@@ -1,136 +1,70 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Elephant Express — Arcade Walker</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zoo Patrol — Sanctuary Defense</title>
 <style>
-  :root { color-scheme: dark; --ink:#10132b; --cyan:#61f6e7; --pink:#ff5caa; --gold:#ffd166; }
-  * { box-sizing:border-box }
-  body { margin:0; min-height:100vh; display:grid; place-items:center; overflow:hidden; color:#fff; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#090b19; }
-  .cabinet { width:min(94vw,760px); padding:18px; border:2px solid #54418a; border-radius:24px; background:linear-gradient(145deg,#191b3b,#11142b 62%,#211638); box-shadow:0 0 0 5px #0d0e20,0 0 60px #915cff25,inset 0 0 32px #8e5cff12; }
-  .topline { display:flex; justify-content:space-between; align-items:center; padding:4px 8px 14px; color:#a8a5d3; font-size:11px; letter-spacing:.16em; }
-  .brand { color:var(--cyan); font-weight:900; text-shadow:0 0 12px #61f6e799; }
-  h1 { margin:0; color:#fff; text-align:center; font-size:clamp(24px,5vw,42px); line-height:1; letter-spacing:.08em; text-shadow:0 3px #7652c8,0 0 24px #bd72ff70; }
-  .subtitle { text-align:center; margin:8px 0 14px; color:#b5b1d8; font-size:11px; letter-spacing:.2em; }
-  .screen { position:relative; overflow:hidden; border:3px solid #6150a1; border-radius:13px; background:#131631; box-shadow:inset 0 0 25px #050615,0 0 22px #6b4bcb35; }
-  svg { width:100%; display:block; }
-  .scanlines { position:absolute; inset:0; pointer-events:none; opacity:.14; background:repeating-linear-gradient(0deg,transparent 0px,transparent 3px,#08091b 4px); mix-blend-mode:multiply; }
-  .controls { display:flex; justify-content:center; align-items:center; gap:12px; flex-wrap:wrap; padding:15px 4px 2px; color:#c5c1e5; font-size:12px; }
-  button { color:#e6e2ff; background:#302650; border:1px solid #9877e8; border-radius:8px; padding:9px 15px; font:700 11px inherit; font-family:inherit; letter-spacing:.08em; cursor:pointer; box-shadow:0 3px #17122a; }
-  button:hover { background:#47336c; } button:focus-visible,input:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
-  input { accent-color:var(--pink); width:105px; vertical-align:middle; }
-  .hint { width:100%; text-align:center; color:#8885ad; font-size:10px; letter-spacing:.12em; }
-  .pixel { shape-rendering:crispEdges; }
-  @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; } }
+:root{color-scheme:dark;--bg:#090c19;--panel:#151a31;--line:#383c68;--cyan:#66f5dc;--pink:#ff6caa;--gold:#ffd36b;--muted:#a4a6c8;--green:#8de6a0}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% 0,#202044 0,#0b0e1c 60%);color:#f5f2ff;font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;min-height:100vh;padding:18px}.shell{width:min(1280px,100%);margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.brand{font-weight:900;letter-spacing:.12em;color:var(--cyan);text-shadow:0 0 14px #66f5dc70}.brand small{display:block;color:#a9a4ca;font-size:10px;letter-spacing:.25em;margin-top:4px}.title{font-size:clamp(24px,4vw,38px);font-weight:1000;letter-spacing:.08em;text-align:center;text-shadow:0 3px #7652c8,0 0 22px #bd72ff50}.top-stats{display:flex;gap:8px}.pill{border:1px solid var(--line);background:#15182d;border-radius:9px;padding:8px 11px;font-weight:800;white-space:nowrap}.pill strong{color:var(--gold)}.layout{display:grid;grid-template-columns:minmax(0,1fr) 286px;gap:14px;align-items:start}.main-card,.sidebar{border:1px solid #484775;border-radius:15px;background:linear-gradient(145deg,#191d38,#111529);box-shadow:0 12px 30px #0005}.main-card{padding:12px}.stagebar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 10px}.stage-info{min-width:0}.stage-title{font-size:17px;font-weight:900;color:#fff}.stage-sub{font-size:10px;color:var(--muted);margin-top:4px}.stage-dots{display:flex;gap:5px}.stage-dot{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;background:#252843;border:1px solid #454970;color:#a6a7c9;font-size:11px;font-weight:bold;cursor:pointer}.stage-dot.active{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 10px #66f5dc38}.stage-dot.locked{opacity:.4;cursor:not-allowed}.canvas-wrap{position:relative;border-radius:10px;overflow:hidden;border:2px solid #4a4b7b;background:#121831;line-height:0}canvas{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair}.canvas-hint{position:absolute;left:12px;bottom:9px;padding:6px 8px;border-radius:6px;background:#0a1022d9;color:#b8b9d8;font-size:10px;line-height:1.3;pointer-events:none}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:11px;flex-wrap:wrap}.wave-label{color:var(--muted);font-size:11px}.wave-label b{color:#fff}.actions{display:flex;gap:8px;align-items:center}button{font:inherit;color:#f5f2ff;background:#30284f;border:1px solid #8b70c5;border-radius:8px;padding:9px 12px;cursor:pointer;font-weight:800;font-size:11px;letter-spacing:.04em;box-shadow:0 2px #17152a}button:hover:not(:disabled){background:#47386e;transform:translateY(-1px)}button:disabled{opacity:.45;cursor:not-allowed}button.primary{background:#246e67;border-color:#69e7d1;color:#dcfff7}button.danger{background:#713750;border-color:#cb6593}.speed-control{display:flex;gap:6px}.speed-control button{padding:8px}.sidebar{padding:13px}.section-title{font-size:11px;color:var(--cyan);letter-spacing:.18em;font-weight:900;margin:1px 0 10px}.shop{display:grid;gap:7px}.tower-card{display:grid;grid-template-columns:39px 1fr auto;gap:8px;align-items:center;width:100%;text-align:left;padding:8px;background:#1e223e;border:1px solid #383d68;box-shadow:none}.tower-card.selected{border-color:var(--gold);box-shadow:0 0 12px #ffd36b32;background:#302844}.tower-icon{font-size:23px;text-align:center;filter:drop-shadow(0 0 4px #fff3)}.tower-name{display:block;font-size:11px;font-weight:900}.tower-desc{display:block;font-size:9px;line-height:1.4;color:var(--muted);margin-top:3px}.tower-cost{font-size:10px;color:var(--gold);font-weight:900;white-space:nowrap}.divider{height:1px;background:#343856;margin:13px 0}.unit-detail{min-height:94px;font-size:10px;color:var(--muted);line-height:1.6}.unit-detail b{color:#fff}.unit-detail .detail-title{font-weight:900;color:var(--gold);font-size:12px}.detail-actions{display:flex;gap:6px;margin-top:8px}.detail-actions button{flex:1;padding:8px 5px;font-size:10px}.guide{color:#9295b8;font-size:9px;line-height:1.7}.toast{position:fixed;z-index:5;bottom:18px;left:50%;transform:translate(-50%,20px);padding:10px 16px;background:#242846;border:1px solid #686694;border-radius:9px;opacity:0;pointer-events:none;transition:.2s;font-size:11px;box-shadow:0 8px 30px #0007}.toast.show{opacity:1;transform:translate(-50%,0)}.modal{position:fixed;z-index:4;inset:0;display:none;place-items:center;background:#070914b8;backdrop-filter:blur(4px);padding:20px}.modal.open{display:grid}.modal-card{width:min(430px,100%);padding:25px;text-align:center;background:linear-gradient(145deg,#202344,#15182d);border:1px solid #7770aa;border-radius:16px;box-shadow:0 15px 55px #000a}.modal-icon{font-size:42px}.modal h2{margin:8px 0;color:#fff}.modal p{color:#b3b4d2;font-size:12px;line-height:1.7}.modal button{margin:8px 5px 0}.footer{text-align:center;color:#747899;font-size:9px;margin-top:11px;letter-spacing:.12em}.heart{color:var(--pink)}
+@media(max-width:850px){body{padding:10px}.layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr;gap:0 15px}.sidebar .section-title:first-child,.sidebar .shop{grid-column:1/-1}.sidebar .divider{grid-column:1/-1}.guide{grid-column:1/-1}.top-stats{gap:5px}.pill{padding:7px;font-size:11px}.brand{font-size:11px}.top{flex-wrap:wrap}.title{order:3;width:100%}}@media(max-width:500px){.sidebar{grid-template-columns:1fr}.sidebar .section-title:first-child,.sidebar .shop,.sidebar .divider,.guide{grid-column:auto}.stagebar{align-items:flex-start}.stage-dot{width:24px;height:24px}.toolbar{align-items:flex-start}.actions{flex-wrap:wrap}.canvas-hint{font-size:8px}.top-stats{width:100%;justify-content:center}}
 </style>
 </head>
 <body>
-<main class="cabinet" aria-label="Arcade elephant animation">
-  <div class="topline"><span class="brand">★ PIXEL PARADE ★</span><span>PLAYER 1 &nbsp; ♥♥♥</span></div>
-  <h1>ELEPHANT EXPRESS</h1>
-  <p class="subtitle">A BIG STEP INTO THE FUTURE</p>
-  <div class="screen">
-    <svg id="game" viewBox="0 0 720 560" role="img" aria-labelledby="title desc">
-      <title id="title">A friendly elephant walking toward you</title><desc id="desc">A colorful, front-facing cartoon elephant walks in place on a neon arcade stage.</desc>
-      <defs>
-        <radialGradient id="sky" cx="50%" cy="39%" r="72%"><stop stop-color="#29255c"/><stop offset="1" stop-color="#10132b"/></radialGradient>
-        <linearGradient id="hide" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a8a2ff"/><stop offset=".48" stop-color="#7779db"/><stop offset="1" stop-color="#5558b5"/></linearGradient>
-        <linearGradient id="ear" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff83b7"/><stop offset="1" stop-color="#dc4d9e"/></linearGradient>
-        <linearGradient id="trunk" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#9895f2"/><stop offset="1" stop-color="#696dca"/></linearGradient>
-        <filter id="glow"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-        <pattern id="stars" width="90" height="80" patternUnits="userSpaceOnUse"><circle cx="13" cy="17" r="1.5" fill="#fff" opacity=".65"/><circle cx="67" cy="55" r="1" fill="#71f6e8" opacity=".8"/><path d="M43 8v7m-3.5-3.5h7" stroke="#ff76bd" stroke-width="1.5" opacity=".8"/></pattern>
-      </defs>
-      <rect width="720" height="560" fill="url(#sky)"/><rect width="720" height="390" fill="url(#stars)"/>
-      <g opacity=".35" stroke="#57e8e0" fill="none"><path d="M0 340H720M0 370H720M0 400H720"/><path d="M360 310L0 450m360-140L90 450m270-140L180 450m180-140L270 450m180-140L450 450m-90-140L540 450m-180-140L630 450m-270-140L720 450"/></g>
-      <path d="M0 416H720V560H0Z" fill="#11152c" opacity=".76"/>
-      <g fill="#ffd166" filter="url(#glow)" font-family="monospace" font-size="13" font-weight="bold" letter-spacing="2"><text x="27" y="45">STAGE 01</text><text x="570" y="45">WALK!</text></g>
-      <g fill="#ff66b3"><path d="M85 78h13v13H85zm8-8h13v13H93zM615 91h12v12h-12zm8-8h12v12h-12z"/></g>
-      <g fill="#65f5e3"><path d="M163 103h12v12h-12zm8-8h12v12h-12zM536 130h12v12h-12zm8-8h12v12h-12z"/></g>
-      <ellipse id="shadow" cx="360" cy="472" rx="126" ry="19" fill="#050714" opacity=".7"/>
-      <ellipse cx="360" cy="465" rx="105" ry="8" fill="#53f6e0" opacity=".28" filter="url(#glow)"/>
-      <!-- Rear legs -->
-      <g id="legBackL" transform="translate(0 0)"><path d="M287 366Q278 395 280 439L277 460Q282 472 319 470Q335 468 330 457L325 439 334 383Z" fill="#6267c5" stroke="#393b83" stroke-width="4"/><path d="M279 450Q302 458 331 449L333 462Q327 473 281 469Z" fill="#ffc56a"/></g>
-      <g id="legBackR" transform="translate(0 0)"><path d="M389 379L401 436 395 458Q393 470 427 470Q449 469 442 456L435 435 433 375Z" fill="#696dc9" stroke="#393b83" stroke-width="4"/><path d="M394 450Q417 458 443 449L446 462Q440 473 397 469Z" fill="#ffc56a"/></g>
-      <!-- Tail -->
-      <g id="tail"><path d="M431 295Q471 316 457 355" fill="none" stroke="#686ac4" stroke-width="10" stroke-linecap="round"/><path d="M450 351l11 1-3 16-12-3z" fill="#ff66b3"/></g>
-      <!-- Big ears, with separate inner panels -->
-      <g id="earL"><path d="M304 183Q254 132 227 177Q208 221 264 286L309 273Z" fill="url(#hide)" stroke="#454895" stroke-width="5"/><path d="M293 198Q254 162 240 184Q233 211 271 251L299 252Z" fill="url(#ear)" opacity=".88"/></g>
-      <g id="earR"><path d="M416 183Q466 132 493 177Q512 221 456 286L411 273Z" fill="url(#hide)" stroke="#454895" stroke-width="5"/><path d="M427 198Q466 162 480 184Q487 211 449 251L421 252Z" fill="url(#ear)" opacity=".88"/></g>
-      <!-- Body -->
-      <path d="M277 279Q279 250 310 243L410 243Q441 250 443 279L451 359Q449 391 417 401L303 401Q271 390 269 359Z" fill="url(#hide)" stroke="#41458e" stroke-width="5"/>
-      <path d="M302 347Q360 365 418 347L412 389Q360 411 308 389Z" fill="#9694ed" opacity=".55"/>
-      <path d="M306 265Q360 253 414 265" fill="none" stroke="#d0c5ff" stroke-width="5" opacity=".42" stroke-linecap="round"/>
-      <!-- Front legs: offset phase, with chunky arcade boots -->
-      <g id="legFrontL"><path d="M300 352Q296 384 301 429L296 455Q297 468 329 469Q350 468 345 455L339 428 344 364Z" fill="url(#hide)" stroke="#41458e" stroke-width="5"/><path d="M297 447Q320 455 346 445L350 459Q347 472 300 470Z" fill="#ffd166" stroke="#bd7c50" stroke-width="3"/><path d="M307 461h5m8 1h5m8-2h5" stroke="#fff5cd" stroke-width="3" stroke-linecap="round"/></g>
-      <g id="legFrontR"><path d="M376 364L381 428 375 455Q370 468 400 469Q427 469 425 455L418 429 420 352Z" fill="url(#hide)" stroke="#41458e" stroke-width="5"/><path d="M372 447Q399 455 426 445L430 459Q426 472 378 470Z" fill="#ffd166" stroke="#bd7c50" stroke-width="3"/><path d="M382 461h5m8 1h5m8-2h5" stroke="#fff5cd" stroke-width="3" stroke-linecap="round"/></g>
-      <!-- Head silhouette -->
-      <path d="M291 207Q291 164 329 157Q360 147 391 157Q429 164 429 207L426 269Q421 302 389 311L331 311Q299 302 294 269Z" fill="url(#hide)" stroke="#41458e" stroke-width="5"/>
-      <path d="M311 206Q325 194 340 207" fill="none" stroke="#d0c5ff" stroke-width="4" opacity=".6" stroke-linecap="round"/>
-      <!-- Eyes -->
-      <ellipse cx="333" cy="226" rx="17" ry="21" fill="#fff8df"/><ellipse cx="387" cy="226" rx="17" ry="21" fill="#fff8df"/>
-      <ellipse cx="337" cy="230" rx="8" ry="12" fill="#263057"/><ellipse cx="383" cy="230" rx="8" ry="12" fill="#263057"/>
-      <circle cx="340" cy="225" r="3.3" fill="#fff"/><circle cx="386" cy="225" r="3.3" fill="#fff"/>
-      <path d="M320 201q13-9 25-1m28 0q13-8 26 1" fill="none" stroke="#41458e" stroke-width="5" stroke-linecap="round"/>
-      <!-- Trunk: animated in small segments for a springy walk -->
-      <g id="trunkRoot"><path d="M343 248Q360 256 377 248L378 269Q380 282 374 292L382 310Q388 327 376 339Q368 348 354 341Q346 336 351 327L359 311Q346 302 343 286Z" fill="url(#trunk)" stroke="#41458e" stroke-width="5" stroke-linejoin="round"/>
-        <path d="M350 274Q360 281 374 276M351 285Q361 292 376 286M357 302Q365 308 378 300" fill="none" stroke="#c1b9ff" stroke-width="3" opacity=".65" stroke-linecap="round"/>
-        <ellipse cx="367" cy="337" rx="10" ry="5" fill="#ff8fbc" transform="rotate(16 367 337)"/>
-      </g>
-      <!-- Cheek freckles -->
-      <g fill="#ff8fbc"><circle cx="315" cy="266" r="3"/><circle cx="322" cy="272" r="2.5"/><circle cx="405" cy="266" r="3"/><circle cx="398" cy="272" r="2.5"/></g>
-      <path d="M334 299Q360 310 386 299" fill="none" stroke="#5559ad" stroke-width="3" opacity=".7"/>
-      <g fill="#61f6e7" font-family="monospace" font-weight="bold" font-size="12" letter-spacing="2"><text x="30" y="519">POWER</text><text x="621" y="519">100%</text></g>
-      <rect x="105" y="508" width="485" height="12" rx="6" fill="#302e57" stroke="#6760a2"/><rect x="110" y="512" width="410" height="4" rx="2" fill="#ff5caa" filter="url(#glow)"/>
-      <g fill="#ffd166"><path d="M255 60h8v8h-8zm15 0h8v8h-8zm15 0h8v8h-8z"/></g>
-    </svg>
-    <div class="scanlines" aria-hidden="true"></div>
-  </div>
-  <div class="controls"><button id="toggle" type="button" aria-pressed="false">Ⅱ &nbsp; PAUSE</button><label for="speed">WALK SPEED <input id="speed" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="Walk speed"></label><span id="speedReadout">1.0×</span><div class="hint">TIP: GIVE THIS LITTLE LEGEND SOME ROOM TO ROAM</div></div>
-</main>
+<div class="shell">
+<header class="top"><div class="brand">★ ZOO PATROL ★<small>SANCTUARY DEFENSE FORCE</small></div><div class="title">WILD ESCAPE!</div><div class="top-stats"><div class="pill">🪙 <strong id="money">$180</strong></div><div class="pill"><span class="heart">♥</span> <strong id="lives">20</strong></div><div class="pill">WAVE <strong id="waveCount">0/3</strong></div></div></header>
+<div class="layout"><main class="main-card"><div class="stagebar"><div class="stage-info"><div class="stage-title" id="levelName">01 · SUNNY SAVANNA</div><div class="stage-sub" id="levelSub">A gentle warm-up. The herd is on the move!</div></div><nav class="stage-dots" id="stageDots" aria-label="Choose stage"></nav></div><div class="canvas-wrap"><canvas id="field" width="1000" height="590" aria-label="Tower defense map. Click to place a selected ranger."></canvas><div class="canvas-hint" id="hint">PICK A RANGER, THEN PLACE THEM OFF THE PATH</div></div><div class="toolbar"><div class="wave-label">OBJECTIVE &nbsp; <b id="objective">Stop the herd before the zoo gate!</b></div><div class="actions"><div class="speed-control"><button id="pauseBtn" aria-label="Pause game">Ⅱ</button><button id="speedBtn" aria-label="Game speed">1×</button></div><button id="startBtn" class="primary">▶ &nbsp; START WAVE</button></div></div></main>
+<aside class="sidebar"><div class="section-title">🛡️ &nbsp; RANGER ROSTER</div><div class="shop" id="shop"></div><div class="divider"></div><div class="section-title">📋 &nbsp; RANGER ORDERS</div><div class="unit-detail" id="detail">Select a ranger to inspect their special tranquilizer gear. Then click an open patch of grass beside the trail to deploy.</div><div class="divider"></div><div class="guide"><b style="color:#fff">FIELD GUIDE</b><br>• Place rangers beside the winding trail.<br>• Each ranger automatically targets the nearest escaping animal.<br>• Earn coins for every safe tranquilization.<br>• Upgrade selected rangers between waves.<br>• Keep the herd away from the <span style="color:#ff859d">ZOO EXIT</span>!</div></aside></div><div class="footer">A FRIENDLY ARCADE TOWER DEFENSE · NO ANIMALS HARMED · MADE FOR THE SANCTUARY</div></div>
+<div class="toast" id="toast" role="status"></div><div class="modal" id="modal"><div class="modal-card"><div class="modal-icon" id="modalIcon">🦓</div><h2 id="modalTitle"></h2><p id="modalText"></p><div id="modalActions"></div></div></div>
 <script>
-(() => {
-  // Tiny procedural animation loop: sinusoidal gait, independent limb swing, and a buoyant body bob.
-  const parts = Object.fromEntries(['legBackL','legBackR','legFrontL','legFrontR','earL','earR','trunkRoot','tail','shadow'].map(id => [id, document.getElementById(id)]));
-  const toggle = document.getElementById('toggle');
-  const speedControl = document.getElementById('speed');
-  const speedReadout = document.getElementById('speedReadout');
-  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let phase = 0, lastTime = 0, speed = 1, playing = !reducedMotion;
-  function setPlaying(value) {
-    playing = value;
-    toggle.textContent = playing ? 'Ⅱ  PAUSE' : '▶  WALK';
-    toggle.setAttribute('aria-pressed', String(!playing));
-  }
-  toggle.addEventListener('click', () => setPlaying(!playing));
-  speedControl.addEventListener('input', () => { speed = Number(speedControl.value); speedReadout.textContent = `${speed.toFixed(1)}×`; });
-  function frame(now) {
-    const dt = Math.min((now - (lastTime || now)) / 1000, .05); lastTime = now;
-    if (playing) {
-      phase += dt * speed * 5.4;
-      const stride = Math.sin(phase), lift = Math.max(0, Math.cos(phase));
-      const backStride = Math.sin(phase + Math.PI);
-      parts.legFrontL.setAttribute('transform', `translate(${stride*8} ${-lift*8}) rotate(${stride*7} 320 360)`);
-      parts.legFrontR.setAttribute('transform', `translate(${-stride*8} ${-Math.max(0,-Math.cos(phase))*8}) rotate(${-stride*7} 400 360)`);
-      parts.legBackL.setAttribute('transform', `translate(${backStride*5} ${-Math.max(0,Math.cos(phase+Math.PI))*5})`);
-      parts.legBackR.setAttribute('transform', `translate(${-backStride*5} ${-Math.max(0,-Math.cos(phase+Math.PI))*5})`);
-      parts.earL.setAttribute('transform', `rotate(${Math.sin(phase)*2.5} 286 225)`);
-      parts.earR.setAttribute('transform', `rotate(${-Math.sin(phase)*2.5} 434 225)`);
-      parts.trunkRoot.setAttribute('transform', `rotate(${Math.sin(phase+.6)*5} 360 250) translate(0 ${Math.sin(phase*2)*3})`);
-      parts.tail.setAttribute('transform', `rotate(${Math.sin(phase+1)*12} 432 297)`);
-      const bob = Math.abs(Math.sin(phase*2))*4;
-      parts.shadow.setAttribute('rx', String(126 - bob*2));
-      bodyShape.setAttribute('transform', `translate(0 ${-bob})`);
-      headShape.setAttribute('transform', `translate(0 ${-bob})`);
-    }
-    requestAnimationFrame(frame);
-  }
-  const svg = document.getElementById('game');
-  const bodyShape = svg.querySelector('path[d^="M277 279"]');
-  const headShape = svg.querySelector('path[d^="M291 207"]');
-  if (reducedMotion) setPlaying(false);
-  requestAnimationFrame(frame); 
+(()=>{'use strict';
+const canvas=document.getElementById('field'),ctx=canvas.getContext('2d'),W=1000,H=590;
+const animals=[{name:'Gazelle',icon:'🦌',hp:1,speed:58,reward:8,color:'#eab676'},{name:'Zebra',icon:'🦓',hp:2,speed:46,reward:11,color:'#f2f0e7'},{name:'Monkey',icon:'🐒',hp:3,speed:66,reward:14,color:'#bd804f'},{name:'Panda',icon:'🐼',hp:5,speed:34,reward:18,color:'#e9e9e9'},{name:'Elephant',icon:'🐘',hp:9,speed:26,reward:26,color:'#a6a6dd'}];
+const towers=[{name:'Ranger',icon:'🧑‍🌾',cost:65,range:140,rate:.82,power:1,desc:'Reliable all-rounder. Good range and steady darts.',color:'#62d6ad',shot:'#7effcf'},{name:'Koala Keeper',icon:'🐨',cost:90,range:105,rate:.43,power:1,desc:'Rapid-fire eucalyptus tranquilizer darts.',color:'#b5a6e5',shot:'#c3a1ff'},{name:'Falcon Scout',icon:'🦅',cost:120,range:210,rate:1.15,power:2,desc:'Long-range, high-impact sleepy-seed launcher.',color:'#efbb66',shot:'#ffe07c'},{name:'Otter Medic',icon:'🦦',cost:145,range:125,rate:1.0,power:2,desc:'Splashy water-dart burst slows nearby wildlife.',color:'#65d9ed',shot:'#73edff'},{name:'Tortoise Tech',icon:'🐢',cost:185,range:160,rate:1.8,power:4,desc:'Heavy-duty tranquilizer cannon. Slow but mighty.',color:'#8cdb7f',shot:'#a9ff7d'}];
+const levels=[{name:'SUNNY SAVANNA',sub:'A gentle warm-up. The herd is on the move!',waves:3,scale:1,theme:['#8bc86b','#d7df86'],count:[7,9,11]},{name:'BAMBOO GROVE',sub:'Quicker feet and a few more friends to catch.',waves:3,scale:1.25,theme:['#59a879','#b2d181'],count:[10,12,14]},{name:'MONKEY MOUNTAIN',sub:'The cheeky climbers are getting tougher!',waves:4,scale:1.55,theme:['#6c9c56','#c8a45c'],count:[12,14,16,18]},{name:'FROSTY HABITAT',sub:'A chilly challenge with resilient pandas.',waves:4,scale:1.9,theme:['#70aab3','#c2d9cb'],count:[15,17,19,21]},{name:'ELEPHANT ENCLAVE',sub:'The grand finale! Stop the whole stampede.',waves:5,scale:2.35,theme:['#a880bc','#e1bd79'],count:[18,20,22,25,28]}];
+// Smooth trail across the park; cumulative samples give enemies consistent movement speed.
+const anchors=[[-25,455],[95,470],[185,405],[190,320],[92,300],[70,210],[170,175],[310,190],[352,278],[294,348],[385,420],[500,430],[570,355],[548,270],[465,240],[455,155],[545,112],[660,125],[705,205],[660,280],[710,345],[805,350],[855,285],[830,215],[765,185],[775,120],[875,90],[1025,118]];
+function makePath(){const pts=[];for(let i=0;i<anchors.length-1;i++){const p0=anchors[Math.max(0,i-1)],p1=anchors[i],p2=anchors[i+1],p3=anchors[Math.min(anchors.length-1,i+2)];for(let j=0;j<18;j++){const t=j/18,t2=t*t,t3=t2*t;const x=.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);const y=.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);pts.push({x,y})}}pts.push({x:anchors.at(-1)[0],y:anchors.at(-1)[1]});let d=0;pts[0].d=0;for(let i=1;i<pts.length;i++){d+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);pts[i].d=d}return{pts,length:d}}
+const path=makePath();function pointAt(d){let lo=0,hi=path.pts.length-1;while(lo<hi){const mid=(lo+hi)>>1;if(path.pts[mid].d<d)lo=mid+1;else hi=mid}const b=path.pts[lo],a=path.pts[Math.max(0,lo-1)],f=b.d===a.d?0:(d-a.d)/(b.d-a.d);return{x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f}}
+let level=0,unlocked=Number(localStorage.getItem('zooPatrolUnlocked')||0),money=180,lives=20,wave=0,animalsLive=[],placed=[],shots=[],effects=[],selectedTower=-1,selectedUnit=null,active=false,between=true,paused=false,gameSpeed=1,last=0,spawnQueue=[],spawnTimer=0,toastTimer=0,gameOver=false;
+const $=id=>document.getElementById(id);function notify(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2100)}
+function makeWave(n){const count=levels[level].count[n-1];const list=[];for(let i=0;i<count;i++){let type=0;if(level===0)type=i%5===4?1:0;else if(level===1)type=[0,1,2][i%3];else if(level===2)type=[2,0,1,3][i%4];else if(level===3)type=[3,2,1,0][i%4];else type=[4,3,2,1,0][i%5];list.push(type)}return list}
+function renderStageDots(){const nav=$('stageDots');nav.innerHTML='';levels.forEach((l,i)=>{const b=document.createElement('button');b.className='stage-dot'+(i===level?' active':'')+(i>unlocked?' locked':'');b.textContent=i>unlocked?'🔒':String(i+1);b.title=`Stage ${i+1}: ${l.name}`;b.disabled=i>unlocked;b.addEventListener('click',()=>loadLevel(i));nav.append(b)})}
+function renderShop(){const box=$('shop');box.innerHTML='';towers.forEach((t,i)=>{const b=document.createElement('button');b.className='tower-card'+(selectedUnit===i?' selected':'');b.innerHTML=`<span class="tower-icon">${t.icon}</span><span><span class="tower-name">${t.name}</span><span class="tower-desc">${t.desc}</span></span><span class="tower-cost">$${t.cost}</span>`;b.disabled=money<t.cost;b.addEventListener('click',()=>{if(money<t.cost){notify('Not enough coins yet — tranquilize a few escapees!');return}selectedUnit=selectedUnit===i?null:i;selectedTower=-1;renderShop();renderDetail();$('hint').textContent=selectedUnit===null?'PICK A RANGER, THEN PLACE THEM OFF THE PATH':`PLACING ${t.name.toUpperCase()} · CLICK OPEN GRASS`;});box.append(b)})}
+function renderDetail(){const el=$('detail');if(selectedTower<0||!placed[selectedTower]){el.innerHTML='Select a ranger to inspect their special tranquilizer gear. Then click an open patch of grass beside the trail to deploy.';return}const t=placed[selectedTower],data=towers[t.type],upCost=Math.round(data.cost*(.72+t.level*.45));el.innerHTML=`<div class="detail-title">${data.icon} ${data.name} · LV ${t.level+1}</div><b>Range</b> ${Math.round(t.range)} px &nbsp; <b>Dart</b> ${t.power} sleepy ${t.power===1?'dose':'doses'}<br><b>Fire rate</b> ${(1/t.rate).toFixed(1)}/sec<div class="detail-actions"><button id="upgrade" ${t.level>=2||money<upCost?'disabled':''}>⬆ UPGRADE $${upCost}</button><button class="danger" id="sell">↗ SELL $${Math.round(data.cost*(.65+t.level*.15))}</button></div>`;const u=$('upgrade');if(u)u.onclick=()=>upgradeTower(t,upCost);const s=$('sell');if(s)s.onclick=()=>sellTower(t)}
+function updateHUD(){ $('money').textContent='$'+money;$('lives').textContent=lives;$('waveCount').textContent=`${wave}/${levels[level].waves}`;$('levelName').textContent=`0${level+1} · ${levels[level].name}`;$('levelSub').textContent=levels[level].sub;$('startBtn').disabled=active||gameOver;$('startBtn').textContent=gameOver?'↻  TRY AGAIN':wave>=levels[level].waves?'✓  STAGE CLEAR':active?'🐾  HERD INCOMING':wave>0?'▶  NEXT WAVE':'▶  START WAVE';$('objective').textContent=gameOver?'The herd made it to the exit!':wave>=levels[level].waves?'Every animal safely back in its habitat!':'Stop the herd before the zoo gate!';renderShop();renderStageDots()}
+function loadLevel(i){if(i>unlocked)return;level=i;money=180+level*35;lives=20;wave=0;animalsLive=[];placed=[];shots=[];effects=[];spawnQueue=[];selectedTower=-1;selectedUnit=null;active=false;between=true;paused=false;gameOver=false;setTimeout(()=>{updateHUD();renderDetail();$('hint').textContent='PICK A RANGER, THEN PLACE THEM OFF THE PATH';$('modal').classList.remove('open')},0)}
+function startWave(){if(gameOver){loadLevel(level);return}if(active||wave>=levels[level].waves)return;wave++;spawnQueue=makeWave(wave);spawnTimer=.3;active=true;between=false;selectedUnit=null;selectedTower=-1;updateHUD();renderDetail();$('hint').textContent='RANGERS AUTO-TARGET · PLACE MORE DURING THE WAVE'}
+function endWaveIfReady(){if(active&&spawnQueue.length===0&&animalsLive.length===0){active=false;between=true;if(wave>=levels[level].waves){unlocked=Math.max(unlocked,Math.min(level+1,levels.length-1));localStorage.setItem('zooPatrolUnlocked',String(unlocked));updateHUD();showStageClear()}else{money+=25+level*8;notify('Wave cleared! +$'+(25+level*8)+' supply bonus');updateHUD()}}}
+function showStageClear(){const final=level===levels.length-1;$('modalIcon').textContent=final?'🏆':'🎉';$('modalTitle').textContent=final?'SANCTUARY SAVED!':`${levels[level].name} CLEARED!`;$('modalText').textContent=final?'Every animal is safe at home. You are the legendary Zoo Patrol captain!':`A perfect rescue! Stage ${level+2} is now unlocked. Take a breath, upgrade your rangers, and get ready for a tougher stampede.`;$('modalActions').innerHTML=final?'<button id="modalReplay">PLAY AGAIN</button>':'<button id="modalNext" class="primary">NEXT HABITAT →</button> <button id="modalStay">STAY HERE</button>';if(!final){$('modalNext').onclick=()=>loadLevel(level+1);$('modalStay').onclick=()=>$('modal').classList.remove('open')}else $('modalReplay').onclick=()=>loadLevel(0);$('modal').classList.add('open')}
+function placeTower(x,y){if(selectedUnit===null)return;if(money<towers[selectedUnit].cost){notify('Not enough coins!');return}if(x<22||x>W-22||y<45||y>H-28||distToPath(x,y)<40){notify('Rangers need a safe spot away from the animal trail.');return}if(placed.some(t=>Math.hypot(t.x-x,t.y-y)<37)){notify('Leave a little elbow room between rangers!');return}const type=selectedUnit;money-=towers[type].cost;placed.push({x,y,type,level:0,range:towers[type].range,rate:towers[type].rate,power:towers[type].power,cooldown:Math.random()*.3,shots:0});selectedTower=placed.length-1;selectedUnit=null;updateHUD();renderDetail();$('hint').textContent='RANGERS AUTO-TARGET · PLACE MORE DURING THE WAVE'}
+function distToPath(x,y){let d=Infinity;for(const p of path.pts)d=Math.min(d,Math.hypot(p.x-x,p.y-y));return d}
+function upgradeTower(t,cost){if(money<cost||t.level>=2)return;money-=cost;t.level++;t.range+=28;t.power+=Math.max(1,Math.floor(t.power*.45));t.rate*=.84;notify(`${towers[t.type].name} upgraded to level ${t.level+1}!`);updateHUD();renderDetail()}
+function sellTower(t){money+=Math.round(towers[t.type].cost*(.65+t.level*.15));placed=placed.filter(x=>x!==t);selectedTower=-1;updateHUD();renderDetail()}
+function canvasPoint(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}}
+canvas.addEventListener('pointerdown',e=>{const p=canvasPoint(e);if(selectedUnit!==null){placeTower(p.x,p.y);return}let found=-1;for(let i=placed.length-1;i>=0;i--)if(Math.hypot(placed[i].x-p.x,placed[i].y-p.y)<24){found=i;break}selectedTower=found;if(found>=0){selectedUnit=null;renderShop();renderDetail()}else if(selectedTower===-1){renderDetail()}});
+$('startBtn').addEventListener('click',startWave);$('pauseBtn').addEventListener('click',()=>{paused=!paused;$('pauseBtn').textContent=paused?'▶':'Ⅱ';$('pauseBtn').setAttribute('aria-label',paused?'Resume game':'Pause game')});$('speedBtn').addEventListener('click',()=>{gameSpeed=gameSpeed===1?1.7:gameSpeed===1.7?2.5:1;$('speedBtn').textContent=gameSpeed===1?'1×':gameSpeed===1.7?'1.7×':'2.5×'});
+function spawn(type){const base=animals[type],scale=levels[level].scale*(1+(wave-1)*.09);animalsLive.push({type,d:0,hp:Math.ceil(base.hp*scale),maxHp:Math.ceil(base.hp*scale),speed:base.speed*(1+level*.045),reward:base.reward,slow:0,wiggle:Math.random()*7})}
+function update(dt){if(paused||gameOver)return;dt*=gameSpeed;if(active){spawnTimer-=dt;if(spawnTimer<=0&&spawnQueue.length){spawn(spawnQueue.shift());spawnTimer=.55+Math.random()*.22}}
+for(const a of animalsLive){a.d+=a.speed*dt*(a.slow>0?.52:1);a.slow=Math.max(0,a.slow-dt);if(a.d>=path.length&&!a.escaped){a.escaped=true;lives--;if(lives<=0){lives=0;gameOver=true;showDefeat()}}}
+if(animalsLive.some(a=>a.escaped))updateHUD();animalsLive=animalsLive.filter(a=>!a.escaped);
+for(const t of placed){t.cooldown-=dt;if(t.cooldown>0)continue;let target=null,progress=-1;for(const a of animalsLive){const p=pointAt(a.d),dist=Math.hypot(p.x-t.x,p.y-t.y);if(dist<=t.range&&a.d>progress){target=a;progress=a.d}}if(target){const p=pointAt(target.d);shots.push({x:t.x,y:t.y-14,target,tx:p.x,ty:p.y,life:.18,type:t.type,power:t.power});t.cooldown=t.rate;t.shots++}}
+for(const s of shots){s.life-=dt;s.tx=pointAt(s.target.d).x;s.ty=pointAt(s.target.d).y;if(s.life<=0&&!s.hit){s.hit=true;if(animalsLive.includes(s.target)){s.target.hp-=s.power;if(s.type===3){s.target.slow=1.4;for(const a of animalsLive){if(Math.hypot(pointAt(a.d).x-s.tx,pointAt(a.d).y-s.ty)<45)a.hp-=1}}if(s.target.hp<=0){money+=s.target.reward;effects.push({x:s.tx,y:s.ty-12,text:'Zzz! +$'+s.target.reward,life:.8});animalsLive=animalsLive.filter(a=>a!==s.target);updateHUD()}}}}shots=shots.filter(s=>s.life>-.08);for(const e of effects)e.life-=dt;effects=effects.filter(e=>e.life>0);endWaveIfReady()}
+function showDefeat(){$('modalIcon').textContent='🚪';$('modalTitle').textContent='THE HERD REACHED THE EXIT!';$('modalText').textContent='A few animals dashed past the rangers. Tune your placements, upgrade your gear, and try the stage again!';$('modalActions').innerHTML='<button id="retry" class="primary">↻ TRY AGAIN</button>'; $('retry').onclick=()=>loadLevel(level);$('modal').classList.add('open')}
+function roundedRect(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r)}
+function drawBackground(){const colors=levels[level].theme;const g=ctx.createLinearGradient(0,0,W,H);g.addColorStop(0,colors[0]);g.addColorStop(1,colors[1]);ctx.fillStyle=g;ctx.fillRect(0,0,W,H); // habitat patches
+for(let i=0;i<19;i++){const x=(i*173+67)%W,y=(i*97+35)%H;ctx.fillStyle=i%2?'#ffffff0a':'#294b3540';ctx.beginPath();ctx.ellipse(x,y,25+(i%4)*9,13+(i%3)*7,(i%5)*.3,0,Math.PI*2);ctx.fill()}
+// enclosures, bushes, trees
+for(const [x,y,r] of [[42,100,26],[267,79,22],[406,105,27],[925,440,31],[904,175,22],[107,540,29],[737,505,26],[955,80,22],[317,510,21],[598,500,18]]){ctx.fillStyle='#204e46aa';ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#397b58';ctx.beginPath();ctx.arc(x-5,y-7,r*.66,0,Math.PI*2);ctx.fill();ctx.fillStyle='#65a967';ctx.beginPath();ctx.arc(x-8,y-10,r*.35,0,Math.PI*2);ctx.fill()}
+// path shadow, dirt path
+ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();path.pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.strokeStyle='#46352b';ctx.lineWidth=62;ctx.stroke();ctx.strokeStyle='#c69c6a';ctx.lineWidth=52;ctx.stroke();ctx.strokeStyle='#d9b682';ctx.lineWidth=2;ctx.setLineDash([4,12]);ctx.stroke();ctx.setLineDash([]);
+// start and exit markers
+const first=pointAt(5),lastp=pointAt(path.length-15);ctx.fillStyle='#174c36';roundedRect(9,first.y-30,89,25,7);ctx.fill();ctx.fillStyle='#e8fff1';ctx.font='bold 11px monospace';ctx.fillText('🐾  CAGES',17,first.y-13);ctx.fillStyle='#6c213a';roundedRect(W-98,lastp.y-30,90,25,7);ctx.fill();ctx.fillStyle='#fff0f5';ctx.fillText('EXIT →',W-83,lastp.y-13)}
+function drawTower(t,i){const data=towers[t.type],selected=i===selectedTower;ctx.save();if(selected){ctx.beginPath();ctx.arc(t.x,t.y,t.range,0,Math.PI*2);ctx.fillStyle='#f9dc7a14';ctx.fill();ctx.strokeStyle='#fff0a9aa';ctx.setLineDash([6,5]);ctx.lineWidth=1.5;ctx.stroke();ctx.setLineDash([])}ctx.fillStyle='#14203899';ctx.beginPath();ctx.ellipse(t.x,t.y+10,20,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#293653';ctx.strokeStyle=selected?'#ffe278':data.color;ctx.lineWidth=3;roundedRect(t.x-18,t.y-20,36,36,10);ctx.fill();ctx.stroke();ctx.font='22px serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(data.icon,t.x,t.y-2);for(let n=0;n<=t.level;n++){ctx.fillStyle='#ffd36b';ctx.beginPath();ctx.arc(t.x-9+n*9,t.y+22,2.4,0,Math.PI*2);ctx.fill()}ctx.restore()}
+function draw(){drawBackground();if(selectedUnit!==null){const p=canvasPoint(lastPointer||{clientX:0,clientY:0});ctx.beginPath();ctx.arc(p.x,p.y,towers[selectedUnit].range,0,Math.PI*2);ctx.fillStyle='#ffe37512';ctx.fill();ctx.strokeStyle='#ffe37588';ctx.setLineDash([7,6]);ctx.stroke();ctx.setLineDash([])}for(let i=0;i<placed.length;i++)drawTower(placed[i],i);
+for(const a of animalsLive){const p=pointAt(a.d);ctx.save();ctx.translate(p.x,p.y+Math.sin(performance.now()/130+a.wiggle)*2);ctx.fillStyle='#0005';ctx.beginPath();ctx.ellipse(0,15,16,5,0,0,Math.PI*2);ctx.fill();ctx.font='29px serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(animals[a.type].icon,0,0);ctx.fillStyle='#211b27';roundedRect(-17,-23,34,5,2);ctx.fill();ctx.fillStyle=a.hp/a.maxHp>.55?'#8ae58a':'#ff748f';roundedRect(-16,-22,32*Math.max(0,a.hp/a.maxHp),3,1);ctx.fill();ctx.restore()}
+for(const s of shots){const f=Math.max(0,1-s.life/.18);const x=s.x+(s.tx-s.x)*f,y=s.y+(s.ty-s.y)*f;ctx.fillStyle=towers[s.type].shot;ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=10;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0}
+for(const e of effects){ctx.globalAlpha=Math.min(1,e.life*2);ctx.fillStyle='#fffbbe';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.fillText(e.text,e.x,e.y-e.life*24);ctx.globalAlpha=1}
+if(paused){ctx.fillStyle='#0a0d20aa';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='bold 36px monospace';ctx.textAlign='center';ctx.fillText('PAUSED',W/2,H/2)} }
+let lastPointer=null;canvas.addEventListener('pointermove',e=>{lastPointer=e;});function loop(now){const dt=Math.min((now-last)/1000||0,.05);last=now;update(dt);draw();requestAnimationFrame(loop)}
+renderStageDots();updateHUD();renderDetail();requestAnimationFrame(loop);
 })();
-</script>
-</body>
-</html>
+</script></body></html>
