@@ -1,0 +1,11 @@
+# Preserved prior project; kept locally but excluded from Animal Balloon Farm commits
+.archive/
+
+# Generated dependencies and output
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.vscode/
+.idea/
