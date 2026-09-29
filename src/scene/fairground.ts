@@ -69,6 +69,31 @@ export function makeGardenLawnGeometry(): THREE.BufferGeometry {
   return geometry
 }
 
+/** The buildable garden footprint as a path, outset outward by `outset`. */
+function gardenHolePath(outset: number): THREE.Path {
+  const halfWidth = GARDEN_BOUNDS.halfWidth + outset
+  const halfDepth = GARDEN_BOUNDS.halfDepth + outset
+  const hole = new THREE.Path()
+  hole.moveTo(-halfWidth, -halfDepth)
+  hole.lineTo(-halfWidth, halfDepth)
+  hole.lineTo(halfWidth, halfDepth)
+  hole.lineTo(halfWidth, -halfDepth)
+  hole.closePath()
+  return hole
+}
+
+/** Axis-aligned rectangle with the buildable garden cut out as a hole. */
+function rectangleWithGardenHole(width: number, depth: number, outset: number): THREE.Shape {
+  const shape = new THREE.Shape()
+  shape.moveTo(-width / 2, -depth / 2)
+  shape.lineTo(width / 2, -depth / 2)
+  shape.lineTo(width / 2, depth / 2)
+  shape.lineTo(-width / 2, depth / 2)
+  shape.closePath()
+  shape.holes.push(gardenHolePath(outset))
+  return shape
+}
+
 function makeSoilTexture(seed: number): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = 512
@@ -454,30 +479,52 @@ export function createFairground(): Fairground {
 
   const far=makeGrassTexture(37,'#7ba95d','#466f49')
   far.repeat.set(90,90)
-  const meadow=new THREE.Mesh(new THREE.PlaneGeometry(520,520),new THREE.MeshStandardMaterial({color:'#a7ba6d',map:far,roughness:1}))
-  meadow.rotation.x=-Math.PI/2
+  // Meadow and outer lawn are ring planes with the garden cut out, so deep
+  // digs (future ponds) stay visible instead of being capped by a grass plane.
+  // Insets are NEGATIVE: the cutouts must extend BEYOND the deformable region
+  // (edits reach ±13.1/±8.6 through the edge fade), or edge/corner pits dip
+  // below these flat planes and they occlude the hole (green-through).
+  const meadowGeo=new THREE.ShapeGeometry(rectangleWithGardenHole(520,520,-2),2)
+  meadowGeo.rotateX(-Math.PI/2)
+  const meadow=new THREE.Mesh(meadowGeo,new THREE.MeshStandardMaterial({color:'#a7ba6d',map:far,roughness:1,side:THREE.DoubleSide}))
   meadow.position.y=-.22
   meadow.receiveShadow=true
   root.add(meadow)
   const outerTexture=makeGrassTexture(73,'#88bb69','#578e53')
   outerTexture.repeat.set(18,14)
-  const outer=new THREE.Mesh(new THREE.PlaneGeometry(115,82),new THREE.MeshStandardMaterial({color:'#7bb766',map:outerTexture,roughness:1}))
-  outer.rotation.x=-Math.PI/2
+  const outerGeo=new THREE.ShapeGeometry(rectangleWithGardenHole(115,82,-1.8),2)
+  outerGeo.rotateX(-Math.PI/2)
+  const outer=new THREE.Mesh(outerGeo,new THREE.MeshStandardMaterial({color:'#7bb766',map:outerTexture,roughness:1,side:THREE.DoubleSide}))
   outer.position.y=-.13
   outer.receiveShadow=true
   root.add(outer)
 
   // A visibly cut-away raised parcel contains buildable lawn; outside is the shared fairground.
+  // The parcel is a rim around an open pit: deep digs (future ponds) stay
+  // visible instead of hiding behind a flat brown floor. The hole is outset
+  // past the deformable region (±13.1/±8.6) so no dig ever passes under the
+  // cap ring — an earlier smaller hole is what made edge pits show flat brown.
   const baseShape=roundedRectangle(30.8,22.4,1.3)
+  baseShape.holes.push(gardenHolePath(0.8))
   const baseGeo=new THREE.ExtrudeGeometry(baseShape,{depth:.60,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.12,bevelThickness:.08,curveSegments:8})
   baseGeo.rotateX(-Math.PI/2)
   const base=new THREE.Mesh(baseGeo,standard('#855a3e',.87))
+  base.material.side=THREE.DoubleSide
   // Depth (.60) plus bevelThickness (.08) puts the cap at local y .68; keep it
   // below the lawn plane (GARDEN_LAWN_Y .03) or the soil occludes the lawn.
   base.position.y=-.72
   base.name='Rounded cutaway farm-garden parcel'
   base.castShadow=base.receiveShadow=true
   root.add(base)
+
+  // Pit backstop well below the deepest diggable surface (grid min −2.6 →
+  // soil world ≈ −2.61), so a max-depth pond bed never bottoms out against
+  // an under-garden plane. A plain slab: everything above it is opaque.
+  const underSoil=new THREE.Mesh(new THREE.PlaneGeometry(34,26),standard('#6e4c33',.95))
+  underSoil.rotation.x=-Math.PI/2
+  underSoil.position.y=-2.85
+  underSoil.receiveShadow=true
+  root.add(underSoil)
 
   const pathMat=standard('#d4bb83',.92)
   const pathEdge=standard('#8b714e',.95)

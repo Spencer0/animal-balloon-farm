@@ -102,7 +102,6 @@ function createShovelModel(): THREE.Group {
   const brass = new THREE.MeshStandardMaterial({ color: '#d7b765', roughness: 0.3, metalness: 0.48 })
   const steel = new THREE.MeshStandardMaterial({ color: '#c8cdd4', roughness: 0.34, metalness: 0.62 })
   const steelDark = new THREE.MeshStandardMaterial({ color: '#9aa3ad', roughness: 0.42, metalness: 0.55 })
-  const dirt = new THREE.MeshStandardMaterial({ color: '#8a6a49', roughness: 0.95 })
 
   // Shaft rises from the blade toward the cursor ring's grip corner.
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.042, 0.92, 10), wood)
@@ -135,14 +134,6 @@ function createShovelModel(): THREE.Group {
   bladeTip.scale.set(1.15, 1, 0.55)
   bladeTip.rotation.set(0, Math.PI / 4, 0.5)
   model.add(bladeTip)
-
-  // A little carried dirt inside the scoop.
-  const load = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), dirt)
-  load.position.set(-0.1, 0.17, 0)
-  load.scale.set(1, 0.55, 0.9)
-  load.visible = false
-  load.name = 'Shovel dirt load'
-  model.add(load)
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {

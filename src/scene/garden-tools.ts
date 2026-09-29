@@ -18,7 +18,7 @@ export interface GardenToolDebugState {
   readonly cursor: { readonly x: number; readonly y: number; readonly z: number } | null
   readonly isPointerDown: boolean
   readonly holdSeconds: number
-  readonly activeAction: 'grow' | 'trim' | 'dig' | 'smooth' | null
+  readonly activeAction: 'grow' | 'trim' | 'dig' | 'fill' | null
   readonly grassBatches: number
   readonly grassBlades: number
   readonly grassCapacity: number
@@ -29,11 +29,9 @@ export interface GardenToolDebugState {
   readonly brushLevel: number
   readonly brushRadius: number
   readonly tallestBlade: number
-  readonly dirtPiles: number
-  readonly carryingDirt: boolean
+  readonly lastGrassSpawnMaxY: number
   readonly terrainMin: number
   readonly terrainMax: number
-  readonly pilePositions: readonly { readonly x: number; readonly z: number }[]
 }
 
 export interface GardenTools {
@@ -92,16 +90,17 @@ const LAWN_VERTEX_SPACING = 0.58
 const GRASS_STROKE_SPACING = 0.34
 const GROW_PAINT_FACTOR = 1.06
 const TRIM_PAINT_FACTOR = 0.9
-// Shovel: dirt is conserved — digging spawns piles, depositing them raises the
-// ground by roughly what the dig removed. Slope clamps in garden-terrain keep
-// every result walkable.
-const DIG_PILE_RADIUS_FACTOR = 0.8
-const DIG_DEPTH = -0.2
-const DEPOSIT_RISE = 0.2
-const DIG_FIRST_PILE_SECONDS = 0.35
-const DIG_PILE_INTERVAL = 0.95
-const SMOOTH_STRENGTH = 0.35
-const MAX_DIRT_PILES = 12
+// Shovel: two verbs, no inventory — left-hold carves straight down, right-hold
+// mounds straight up. Depth contour rings baked into the soil (garden-terrain)
+// make holes read as depth, and slope clamps keep every result walkable.
+const DIG_RADIUS_FACTOR = 1
+// Nominal rates run hot because the walkable-slope clamp redistributes part of
+// every stroke into widening the pit walls; these values keep the felt sink
+// rate near −0.25 m/s at the cursor and make a pond-floor-size pit take a
+// pleasant, deliberate hold rather than an eternity.
+const DIG_DROP = -0.5
+const FILL_RADIUS_FACTOR = 0.9
+const FILL_RISE = 0.4
 const GROUND_GREEN = new THREE.Color('#6db254')
 const GRASS_RANDOM_SEED = 471903
 
@@ -140,12 +139,6 @@ function circleGeometry(radius: number, segments = 48): THREE.CircleGeometry {
 function insideGarden(x: number, z: number): boolean {
   return Math.abs(x) <= GARDEN_BOUNDS.halfWidth - 0.08
     && Math.abs(z) <= GARDEN_BOUNDS.halfDepth - 0.08
-}
-
-interface DirtPile {
-  readonly group: THREE.Group
-  x: number
-  z: number
 }
 
 export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camera, lawn: THREE.Mesh, terrain: GardenTerrain): GardenTools {
@@ -198,6 +191,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
   let sizePop = 0
   const SIZE_POP_SECONDS = 0.28
   let tallestBladeHeight = 0
+  // Debug probe: highest blade base Y seen at spawn (catches grass spawning on
+  // the flat lawn plane instead of the deformed terrain).
+  let lastGrassSpawnMaxY = 0
 
   function brushLevelIndex(): number {
     return brushLevels.get(selectedTool) ?? 1
@@ -215,7 +211,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
 
   let cursorVisible = false
   let isPointerDown = false
-  let activeAction: 'grow' | 'trim' | 'dig' | 'smooth' | null = null
+  let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | null = null
   let lastPaintPoint: THREE.Vector3 | null = null
   let lastSeedPoint: THREE.Vector3 | null = null
   let hoverTint: string | null = null
@@ -226,91 +222,11 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
   let trimmedBlades = 0
   let greenGroundVertices = 0
   let grassCapacity = 0
-  let digTimer = 0
-
-  // --- Dirt piles (shovel) -----------------------------------------------
-  const piles: DirtPile[] = []
-  let carrying: DirtPile | null = null
-  let nextPileIn = DIG_FIRST_PILE_SECONDS
-  const pileGroup = new THREE.Group()
-  pileGroup.name = 'Dug dirt piles'
-  root.add(pileGroup)
-  const pileMaterial = new THREE.MeshStandardMaterial({ color: '#8a6a49', roughness: 0.95 })
-  const pileDarkMaterial = new THREE.MeshStandardMaterial({ color: '#6f5439', roughness: 0.98 })
-
-  // Separate RNG so pile clods never perturb the deterministic grass layout.
-  const pileRandom = seededRandom(918273)
-
-  function createPileVisual(): THREE.Group {
-    const group = new THREE.Group()
-    const mound = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 10), pileMaterial)
-    mound.scale.set(1, 0.55, 1)
-    mound.castShadow = true
-    mound.receiveShadow = true
-    group.add(mound)
-    for (let index = 0; index < 5; index += 1) {
-      const angle = pileRandom() * Math.PI * 2
-      const clod = new THREE.Mesh(new THREE.SphereGeometry(0.05 + pileRandom() * 0.05, 8, 6), pileDarkMaterial)
-      clod.position.set(Math.cos(angle) * (0.1 + pileRandom() * 0.2), 0.06 + pileRandom() * 0.08, Math.sin(angle) * (0.1 + pileRandom() * 0.2))
-      clod.castShadow = true
-      group.add(clod)
-    }
-    return group
-  }
-
-  function spawnPile(x: number, z: number): DirtPile {
-    const pile: DirtPile = { group: createPileVisual(), x, z }
-    pile.group.name = 'Dirt pile'
-    pile.group.position.set(x, GARDEN_LAWN_Y + terrain.heightAt(x, z) + 0.1, z)
-    pileGroup.add(pile.group)
-    piles.push(pile)
-    // Abandoned-pile guardrail: the oldest pile settles back into the ground.
-    if (piles.length > MAX_DIRT_PILES) {
-      const oldest = piles.shift()
-      if (oldest && oldest !== carrying) {
-        terrain.splat(oldest.x, oldest.z, brushRadius() * DIG_PILE_RADIUS_FACTOR, DEPOSIT_RISE)
-        pileGroup.remove(oldest.group)
-      }
-    }
-    return pile
-  }
-
-  function pileUnderCursor(): DirtPile | null {
-    const hits = raycaster.intersectObjects(pileGroup.children, true)
-    if (!hits.length) return null
-    let object: THREE.Object3D | null = hits[0].object
-    while (object && object.parent !== pileGroup) object = object.parent
-    return piles.find((pile) => pile.group === object) ?? null
-  }
-
-  function pickUpPile(pile: DirtPile): void {
-    carrying = pile
-    pile.group.visible = false
-    const load = toolModels.shovel.getObjectByName('Shovel dirt load')
-    if (load) load.visible = true
-  }
-
-  function returnCarriedPile(): void {
-    // Dropping mid-carry returns the pile where it was picked up.
-    if (!carrying) return
-    carrying.group.visible = true
-    carrying.group.position.set(carrying.x, GARDEN_LAWN_Y + terrain.heightAt(carrying.x, carrying.z) + 0.1, carrying.z)
-    carrying = null
-    const load = toolModels.shovel.getObjectByName('Shovel dirt load')
-    if (load) load.visible = false
-  }
-
-  function depositCarriedPile(x: number, z: number): void {
-    if (!carrying) return
-    terrain.splat(x, z, brushRadius() * DIG_PILE_RADIUS_FACTOR, DEPOSIT_RISE)
-    afterTerrainEdit(x, z, brushRadius() * DIG_PILE_RADIUS_FACTOR)
-    pileGroup.remove(carrying.group)
-    piles.splice(piles.indexOf(carrying), 1)
-    carrying = null
-    const load = toolModels.shovel.getObjectByName('Shovel dirt load')
-    if (load) load.visible = false
-  }
-
+  let terrainApplyTimer = 0
+  // Re-deriving two ~6.5k-vertex planes (positions + normals + contour colors)
+  // every rAF frame during a hold cost more than the rest of the game combined;
+  // 30 Hz is visually indistinguishable for slow ground deformation.
+  const TERRAIN_APPLY_INTERVAL = 1 / 30
   /** Blades and painted ground must follow the deformed surface. */
   function afterTerrainEdit(x: number, z: number, radius: number): void {
     reprojectGrass(x, z, radius + 0.5)
@@ -544,7 +460,12 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       const height = STARTING_BLADE_HEIGHT + random() * 0.025
       const width = 0.62 + random() * 0.62
       const color = GRASS_COLOR_VALUES[Math.floor(random() * GRASS_COLOR_VALUES.length)]
-      dummy.position.set(xPos, GARDEN_LAWN_Y + 0.009, zPos)
+      // Seed onto the CURRENT ground surface, not the flat lawn plane, so
+      // grass laid on dug/mounded ground sits on the slope instead of
+      // clipping under hills or floating over pits.
+      dummy.position.set(xPos, GARDEN_LAWN_Y + 0.009 + terrain.heightAt(xPos, zPos), zPos)
+      const baseY = dummy.position.y
+      if (baseY > lastGrassSpawnMaxY) lastGrassSpawnMaxY = baseY
       dummy.rotation.set((random() - 0.5) * 0.12, random() * Math.PI * 2, (random() - 0.5) * 0.12)
       dummy.scale.set(width, height, width)
       dummy.updateMatrix()
@@ -605,6 +526,46 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
     }
     updatedMeshes.forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true })
     return changed
+  }
+
+  /** Digging demolishes grass: every blade inside the dig disc is removed. */
+  function demolishGrass(x: number, z: number, radius: number): number {
+    const minCellX = Math.floor((x - radius) / GRASS_CELL_SPACING)
+    const maxCellX = Math.floor((x + radius) / GRASS_CELL_SPACING)
+    const minCellZ = Math.floor((z - radius) / GRASS_CELL_SPACING)
+    const maxCellZ = Math.floor((z + radius) / GRASS_CELL_SPACING)
+    const matrix = new THREE.Matrix4()
+    const position = new THREE.Vector3()
+    const rotation = new THREE.Quaternion()
+    const scale = new THREE.Vector3()
+    const updatedMeshes = new Set<THREE.InstancedMesh>()
+    let removed = 0
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const cell = occupancy.get(`${cellX},${cellZ}`)
+        if (!cell) continue
+        for (let cellIndex = cell.length - 1; cellIndex >= 0; cellIndex -= 1) {
+          const blade = cell[cellIndex]
+          if (blade.height <= 0) continue
+          const dx = blade.x - x
+          const dz = blade.z - z
+          if (dx * dx + dz * dz > radius * radius) continue
+          blade.mesh.getMatrixAt(blade.tileIndex, matrix)
+          matrix.decompose(position, rotation, scale)
+          scale.setScalar(0.0001)
+          matrix.compose(position, rotation, scale)
+          blade.mesh.setMatrixAt(blade.tileIndex, matrix)
+          updatedMeshes.add(blade.mesh)
+          cell.splice(cellIndex, 1)
+          blade.height = 0
+          totalGrassBlades -= 1
+          removed += 1
+        }
+      }
+    }
+    updatedMeshes.forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true })
+    trimmedBlades += removed
+    return removed
   }
 
   function trimGrass(x: number, z: number, deltaSeconds: number): number {
@@ -705,9 +666,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
     }
     lawnColors.needsUpdate = true
     tallestBladeHeight = 0
-    returnCarriedPile()
-    for (const pile of piles.splice(0, piles.length)) pileGroup.remove(pile.group)
+    lastGrassSpawnMaxY = 0
     terrain.clear()
+    terrain.clearSoilBandColors()
   }
 
   function dispose(): void {
@@ -730,8 +691,6 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
     selectTool(id): void {
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
-      // Leaving the shovel mid-carry returns the pile to its spot untouched.
-      if (selectedTool === 'shovel') returnCarriedPile()
       selectedTool = id
       for (const [key, model] of Object.entries(toolModels)) model.visible = key === id
     },
@@ -747,10 +706,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
         return
       }
       if (selectedTool === 'shovel') {
-        // Digging and smoothing follow the pointer continuously; deposits are
-        // click-actions handled in pointerDown.
-        if (activeAction === 'dig' || activeAction === 'smooth') lastSeedPoint = position.clone()
-        hoverTint = carrying ? '#e8c78f' : '#d9a06b'
+        // Digging and filling follow the pointer continuously.
+        if (activeAction === 'dig' || activeAction === 'fill') lastSeedPoint = position.clone()
+        hoverTint = '#d9a06b'
         return
       }
       // Moving while growing drags a seed trail: each stamp greens the ground and
@@ -791,22 +749,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
         paintTimer = 0
         actionAccumulator = 0
         lastPaintDuration = 0
-        if (event.button === 0) {
-          if (carrying) {
-            depositCarriedPile(position.x, position.z)
-            return true
-          }
-          const pile = pileUnderCursor()
-          if (pile) {
-            pickUpPile(pile)
-            return true
-          }
-          activeAction = 'dig'
-          digTimer = 0
-          nextPileIn = DIG_FIRST_PILE_SECONDS
-        } else {
-          activeAction = 'smooth'
-        }
+        activeAction = event.button === 0 ? 'dig' : 'fill'
         return true
       }
       activeAction = event.button === 0 ? 'grow' : 'trim'
@@ -897,11 +840,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
         brushLevel: brushLevelIndex() + 1,
         brushRadius: brushRadius(),
         tallestBlade: tallestBladeHeight,
-        dirtPiles: piles.length,
-        carryingDirt: carrying !== null,
+        lastGrassSpawnMaxY: +lastGrassSpawnMaxY.toFixed(3),
         terrainMin: terrain.stats().min,
         terrainMax: terrain.stats().max,
-        pilePositions: piles.map((pile) => ({ x: +pile.x.toFixed(2), z: +pile.z.toFixed(2) })),
       }
     },
     clearGrass,
@@ -923,28 +864,28 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
             trimGrass(x, z, ACTION_INTERVAL)
             updateLawnCoverage(x, z, brushRadius() * TRIM_PAINT_FACTOR, -LAWN_UNGREEN_PER_SECOND * ACTION_INTERVAL)
           } else if (activeAction === 'dig') {
-            terrain.splat(x, z, brushRadius() * DIG_PILE_RADIUS_FACTOR, DIG_DEPTH * ACTION_INTERVAL)
-          } else if (activeAction === 'smooth') {
-            terrain.smooth(x, z, brushRadius(), SMOOTH_STRENGTH * ACTION_INTERVAL)
-          }
-        }
-        if (activeAction === 'dig') {
-          digTimer += deltaSeconds
-          if (digTimer >= nextPileIn) {
-            // Piles appear at the hole's rim, never under the cursor, so a
-            // re-press keeps digging instead of picking the new pile up.
-            const rimAngle = pileRandom() * Math.PI * 2
-            const rimDistance = brushRadius() * DIG_PILE_RADIUS_FACTOR * 1.15
-            spawnPile(
-              lastSeedPoint.x + Math.cos(rimAngle) * rimDistance,
-              lastSeedPoint.z + Math.sin(rimAngle) * rimDistance,
-            )
-            digTimer = 0
-            nextPileIn = DIG_PILE_INTERVAL
+            const radius = brushRadius() * DIG_RADIUS_FACTOR
+            // The shovel scours the sod even over floor-bound ground (where
+            // splat can no longer change heights): blades in the disc are gone
+            // and the green paint peels (bare soil shows immediately).
+            demolishGrass(x, z, radius + 0.15)
+            updateLawnCoverage(x, z, radius * 0.92, -2)
+            if (terrain.splat(x, z, radius, DIG_DROP * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
+          } else if (activeAction === 'fill') {
+            const radius = brushRadius() * FILL_RADIUS_FACTOR
+            if (terrain.splat(x, z, radius, FILL_RISE * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
           }
         }
       }
-      if (terrain.dirty) terrain.applyToMeshes()
+      if (terrain.dirty) {
+        terrainApplyTimer += deltaSeconds
+        if (terrainApplyTimer >= TERRAIN_APPLY_INTERVAL) {
+          terrain.applyToMeshes()
+          terrainApplyTimer = 0
+        }
+      } else {
+        terrainApplyTimer = 0
+      }
       const time = performance.now() * 0.001
       sizePop = Math.max(0, sizePop - deltaSeconds)
       const popGlow = sizePop > 0 ? Math.sin((sizePop / SIZE_POP_SECONDS) * Math.PI) : 0
@@ -961,7 +902,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       glowMaterial.color.set(activeAction === 'trim' ? '#f3aa7b'
         : activeAction === 'grow' ? '#c2efa0'
         : activeAction === 'dig' ? '#e0b080'
-        : activeAction === 'smooth' ? '#cfe4ee'
+        : activeAction === 'fill' ? '#e8c78f'
         : '#fff3d7')
       ;(cursorShadow.material as THREE.MeshBasicMaterial).opacity = isPointerDown && activeAction === 'grow' ? 0.19 + pulse * 0.1 : 0.14
       // hoverTint is refreshed by pointerMove; re-applying it here keeps a stale

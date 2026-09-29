@@ -132,7 +132,7 @@ function makeCardTexture(tool: GardenToolDefinition, selected: boolean): THREE.C
   context.fillText(
     tool.id === 'grass'
       ? 'HOLD TO GROW  ·  RIGHT-CLICK TO SHRINK  ·  DRAG TO SOW'
-      : 'LEFT: DIG/CARRY/DUMP  ·  RIGHT: SMOOTH  ·  TAP 2: SIZE',
+      : 'LEFT: DIG DOWN  ·  RIGHT: FILL  ·  TAP 2: SIZE',
     88,
     53,
   )

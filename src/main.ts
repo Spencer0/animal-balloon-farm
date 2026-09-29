@@ -86,7 +86,7 @@ scene.add(fairground.root)
 // the lawn paint layer so the two displaced planes never z-fight.
 const gardenTerrain = !showcaseMode && fairground.gardenSurface && fairground.gardenSoil
   ? createGardenTerrain([
-      { mesh: fairground.gardenSoil, offset: -0.012 },
+      { mesh: fairground.gardenSoil, offset: -0.012, soilRings: true },
       { mesh: fairground.gardenSurface },
     ])
   : null
@@ -263,18 +263,10 @@ function heightsSummary(): Record<string, unknown> | null {
   const tool = gardenTools.debugState()
   return {
     ...stats,
-    dirtPiles: tool.dirtPiles,
-    carryingDirt: tool.carryingDirt,
-    pilePositions: tool.pilePositions,
     tool: tool.selectedTool,
+    action: tool.activeAction,
   }
 }
-
-function gardenScreenPoint(x: number, z: number): { readonly x: number; readonly y: number } {
-  return gardenScreenPosition(x, z)
-}
-
-
 
 function handleToolKeyboard(event: KeyboardEvent): void {
   if (journalUI?.isOpen) {
@@ -346,8 +338,7 @@ interface GardenDebugHarness {
   trim(x: number, y: number): void
   pickReport(x: number, y: number): unknown
   dig(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
-  deposit(x: number, y: number): Record<string, unknown> | null
-  smooth(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  fill(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
   heightsSummary(): Record<string, unknown> | null
   animalsSummary(): { id: string; y: number }[]
   drag(points: readonly { readonly x: number; readonly y: number }[], holdMs?: number): Promise<ReturnType<GardenDebugHarness['state']> | null>
@@ -414,12 +405,9 @@ if (gardenDebugMode) {
       debugHarness.down(x, y)
       await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
       debugHarness.up()
-      return { ...heightsSummary(), carrying: gardenTools.debugState().carryingDirt }
+      return heightsSummary()
     },
-    deposit(x, y): Record<string, unknown> | null {
-      return depositNearestPile(x, y)
-    },
-    async smooth(x: number, y: number, holdMs = 700): Promise<Record<string, unknown> | null> {
+    async fill(x, y, holdMs = 900): Promise<Record<string, unknown> | null> {
       if (!gardenTools || !gardenTerrain) return null
       debugHarness.up()
       debugHarness.move(x, y)
@@ -557,29 +545,7 @@ if (gardenDebugMode) {
   Object.defineProperty(window, '__gardenDebug', { value: debugHarness, configurable: true })
   window.dispatchEvent(new CustomEvent('garden-debug-ready'))
 
-  function depositNearestPile(x: number, z: number): Record<string, unknown> | null {
-  if (!gardenTools || !gardenTerrain) return null
-  debugHarness.up()
-  const summary = heightsSummary()
-  const piles = (summary?.pilePositions as readonly { x: number; z: number }[] | undefined) ?? []
-  if (!piles.length) return summary ?? null
-  const nearest = piles.reduce((best, pile) => {
-    const bestDistance = (best.x - x) ** 2 + (best.z - z) ** 2
-    const distance = (pile.x - x) ** 2 + (pile.z - z) ** 2
-    return distance < bestDistance ? pile : best
-  })
-  const screen = gardenScreenPoint(nearest.x, nearest.z)
-  debugHarness.move(screen.x, screen.y)
-  debugHarness.down(screen.x, screen.y)
-  debugHarness.up()
-  const destination = gardenScreenPoint(x, z)
-  debugHarness.move(destination.x, destination.y)
-  debugHarness.down(destination.x, destination.y)
-  debugHarness.up()
-  return heightsSummary()
-}
-
-  console.info('[Garden Debug] Ready at window.__gardenDebug (move/down/trim/drag/sampleGarden/up/state/clearGrass/focusGarden)')
+  console.info('[Garden Debug] Ready at window.__gardenDebug (move/down/dig/fill/trim/drag/sampleGarden/up/state/clearGrass/focusGarden/heightsSummary)')
 }
 
 
