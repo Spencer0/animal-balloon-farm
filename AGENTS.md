@@ -1,5 +1,12 @@
 # Animal Balloon Farm — agent instructions
 
+## Screenshots (do not skip)
+
+- A large screenshot permanently poisons an agent thread: once an oversized image is in the transcript, every later request re-uploads it and fails with "Downloaded image content cannot exceed 30MB" until the thread is abandoned.
+- Never take fullPage screenshots of the game canvas.
+- Before any screenshot, resize the browser viewport to about 1280x720.
+- Take one screenshot per state change, never in a loop.
+
 ## Before making changes
 
 - Read `SPEC.md` for the agreed pre-production vision and first-playable scope.

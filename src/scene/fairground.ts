@@ -9,6 +9,7 @@ export const GARDEN_LAWN_Y = 0.03
 
 export interface Fairground {
   readonly root: THREE.Group
+  readonly gardenSurface?: THREE.Mesh
   update(deltaSeconds: number): void
 }
 
@@ -31,6 +32,77 @@ function seededRandom(seed: number): () => number {
 
 function standard(color: THREE.ColorRepresentation, roughness = 0.85): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.02 })
+}
+
+export function makeGardenLawnGeometry(): THREE.BufferGeometry {
+  const width = GARDEN_BOUNDS.halfWidth * 2 + 0.16
+  const depth = GARDEN_BOUNDS.halfDepth * 2 + 0.16
+  const radius = 0.9
+  const geometry = new THREE.PlaneGeometry(width, depth, 96, 66)
+  const positions = geometry.getAttribute('position')
+  // RGBA vertex colors: rgb is the painted grass tint, alpha is how much of the
+  // paint layer shows (0 = bare soil below, 1 = full grass). The grass seeder
+  // writes alpha; the soil plane underneath is the untouched garden ground.
+  const colors = new Float32Array(positions.count * 4)
+  for (let index = 0; index < positions.count; index += 1) {
+    let x = positions.getX(index)
+    let y = positions.getY(index)
+    const centerX = Math.sign(x) * (GARDEN_BOUNDS.halfWidth + 0.08 - radius)
+    const centerY = Math.sign(y) * (GARDEN_BOUNDS.halfDepth + 0.08 - radius)
+    if (Math.abs(x) > Math.abs(centerX) && Math.abs(y) > Math.abs(centerY)) {
+      const dx = x - centerX
+      const dy = y - centerY
+      const distance = Math.hypot(dx, dy)
+      if (distance > radius) {
+        x = centerX + dx / distance * radius
+        y = centerY + dy / distance * radius
+        positions.setXY(index, x, y)
+      }
+    }
+    colors[index * 4] = 1
+    colors[index * 4 + 1] = 1
+    colors[index * 4 + 2] = 1
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+function makeSoilTexture(seed: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 512
+  canvas.height = 512
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Canvas 2D context is unavailable for the soil texture')
+  const random = seededRandom(seed)
+  context.fillStyle = '#96744e'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  // Tilled-earth blotches and light pebble speckles, no grass marks.
+  for (let index = 0; index < 1400; index += 1) {
+    const x = random() * canvas.width
+    const y = random() * canvas.height
+    context.globalAlpha = 0.05 + random() * 0.12
+    context.fillStyle = random() > 0.5 ? '#7a5c3d' : '#a8835c'
+    context.beginPath()
+    context.ellipse(x, y, 4 + random() * 11, 2 + random() * 5, random() * Math.PI, 0, Math.PI * 2)
+    context.fill()
+  }
+  for (let index = 0; index < 900; index += 1) {
+    const x = random() * canvas.width
+    const y = random() * canvas.height
+    context.globalAlpha = 0.1 + random() * 0.16
+    context.fillStyle = random() > 0.4 ? '#b59067' : '#c9b192'
+    context.beginPath()
+    context.arc(x, y, 0.6 + random() * 1.4, 0, Math.PI * 2)
+    context.fill()
+  }
+  context.globalAlpha = 1
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.wrapS = THREE.RepeatWrapping
+  texture.wrapT = THREE.RepeatWrapping
+  texture.anisotropy = 8
+  return texture
 }
 
 function makeGrassTexture(seed: number, base: string, mark: string): THREE.CanvasTexture {
@@ -399,7 +471,9 @@ export function createFairground(): Fairground {
   const baseGeo=new THREE.ExtrudeGeometry(baseShape,{depth:.60,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.12,bevelThickness:.08,curveSegments:8})
   baseGeo.rotateX(-Math.PI/2)
   const base=new THREE.Mesh(baseGeo,standard('#855a3e',.87))
-  base.position.y=-.60
+  // Depth (.60) plus bevelThickness (.08) puts the cap at local y .68; keep it
+  // below the lawn plane (GARDEN_LAWN_Y .03) or the soil occludes the lawn.
+  base.position.y=-.72
   base.name='Rounded cutaway farm-garden parcel'
   base.castShadow=base.receiveShadow=true
   root.add(base)
@@ -408,7 +482,6 @@ export function createFairground(): Fairground {
   const pathEdge=standard('#8b714e',.95)
   // The ivory boundary is the level-one build limit. The revealed gravel apron is outside it.
   const apronShape=roundedRectangle(30.35,22.0,1.05)
-  const innerShape=roundedRectangle(GARDEN_BOUNDS.halfWidth*2+0.16,GARDEN_BOUNDS.halfDepth*2+0.16,.9)
   const apronHole=new THREE.Path()
   apronHole.moveTo(-GARDEN_BOUNDS.halfWidth,-GARDEN_BOUNDS.halfDepth)
   apronHole.lineTo(-GARDEN_BOUNDS.halfWidth,GARDEN_BOUNDS.halfDepth)
@@ -422,7 +495,17 @@ export function createFairground(): Fairground {
   gravel.receiveShadow=true
   root.add(gravel)
 
-  const lawn=new THREE.Mesh(new THREE.ShapeGeometry(innerShape,12),new THREE.MeshStandardMaterial({color:'#a7ce70',map:makeGrassTexture(119,'#b0cf7d','#739d59'),roughness:.96}))
+  // Bare tilled soil is the untouched garden ground; the growable lawn above it
+  // is a transparent paint layer that only turns green where the seeder works.
+  const soil=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),roughness:1}))
+  soil.material.map!.repeat.set(6,4)
+  soil.rotation.x=-Math.PI/2
+  soil.position.y=.012
+  soil.name='Starter garden soil'
+  soil.receiveShadow=true
+  root.add(soil)
+
+  const lawn=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0'),roughness:.96}))
   lawn.material.map!.repeat.set(7,5)
   lawn.rotation.x=-Math.PI/2
   lawn.position.y=GARDEN_LAWN_Y
@@ -472,7 +555,6 @@ export function createFairground(): Fairground {
   const hills:[number,number,number,number,number,string][]=[[-67,-69,31,18,25,'#83a768'],[-25,-82,37,23,29,'#99b66c'],[25,-88,42,20,34,'#83a666'],[72,-68,34,18,27,'#a6bb70'],[-82,-4,28,17,23,'#8eae65'],[88,8,30,18,26,'#92ad63'],[-65,66,33,21,29,'#92ae67'],[0,84,45,22,30,'#9bb66d'],[69,68,35,20,27,'#84a566']]
   hills.forEach(([x,z,sx,sy,sz,hue],i)=>addHill(root,x,z,sx,sy,sz,hue,i))
   const tufts=new THREE.MeshStandardMaterial({color:'#a1c66b',roughness:.9,side:THREE.DoubleSide})
-  addTufts(root,random,980,true,tufts)
   addTufts(root,random,2700,false,tufts)
   addFlowerPatches(root,random)
 
@@ -501,7 +583,7 @@ export function createFairground(): Fairground {
     skyPuffs.add(cloud)
   }
   root.add(skyPuffs)
-  return {root,update(delta){wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2);wheel.rotor.rotation.z=wheel.angle;wheel.cabins.forEach((c,i)=>{const a=i/wheel.cabins.length*Math.PI*2+wheel.angle;c.position.set(Math.cos(a)*wheel.radius,wheel.centerY+Math.sin(a)*wheel.radius,0);c.rotation.z=-wheel.angle})}}
+  return {root,gardenSurface:lawn,update(delta){wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2);wheel.rotor.rotation.z=wheel.angle;wheel.cabins.forEach((c,i)=>{const a=i/wheel.cabins.length*Math.PI*2+wheel.angle;c.position.set(Math.cos(a)*wheel.radius,wheel.centerY+Math.sin(a)*wheel.radius,0);c.rotation.z=-wheel.angle})}}
 }
 
 export function createSkyDome():THREE.Mesh {

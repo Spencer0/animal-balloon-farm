@@ -25,9 +25,31 @@ npm run dev
 
 Open `http://127.0.0.1:8000/`. The esbuild context watches and rebuilds TypeScript; the server serves the compiled files from `dist/`. Run `npm run typecheck` and `npm run build` for checks and production output:
 
+### Garden interaction debug harness
+
+Append `?gardenDebug=1` to expose a dev-only `window.__gardenDebug` pointer harness. `move`, `down`, `drag`, and `up` dispatch synthetic pointer events through the actual canvas listeners (so input routing, pointer capture, and tool handling get exercised together). Inspect `state()` for cursor world coordinates, active hold duration, grass batches, blade count/capacity, and trimmed blades; `clearGrass()` resets the deterministic grass result and `focusGarden()` restores the starting camera. `pickReport(x, y)` raycasts from screen space and reports what the garden pick hits (lawn distance, occluders) — useful when painted ground fails to show.
+
+In DevTools, `await window.__gardenDebug.drag([{x:520,y:380},{x:580,y:390},{x:640,y:400}], 1800)` is a quick visual check; it holds for 1.8s and releases. `await window.__gardenDebug.sampleGarden(7, 5, 30000)` paints a repeatable coverage grid across the plot for density/performance checks. The harness does not add controls to the shipped HUD and is not available without the query flag.
+
+For browser-driven scripted testing, open the game in Chromium with its remote debugging port enabled (default `9222`), then use:
+
 ```sh
-npm run typecheck
-npm run build
+npm run dev
+npm run garden:drag -- open
+npm run garden:drag -- clear
+npm run garden:drag -- drag 1800 520,380 560,385 600,390 640,395
+npm run garden:drag -- sample 7 5 30000
+npm run garden:drag -- state
+npm run garden:drag -- trim 600 400
+npm run garden:drag -- screenshot
+```
+
+The screenshot command only captures a single viewport and refuses very large window sizes; resize to about 1280×720 first. The helper uses Node's built-in WebSocket client to attach over CDP; it adds no dependency. The `window.__gardenDebug` interface works in the browser console too. The command-line helper defaults to localhost port 8000; set `GARDEN_URL`/`GARDEN_CDP_URL` when needed. Normal game sessions do not expose the harness unless the query flag is present.
+
+Run checks with:
+
+```sh
+npm run check
 ```
 
 Dependencies are pinned in `package.json` (Three.js 0.186.1 and type definitions 0.186.0, esbuild, TypeScript, and Node types). The dependency lockfile has not been generated yet; use the project's npm manifest to install and capture the lock before implementation.

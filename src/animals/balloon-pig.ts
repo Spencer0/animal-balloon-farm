@@ -15,7 +15,7 @@ export async function createBalloonPig(
 ): Promise<BalloonPig> {
   return createBalloonAnimal(parent, {
     id: 'pig',
-    assetUrl: '/assets/animals/balloon-pig.glb',
+    assetUrl: 'assets/animals/balloon-pig.glb',
     name: 'pig',
     spawn: [-7, -3.8],
     groundY: GARDEN_LAWN_Y,
