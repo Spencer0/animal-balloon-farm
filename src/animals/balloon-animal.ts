@@ -1,10 +1,11 @@
 import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
+import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 
 export type AnimalClip = 'IDLE' | 'WALK'
 export type AnimalAppearance = 'standard' | 'wild'
-export type BalloonAnimalId = 'pig' | 'sheep' | 'cow' | 'chicken' | 'duck' | 'goose'
+export type { BalloonAnimalId } from './animal-catalog'
 
 type AnimalGLTF = GLTF & { readonly animations: THREE.AnimationClip[] }
 type AnimalMaterial = THREE.Material & { color?: THREE.Color; roughness?: number; metalness?: number; clearcoat?: number; clearcoatRoughness?: number }

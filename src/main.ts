@@ -1,13 +1,15 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
+import { getAnimalSceneOptions } from './animals/animal-catalog'
 import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from './scene/fairground'
-import { createCaptureShowcaseStage, SHOWCASE_ANIMALS } from './scene/capture-showcase'
+import { createCaptureShowcaseStage } from './scene/capture-showcase'
 import { createCaptureShowcaseUI, createShowcaseLaunchButton } from './ui/capture-showcase-ui'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createGardenToolsUI } from './ui/garden-tools-ui'
+import { createJournalUI } from './ui/journal-ui'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
@@ -94,42 +96,18 @@ const gardenTools: GardenTools | null = !showcaseMode && fairground.gardenSurfac
   : null
 if (gardenTools) scene.add(gardenTools.root)
 const gardenToolsUI = gardenTools ? createGardenToolsUI(gardenTools.selectedTool) : null
+const journalUI = !showcaseMode ? createJournalUI(gameCanvas) : null
 
 // Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
-// each animal's palette through a shared 6.8-second paint-bucket reveal.
-const animalSceneOptions = {
-  canvas: gameCanvas,
+// each animal's palette through a shared 6.8-second paint-bucket reveal. Scene options come from
+// the single ANIMAL_CATALOG source; groundSampler lets them follow the garden terrain height.
+const animals: BalloonAnimal[] = await Promise.all(getAnimalSceneOptions(
+  showcaseMode,
+  gameCanvas,
   camera,
-  groundSampler: gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
-} as const
-const animalDefinitions = [
-  {
-    id: 'pig', assetUrl: 'assets/animals/balloon-pig.glb', name: 'pig', spawn: showcaseMode ? SHOWCASE_ANIMALS.pig.spawn : [-7, -3.8] as const,
-    groundY: GARDEN_LAWN_Y, seed: 5104, size: 2.05, speed: 1.25, bounds: { x: 11.2, z: 6.5 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'sheep', assetUrl: 'assets/animals/balloon-sheep.glb', name: 'sheep', spawn: showcaseMode ? SHOWCASE_ANIMALS.sheep.spawn : [-3.2, 2.1] as const,
-    groundY: GARDEN_LAWN_Y, seed: 861, size: 2.1, speed: 0.88, bounds: { x: 10.9, z: 6.2 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'cow', assetUrl: 'assets/animals/balloon-cow.glb', name: 'cow', spawn: showcaseMode ? SHOWCASE_ANIMALS.cow.spawn : [4.4, 2.8] as const,
-    groundY: GARDEN_LAWN_Y, seed: 1402, size: 2.7, speed: 0.72, bounds: { x: 10.7, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'chicken', assetUrl: 'assets/animals/balloon-chicken.glb', name: 'chicken', spawn: showcaseMode ? SHOWCASE_ANIMALS.chicken.spawn : [7.4, -1.1] as const,
-    groundY: GARDEN_LAWN_Y, seed: 2406, size: 1.85, speed: 1.02, bounds: { x: 10.5, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'duck', assetUrl: 'assets/animals/balloon-duck.glb', name: 'duck', spawn: showcaseMode ? SHOWCASE_ANIMALS.duck.spawn : [-8.0, 3.5] as const,
-    groundY: GARDEN_LAWN_Y, seed: 3128, size: 2.0, speed: 0.92, bounds: { x: 10.5, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'goose', assetUrl: 'assets/animals/balloon-goose.glb', name: 'goose', spawn: showcaseMode ? SHOWCASE_ANIMALS.goose.spawn : [0.4, -5.0] as const,
-    groundY: GARDEN_LAWN_Y, seed: 4801, size: 2.35, speed: 0.8, bounds: { x: 10.5, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-] as const
-const animals: BalloonAnimal[] = await Promise.all(animalDefinitions.map((definition) =>
-  createBalloonAnimal(fairground.root, { ...animalSceneOptions, ...definition }),
+  gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
+).map((options) =>
+  createBalloonAnimal(fairground.root, options),
 ))
 
 const animalById = new Map(animals.map((animal) => [animal.id, animal]))
@@ -204,6 +182,7 @@ function updateCameraProjection(): void {
 }
 
 function orbitPointerDown(event: PointerEvent): void {
+  if (journalUI?.pointerDown(event, gameCanvas)) return
   if (showcaseMode) {
     if (event.button === 0 && gardenToolsUI?.pointerDown(event, gameCanvas)) return
     return
@@ -231,6 +210,7 @@ function orbitPointerDown(event: PointerEvent): void {
 }
 
 function orbitPointerMove(event: PointerEvent): void {
+  if (journalUI?.pointerMove(event, gameCanvas)) return
   gardenTools?.pointerMove(event)
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
   const dx = event.clientX - previousPointer.x
@@ -297,6 +277,11 @@ function gardenScreenPoint(x: number, z: number): { readonly x: number; readonly
 
 
 function handleToolKeyboard(event: KeyboardEvent): void {
+  if (journalUI?.isOpen) {
+    journalUI.handleKeyDown(event)
+    return
+  }
+  if (journalUI?.handleKeyDown(event)) return
   if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return
   const key = event.key.toLowerCase()
   if (selectGardenToolByHotkey(key)) {
@@ -601,10 +586,12 @@ if (gardenDebugMode) {
 window.addEventListener('resize', () => {
   updateCameraProjection()
   gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
+  journalUI?.resize(window.innerWidth, window.innerHeight)
 })
 
 updateCameraProjection()
 gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
+journalUI?.resize(window.innerWidth, window.innerHeight)
 
 let previousTime = performance.now()
 function frame(now: number): void {
@@ -620,6 +607,12 @@ function frame(now: number): void {
     renderer.autoClear = false
     renderer.clearDepth()
     renderer.render(gardenToolsUI.scene, gardenToolsUI.camera)
+    renderer.autoClear = true
+  }
+  if (journalUI) {
+    renderer.autoClear = false
+    renderer.clearDepth()
+    renderer.render(journalUI.scene, journalUI.camera)
     renderer.autoClear = true
   }
   requestAnimationFrame(frame)

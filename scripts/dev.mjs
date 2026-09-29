@@ -20,7 +20,8 @@ const ctx = await context({
 })
 
 await ctx.watch()
-const server = await ctx.serve({ host: '127.0.0.1', port: 8000, servedir: outdir })
+const port = Number(process.env.PORT ?? 8000)
+const server = await ctx.serve({ host: '127.0.0.1', port, servedir: outdir })
 console.log(`Animal Balloon Farm ready at http://${server.hosts[0]}:${server.port}/`)
 
 const shutdown = async () => {

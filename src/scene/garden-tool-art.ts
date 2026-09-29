@@ -6,13 +6,26 @@ export interface GardenToolDefinition {
   readonly id: GardenToolId
   readonly hotkey: string
   readonly label: string
+  readonly subtitle: string
+  readonly description: string
+  readonly note: string
   readonly tint: string
   readonly accent: string
 }
 
 export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
-  { id: 'grass', hotkey: '1', label: 'Grass Seeder', tint: '#b7d97a', accent: '#f3d78a' },
-  { id: 'shovel', hotkey: '2', label: 'Shovel', tint: '#d9a06b', accent: '#e8c78f' },
+  {
+    id: 'grass', hotkey: '1', label: 'Grass Seeder', subtitle: 'A little green goes a long way',
+    description: 'A trusty hand tool for turning bare soil into a soft patch of meadow.',
+    note: 'Hold and drag to sow grass. Right-click to gently trim it back.',
+    tint: '#b7d97a', accent: '#f3d78a',
+  },
+  {
+    id: 'shovel', hotkey: '2', label: 'Shovel', subtitle: 'Lift, turn, and tidy the soil',
+    description: 'A sturdy garden shovel for digging up a planting spot and moving soil around.',
+    note: 'Click the ground to dig a hole, then drop a seed or a friend right into it.',
+    tint: '#d9a06b', accent: '#e8c78f',
+  },
 ]
 
 export function createGardenToolModel(id: GardenToolId): THREE.Group {

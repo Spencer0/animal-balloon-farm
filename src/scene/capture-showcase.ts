@@ -1,20 +1,10 @@
 import * as THREE from 'three'
-import type { BalloonAnimalId } from '../animals/balloon-animal'
+import { SHOWCASE_ANIMALS } from '../animals/balloon-catalog'
+import type { BalloonAnimalId } from '../animals/animal-catalog'
 import type { Fairground } from './fairground'
 import { GARDEN_LAWN_Y } from './fairground'
 
-export const SHOWCASE_ANIMALS: Readonly<Record<BalloonAnimalId, {
-  readonly spawn: readonly [number, number]
-  readonly color: string
-  readonly accent: string
-}>> = {
-  pig: { spawn: [-7, -3.2], color: '#ed679d', accent: '#ffb0c2' },
-  sheep: { spawn: [0, -3.2], color: '#fff0d0', accent: '#c69473' },
-  cow: { spawn: [7, -3.2], color: '#292735', accent: '#fff4df' },
-  chicken: { spawn: [-7, 3.2], color: '#f6c94d', accent: '#e97836' },
-  duck: { spawn: [0, 3.2], color: '#45a36c', accent: '#d6a34d' },
-  goose: { spawn: [7, 3.2], color: '#fff2df', accent: '#ed8543' },
-}
+export { SHOWCASE_ANIMALS } from '../animals/balloon-catalog'
 
 function standard(color: THREE.ColorRepresentation, roughness = 0.62): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.025 })
