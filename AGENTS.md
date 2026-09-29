@@ -14,6 +14,15 @@
 - No destructive cleanup or Git reset. Work only in the new project files. Inspect `git status --short --branch` first; the old checkout has a pre-existing deletion of tracked `elephant-arcade.html`.
 - User clarified: main menu is exactly **Continue + Options**; **Resume** is for pausing in-game. Art direction is a whimsical traveling carnival farm.
 
+## Shipping to mainline
+
+- After a feature is complete and verified, commit it and push to `main`. Spencer asked for this explicitly: do not sit on finished work across sessions.
+- Run `npm run check` first and only push when it passes. A push to `main` deploys to GitHub Pages via `.github/workflows/pages.yml`, so a red build must never reach the branch and a red push ships a broken game.
+- Inspect `git status --short` immediately before staging. Other threads and the editor can be editing the same files at the same time; stage only the paths you changed and never `git add -A`.
+- Keep each commit scoped to one feature, and explain in the message why the change was needed rather than restating the diff.
+- No force-push, no rewriting pushed history, and no `git reset`. If the branch has moved or a push is rejected, pull and rebase first.
+- If unrelated modifications turn up in the working tree, leave them uncommitted and say so in your summary rather than sweeping them into your commit.
+
 ## Non-negotiable product/tech constraints
 
 - Use Three.js for all game rendering, including game menus, HUD, journal, dialogs, and the Options → Asset Viewer.
