@@ -6,6 +6,10 @@ A new Three.js-first garden/animal sandbox with the spirit of a whimsical travel
 
 Every push to `main` is typechecked and built by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) and published to GitHub Pages, so the deployed game always matches a green `main`. Asset URLs in `src/` are document-relative rather than root-absolute so they resolve under the Pages subpath as well as on localhost.
 
+## Adding an animal
+
+Start with [`ANIMAL_PIPELINE.md`](ANIMAL_PIPELINE.md) — the end-to-end path from a Blender Python script to a wandering, catchable species in the garden, with the registration checklist and the known friction points for scaling the catalog. Blender authoring details live in [`art/blender/README.md`](art/blender/README.md) and the general operating skill in [`skills/blender-asset-pipeline/SKILL.md`](skills/blender-asset-pipeline/SKILL.md).
+
 ## Status
 
 Pre-production scaffold. The previous Zoo Patrol project has been preserved under [`.archive/zoo-patrol/`](.archive/zoo-patrol/) as local history and is not part of this game. The current scene boot is intentionally only a renderer foundation; there are no gameplay systems or game UI yet.
