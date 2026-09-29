@@ -1,0 +1,86 @@
+import type { Camera } from 'three'
+import { GARDEN_LAWN_Y } from '../scene/fairground'
+
+interface AnimalCatalogFields {
+  readonly name: string
+  readonly label: string
+  readonly spriteUrl: string
+  readonly subtitle: string
+  readonly description: string
+  readonly note: string
+  readonly color: string
+  readonly gesture: string
+  readonly assetUrl: string
+  readonly spawn: readonly [number, number]
+  readonly showcaseSpawn: readonly [number, number]
+  readonly seed: number
+  readonly size: number
+  readonly speed: number
+  readonly bounds: { readonly x: number; readonly z: number }
+}
+
+export const ANIMAL_CATALOG = [
+  {
+    id: 'pig', name: 'Pig', label: 'pig', spriteUrl: 'assets/animals/balloon-pig-review.png',
+    subtitle: 'The curious snuffler', description: 'A rosy little wanderer with a nose for new things and a soft spot for a friendly garden.',
+    note: 'A familiar face around the farm. Look for its jaunty ears and bright balloon cheeks.', color: '#ed679d', gesture: 'Digs for color',
+    assetUrl: 'assets/animals/balloon-pig.glb', spawn: [-7, -3.8], showcaseSpawn: [-7, -3.2], seed: 5104, size: 2.05, speed: 1.25, bounds: { x: 11.2, z: 6.5 },
+  },
+  {
+    id: 'sheep', name: 'Sheep', label: 'sheep', spriteUrl: 'assets/animals/balloon-sheep-review.png',
+    subtitle: 'The cloud-soft friend', description: 'A gentle woolly visitor who brings a little extra fluff and calm wherever it goes.',
+    note: 'Its pillowy coat catches the afternoon light like a tiny traveling cloud.', color: '#fff0d0', gesture: 'Bouncy wool',
+    assetUrl: 'assets/animals/balloon-sheep.glb', spawn: [-3.2, 2.1], showcaseSpawn: [0, -3.2], seed: 861, size: 2.1, speed: 0.88, bounds: { x: 10.9, z: 6.2 },
+  },
+  {
+    id: 'cow', name: 'Cow', label: 'cow', spriteUrl: 'assets/animals/balloon-cow-review.png',
+    subtitle: 'The meadow sweetheart', description: 'A big-hearted farm friend with a patient pace and a wonderfully unmistakable silhouette.',
+    note: 'A slow stroll and a sunny patch make a lovely afternoon.', color: '#292735', gesture: 'Tips into color',
+    assetUrl: 'assets/animals/balloon-cow.glb', spawn: [4.4, 2.8], showcaseSpawn: [7, -3.2], seed: 1402, size: 2.7, speed: 0.72, bounds: { x: 10.7, z: 6.1 },
+  },
+  {
+    id: 'chicken', name: 'Chicken', label: 'chicken', spriteUrl: 'assets/animals/balloon-chicken-review.png',
+    subtitle: 'The peppy peckish pal', description: 'A small golden busybody, always ready to investigate a new corner of the garden.',
+    note: 'Listen for a happy little cluck as it bobs along the path.', color: '#f6c94d', gesture: 'Flaps skyward',
+    assetUrl: 'assets/animals/balloon-chicken.glb', spawn: [7.4, -1.1], showcaseSpawn: [-7, 3.2], seed: 2406, size: 1.85, speed: 1.02, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
+    id: 'duck', name: 'Duck', label: 'duck', spriteUrl: 'assets/animals/balloon-duck-review.png',
+    subtitle: 'The puddle-day dreamer', description: 'A bright-eyed waddler who makes even an ordinary stroll feel like a little parade.',
+    note: 'Those tiny webbed feet are made for a cheerful waddle.', color: '#45a36c', gesture: 'Flaps and floats',
+    assetUrl: 'assets/animals/balloon-duck.glb', spawn: [-8, 3.5], showcaseSpawn: [0, 3.2], seed: 3128, size: 2, speed: 0.92, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
+    id: 'goose', name: 'Goose', label: 'goose', spriteUrl: 'assets/animals/balloon-goose-review.png',
+    subtitle: 'The grand waddler', description: 'A graceful feathered friend with a curious gaze and a rather proud little stride.',
+    note: 'Give this tall visitor a wave when it wanders by.', color: '#fff2df', gesture: 'Takes flight',
+    assetUrl: 'assets/animals/balloon-goose.glb', spawn: [0.4, -5], showcaseSpawn: [7, 3.2], seed: 4801, size: 2.35, speed: 0.8, bounds: { x: 10.5, z: 6.1 },
+  },
+] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
+
+export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']
+
+export function getAnimalSceneOptions(
+  showcaseMode: boolean,
+  canvas: HTMLCanvasElement,
+  camera: Camera,
+  groundSampler?: (x: number, z: number) => number,
+) {
+  return ANIMAL_CATALOG.map((animal) => ({
+    id: animal.id,
+    assetUrl: animal.assetUrl,
+    name: animal.label,
+    spawn: showcaseMode ? animal.showcaseSpawn : animal.spawn,
+    groundY: GARDEN_LAWN_Y,
+    seed: animal.seed,
+    size: animal.size,
+    speed: animal.speed,
+    bounds: animal.bounds,
+    canvas,
+    camera,
+    groundSampler,
+    wandering: !showcaseMode,
+    captureOnClick: !showcaseMode,
+    replayCaptureOnClick: showcaseMode,
+  }))
+}

@@ -1,19 +1,8 @@
 import type { BalloonAnimal, BalloonAnimalId } from '../animals/balloon-animal'
+import { ANIMAL_CATALOG } from '../animals/animal-catalog'
 import { CAPTURE_DURATION_SECONDS } from '../animals/balloon-capture'
 
-const ANIMALS: readonly {
-  readonly id: BalloonAnimalId
-  readonly label: string
-  readonly gesture: string
-  readonly color: string
-}[] = [
-  { id: 'pig', label: 'Pig', gesture: 'Digs for color', color: '#ed679d' },
-  { id: 'sheep', label: 'Sheep', gesture: 'Bouncy wool', color: '#fff0d0' },
-  { id: 'cow', label: 'Cow', gesture: 'Tips into color', color: '#292735' },
-  { id: 'chicken', label: 'Chicken', gesture: 'Flaps skyward', color: '#f6c94d' },
-  { id: 'duck', label: 'Duck', gesture: 'Flaps and floats', color: '#45a36c' },
-  { id: 'goose', label: 'Goose', gesture: 'Takes flight', color: '#fff2df' },
-]
+const ANIMALS = ANIMAL_CATALOG
 
 export interface CaptureShowcaseUI {
   update(animals: readonly BalloonAnimal[]): void
@@ -40,7 +29,7 @@ export function createCaptureShowcaseUI(actions: {
   const title = document.createElement('h1')
   title.textContent = 'The color reveal'
   const description = document.createElement('p')
-  description.textContent = `Six personalities. One little paint-bucket miracle. · ${CAPTURE_DURATION_SECONDS.toFixed(1)} sec each`
+  description.textContent = `${ANIMAL_CATALOG.length} personalities. One little paint-bucket miracle. · ${CAPTURE_DURATION_SECONDS.toFixed(1)} sec each`
   heading.append(eyebrow, title, description)
 
   const toolbar = document.createElement('div')
@@ -49,7 +38,7 @@ export function createCaptureShowcaseUI(actions: {
   playAll.className = 'showcase-button showcase-button--primary'
   playAll.dataset.role = 'play-all'
   playAll.type = 'button'
-  playAll.textContent = '▶  Play all six'
+  playAll.textContent = `▶  Play all ${ANIMAL_CATALOG.length}`
   playAll.addEventListener('click', actions.onPlayAll)
   const resetAll = document.createElement('button')
   resetAll.className = 'showcase-button showcase-button--quiet'
@@ -122,7 +111,7 @@ export function createCaptureShowcaseUI(actions: {
       const anyPlaying = animals.some((animal) => animal.isCapturing)
       const everyAnimalIsRunning = animals.length > 0 && animals.every((animal) => animal.isCapturing)
       playAll.disabled = everyAnimalIsRunning
-      playAll.textContent = everyAnimalIsRunning ? '✦  All six are painting…' : anyPlaying ? '↻  Replay all six' : '▶  Play all six'
+      playAll.textContent = everyAnimalIsRunning ? `✦  All ${ANIMAL_CATALOG.length} are painting…` : anyPlaying ? `↻  Replay all ${ANIMAL_CATALOG.length}` : `▶  Play all ${ANIMAL_CATALOG.length}`
     },
     dispose(): void {
       root.remove()
