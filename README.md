@@ -2,6 +2,10 @@
 
 A new Three.js-first garden/animal sandbox with the spirit of a whimsical traveling carnival. See [`SPEC.md`](SPEC.md) for the research-informed design, gameplay loop, first playable scope, and technical direction.
 
+**Live site:** <https://spencer0.github.io/animal-balloon-farm/>
+
+Every push to `main` is typechecked and built by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) and published to GitHub Pages, so the deployed game always matches a green `main`. Asset URLs in `src/` are document-relative rather than root-absolute so they resolve under the Pages subpath as well as on localhost.
+
 ## Status
 
 Pre-production scaffold. The previous Zoo Patrol project has been preserved under [`.archive/zoo-patrol/`](.archive/zoo-patrol/) as local history and is not part of this game. The current scene boot is intentionally only a renderer foundation; there are no gameplay systems or game UI yet.
@@ -52,7 +56,7 @@ Run checks with:
 npm run check
 ```
 
-Dependencies are pinned in `package.json` (Three.js 0.186.1 and type definitions 0.186.0, esbuild, TypeScript, and Node types). The dependency lockfile has not been generated yet; use the project's npm manifest to install and capture the lock before implementation.
+Dependencies are pinned in `package.json` (Three.js 0.186.1 and type definitions 0.186.0, esbuild, TypeScript, and Node types). `package-lock.json` is committed, so CI installs with `npm ci` and builds are reproducible.
 
 ## Preserved old work
 
