@@ -5,6 +5,7 @@ import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from '.
 import { createCaptureShowcaseStage, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createCaptureShowcaseUI, createShowcaseLaunchButton } from './ui/capture-showcase-ui'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
+import { createGardenTerrain } from './scene/garden-terrain'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createGardenToolsUI } from './ui/garden-tools-ui'
 
@@ -79,15 +80,28 @@ scene.add(rim)
 
 const fairground = showcaseMode ? createCaptureShowcaseStage() : createFairground()
 scene.add(fairground.root)
-const gardenTools: GardenTools | null = !showcaseMode && fairground.gardenSurface
-  ? createGardenTools(gameCanvas, camera, fairground.gardenSurface)
+// The height field is the terrain source of truth; the soil sits 12 mm below
+// the lawn paint layer so the two displaced planes never z-fight.
+const gardenTerrain = !showcaseMode && fairground.gardenSurface && fairground.gardenSoil
+  ? createGardenTerrain([
+      { mesh: fairground.gardenSoil, offset: -0.012 },
+      { mesh: fairground.gardenSurface },
+    ])
+  : null
+gardenTerrain?.applyToMeshes()
+const gardenTools: GardenTools | null = !showcaseMode && fairground.gardenSurface && fairground.gardenSoil && gardenTerrain
+  ? createGardenTools(gameCanvas, camera, fairground.gardenSurface, gardenTerrain)
   : null
 if (gardenTools) scene.add(gardenTools.root)
-const gardenToolsUI = gardenTools ? createGardenToolsUI() : null
+const gardenToolsUI = gardenTools ? createGardenToolsUI(gardenTools.selectedTool) : null
 
 // Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
 // each animal's palette through a shared 6.8-second paint-bucket reveal.
-const animalSceneOptions = { canvas: gameCanvas, camera } as const
+const animalSceneOptions = {
+  canvas: gameCanvas,
+  camera,
+  groundSampler: gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
+} as const
 const animalDefinitions = [
   {
     id: 'pig', assetUrl: 'assets/animals/balloon-pig.glb', name: 'pig', spawn: showcaseMode ? SHOWCASE_ANIMALS.pig.spawn : [-7, -3.8] as const,
@@ -170,7 +184,10 @@ function selectGardenToolByHotkey(key: string): boolean {
   if (!tool || !gardenTools) return false
   // Tapping the active tool's hotkey cycles its brush size instead of re-selecting.
   if (gardenTools.selectedTool === tool.id) gardenTools.cycleBrushSize()
-  else gardenTools.selectTool(tool.id)
+  else {
+    gardenTools.selectTool(tool.id)
+    gardenToolsUI?.selectTool(tool.id)
+  }
   return true
 }
 
@@ -193,7 +210,13 @@ function orbitPointerDown(event: PointerEvent): void {
   }
   if (event.button === 0 && event.detail >= 2) return
   if (event.button !== 0 && event.button !== 2) return
-  if (gardenToolsUI?.pointerDown(event, gameCanvas)) return
+  if (gardenToolsUI?.pointerDown(event, gameCanvas)) {
+    // A HUD card click may have switched tools; keep the 3D tool in sync.
+    if (gardenTools && gardenTools.selectedTool !== gardenToolsUI.selectedTool) {
+      gardenTools.selectTool(gardenToolsUI.selectedTool)
+    }
+    return
+  }
   if (gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
@@ -253,6 +276,25 @@ function preventCanvasMenu(event: MouseEvent): void {
   if (gardenTools && gardenTools.handleContextMenu(event)) return
   event.preventDefault()
 }
+
+function heightsSummary(): Record<string, unknown> | null {
+  if (!gardenTerrain || !gardenTools) return null
+  const stats = gardenTerrain.stats()
+  const tool = gardenTools.debugState()
+  return {
+    ...stats,
+    dirtPiles: tool.dirtPiles,
+    carryingDirt: tool.carryingDirt,
+    pilePositions: tool.pilePositions,
+    tool: tool.selectedTool,
+  }
+}
+
+function gardenScreenPoint(x: number, z: number): { readonly x: number; readonly y: number } {
+  return gardenScreenPosition(x, z)
+}
+
+
 
 function handleToolKeyboard(event: KeyboardEvent): void {
   if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return
@@ -318,6 +360,11 @@ interface GardenDebugHarness {
   down(x: number, y: number, button?: number): void
   trim(x: number, y: number): void
   pickReport(x: number, y: number): unknown
+  dig(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  deposit(x: number, y: number): Record<string, unknown> | null
+  smooth(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  heightsSummary(): Record<string, unknown> | null
+  animalsSummary(): { id: string; y: number }[]
   drag(points: readonly { readonly x: number; readonly y: number }[], holdMs?: number): Promise<ReturnType<GardenDebugHarness['state']> | null>
   sampleGarden(columns?: number, rows?: number, holdMs?: number): GardenSampleStatus
   up(): void
@@ -374,6 +421,38 @@ if (gardenDebugMode) {
     },
     pickReport(x, y): unknown {
       return gardenTools?.pickReport(x, y) ?? null
+    },
+    async dig(x, y, holdMs = 700): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      debugHarness.move(x, y)
+      debugHarness.down(x, y)
+      await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
+      debugHarness.up()
+      return { ...heightsSummary(), carrying: gardenTools.debugState().carryingDirt }
+    },
+    deposit(x, y): Record<string, unknown> | null {
+      return depositNearestPile(x, y)
+    },
+    async smooth(x: number, y: number, holdMs = 700): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      debugHarness.move(x, y)
+      debugHarness.down(x, y, 2)
+      await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
+      debugHarness.up()
+      return heightsSummary()
+    },
+    heightsSummary(): Record<string, unknown> | null {
+      return heightsSummary()
+    },
+    animalsSummary(): { id: string; x: number; z: number; y: number }[] {
+      return animals.map((animal) => ({
+        id: animal.id,
+        x: +animal.root.position.x.toFixed(2),
+        z: +animal.root.position.z.toFixed(2),
+        y: +animal.root.position.y.toFixed(3),
+      }))
     },
     async drag(points, holdMs = 1200): Promise<ReturnType<GardenDebugHarness['state']> | null> {
       if (!gardenTools || points.length === 0) return null
@@ -492,8 +571,32 @@ if (gardenDebugMode) {
   }
   Object.defineProperty(window, '__gardenDebug', { value: debugHarness, configurable: true })
   window.dispatchEvent(new CustomEvent('garden-debug-ready'))
+
+  function depositNearestPile(x: number, z: number): Record<string, unknown> | null {
+  if (!gardenTools || !gardenTerrain) return null
+  debugHarness.up()
+  const summary = heightsSummary()
+  const piles = (summary?.pilePositions as readonly { x: number; z: number }[] | undefined) ?? []
+  if (!piles.length) return summary ?? null
+  const nearest = piles.reduce((best, pile) => {
+    const bestDistance = (best.x - x) ** 2 + (best.z - z) ** 2
+    const distance = (pile.x - x) ** 2 + (pile.z - z) ** 2
+    return distance < bestDistance ? pile : best
+  })
+  const screen = gardenScreenPoint(nearest.x, nearest.z)
+  debugHarness.move(screen.x, screen.y)
+  debugHarness.down(screen.x, screen.y)
+  debugHarness.up()
+  const destination = gardenScreenPoint(x, z)
+  debugHarness.move(destination.x, destination.y)
+  debugHarness.down(destination.x, destination.y)
+  debugHarness.up()
+  return heightsSummary()
+}
+
   console.info('[Garden Debug] Ready at window.__gardenDebug (move/down/trim/drag/sampleGarden/up/state/clearGrass/focusGarden)')
 }
+
 
 window.addEventListener('resize', () => {
   updateCameraProjection()

@@ -10,6 +10,7 @@ export const GARDEN_LAWN_Y = 0.03
 export interface Fairground {
   readonly root: THREE.Group
   readonly gardenSurface?: THREE.Mesh
+  readonly gardenSoil?: THREE.Mesh
   update(deltaSeconds: number): void
 }
 
@@ -583,7 +584,7 @@ export function createFairground(): Fairground {
     skyPuffs.add(cloud)
   }
   root.add(skyPuffs)
-  return {root,gardenSurface:lawn,update(delta){wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2);wheel.rotor.rotation.z=wheel.angle;wheel.cabins.forEach((c,i)=>{const a=i/wheel.cabins.length*Math.PI*2+wheel.angle;c.position.set(Math.cos(a)*wheel.radius,wheel.centerY+Math.sin(a)*wheel.radius,0);c.rotation.z=-wheel.angle})}}
+  return {root,gardenSurface:lawn,gardenSoil:soil,update(delta){wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2);wheel.rotor.rotation.z=wheel.angle;wheel.cabins.forEach((c,i)=>{const a=i/wheel.cabins.length*Math.PI*2+wheel.angle;c.position.set(Math.cos(a)*wheel.radius,wheel.centerY+Math.sin(a)*wheel.radius,0);c.rotation.z=-wheel.angle})}}
 }
 
 export function createSkyDome():THREE.Mesh {

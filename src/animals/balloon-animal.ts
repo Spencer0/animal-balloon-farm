@@ -25,6 +25,8 @@ export interface BalloonAnimalOptions {
   readonly wandering?: boolean
   readonly captureOnClick?: boolean
   readonly replayCaptureOnClick?: boolean
+  /** Terrain height at garden (x, z); enables walking over deformed ground. */
+  readonly groundSampler?: (x: number, z: number) => number
 }
 
 export interface BalloonAnimal {
@@ -307,6 +309,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   posePivot.name = `${options.name} · capture flourish pivot`
   wrapper.add(posePivot)
 
+  // Eased ground height so stepping over dug mounds reads as a gentle bob.
+  let groundYCurrent = options.groundY
+
   let loaded: LoadedAnimal | null = null
   let modelRoot: THREE.Group | null = null
   let gltf: AnimalGLTF | null = null
@@ -553,7 +558,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       }
 
       loaded?.mixer.update(delta)
-      if (!loaded) {
+      // Ride the deformed garden: ease toward the sampled terrain height so
+      // both walking and idling animals follow digs and deposits.
+      if (options.groundSampler) {
+        const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
+        groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
+        wrapper.position.y = groundYCurrent + (loaded ? 0 : Math.abs(Math.sin(elapsed * 5.8)) * 0.035)
+      } else if (!loaded) {
         wrapper.position.y = options.groundY + Math.abs(Math.sin(elapsed * 5.8)) * 0.035
         wrapper.quaternion.setFromAxisAngle(upAxis, Math.sin(elapsed * 2.7) * 0.04)
       }
