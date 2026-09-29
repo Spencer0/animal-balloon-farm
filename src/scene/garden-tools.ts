@@ -25,12 +25,16 @@ export interface GardenToolDebugState {
   readonly greenGroundVertices: number
   readonly maxGrassBlades: number
   readonly densitySpacing: number
+  readonly brushLevel: number
+  readonly brushRadius: number
+  readonly tallestBlade: number
 }
 
 export interface GardenTools {
   readonly root: THREE.Group
   readonly selectedTool: GardenToolId
   selectTool(id: GardenToolId): void
+  cycleBrushSize(): void
   pointerMove(event: GardenPointerMove): void
   pointerDown(event: GardenPointerDown): boolean
   pointerUp(): void
@@ -62,6 +66,9 @@ interface GrassBatch {
 const GRASS_COLORS = ['#71a957', '#86bc62', '#a3ca6f', '#618f50', '#b3cc79']
 const GRASS_COLOR_VALUES = GRASS_COLORS.map((color) => new THREE.Color(color))
 const BRUSH_RADIUS = 1.18
+// Tapping the selected tool's hotkey cycles sizes 1..5; level 2 is the original
+// radius. Blades, ground paint, seed counts, and stroke spacing all scale with it.
+const BRUSH_SIZE_LEVELS = [0.5, 1, 2, 3, 4] as const
 const GRASS_TILE_SIZE = 4
 const GRASS_CELL_SPACING = 0.085
 const INITIAL_BATCH_CAPACITY = 256
@@ -70,13 +77,15 @@ const STARTING_BLADE_HEIGHT = 0.085
 const MIN_SEED_BLADES = 22
 const HOLD_SEED_BLADES = 4
 const MAX_BLADE_HEIGHT = 0.72
-const BLADE_GROWTH_PER_SECOND = 0.3
+// Base growth eased by remaining height (sqrt ease-out): a held patch rockets
+// up quickly and settles into the cap — full height in about two seconds.
+const BLADE_GROWTH_PER_SECOND = 0.7
 const LAWN_UNGREEN_PER_SECOND = 0.34
 const ACTION_INTERVAL = 0.08
 const LAWN_VERTEX_SPACING = 0.58
 const GRASS_STROKE_SPACING = 0.34
-const GROW_PAINT_RADIUS = BRUSH_RADIUS * 1.06
-const TRIM_PAINT_RADIUS = BRUSH_RADIUS * 0.9
+const GROW_PAINT_FACTOR = 1.06
+const TRIM_PAINT_FACTOR = 0.9
 const GROUND_GREEN = new THREE.Color('#6db254')
 const GRASS_RANDOM_SEED = 471903
 
@@ -160,6 +169,25 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
   const cursor = new THREE.Group()
   const seeder = createGardenToolModel()
   let selectedTool: GardenToolId = 'grass'
+  const brushLevels = new Map<GardenToolId, number>()
+  let sizePop = 0
+  const SIZE_POP_SECONDS = 0.28
+  let tallestBladeHeight = 0
+
+  function brushLevelIndex(): number {
+    return brushLevels.get(selectedTool) ?? 1
+  }
+
+  function brushRadius(): number {
+    return BRUSH_RADIUS * BRUSH_SIZE_LEVELS[brushLevelIndex()]
+  }
+
+  // Seed counts scale with the brush's area so density per square meter stays
+  // constant across sizes.
+  function stampBladeCount(base: number): number {
+    return Math.max(4, Math.round(base * BRUSH_SIZE_LEVELS[brushLevelIndex()] ** 2))
+  }
+
   let cursorVisible = false
   let isPointerDown = false
   let activeAction: 'grow' | 'trim' | null = null
@@ -386,7 +414,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
 
   function growGrass(x: number, z: number, deltaSeconds: number): number {
     let changed = 0
-    const radius = BRUSH_RADIUS
+    const radius = brushRadius()
     const radiusSquared = radius * radius
     const minCellX = Math.floor((x - radius) / GRASS_CELL_SPACING)
     const maxCellX = Math.floor((x + radius) / GRASS_CELL_SPACING)
@@ -405,9 +433,13 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
           const distanceSquared = (x - blade.x) ** 2 + (z - blade.z) ** 2
           if (distanceSquared > radiusSquared || blade.height >= MAX_BLADE_HEIGHT) continue
           const influence = 1 - Math.sqrt(distanceSquared) / radius
-          const growth = BLADE_GROWTH_PER_SECOND * deltaSeconds * Math.max(0.12, influence)
+          // Non-linear: rate ∝ remaining height (sqrt ease-out), so blades shoot
+          // up early and ease into the cap instead of creeping linearly.
+          const remaining = Math.max(0, (MAX_BLADE_HEIGHT - blade.height) / (MAX_BLADE_HEIGHT - STARTING_BLADE_HEIGHT))
+          const growth = BLADE_GROWTH_PER_SECOND * deltaSeconds * Math.sqrt(remaining) * (0.6 + 0.4 * influence)
           const height = Math.min(MAX_BLADE_HEIGHT, blade.height + growth)
           if (height === blade.height) continue
+          if (height > tallestBladeHeight) tallestBladeHeight = height
           blade.mesh.getMatrixAt(blade.tileIndex, matrix)
           matrix.decompose(position, rotation, scale)
           scale.y = height
@@ -426,7 +458,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
   function trimGrass(x: number, z: number, deltaSeconds: number): number {
     // Right-click is a continuous inverse-grow: blades shrink from their current
     // height toward zero (and vanish) the whole time the button is held.
-    const radius = BRUSH_RADIUS * 0.85
+    const radius = brushRadius() * 0.85
     const minCellX = Math.floor((x - radius) / GRASS_CELL_SPACING)
     const maxCellX = Math.floor((x + radius) / GRASS_CELL_SPACING)
     const minCellZ = Math.floor((z - radius) / GRASS_CELL_SPACING)
@@ -448,7 +480,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
           const distance = Math.sqrt((x - blade.x) ** 2 + (z - blade.z) ** 2)
           if (distance > radius) continue
           const influence = 1 - Math.min(1, distance / radius)
-          const shrink = BLADE_GROWTH_PER_SECOND * 1.35 * deltaSeconds * Math.max(0.2, influence)
+          // Mirror of the growth easing: tall blades fall fast, the last bit eases out.
+          const progress = Math.min(1, blade.height / (MAX_BLADE_HEIGHT - STARTING_BLADE_HEIGHT))
+          const shrink = BLADE_GROWTH_PER_SECOND * 1.35 * deltaSeconds * Math.sqrt(progress) * (0.6 + 0.4 * influence)
           const height = Math.max(0, blade.height - shrink)
           blade.mesh.getMatrixAt(blade.tileIndex, matrix)
           matrix.decompose(position, rotation, scale)
@@ -490,8 +524,8 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
     }
     cursorVisible = true
     cursor.position.set(position.x, position.y + 0.008, position.z)
-    cursor.scale.setScalar(BRUSH_RADIUS)
-    seeder.scale.setScalar(1 / BRUSH_RADIUS)
+    cursor.scale.setScalar(brushRadius())
+    seeder.scale.setScalar(1 / brushRadius())
     cursor.visible = true
     return position
   }
@@ -518,6 +552,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       lawnColors.setXYZW(index, 1, 1, 1, 0)
     }
     lawnColors.needsUpdate = true
+    tallestBladeHeight = 0
   }
 
   function dispose(): void {
@@ -540,6 +575,10 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
     selectTool(id): void {
       if (GARDEN_TOOLS.some((tool) => tool.id === id)) selectedTool = id
     },
+    cycleBrushSize(): void {
+      brushLevels.set(selectedTool, (brushLevelIndex() + 1) % BRUSH_SIZE_LEVELS.length)
+      sizePop = SIZE_POP_SECONDS
+    },
     pointerMove(event): void {
       const position = updateCursorPosition(event)
       if (!position) {
@@ -551,17 +590,17 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       // plants a light sprinkle of short blades. Height only accumulates where the
       // brush lingers (see update), so dragging leaves short grass, not tall.
       if (isPointerDown && activeAction === 'grow') {
-        const spacing = Math.max(GRASS_STROKE_SPACING, BRUSH_RADIUS * 0.3)
+        const spacing = Math.max(GRASS_STROKE_SPACING, brushRadius() * 0.3)
         if (!lastPaintPoint || lastPaintPoint.distanceTo(position) >= spacing) {
           lastPaintPoint = position.clone()
           lastSeedPoint = position.clone()
-          updateLawnCoverage(position.x, position.z, GROW_PAINT_RADIUS, 1.05)
-          addGrass(position.x, position.z, BRUSH_RADIUS * 0.88, MIN_SEED_BLADES)
+          updateLawnCoverage(position.x, position.z, brushRadius() * GROW_PAINT_FACTOR, 1.05)
+          addGrass(position.x, position.z, brushRadius() * 0.88, stampBladeCount(MIN_SEED_BLADES))
         }
         return
       }
       if (activeAction) return
-      const hoverRadius = BRUSH_RADIUS * 1.8
+      const hoverRadius = brushRadius() * 1.8
       const minimumX = Math.floor((position.x - hoverRadius) / LAWN_VERTEX_SPACING)
       const maximumX = Math.floor((position.x + hoverRadius) / LAWN_VERTEX_SPACING)
       const minimumZ = Math.floor((position.z - hoverRadius) / LAWN_VERTEX_SPACING)
@@ -588,8 +627,8 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       if (activeAction === 'grow') {
         // The first press starts a light sprinkle of short blades on freshly
         // greened ground; holding in place then grows that patch (see update).
-        updateLawnCoverage(position.x, position.z, GROW_PAINT_RADIUS, 1.05)
-        addGrass(position.x, position.z, BRUSH_RADIUS * 0.88, MIN_SEED_BLADES)
+        updateLawnCoverage(position.x, position.z, brushRadius() * GROW_PAINT_FACTOR, 1.05)
+        addGrass(position.x, position.z, brushRadius() * 0.88, stampBladeCount(MIN_SEED_BLADES))
       }
       return true
     },
@@ -663,6 +702,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
         densitySpacing: GRASS_CELL_SPACING,
         greenGroundVertices,
         activeAction,
+        brushLevel: brushLevelIndex() + 1,
+        brushRadius: brushRadius(),
+        tallestBlade: tallestBladeHeight,
       }
     },
     clearGrass,
@@ -676,27 +718,30 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
           const z = lastSeedPoint.z
           if (activeAction === 'grow') {
             growGrass(x, z, ACTION_INTERVAL)
-            updateLawnCoverage(x, z, GROW_PAINT_RADIUS, 0.055)
+            updateLawnCoverage(x, z, brushRadius() * GROW_PAINT_FACTOR, 0.055)
             // Lingering fills the patch in: extra seeds land until the occupancy
             // grid saturates, so holds raise both height and density.
-            addGrass(x, z, BRUSH_RADIUS * 0.88, HOLD_SEED_BLADES)
+            addGrass(x, z, brushRadius() * 0.88, stampBladeCount(HOLD_SEED_BLADES))
           } else {
             trimGrass(x, z, ACTION_INTERVAL)
-            updateLawnCoverage(x, z, TRIM_PAINT_RADIUS, -LAWN_UNGREEN_PER_SECOND * ACTION_INTERVAL)
+            updateLawnCoverage(x, z, brushRadius() * TRIM_PAINT_FACTOR, -LAWN_UNGREEN_PER_SECOND * ACTION_INTERVAL)
           }
         }
       }
       const time = performance.now() * 0.001
+      sizePop = Math.max(0, sizePop - deltaSeconds)
+      const popGlow = sizePop > 0 ? Math.sin((sizePop / SIZE_POP_SECONDS) * Math.PI) : 0
+      const popScale = 1 + popGlow * 0.16
       const pulse = isPointerDown ? 0.5 + 0.5 * Math.sin(time * 8.5) : 0.5 + 0.5 * Math.sin(time * 2.2)
       const pulseAmount = isPointerDown ? 0.12 + pulse * 0.12 : pulse * 0.025
-      cursor.scale.setScalar(BRUSH_RADIUS * (1 + pulseAmount))
+      cursor.scale.setScalar(brushRadius() * (1 + pulseAmount) * popScale)
       outerMaterial.emissiveIntensity = isPointerDown ? 0.32 + pulse * 0.72 : 0.11 + pulse * 0.12
       innerMaterial.emissiveIntensity = isPointerDown ? 0.22 + pulse * 0.58 : 0.12 + pulse * 0.12
       const glowMaterial = actionGlow.material as THREE.MeshBasicMaterial
-      actionGlow.visible = cursorVisible && isPointerDown
-      actionGlow.scale.setScalar(1 + pulse * 0.18)
-      glowMaterial.opacity = actionGlow.visible ? 0.18 + pulse * 0.24 : 0
-      glowMaterial.color.set(activeAction === 'trim' ? '#f3aa7b' : '#c2efa0')
+      actionGlow.visible = cursorVisible && (isPointerDown || popGlow > 0)
+      actionGlow.scale.setScalar(1 + pulse * 0.18 + popGlow * 0.12)
+      glowMaterial.opacity = actionGlow.visible ? (isPointerDown ? 0.18 + pulse * 0.24 : 0) + popGlow * 0.32 : 0
+      glowMaterial.color.set(activeAction === 'trim' ? '#f3aa7b' : activeAction === 'grow' ? '#c2efa0' : '#fff3d7')
       ;(cursorShadow.material as THREE.MeshBasicMaterial).opacity = isPointerDown && activeAction === 'grow' ? 0.19 + pulse * 0.1 : 0.14
       // hoverTint is refreshed by pointerMove; re-applying it here keeps a stale
       // hover tint from leaking into later frames.

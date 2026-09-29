@@ -168,7 +168,9 @@ let pointerButton = 0
 function selectGardenToolByHotkey(key: string): boolean {
   const tool = GARDEN_TOOLS.find((item) => item.hotkey === key)
   if (!tool || !gardenTools) return false
-  gardenTools.selectTool(tool.id)
+  // Tapping the active tool's hotkey cycles its brush size instead of re-selecting.
+  if (gardenTools.selectedTool === tool.id) gardenTools.cycleBrushSize()
+  else gardenTools.selectTool(tool.id)
   return true
 }
 
