@@ -67,7 +67,8 @@ const GRASS_CELL_SPACING = 0.085
 const INITIAL_BATCH_CAPACITY = 256
 const MAX_GRASS_BLADES = 120_000
 const STARTING_BLADE_HEIGHT = 0.085
-const MIN_SEED_BLADES = 12
+const MIN_SEED_BLADES = 22
+const HOLD_SEED_BLADES = 4
 const MAX_BLADE_HEIGHT = 0.72
 const BLADE_GROWTH_PER_SECOND = 0.3
 const LAWN_UNGREEN_PER_SECOND = 0.34
@@ -76,7 +77,7 @@ const LAWN_VERTEX_SPACING = 0.58
 const GRASS_STROKE_SPACING = 0.34
 const GROW_PAINT_RADIUS = BRUSH_RADIUS * 1.06
 const TRIM_PAINT_RADIUS = BRUSH_RADIUS * 0.9
-const GROUND_GREEN = new THREE.Color('#7fbc5e')
+const GROUND_GREEN = new THREE.Color('#6db254')
 const GRASS_RANDOM_SEED = 471903
 
 function seededRandom(seed: number): () => number {
@@ -678,6 +679,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
           if (activeAction === 'grow') {
             growGrass(x, z, ACTION_INTERVAL)
             updateLawnCoverage(x, z, GROW_PAINT_RADIUS, 0.055)
+            // Lingering fills the patch in: extra seeds land until the occupancy
+            // grid saturates, so holds raise both height and density.
+            addGrass(x, z, BRUSH_RADIUS * 0.88, HOLD_SEED_BLADES)
           } else {
             trimGrass(x, z, ACTION_INTERVAL)
             updateLawnCoverage(x, z, TRIM_PAINT_RADIUS, -LAWN_UNGREEN_PER_SECOND * ACTION_INTERVAL)

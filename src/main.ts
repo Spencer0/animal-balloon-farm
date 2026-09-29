@@ -23,7 +23,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping
 renderer.toneMappingExposure = 1.12
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFShadowMap
-renderer.info.autoReset = true
+renderer.info.autoReset = false // reset manually each frame so stats survive the HUD pass
 
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#a7d5d3')
@@ -302,9 +302,16 @@ interface GardenSampleStatus {
   readonly error: string | null
 }
 
+interface GardenRenderInfo {
+  readonly calls: number
+  readonly triangles: number
+  readonly geometries: number
+  readonly textures: number
+}
+
 interface GardenDebugHarness {
   readonly enabled: true
-  state(): (ReturnType<GardenTools['debugState']> & { readonly screen: { readonly x: number; readonly y: number } | null; readonly sample: GardenSampleStatus }) | null
+  state(): (ReturnType<GardenTools['debugState']> & { readonly screen: { readonly x: number; readonly y: number } | null; readonly sample: GardenSampleStatus; readonly render: GardenRenderInfo }) | null
   move(x: number, y: number): void
   down(x: number, y: number, button?: number): void
   trim(x: number, y: number): void
@@ -328,6 +335,12 @@ if (gardenDebugMode) {
         ...state,
         screen: state.cursor ? gardenScreenPosition(state.cursor.x, state.cursor.z) : null,
         sample: sampleStatus,
+        render: {
+          calls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          geometries: renderer.info.memory.geometries,
+          textures: renderer.info.memory.textures,
+        },
       }
     },
     move(x, y): void {
@@ -496,6 +509,7 @@ function frame(now: number): void {
   animals.forEach((animal) => animal.update(delta))
   gardenTools?.update(delta)
   showcaseUI?.update(animals)
+  renderer.info.reset()
   renderer.render(scene, camera)
   if (gardenToolsUI) {
     renderer.autoClear = false
