@@ -226,7 +226,6 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
   function updateLawnCoverage(x: number, z: number, radius: number, amount: number): number {
     let changes = 0
     const radiusSquared = radius * radius
-    const color = new THREE.Color()
     const minCellX = Math.floor((x - radius) / LAWN_VERTEX_SPACING)
     const maxCellX = Math.floor((x + radius) / LAWN_VERTEX_SPACING)
     const minCellZ = Math.floor((z - radius) / LAWN_VERTEX_SPACING)
@@ -252,11 +251,10 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
           if (before <= 0.05 && after > 0.05) greenGroundVertices += 1
           else if (before > 0.05 && after <= 0.05) greenGroundVertices -= 1
           groundCoverage[vertexIndex] = after
-          // RGBA paint layer: tint slides white → grass green while alpha reveals
-          // the paint over the soil below.
-          color.setRGB(1, 1, 1)
-          color.lerp(GROUND_GREEN, after)
-          lawnColors.setXYZW(vertexIndex, color.r, color.g, color.b, after)
+          // RGBA paint layer: rgb is ALWAYS the full grass tint — alpha alone
+          // fades the edge. Lerping rgb from white here would leave a pale
+          // semi-transparent halo where coverage is partial (paint and trim).
+          lawnColors.setXYZW(vertexIndex, GROUND_GREEN.r, GROUND_GREEN.g, GROUND_GREEN.b, after)
           changes += 1
         }
       }
