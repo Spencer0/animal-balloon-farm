@@ -9,6 +9,8 @@
 
 ## Before making changes
 
+- **Every task that changes files must run in its own Git worktree.** Before editing, inspect `git worktree list` and branch/worktree status. Never switch branches or edit files in a checkout another agent or user may be using. Create a dedicated worktree and feature branch for the task; if the worktree/branch is already in use, coordinate before proceeding. Keep all edits for the task inside its worktree.
+
 - Read `SPEC.md` for the agreed pre-production vision and first-playable scope.
 - This is a new game, not Zoo Patrol. Zoo Patrol is preserved under `.archive/zoo-patrol/` and is excluded from the project by `.gitignore`. Do not restore/copy its UI, models, gameplay, renderer, or Vite setup unless Spencer asks.
 - No destructive cleanup or Git reset. Work only in the new project files. Inspect `git status --short --branch` first; the old checkout has a pre-existing deletion of tracked `elephant-arcade.html`.

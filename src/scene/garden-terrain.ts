@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { GARDEN_BOUNDS } from './fairground'
+import { GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './fairground'
+import type { GardenBounds } from '../game/farm-expansion'
 
 /**
  * Canonical garden height field (SPEC §9: garden coordinates independent of
@@ -18,10 +19,10 @@ const EDGE_KEEP_OUT = 0.9
 const EDGE_FADE_WIDTH = 0.6
 const SLOPE_PASSES = 3
 
-const GRID_ORIGIN_X = -(GARDEN_BOUNDS.halfWidth + 0.08)
-const GRID_ORIGIN_Z = -(GARDEN_BOUNDS.halfDepth + 0.08)
-const GRID_COLS = Math.round((GARDEN_BOUNDS.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1
-const GRID_ROWS = Math.round((GARDEN_BOUNDS.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1
+const GRID_ORIGIN_X = -(GARDEN_MAX_BOUNDS.halfWidth + 0.08)
+const GRID_ORIGIN_Z = -(GARDEN_MAX_BOUNDS.halfDepth + 0.08)
+const GRID_COLS = Math.round((GARDEN_MAX_BOUNDS.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1
+const GRID_ROWS = Math.round((GARDEN_MAX_BOUNDS.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1
 
 export interface GardenTerrain {
   readonly cellSize: number
@@ -47,7 +48,10 @@ function smoothstep(edge0: number, edge1: number, value: number): number {
   return t * t * (3 - 2 * t)
 }
 
-export function createGardenTerrain(bindings: readonly TerrainMeshBinding[]): GardenTerrain {
+export function createGardenTerrain(
+  bindings: readonly TerrainMeshBinding[],
+  getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
+): GardenTerrain {
   const heights = new Float32Array(GRID_COLS * GRID_ROWS)
   let dirty = false
 
@@ -70,8 +74,9 @@ export function createGardenTerrain(bindings: readonly TerrainMeshBinding[]): Ga
   function cellEdgeFade(gx: number, gz: number): number {
     const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
     const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
-    const fadeX = Math.min(1, Math.max(0, (GARDEN_BOUNDS.halfWidth - EDGE_KEEP_OUT - Math.abs(worldX)) / EDGE_FADE_WIDTH))
-    const fadeZ = Math.min(1, Math.max(0, (GARDEN_BOUNDS.halfDepth - EDGE_KEEP_OUT - Math.abs(worldZ)) / EDGE_FADE_WIDTH))
+    const bounds = getActiveBounds()
+    const fadeX = Math.min(1, Math.max(0, (bounds.halfWidth - EDGE_KEEP_OUT - Math.abs(worldX)) / EDGE_FADE_WIDTH))
+    const fadeZ = Math.min(1, Math.max(0, (bounds.halfDepth - EDGE_KEEP_OUT - Math.abs(worldZ)) / EDGE_FADE_WIDTH))
     return Math.min(fadeX, fadeZ)
   }
 

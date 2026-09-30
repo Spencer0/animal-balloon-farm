@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
+import { FARM_EXPANSION_CONFIG } from '../game/farm-expansion'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 
 export type AnimalClip = 'IDLE' | 'WALK'
@@ -20,6 +21,10 @@ export interface BalloonAnimalOptions {
   readonly size: number
   readonly speed: number
   readonly bounds: { readonly x: number; readonly z: number }
+  /** Current expandable plot limits; stationary-wanderer games may omit it. */
+  readonly getGardenBounds?: () => { readonly halfWidth: number; readonly halfDepth: number }
+  /** Ignore animal clicks when an in-game HUD panel is occupying the pointer. */
+  readonly isPointerBlocked?: (clientX: number, clientY: number) => boolean
   readonly canvas: HTMLCanvasElement
   readonly camera: THREE.Camera
   readonly wandering?: boolean
@@ -381,10 +386,15 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const chooseTarget = (): void => {
     const angle = random() * Math.PI * 2
     const radius = 2.4 + random() * 5.8
+    const gardenBounds = options.getGardenBounds?.()
+    const expansionX = Math.max(0, (gardenBounds?.halfWidth ?? FARM_EXPANSION_CONFIG.startBounds.halfWidth) - FARM_EXPANSION_CONFIG.startBounds.halfWidth)
+    const expansionZ = Math.max(0, (gardenBounds?.halfDepth ?? FARM_EXPANSION_CONFIG.startBounds.halfDepth) - FARM_EXPANSION_CONFIG.startBounds.halfDepth)
+    const halfWidth = Math.min(options.bounds.x + expansionX, Math.max(0, (gardenBounds?.halfWidth ?? options.bounds.x) - 1.2))
+    const halfDepth = Math.min(options.bounds.z + expansionZ, Math.max(0, (gardenBounds?.halfDepth ?? options.bounds.z) - 1.2))
     target.set(
-      THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -options.bounds.x, options.bounds.x),
+      THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -halfWidth, halfWidth),
       0,
-      THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -options.bounds.z, options.bounds.z),
+      THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -halfDepth, halfDepth),
     )
     nextDecision = 2 + random() * 2.4
   }
@@ -472,7 +482,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   }
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (options.captureOnClick === false || event.button !== 0 || event.detail >= 2 || (captured && !options.replayCaptureOnClick)) return
+    if (options.captureOnClick === false || event.button !== 0 || event.detail >= 2
+      || options.isPointerBlocked?.(event.clientX, event.clientY)
+      || (captured && !options.replayCaptureOnClick)) return
     const bounds = options.canvas.getBoundingClientRect()
     const pointer = new THREE.Vector2(
       ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
@@ -536,6 +548,15 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         nextDecision -= delta
       }
 
+      const gardenBounds = options.getGardenBounds?.()
+      if (gardenBounds) {
+        const expansionX = Math.max(0, gardenBounds.halfWidth - FARM_EXPANSION_CONFIG.startBounds.halfWidth)
+        const expansionZ = Math.max(0, gardenBounds.halfDepth - FARM_EXPANSION_CONFIG.startBounds.halfDepth)
+        const maxX = Math.min(options.bounds.x + expansionX, Math.max(0, gardenBounds.halfWidth - 1.2))
+        const maxZ = Math.min(options.bounds.z + expansionZ, Math.max(0, gardenBounds.halfDepth - 1.2))
+        wrapper.position.x = THREE.MathUtils.clamp(wrapper.position.x, -maxX, maxX)
+        wrapper.position.z = THREE.MathUtils.clamp(wrapper.position.z, -maxZ, maxZ)
+      }
       direction.subVectors(target, wrapper.position)
       direction.y = 0
       const distance = direction.length()

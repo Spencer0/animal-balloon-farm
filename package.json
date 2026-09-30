@@ -7,8 +7,9 @@
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "garden:drag": "node scripts/garden-drag.mjs",
+    "test": "node --test tests/farm-expansion.test.mjs",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run build"
+    "check": "npm test && npm run typecheck && npm run build"
   },
   "dependencies": {
     "three": "0.186.1"

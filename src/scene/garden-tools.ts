@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { GARDEN_BOUNDS, GARDEN_LAWN_Y } from './fairground'
+import { containsGardenPoint, GARDEN_BOUNDS, GARDEN_LAWN_Y, GARDEN_MAX_BOUNDS } from './fairground'
+import type { GardenBounds } from '../game/farm-expansion'
 import { createGardenToolModel, GARDEN_TOOLS, type GardenToolId } from './garden-tool-art'
 import type { GardenTerrain } from './garden-terrain'
 
@@ -137,9 +138,8 @@ function circleGeometry(radius: number, segments = 48): THREE.CircleGeometry {
   return geometry
 }
 
-function insideGarden(x: number, z: number): boolean {
-  return Math.abs(x) <= GARDEN_BOUNDS.halfWidth - 0.08
-    && Math.abs(z) <= GARDEN_BOUNDS.halfDepth - 0.08
+function insideGarden(x: number, z: number, bounds: GardenBounds): boolean {
+  return containsGardenPoint(x, z, bounds)
 }
 
 interface DirtPile {
@@ -148,10 +148,16 @@ interface DirtPile {
   z: number
 }
 
-export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camera, lawn: THREE.Mesh, terrain: GardenTerrain): GardenTools {
+export function createGardenTools(
+  canvas: HTMLCanvasElement,
+  camera: THREE.Camera,
+  lawn: THREE.Mesh,
+  terrain: GardenTerrain,
+  getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
+): GardenTools {
   // The painted ring IS the cursor inside the garden; the OS arrow would just
-  // clutter the meadow scene.
-  canvas.style.cursor = 'none'
+  // clutter the meadow scene. Restore the system pointer outside the plot.
+  canvas.style.cursor = ''
   const root = new THREE.Group()
   root.name = 'Grass seeder and garden brush cursor'
   root.add(lawn)
@@ -417,6 +423,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
         if (!vertices) continue
         for (const vertexIndex of vertices) {
           const vertex = lawnVertices[vertexIndex]
+          if (!insideGarden(vertex.x, vertex.z, getActiveBounds())) continue
           const dx = vertex.x - x
           const dz = vertex.z - z
           const distanceSquared = dx * dx + dz * dz
@@ -453,9 +460,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
     mesh.frustumCulled = true
     mesh.boundingSphere = new THREE.Sphere(
       new THREE.Vector3(
-        -GARDEN_BOUNDS.halfWidth + (tileX + 0.5) * GRASS_TILE_SIZE,
+        -GARDEN_MAX_BOUNDS.halfWidth + (tileX + 0.5) * GRASS_TILE_SIZE,
         GARDEN_LAWN_Y + 0.42,
-        -GARDEN_BOUNDS.halfDepth + (tileZ + 0.5) * GRASS_TILE_SIZE,
+        -GARDEN_MAX_BOUNDS.halfDepth + (tileZ + 0.5) * GRASS_TILE_SIZE,
       ),
       Math.SQRT2 * GRASS_TILE_SIZE / 2 + 0.8,
     )
@@ -489,8 +496,10 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
   }
 
   function getBatch(x: number, z: number): GrassBatch | null {
-    const tileX = Math.floor((x + GARDEN_BOUNDS.halfWidth) / GRASS_TILE_SIZE)
-    const tileZ = Math.floor((z + GARDEN_BOUNDS.halfDepth) / GRASS_TILE_SIZE)
+    // Anchor tile IDs and bounds to the maximum plot so earlier batches never
+    // shift beneath their grass when the garden grows.
+    const tileX = Math.floor((x + GARDEN_MAX_BOUNDS.halfWidth) / GRASS_TILE_SIZE)
+    const tileZ = Math.floor((z + GARDEN_MAX_BOUNDS.halfDepth) / GRASS_TILE_SIZE)
     const key = `${tileX},${tileZ}`
     let batch = batches.get(key)
     if (!batch) {
@@ -531,7 +540,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       const distance = radius * Math.sqrt(random())
       const xPos = x + Math.cos(angle) * distance
       const zPos = z + Math.sin(angle) * distance
-      if (!insideGarden(xPos, zPos) || occupiedNear(xPos, zPos)) continue
+      if (!insideGarden(xPos, zPos, getActiveBounds()) || occupiedNear(xPos, zPos)) continue
       const batch = getBatch(xPos, zPos)
       if (!batch) continue
       const cellKey = occupancyCell(xPos, zPos)
@@ -665,16 +674,19 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       cursor.visible = false
       cursorVisible = false
       actionGlow.visible = false
+      canvas.style.cursor = ''
       return null
     }
     const position = floorPosition()
-    if (!position || !insideGarden(position.x, position.z)) {
+    if (!position || !insideGarden(position.x, position.z, getActiveBounds())) {
       cursor.visible = false
       cursorVisible = false
       actionGlow.visible = false
+      canvas.style.cursor = ''
       return null
     }
     cursorVisible = true
+    canvas.style.cursor = 'none'
     cursor.position.set(position.x, position.y + 0.008, position.z)
     cursor.scale.setScalar(brushRadius())
     toolModels[selectedTool].scale.setScalar(1 / brushRadius())
@@ -836,6 +848,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       cursor.visible = false
       cursorVisible = false
       actionGlow.visible = false
+      canvas.style.cursor = ''
       if (!isPointerDown) return
       // The pointer left the garden mid-stroke: pause painting until it returns.
       lastSeedPoint = null

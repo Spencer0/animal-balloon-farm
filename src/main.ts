@@ -1,6 +1,8 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
+import { createFarmExpansionUI } from './game/farm-expansion-ui'
+import type { FarmExpansionState } from './game/farm-expansion'
 import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from './scene/fairground'
 import { createCaptureShowcaseStage, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createCaptureShowcaseUI, createShowcaseLaunchButton } from './ui/capture-showcase-ui'
@@ -37,6 +39,8 @@ const normalViewHeight = 39.5
 const showcaseViewHeight = 22
 
 const cameraTarget = new THREE.Vector3(0, 1.25, 0)
+let expansionFeedbackSeconds = 0
+let expansionFeedbackStrength = 0
 const aspect = window.innerWidth / Math.max(1, window.innerHeight)
 const viewHeight = showcaseMode ? showcaseViewHeight : normalViewHeight
 const camera = new THREE.OrthographicCamera(
@@ -81,26 +85,67 @@ scene.add(rim)
 const fairground = showcaseMode ? createCaptureShowcaseStage() : createFairground()
 scene.add(fairground.root)
 // The height field is the terrain source of truth; the soil sits 12 mm below
-// the lawn paint layer so the two displaced planes never z-fight.
+// the lawn paint layer so the two displaced planes never z-fight. Cache active
+// bounds once per frame so tool/terrain hot loops don't allocate state objects.
+let currentGardenBounds: typeof GARDEN_BOUNDS = GARDEN_BOUNDS
+const activeGardenBounds = (): typeof GARDEN_BOUNDS => currentGardenBounds
 const gardenTerrain = !showcaseMode && fairground.gardenSurface && fairground.gardenSoil
   ? createGardenTerrain([
       { mesh: fairground.gardenSoil, offset: -0.012 },
       { mesh: fairground.gardenSurface },
-    ])
+    ], activeGardenBounds)
   : null
 gardenTerrain?.applyToMeshes()
 const gardenTools: GardenTools | null = !showcaseMode && fairground.gardenSurface && fairground.gardenSoil && gardenTerrain
-  ? createGardenTools(gameCanvas, camera, fairground.gardenSurface, gardenTerrain)
+  ? createGardenTools(gameCanvas, camera, fairground.gardenSurface, gardenTerrain, activeGardenBounds)
   : null
 if (gardenTools) scene.add(gardenTools.root)
 const gardenToolsUI = gardenTools ? createGardenToolsUI(gardenTools.selectedTool) : null
+const farmExpansionUI = fairground.farmExpansion
+  ? createFarmExpansionUI(window.innerWidth, window.innerHeight, fairground.farmExpansion.state)
+  : null
+let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
+const pressedKeys = new Set<string>()
+let pointerPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+let pointerWasSeen = false
+const CAMERA_EDGE_MARGIN = 34
+const CAMERA_BASE_SPEED = 12
+const CAMERA_MAX_SPEED = 27
+const CAMERA_MIN_ZOOM = 1.25
+const CAMERA_MAX_ZOOM = 34
+
+function isOverGameHUD(clientX: number, clientY: number): boolean {
+  if (showcaseMode) return false
+  const toolScale = Math.min(1, Math.max(0.62, (window.innerWidth - 24) / (2 * 360 + 10 + 24)))
+  const toolWidth = (2 * 360 + 10) * toolScale
+  const toolHeight = 84 * toolScale
+  const toolLeft = (window.innerWidth - toolWidth) / 2
+  const toolTop = window.innerHeight - 20 - toolHeight
+  if (clientY >= toolTop && clientY <= window.innerHeight - 20
+    && clientX >= toolLeft && clientX <= toolLeft + toolWidth) return true
+
+  const expansionScale = THREE.MathUtils.clamp((window.innerWidth - 36) / 404, 0.5, 1)
+  const expansionWidth = 404 * expansionScale
+  const expansionHeight = 112 * expansionScale
+  if (clientX >= 18 && clientX <= 18 + expansionWidth
+    && clientY >= 18 && clientY <= 18 + expansionHeight) return true
+
+  const launchButton = document.querySelector<HTMLElement>('.showcase-launch-button')
+  if (launchButton) {
+    const bounds = launchButton.getBoundingClientRect()
+    if (clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom) return true
+  }
+  return false
+}
 
 // Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
-// each animal's palette through a shared 6.8-second paint-bucket reveal.
+// their palette through a shared 6.8-second paint-bucket reveal.
 const animalSceneOptions = {
   canvas: gameCanvas,
   camera,
   groundSampler: gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
+  getGardenBounds: activeGardenBounds,
+  isPointerBlocked: isOverGameHUD,
 } as const
 const animalDefinitions = [
   {
@@ -164,20 +209,22 @@ const showcaseUI = showcaseMode
   : null
 if (showcaseMode) document.title = 'Capture Showcase · Animal Balloon Farm'
 
-const targetOffset = new THREE.Vector3()
 const viewDirection = new THREE.Vector3().subVectors(camera.position, cameraTarget).normalize()
+const cameraShakeOffset = new THREE.Vector3()
+const CAMERA_SHAKE_DURATION = 0.82
+const CAMERA_SHAKE_AMPLITUDE = 0.38
 
 function gardenScreenPosition(x: number, z: number): { readonly x: number; readonly y: number } {
   const world = new THREE.Vector3(x, GARDEN_LAWN_Y + 0.008, z).project(camera)
   return { x: (world.x + 1) * window.innerWidth / 2, y: (1 - world.y) * window.innerHeight / 2 }
 }
 
-let cameraDistance = initialOffset.length()
 let viewHalfHeight = viewHeight / 2
 let dragPointer: number | null = null
+let dragMode: 'orbit' | 'pan' | null = null
 let toolPointer: number | null = null
 let previousPointer = { x: 0, y: 0 }
-let pointerButton = 0
+let spaceHeld = false
 
 function selectGardenToolByHotkey(key: string): boolean {
   const tool = GARDEN_TOOLS.find((item) => item.hotkey === key)
@@ -203,6 +250,88 @@ function updateCameraProjection(): void {
   renderer.setSize(width, height)
 }
 
+function updateCameraPan(deltaSeconds: number): void {
+  if (showcaseMode || deltaSeconds <= 0 || spaceHeld) return
+  let horizontal = Number(pressedKeys.has('d') || pressedKeys.has('arrowright'))
+    - Number(pressedKeys.has('a') || pressedKeys.has('arrowleft'))
+  let vertical = Number(pressedKeys.has('w') || pressedKeys.has('arrowup'))
+    - Number(pressedKeys.has('s') || pressedKeys.has('arrowdown'))
+  let edgeStrength = 0
+
+  if (pointerWasSeen && dragPointer === null && toolPointer === null
+    && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
+    if (pointerPosition.x < CAMERA_EDGE_MARGIN) {
+      const strength = THREE.MathUtils.clamp((CAMERA_EDGE_MARGIN - pointerPosition.x) / CAMERA_EDGE_MARGIN, 0, 1)
+      horizontal -= strength
+      edgeStrength = Math.max(edgeStrength, strength)
+    } else if (pointerPosition.x > window.innerWidth - CAMERA_EDGE_MARGIN) {
+      const strength = THREE.MathUtils.clamp((pointerPosition.x - (window.innerWidth - CAMERA_EDGE_MARGIN)) / CAMERA_EDGE_MARGIN, 0, 1)
+      horizontal += strength
+      edgeStrength = Math.max(edgeStrength, strength)
+    }
+    if (pointerPosition.y < CAMERA_EDGE_MARGIN) {
+      const strength = THREE.MathUtils.clamp((CAMERA_EDGE_MARGIN - pointerPosition.y) / CAMERA_EDGE_MARGIN, 0, 1)
+      vertical += strength
+      edgeStrength = Math.max(edgeStrength, strength)
+    } else if (pointerPosition.y > window.innerHeight - CAMERA_EDGE_MARGIN) {
+      const strength = THREE.MathUtils.clamp((pointerPosition.y - (window.innerHeight - CAMERA_EDGE_MARGIN)) / CAMERA_EDGE_MARGIN, 0, 1)
+      vertical -= strength
+      edgeStrength = Math.max(edgeStrength, strength)
+    }
+  }
+
+  const inputLength = Math.hypot(horizontal, vertical)
+  if (inputLength < 0.001) return
+  if (inputLength > 1) {
+    horizontal /= inputLength
+    vertical /= inputLength
+  }
+
+  const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
+  cameraRight.y = 0
+  cameraRight.normalize()
+  const cameraForward = new THREE.Vector3().subVectors(cameraTarget, camera.position)
+  cameraForward.y = 0
+  cameraForward.normalize()
+  const direction = cameraRight.multiplyScalar(horizontal).addScaledVector(cameraForward, vertical)
+  if (direction.lengthSq() < 0.0001) return
+  direction.normalize()
+  const zoomScale = viewHalfHeight / (normalViewHeight / 2)
+  const speed = THREE.MathUtils.lerp(CAMERA_BASE_SPEED, CAMERA_MAX_SPEED, edgeStrength) * zoomScale
+  const movement = direction.multiplyScalar(speed * deltaSeconds)
+  cameraTarget.add(movement)
+  camera.position.add(movement)
+  camera.lookAt(cameraTarget)
+  camera.updateMatrixWorld()
+}
+
+function removePreviousCameraShake(): void {
+  if (cameraShakeOffset.lengthSq() === 0) return
+  camera.position.sub(cameraShakeOffset)
+  cameraTarget.sub(cameraShakeOffset)
+  cameraShakeOffset.set(0, 0, 0)
+}
+
+function applyExpansionCameraShake(deltaSeconds: number, elapsedSeconds: number): void {
+  if (expansionFeedbackSeconds <= 0) {
+    expansionFeedbackSeconds = 0
+    expansionFeedbackStrength = 0
+    return
+  }
+  expansionFeedbackSeconds = Math.max(0, expansionFeedbackSeconds - deltaSeconds)
+  const envelope = expansionFeedbackSeconds / CAMERA_SHAKE_DURATION
+  const amplitude = CAMERA_SHAKE_AMPLITUDE * expansionFeedbackStrength * envelope * envelope
+  cameraShakeOffset.set(
+    (Math.sin(elapsedSeconds * 51) + Math.sin(elapsedSeconds * 31 + 1.7) * 0.45) * amplitude,
+    Math.sin(elapsedSeconds * 43 + 0.6) * amplitude * 0.16,
+    (Math.cos(elapsedSeconds * 47 + 0.3) + Math.sin(elapsedSeconds * 29) * 0.35) * amplitude,
+  )
+  camera.position.add(cameraShakeOffset)
+  cameraTarget.add(cameraShakeOffset)
+  camera.lookAt(cameraTarget)
+  camera.updateMatrixWorld()
+}
+
 function orbitPointerDown(event: PointerEvent): void {
   if (showcaseMode) {
     if (event.button === 0 && gardenToolsUI?.pointerDown(event, gameCanvas)) return
@@ -210,40 +339,47 @@ function orbitPointerDown(event: PointerEvent): void {
   }
   if (event.button === 0 && event.detail >= 2) return
   if (event.button !== 0 && event.button !== 2) return
-  if (gardenToolsUI?.pointerDown(event, gameCanvas)) {
+  const cameraGesture = event.button === 2 || (event.button === 0 && spaceHeld)
+  if (!cameraGesture && event.button === 0 && gardenToolsUI?.pointerDown(event, gameCanvas)) {
     // A HUD card click may have switched tools; keep the 3D tool in sync.
     if (gardenTools && gardenTools.selectedTool !== gardenToolsUI.selectedTool) {
       gardenTools.selectTool(gardenToolsUI.selectedTool)
     }
     return
   }
-  if (gardenTools?.pointerDown(event)) {
+  // The HUD is rendered in front of the garden; clicks on its other panels
+  // should not leak through as planting, shoveling, smoothing, or camera drags.
+  if (!spaceHeld && isOverGameHUD(event.clientX, event.clientY)) {
+    event.preventDefault()
+    return
+  }
+  if (!cameraGesture && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
     return
   }
-  if (gardenDebugMode) return
+  if (gardenDebugMode && !event.isTrusted) return
   dragPointer = event.pointerId
-  pointerButton = event.button
+  dragMode = event.button === 2 ? 'pan' : 'orbit'
   previousPointer = { x: event.clientX, y: event.clientY }
-  gameCanvas.setPointerCapture(event.pointerId)
+  if (event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
 }
 
 function orbitPointerMove(event: PointerEvent): void {
-  gardenTools?.pointerMove(event)
+  if (isOverGameHUD(event.clientX, event.clientY)) gardenTools?.pointerLeave()
+  else gardenTools?.pointerMove(event)
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
   const dx = event.clientX - previousPointer.x
   const dy = event.clientY - previousPointer.y
   previousPointer = { x: event.clientX, y: event.clientY }
-  if (pointerButton === 2) {
+  if (dragMode === 'pan') {
     const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
     const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1)
     const panScale = viewHalfHeight / Math.max(1, window.innerHeight)
-    targetOffset.addScaledVector(cameraRight, -dx * panScale)
-    targetOffset.addScaledVector(cameraUp, dy * panScale)
-    cameraTarget.add(targetOffset)
-    camera.position.copy(cameraTarget).addScaledVector(viewDirection, cameraDistance)
+    const movement = cameraRight.multiplyScalar(-dx * panScale).addScaledVector(cameraUp, dy * panScale)
+    cameraTarget.add(movement)
+    camera.position.add(movement)
     camera.lookAt(cameraTarget)
     camera.updateMatrixWorld()
     return
@@ -269,6 +405,7 @@ function orbitPointerUp(event: PointerEvent): void {
   }
   if (dragPointer !== event.pointerId) return
   dragPointer = null
+  dragMode = null
   if (gameCanvas.hasPointerCapture(event.pointerId)) gameCanvas.releasePointerCapture(event.pointerId)
 }
 
@@ -296,13 +433,57 @@ function gardenScreenPoint(x: number, z: number): { readonly x: number; readonly
 
 
 
+function isTextInputTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || Boolean(target.closest('input, textarea, select, [contenteditable="true"]')))
+}
+
 function handleToolKeyboard(event: KeyboardEvent): void {
-  if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return
-  const key = event.key.toLowerCase()
-  if (selectGardenToolByHotkey(key)) {
+  if (event.altKey || event.ctrlKey || event.metaKey || isTextInputTarget(event.target)) return
+  if (event.code === 'Space') {
+    spaceHeld = true
     event.preventDefault()
     return
   }
+  const key = event.key.toLowerCase()
+  const panKey = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(key)
+  if (panKey) {
+    pressedKeys.add(key)
+    event.preventDefault()
+    return
+  }
+  if (key === 'e' && !showcaseMode && fairground.farmExpansion) {
+    event.preventDefault()
+    if (!event.repeat) fairground.farmExpansion.expand()
+    return
+  }
+  if (event.repeat) return
+  if (selectGardenToolByHotkey(key)) event.preventDefault()
+}
+
+function handleKeyUp(event: KeyboardEvent): void {
+  pressedKeys.delete(event.key.toLowerCase())
+  if (event.code === 'Space') spaceHeld = false
+  if (!isTextInputTarget(event.target) && ['arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(event.key.toLowerCase())) {
+    event.preventDefault()
+  }
+}
+
+function handleWindowPointerMove(event: PointerEvent): void {
+  pointerPosition = { x: event.clientX, y: event.clientY }
+  pointerWasSeen = event.clientX >= 0 && event.clientY >= 0
+    && event.clientX <= window.innerWidth && event.clientY <= window.innerHeight
+    && !isOverGameHUD(event.clientX, event.clientY)
+}
+
+function handleWindowBlur(): void {
+  pressedKeys.clear()
+  spaceHeld = false
+  pointerWasSeen = false
+}
+
+function handleWindowLeave(): void {
+  pointerWasSeen = false
 }
 
 function handleWindowPointerUp(): void {
@@ -318,7 +499,7 @@ function handleCanvasLeave(): void {
 
 function handleZoom(event: WheelEvent): void {
   event.preventDefault()
-  viewHalfHeight = THREE.MathUtils.clamp(viewHalfHeight * Math.exp(event.deltaY * 0.001), 1.25, 34)
+  viewHalfHeight = THREE.MathUtils.clamp(viewHalfHeight * Math.exp(event.deltaY * 0.001), CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM)
   updateCameraProjection()
 }
 
@@ -330,7 +511,11 @@ gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
 gameCanvas.addEventListener('contextmenu', preventCanvasMenu)
 gameCanvas.addEventListener('wheel', handleZoom, { passive: false })
 window.addEventListener('pointerup', handleWindowPointerUp)
+window.addEventListener('pointermove', handleWindowPointerMove)
 window.addEventListener('keydown', handleToolKeyboard)
+window.addEventListener('keyup', handleKeyUp)
+window.addEventListener('blur', handleWindowBlur)
+window.addEventListener('mouseleave', handleWindowLeave)
 
 declare global {
   interface Window {
@@ -355,7 +540,7 @@ interface GardenRenderInfo {
 
 interface GardenDebugHarness {
   readonly enabled: true
-  state(): (ReturnType<GardenTools['debugState']> & { readonly screen: { readonly x: number; readonly y: number } | null; readonly sample: GardenSampleStatus; readonly render: GardenRenderInfo }) | null
+  state(): (ReturnType<GardenTools['debugState']> & { readonly screen: { readonly x: number; readonly y: number } | null; readonly sample: GardenSampleStatus; readonly render: GardenRenderInfo; readonly farmExpansion: FarmExpansionState | null }) | null
   move(x: number, y: number): void
   down(x: number, y: number, button?: number): void
   trim(x: number, y: number): void
@@ -390,6 +575,7 @@ if (gardenDebugMode) {
           geometries: renderer.info.memory.geometries,
           textures: renderer.info.memory.textures,
         },
+        farmExpansion: fairground.farmExpansion?.state ?? null,
       }
     },
     move(x, y): void {
@@ -488,10 +674,10 @@ if (gardenDebugMode) {
       debugHarness.clearGrass()
       debugHarness.focusGarden()
       const corners = [
-        gardenScreenPosition(-GARDEN_BOUNDS.halfWidth + 0.3, -GARDEN_BOUNDS.halfDepth + 0.3),
-        gardenScreenPosition(GARDEN_BOUNDS.halfWidth - 0.3, -GARDEN_BOUNDS.halfDepth + 0.3),
-        gardenScreenPosition(GARDEN_BOUNDS.halfWidth - 0.3, GARDEN_BOUNDS.halfDepth - 0.3),
-        gardenScreenPosition(-GARDEN_BOUNDS.halfWidth + 0.3, GARDEN_BOUNDS.halfDepth - 0.3),
+        gardenScreenPosition(-activeGardenBounds().halfWidth + 0.3, -activeGardenBounds().halfDepth + 0.3),
+        gardenScreenPosition(activeGardenBounds().halfWidth - 0.3, -activeGardenBounds().halfDepth + 0.3),
+        gardenScreenPosition(activeGardenBounds().halfWidth - 0.3, activeGardenBounds().halfDepth - 0.3),
+        gardenScreenPosition(-activeGardenBounds().halfWidth + 0.3, activeGardenBounds().halfDepth - 0.3),
       ]
       const top = corners.reduce((best, point) => point.y < best.y ? point : best)
       const bottom = corners.reduce((best, point) => point.y > best.y ? point : best)
@@ -558,12 +744,10 @@ if (gardenDebugMode) {
       gardenTools?.clearGrass()
     },
     focusGarden(): void {
-      targetOffset.set(0, 0, 0)
       cameraTarget.set(0, 1.25, 0)
       viewHalfHeight = normalViewHeight / 2
       camera.position.copy(cameraTarget).add(initialOffset)
       viewDirection.copy(initialOffset).normalize()
-      cameraDistance = initialOffset.length()
       camera.lookAt(cameraTarget)
       camera.updateMatrixWorld()
       updateCameraProjection()
@@ -601,25 +785,48 @@ if (gardenDebugMode) {
 window.addEventListener('resize', () => {
   updateCameraProjection()
   gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
+  farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
 })
 
 updateCameraProjection()
 gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
+farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
 
 let previousTime = performance.now()
 function frame(now: number): void {
   const delta = Math.min(0.05, Math.max(0, (now - previousTime) / 1000))
   previousTime = now
+  removePreviousCameraShake()
   fairground.update(delta)
+  currentGardenBounds = fairground.farmExpansion?.state.bounds ?? GARDEN_BOUNDS
   animals.forEach((animal) => animal.update(delta))
   gardenTools?.update(delta)
   showcaseUI?.update(animals)
+  const expansionState = fairground.farmExpansion?.state
+  if (expansionState) {
+    if (expansionState.level > lastExpansionLevel) {
+      lastExpansionLevel = expansionState.level
+      expansionFeedbackSeconds = CAMERA_SHAKE_DURATION
+      expansionFeedbackStrength = 1
+    }
+    farmExpansionUI?.update(expansionState, delta)
+  }
+  updateCameraPan(delta)
+  applyExpansionCameraShake(delta, now / 1000)
+  if (pointerWasSeen) {
+    if (isOverGameHUD(pointerPosition.x, pointerPosition.y)) gardenTools?.pointerLeave()
+    else gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
+  }
   renderer.info.reset()
   renderer.render(scene, camera)
-  if (gardenToolsUI) {
+  if (gardenToolsUI || farmExpansionUI) {
     renderer.autoClear = false
     renderer.clearDepth()
-    renderer.render(gardenToolsUI.scene, gardenToolsUI.camera)
+    if (gardenToolsUI) renderer.render(gardenToolsUI.scene, gardenToolsUI.camera)
+    if (farmExpansionUI) {
+      renderer.clearDepth()
+      renderer.render(farmExpansionUI.scene, farmExpansionUI.camera)
+    }
     renderer.autoClear = true
   }
   requestAnimationFrame(frame)
