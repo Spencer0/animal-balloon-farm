@@ -140,6 +140,7 @@ const farmExpansionUI = fairground.farmExpansion
   ? createFarmExpansionUI(window.innerWidth, window.innerHeight, fairground.farmExpansion.state)
   : null
 const journalUI = !showcaseMode ? createJournalUI(gameCanvas) : null
+const performanceOverlay = gardenDebugMode ? createPerformanceOverlay() : null
 let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
 
 // Catalog entries stay the single source of truth; attach live garden bounds
@@ -571,9 +572,40 @@ interface GardenRenderInfo {
   readonly textures: number
 }
 
+interface GardenFrameTiming {
+  readonly intervalMs: number
+  readonly workMs: number
+  readonly fairgroundMs: number
+  readonly animalsMs: number
+  readonly toolsMs: number
+  readonly otherUpdateMs: number
+  readonly sceneRenderMs: number
+  readonly overlayRenderMs: number
+}
+
+interface GardenPerformanceSummary {
+  readonly samples: number
+  readonly fps: number
+  readonly droppedFrames: number
+  readonly zoom: number
+  readonly bufferWidth: number
+  readonly bufferHeight: number
+  readonly renderCalls: number
+  readonly triangles: number
+  readonly intervalMs: { readonly p50: number; readonly p95: number; readonly max: number }
+  readonly workMs: { readonly p50: number; readonly p95: number; readonly max: number }
+  readonly updateMs: { readonly p50: number; readonly p95: number; readonly max: number }
+  readonly fairgroundMs: { readonly p95: number; readonly max: number }
+  readonly animalsMs: { readonly p95: number; readonly max: number }
+  readonly toolsMs: { readonly p95: number; readonly max: number }
+  readonly otherUpdateMs: { readonly p95: number; readonly max: number }
+  readonly sceneRenderMs: { readonly p95: number; readonly max: number }
+  readonly overlayRenderMs: { readonly p95: number; readonly max: number }
+}
+
 interface GardenDebugHarness {
   readonly enabled: true
-  state(): (ReturnType<GardenTools['debugState']> & { readonly screen: { readonly x: number; readonly y: number } | null; readonly sample: GardenSampleStatus; readonly render: GardenRenderInfo; readonly farmExpansion: FarmExpansionState | null }) | null
+  state(): (ReturnType<GardenTools['debugState']> & { readonly screen: { readonly x: number; readonly y: number } | null; readonly sample: GardenSampleStatus; readonly render: GardenRenderInfo; readonly performance: GardenPerformanceSummary | null; readonly farmExpansion: FarmExpansionState | null }) | null;
   move(x: number, y: number): void
   down(x: number, y: number, button?: number): void
   trim(x: number, y: number): void
@@ -596,6 +628,146 @@ interface GardenDebugHarness {
   focusGarden(): void
 }
 
+interface PerformanceOverlay {
+  readonly scene: THREE.Scene
+  readonly camera: THREE.OrthographicCamera
+  update(now: number, summarize: () => GardenPerformanceSummary | null): void
+  resize(width: number, height: number): void
+  dispose(): void
+}
+
+const frameTimingSamples: GardenFrameTiming[] = []
+const FRAME_TIMING_SAMPLE_LIMIT = 180
+const FRAME_DROP_THRESHOLD_MS = 20
+const PERF_OVERLAY_REFRESH_MS = 400
+const PERF_LOG_INTERVAL_MS = 2000
+
+function createPerformanceOverlay(): PerformanceOverlay {
+  const scene = new THREE.Scene()
+  scene.name = 'Debug performance HUD'
+  const camera = new THREE.OrthographicCamera(-640, 640, 360, -360, 0.1, 100)
+  camera.position.set(0, 0, 50)
+  camera.lookAt(0, 0, 0)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = 760
+  canvas.height = 240
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('2D canvas context unavailable for performance HUD')
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  })
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(380, 120), material)
+  panel.position.z = 2
+  scene.add(panel)
+  let viewportWidth = 1280
+  let viewportHeight = 720
+  let lastDrawAt = -PERF_OVERLAY_REFRESH_MS
+
+  function resize(width: number, height: number): void {
+    viewportWidth = width
+    viewportHeight = height
+    camera.left = -width / 2
+    camera.right = width / 2
+    camera.top = height / 2
+    camera.bottom = -height / 2
+    camera.updateProjectionMatrix()
+    panel.position.set(-width / 2 + 205, height / 2 - 80, 2)
+  }
+
+  resize(viewportWidth, viewportHeight)
+  return {
+    scene,
+    camera,
+    resize,
+    update(now, summarize): void {
+      if (now - lastDrawAt < PERF_OVERLAY_REFRESH_MS) return
+      lastDrawAt = now
+      const summary = summarize()
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      context.fillStyle = 'rgba(18, 35, 33, 0.88)'
+      context.strokeStyle = 'rgba(248, 225, 174, 0.78)'
+      context.lineWidth = 3
+      context.beginPath()
+      context.roundRect(3, 3, canvas.width - 6, canvas.height - 6, 24)
+      context.fill()
+      context.stroke()
+      context.textBaseline = 'middle'
+      context.textAlign = 'left'
+      context.font = 'bold 48px ui-monospace, SFMono-Regular, Menlo, monospace'
+      context.fillStyle = !summary || summary.fps >= 50 ? '#c9f29b' : summary.fps >= 30 ? '#ffd27a' : '#ff9988'
+      context.fillText(`${summary?.fps.toFixed(0) ?? '--'} FPS`, 26, 48)
+      context.font = '26px ui-monospace, SFMono-Regular, Menlo, monospace'
+      context.fillStyle = '#fff3d7'
+      context.fillText(
+        `frame p95 ${summary?.intervalMs.p95.toFixed(1) ?? '--'}ms · drops ${summary?.droppedFrames ?? '--'}`,
+        26,
+        104,
+      )
+      context.fillText(
+        `CPU p95 ${summary?.workMs.p95.toFixed(1) ?? '--'}ms · render ${summary?.sceneRenderMs.p95.toFixed(1) ?? '--'}ms`,
+        26,
+        154,
+      )
+      context.font = '23px ui-monospace, SFMono-Regular, Menlo, monospace'
+      context.fillText(
+        `zoom ${summary?.zoom.toFixed(1) ?? '--'}x · buffer ${summary?.bufferWidth ?? '--'}×${summary?.bufferHeight ?? '--'} · ${summary?.renderCalls ?? '--'} calls`,
+        26,
+        207,
+      )
+      texture.needsUpdate = true
+    },
+    dispose(): void {
+      panel.geometry.dispose()
+      texture.dispose()
+      material.dispose()
+      scene.clear()
+    },
+  }
+}
+
+function summarizeFrameTimings(): GardenPerformanceSummary | null {
+  if (!frameTimingSamples.length) return null
+  const percentile = (values: readonly number[], fraction: number): number => {
+    const sorted = [...values].sort((a, b) => a - b)
+    return +sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))].toFixed(2)
+  }
+  const max = (values: readonly number[]): number => +Math.max(...values).toFixed(2)
+  const get = (key: keyof GardenFrameTiming): number[] => frameTimingSamples.map((sample) => sample[key])
+  const update = frameTimingSamples.map((sample) => sample.fairgroundMs + sample.animalsMs + sample.toolsMs + sample.otherUpdateMs)
+  const intervals = get('intervalMs').filter((value) => value > 0)
+  if (intervals.length === 0) return null
+  const averageInterval = intervals.reduce((total, value) => total + value, 0) / intervals.length
+  const drawingBuffer = renderer.getDrawingBufferSize(new THREE.Vector2())
+  const summarize = (values: readonly number[]) => ({ p50: percentile(values, 0.5), p95: percentile(values, 0.95), max: max(values) })
+  const summarizeTail = (values: readonly number[]) => ({ p95: percentile(values, 0.95), max: max(values) })
+  return {
+    samples: intervals.length,
+    fps: +(1000 / averageInterval).toFixed(1),
+    droppedFrames: intervals.filter((value) => value > FRAME_DROP_THRESHOLD_MS).length,
+    zoom: +(normalViewHeight / (viewHalfHeight * 2)).toFixed(2),
+    bufferWidth: drawingBuffer.x,
+    bufferHeight: drawingBuffer.y,
+    renderCalls: renderer.info.render.calls,
+    triangles: renderer.info.render.triangles,
+    intervalMs: summarize(intervals),
+    workMs: summarize(get('workMs')),
+    updateMs: summarize(update),
+    fairgroundMs: summarizeTail(get('fairgroundMs')),
+    animalsMs: summarizeTail(get('animalsMs')),
+    toolsMs: summarizeTail(get('toolsMs')),
+    otherUpdateMs: summarizeTail(get('otherUpdateMs')),
+    sceneRenderMs: summarizeTail(get('sceneRenderMs')),
+    overlayRenderMs: summarizeTail(get('overlayRenderMs')),
+  }
+}
+
 if (gardenDebugMode) {
   let sampleRunId = 0
   let sampleStatus: GardenSampleStatus = { id: 0, running: false, startedAt: null, finishedAt: null, error: null }
@@ -614,6 +786,7 @@ if (gardenDebugMode) {
           geometries: renderer.info.memory.geometries,
           textures: renderer.info.memory.textures,
         },
+        performance: summarizeFrameTimings(),
         farmExpansion: fairground.farmExpansion?.state ?? null,
       }
     },
@@ -842,22 +1015,37 @@ window.addEventListener('resize', () => {
   gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
   farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
   journalUI?.resize(window.innerWidth, window.innerHeight)
+  performanceOverlay?.resize(window.innerWidth, window.innerHeight)
 })
 
 updateCameraProjection()
 gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
 farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
 journalUI?.resize(window.innerWidth, window.innerHeight)
+performanceOverlay?.resize(window.innerWidth, window.innerHeight)
 
 let previousTime = performance.now()
+let lastPerformanceLogAt = previousTime
+let previousFrameTimestamp: number | null = null
 function frame(now: number): void {
+  const intervalMs = previousFrameTimestamp === null ? 0 : now - previousFrameTimestamp
+  previousFrameTimestamp = now
+  const timingEnabled = gardenDebugMode
+  const workStartedAt = timingEnabled ? performance.now() : 0
   const delta = Math.min(0.05, Math.max(0, (now - previousTime) / 1000))
   previousTime = now
+  let stageStartedAt = workStartedAt
   removePreviousCameraShake()
   fairground.update(delta)
+  const fairgroundMs = timingEnabled ? performance.now() - stageStartedAt : 0
   currentGardenBounds = fairground.farmExpansion?.state.bounds ?? GARDEN_BOUNDS
+  stageStartedAt = timingEnabled ? performance.now() : 0
   animals.forEach((animal) => animal.update(delta))
+  const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
+  stageStartedAt = timingEnabled ? performance.now() : 0
   gardenTools?.update(delta)
+  const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
+  stageStartedAt = timingEnabled ? performance.now() : 0
   showcaseUI?.update(animals)
   const expansionState = fairground.farmExpansion?.state
   if (expansionState) {
@@ -874,8 +1062,12 @@ function frame(now: number): void {
     if (isOverGameHUD(pointerPosition.x, pointerPosition.y)) gardenTools?.pointerLeave()
     else gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
   }
+  const otherUpdateMs = timingEnabled ? performance.now() - stageStartedAt : 0
   renderer.info.reset()
+  stageStartedAt = timingEnabled ? performance.now() : 0
   renderer.render(scene, camera)
+  const sceneRenderMs = timingEnabled ? performance.now() - stageStartedAt : 0
+  stageStartedAt = timingEnabled ? performance.now() : 0
   if (gardenToolsUI || farmExpansionUI) {
     renderer.autoClear = false
     renderer.clearDepth()
@@ -891,6 +1083,36 @@ function frame(now: number): void {
     renderer.clearDepth()
     renderer.render(journalUI.scene, journalUI.camera)
     renderer.autoClear = true
+  }
+  let overlayRenderMs = 0
+  if (performanceOverlay) {
+    performanceOverlay.update(now, summarizeFrameTimings)
+    renderer.autoClear = false
+    renderer.clearDepth()
+    renderer.render(performanceOverlay.scene, performanceOverlay.camera)
+    renderer.autoClear = true
+  }
+  if (timingEnabled) {
+    const finishedAt = performance.now()
+    overlayRenderMs = finishedAt - stageStartedAt
+    frameTimingSamples.push({
+      intervalMs,
+      workMs: finishedAt - workStartedAt,
+      fairgroundMs,
+      animalsMs,
+      toolsMs,
+      otherUpdateMs,
+      sceneRenderMs,
+      overlayRenderMs,
+    })
+    if (frameTimingSamples.length > FRAME_TIMING_SAMPLE_LIMIT) frameTimingSamples.shift()
+    if (now - lastPerformanceLogAt >= PERF_LOG_INTERVAL_MS) {
+      lastPerformanceLogAt = now
+      const summary = summarizeFrameTimings()
+      if (summary) {
+        console.info('[Frame Performance]', summary)
+      }
+    }
   }
   requestAnimationFrame(frame)
 }
