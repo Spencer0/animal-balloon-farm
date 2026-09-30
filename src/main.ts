@@ -188,7 +188,8 @@ function orbitPointerDown(event: PointerEvent): void {
     return
   }
   if (event.button === 0 && event.detail >= 2) return
-  if (event.button !== 0 && event.button !== 2) return
+  // Middle (1) joins left/right as a shovel verb (level) inside the garden.
+  if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
   if (gardenToolsUI?.pointerDown(event, gameCanvas)) {
     // A HUD card click may have switched tools; keep the 3D tool in sync.
     if (gardenTools && gardenTools.selectedTool !== gardenToolsUI.selectedTool) {
@@ -268,6 +269,60 @@ function heightsSummary(): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Hold a shovel button over a GARDEN-SPACE point for holdMs, re-projecting the
+ * point to screen every tick. Stays on target even when the camera drifted or
+ * the terrain moves under the cursor, so harness holds land where intended.
+ */
+async function holdWorldButton(wx: number, wz: number, button: number, holdMs: number): Promise<void> {
+  const buttons = button === 0 ? 1 : button === 1 ? 4 : 2
+  const project = (): { x: number; y: number } => {
+    const y = GARDEN_LAWN_Y + (gardenTerrain ? gardenTerrain.heightAt(wx, wz) : 0) + 0.008
+    const world = new THREE.Vector3(wx, y, wz).project(camera)
+    return { x: (world.x + 1) * window.innerWidth / 2, y: (1 - world.y) * window.innerHeight / 2 }
+  }
+  const moveOnce = (): void => {
+    const point = project()
+    gameCanvas.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: point.x,
+      clientY: point.y,
+      pointerId: 9001,
+      pointerType: 'mouse',
+      buttons,
+    }))
+  }
+  // The first synthetic move can absorb a one-time camera sync in the orbit
+  // handler; project the press point only after that has settled.
+  moveOnce()
+  const start = performance.now()
+  const downPoint = project()
+  gameCanvas.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true,
+    cancelable: true,
+    clientX: downPoint.x,
+    clientY: downPoint.y,
+    pointerId: 9001,
+    pointerType: 'mouse',
+    button,
+    buttons,
+  }))
+  while (performance.now() - start < Math.max(200, holdMs)) {
+    await new Promise((resolve) => window.setTimeout(resolve, 80))
+    moveOnce()
+  }
+  const upPoint = project()
+  gameCanvas.dispatchEvent(new PointerEvent('pointerup', {
+    bubbles: true,
+    clientX: upPoint.x,
+    clientY: upPoint.y,
+    pointerId: 9001,
+    pointerType: 'mouse',
+    button,
+    buttons: 0,
+  }))
+}
+
 function handleToolKeyboard(event: KeyboardEvent): void {
   if (journalUI?.isOpen) {
     journalUI.handleKeyDown(event)
@@ -339,6 +394,13 @@ interface GardenDebugHarness {
   pickReport(x: number, y: number): unknown
   dig(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
   fill(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  level(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  digAt(wx: number, wz: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  fillAt(wx: number, wz: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  levelAt(wx: number, wz: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  heightAt(wx: number, wz: number): number
+  splatDirect(wx: number, wz: number, radius: number, amount: number): number
+  levelDirect(wx: number, wz: number, radius: number, strength: number): number
   heightsSummary(): Record<string, unknown> | null
   animalsSummary(): { id: string; y: number }[]
   drag(points: readonly { readonly x: number; readonly y: number }[], holdMs?: number): Promise<ReturnType<GardenDebugHarness['state']> | null>
@@ -387,7 +449,7 @@ if (gardenDebugMode) {
         pointerId: 9001,
         pointerType: 'mouse',
         button,
-        buttons: button === 2 ? 2 : 1,
+        buttons: button === 0 ? 1 : button === 1 ? 4 : 2,
       }))
     },
     trim(x, y): void {
@@ -415,6 +477,47 @@ if (gardenDebugMode) {
       await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
       debugHarness.up()
       return heightsSummary()
+    },
+    async level(x, y, holdMs = 1200): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      debugHarness.move(x, y)
+      debugHarness.down(x, y, 1)
+      await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
+      debugHarness.up()
+      return heightsSummary()
+    },
+    // World-space hold commands: they re-project the garden point to screen
+    // every tick, so they stay on target no matter how the camera drifted —
+    // unlike the screen-space variants, which trust a single projection.
+    async digAt(wx, wz, holdMs = 700): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      await holdWorldButton(wx, wz, 0, holdMs)
+      return heightsSummary()
+    },
+    async fillAt(wx, wz, holdMs = 900): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      await holdWorldButton(wx, wz, 2, holdMs)
+      return heightsSummary()
+    },
+    async levelAt(wx, wz, holdMs = 1200): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      await holdWorldButton(wx, wz, 1, holdMs)
+      return heightsSummary()
+    },
+    heightAt(wx, wz): number {
+      return gardenTerrain ? gardenTerrain.heightAt(wx, wz) : 0
+    },
+    // Direct terrain-math calls (no pointer path, no render loop): let checks
+    // exercise splat/level deterministically even when the tab is throttled.
+    splatDirect(wx, wz, radius, amount): number {
+      return gardenTerrain ? gardenTerrain.splat(wx, wz, radius, amount) : 0
+    },
+    levelDirect(wx, wz, radius, strength): number {
+      return gardenTerrain ? gardenTerrain.level(wx, wz, radius, strength) : 0
     },
     heightsSummary(): Record<string, unknown> | null {
       return heightsSummary()

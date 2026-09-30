@@ -18,7 +18,7 @@ export interface GardenToolDebugState {
   readonly cursor: { readonly x: number; readonly y: number; readonly z: number } | null
   readonly isPointerDown: boolean
   readonly holdSeconds: number
-  readonly activeAction: 'grow' | 'trim' | 'dig' | 'fill' | null
+  readonly activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | null
   readonly grassBatches: number
   readonly grassBlades: number
   readonly grassCapacity: number
@@ -94,6 +94,10 @@ const TRIM_PAINT_FACTOR = 0.9
 // mounds straight up. Depth contour rings baked into the soil (garden-terrain)
 // make holes read as depth, and slope clamps keep every result walkable.
 const DIG_RADIUS_FACTOR = 1
+// Leveling (middle button) drags the whole patch toward its average height;
+// strength is a per-tick fraction, radius slightly inside the brush ring.
+const LEVEL_RADIUS_FACTOR = 0.9
+const LEVEL_STRENGTH = 6
 // Nominal rates run hot because the walkable-slope clamp redistributes part of
 // every stroke into widening the pit walls; these values keep the felt sink
 // rate near −0.25 m/s at the cursor and make a pond-floor-size pit take a
@@ -211,7 +215,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
 
   let cursorVisible = false
   let isPointerDown = false
-  let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | null = null
+  let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | null = null
   let lastPaintPoint: THREE.Vector3 | null = null
   let lastSeedPoint: THREE.Vector3 | null = null
   let hoverTint: string | null = null
@@ -707,7 +711,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       }
       if (selectedTool === 'shovel') {
         // Digging and filling follow the pointer continuously.
-        if (activeAction === 'dig' || activeAction === 'fill') lastSeedPoint = position.clone()
+        if (activeAction === 'dig' || activeAction === 'fill' || activeAction === 'level') lastSeedPoint = position.clone()
         hoverTint = '#d9a06b'
         return
       }
@@ -739,7 +743,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       hoverTint = nearbyCoverage > 0.14 ? '#c2e39a' : '#b7d97a'
     },
     pointerDown(event): boolean {
-      if (event.button !== 0 && event.button !== 2) return false
+      if (event.button !== 0 && event.button !== 1 && event.button !== 2) return false
       const position = updateCursorPosition(event)
       if (!position) return false
       if (selectedTool === 'shovel') {
@@ -749,7 +753,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
         paintTimer = 0
         actionAccumulator = 0
         lastPaintDuration = 0
-        activeAction = event.button === 0 ? 'dig' : 'fill'
+        activeAction = event.button === 0 ? 'dig' : event.button === 1 ? 'level' : 'fill'
         return true
       }
       activeAction = event.button === 0 ? 'grow' : 'trim'
@@ -874,6 +878,9 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
           } else if (activeAction === 'fill') {
             const radius = brushRadius() * FILL_RADIUS_FACTOR
             if (terrain.splat(x, z, radius, FILL_RISE * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
+          } else if (activeAction === 'level') {
+            const radius = brushRadius() * LEVEL_RADIUS_FACTOR
+            if (terrain.level(x, z, radius, LEVEL_STRENGTH * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
           }
         }
       }
@@ -902,6 +909,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
       glowMaterial.color.set(activeAction === 'trim' ? '#f3aa7b'
         : activeAction === 'grow' ? '#c2efa0'
         : activeAction === 'dig' ? '#e0b080'
+        : activeAction === 'level' ? '#cfe4ee'
         : activeAction === 'fill' ? '#e8c78f'
         : '#fff3d7')
       ;(cursorShadow.material as THREE.MeshBasicMaterial).opacity = isPointerDown && activeAction === 'grow' ? 0.19 + pulse * 0.1 : 0.14

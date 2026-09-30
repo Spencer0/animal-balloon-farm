@@ -18,6 +18,7 @@ as "down", not "wet dirt", and future pond beds come pre-shaded.
 | Question | Decision |
 | --- | --- |
 | Controls | **Dig = down, fill = up** (2026-09-29, supersedes pile carrying) — left-hold digs down, right-hold fills up. Simple to reason about; no dirt conservation bookkeeping. |
+| Leveling | **Middle-hold = level** (2026-09-29) — pulls every cell in the brush disc toward the disc's weighted average height, so a patch mixing raised and lowered ground resolves into one flat plane. Smooth-style blur could not do this. |
 | Terrain range | **Pond-capable depth, storybook hills up** — max +1.2 raised / **−2.6 sunk**, deep enough for large ponds in a later water milestone. |
 | Depth legibility | **Contour rings** (2026-09-29) — soil vertex colors step darker/wetter every 0.35 m of depth; under-garden planes were opened (parcel cap hollowed into a rim wall + pit floor) so depth is actually visible rather than capped by a flat brown floor at y≈−0.04. |
 | Smoothing | **Dropped** for now — right-click is fill. Revisit a smooth binding (e.g. a modifier key or tool #3) if lumpy terrain becomes a real complaint. |
@@ -37,6 +38,9 @@ as "down", not "wet dirt", and future pond beds come pre-shaded.
    primary "you are going DOWN" signal.
 4. **Right-click-hold fills up.** The inverse verb: ground mounds back up
    (~+0.22 m/s), so mistakes are recoverable in place with no inventory.
+5. **Middle-click-hold levels.** Everything under the brush eases toward the
+   patch's own average height — the fix for an uneven circle where part is
+   raised and part lowered.
 5. **Undo guardrail:** edits are continuous but slow and radius-bound; a later
    milestone can snapshot the height grid per stroke for true undo.
 

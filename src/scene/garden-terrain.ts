@@ -52,6 +52,7 @@ export interface GardenTerrain {
   heightAt(x: number, z: number): number
   splat(x: number, z: number, radius: number, amount: number): number
   smooth(x: number, z: number, radius: number, strength: number): number
+  level(x: number, z: number, radius: number, strength: number): number
   applyToMeshes(): void
   readonly dirty: boolean
   clear(): void
@@ -218,6 +219,53 @@ export function createGardenTerrain(bindings: readonly TerrainMeshBinding[]): Ga
     return changed
   }
 
+  /**
+   * Level: pull every cell in the disc toward the disc's brush-weighted average
+   * height — the "make this patch flat" verb. Unlike smooth (local blur), a
+   * plane emerges even when the patch mixes raised and lowered ground.
+   */
+  function level(x: number, z: number, radius: number, strength: number): number {
+    const minGx = clampX(Math.floor(gridX(x - radius)))
+    const maxGx = clampX(Math.ceil(gridX(x + radius)))
+    const minGz = clampZ(Math.floor(gridZ(z - radius)))
+    const maxGz = clampZ(Math.ceil(gridZ(z + radius)))
+    const indices: number[] = []
+    const weights: number[] = []
+    let weightSum = 0
+    for (let gz = minGz; gz <= maxGz; gz += 1) {
+      for (let gx = minGx; gx <= maxGx; gx += 1) {
+        const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
+        const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
+        const distance = Math.hypot(worldX - x, worldZ - z)
+        if (distance > radius) continue
+        const weight = (1 - smoothstep(0.6, 1, distance / radius)) * cellEdgeFade(gx, gz)
+        if (weight <= 0) continue
+        indices.push(gz * GRID_COLS + gx)
+        weights.push(weight)
+        weightSum += weight
+      }
+    }
+    if (!indices.length) return 0
+    let average = 0
+    for (let i = 0; i < indices.length; i += 1) average += heights[indices[i]] * weights[i]
+    average /= weightSum
+    let changed = 0
+    for (let i = 0; i < indices.length; i += 1) {
+      const index = indices[i]
+      const before = heights[index]
+      const after = Math.min(TERRAIN_MAX_H, Math.max(TERRAIN_MIN_H, before + (average - before) * Math.min(1, strength * weights[i])))
+      if (after !== before) {
+        heights[index] = after
+        changed += 1
+      }
+    }
+    if (changed > 0) {
+      clampSlope(minGx - CLAMP_PAD_CELLS, maxGx + CLAMP_PAD_CELLS, minGz - CLAMP_PAD_CELLS, maxGz + CLAMP_PAD_CELLS)
+      dirty = true
+    }
+    return changed
+  }
+
   function smooth(x: number, z: number, radius: number, strength: number): number {
     const minGx = clampX(Math.floor(gridX(x - radius)))
     const maxGx = clampX(Math.ceil(gridX(x + radius)))
@@ -362,6 +410,7 @@ export function createGardenTerrain(bindings: readonly TerrainMeshBinding[]): Ga
     heightAt,
     splat,
     smooth,
+    level,
     applyToMeshes,
     get dirty() {
       return dirty
