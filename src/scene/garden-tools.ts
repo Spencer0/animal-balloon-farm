@@ -3,6 +3,7 @@ import { containsGardenPoint, GARDEN_BOUNDS, GARDEN_LAWN_Y, GARDEN_MAX_BOUNDS } 
 import type { GardenBounds } from '../game/farm-expansion'
 import { createGardenToolModel, GARDEN_TOOLS, type GardenToolId } from './garden-tool-art'
 import type { GardenTerrain } from './garden-terrain'
+import type { GardenWaterField } from '../game/garden-water'
 
 export interface GardenPointerMove {
   readonly clientX: number
@@ -33,6 +34,11 @@ export interface GardenToolDebugState {
   readonly lastGrassSpawnMaxY: number
   readonly terrainMin: number
   readonly terrainMax: number
+  readonly waterCells: number
+  readonly waterVolume: number
+  readonly waterMaxDepth: number
+  readonly waterSurface: number
+  readonly waterRunoff: number
 }
 
 export interface GardenTools {
@@ -157,6 +163,7 @@ export function createGardenTools(
   lawn: THREE.Mesh,
   terrain: GardenTerrain,
   getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
+  water?: GardenWaterField,
 ): GardenTools {
   // The pointer used to be hidden outright for the whole canvas, which left the
   // menu, the journal and the viewer with no cursor at all, and was then
@@ -241,13 +248,78 @@ export function createGardenTools(
   let greenGroundVertices = 0
   let grassCapacity = 0
   let terrainApplyTimer = 0
+  let waterApplyTimer = 0
   // Re-deriving two ~6.5k-vertex planes (positions + normals + contour colors)
   // every rAF frame during a hold cost more than the rest of the game combined;
   // 30 Hz is visually indistinguishable for slow ground deformation.
   const TERRAIN_APPLY_INTERVAL = 1 / 30
+  /**
+   * Grass in water: shallow water leaves the meadow standing (reeds at the
+   * edge), deep water lays it flat. Driving it off the water depth rather than
+   * a boolean wet/dry means it is continuous and self-reversing — drain the
+   * pond and the blades stand back up on their own.
+   */
+  const GRASS_DROWN_START = 0.05
+  const GRASS_DROWN_FULL = 0.35
+  // The water field centres its grid on the garden origin, the same convention
+  // the terrain grid uses, so cell -> world is a straight multiply.
+  const waterCellX = (gx: number): number => -(terrain.gridCols * terrain.cellSize) / 2 + (gx + 0.5) * terrain.cellSize
+  const waterCellZ = (gz: number): number => -(terrain.gridRows * terrain.cellSize) / 2 + (gz + 0.5) * terrain.cellSize
+  function submergeGrass(x: number, z: number, radius: number): void {
+    if (!water) return
+    const radiusSquared = radius * radius
+    const minCellX = Math.floor((x - radius) / GRASS_CELL_SPACING)
+    const maxCellX = Math.floor((x + radius) / GRASS_CELL_SPACING)
+    const minCellZ = Math.floor((z - radius) / GRASS_CELL_SPACING)
+    const maxCellZ = Math.floor((z + radius) / GRASS_CELL_SPACING)
+    const matrix = new THREE.Matrix4()
+    const position = new THREE.Vector3()
+    const rotation = new THREE.Quaternion()
+    const scale = new THREE.Vector3()
+    const updatedMeshes = new Set<THREE.InstancedMesh>()
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const cell = occupancy.get(`${cellX},${cellZ}`)
+        if (!cell) continue
+        for (const blade of cell) {
+          if (blade.height <= 0) continue
+          const dx = blade.x - x
+          const dz = blade.z - z
+          if (dx * dx + dz * dz > radiusSquared) continue
+          const depth = water.depthAt(blade.x, blade.z)
+          const drown = 1 - THREE.MathUtils.smoothstep(depth, GRASS_DROWN_START, GRASS_DROWN_FULL)
+          const next = blade.height * drown
+          if (Math.abs(next - blade.height) < 0.0005) continue
+          blade.mesh.getMatrixAt(blade.tileIndex, matrix)
+          matrix.decompose(position, rotation, scale)
+          // Ride the water surface rather than the bed, so a submerged blade
+          // sits in the water instead of under it.
+          position.y = GARDEN_LAWN_Y + 0.009
+            + Math.max(terrain.heightAt(blade.x, blade.z), water.surfaceAt(blade.x, blade.z) - 0.02)
+          if (next <= 0.0005) {
+            scale.setScalar(0.0001)
+            blade.height = 0
+            cell.splice(cell.indexOf(blade), 1)
+            totalGrassBlades -= 1
+          } else {
+            scale.y = next
+            blade.height = next
+          }
+          matrix.compose(position, rotation, scale)
+          blade.mesh.setMatrixAt(blade.tileIndex, matrix)
+          updatedMeshes.add(blade.mesh)
+        }
+      }
+    }
+    updatedMeshes.forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true })
+  }
+
   /** Blades and painted ground must follow the deformed surface. */
   function afterTerrainEdit(x: number, z: number, radius: number): void {
     reprojectGrass(x, z, radius + 0.5)
+    // The ground just moved under whatever water is sitting on it, so the pond
+    // has to re-level: digging deepens it, filling it in makes it disappear.
+    water?.markTerrainChanged()
   }
 
   function reprojectGrass(x: number, z: number, radius: number): void {
@@ -845,6 +917,13 @@ export function createGardenTools(
       }
     },
     debugState(): GardenToolDebugState {
+      const waterStats = water ? water.summary() : {
+        wetCells: 0,
+        volume: 0,
+        maxDepth: 0,
+        highestSurface: 0,
+        runoff: 0,
+      }
       return {
         selectedTool,
         cursorVisible,
@@ -865,6 +944,11 @@ export function createGardenTools(
         lastGrassSpawnMaxY: +lastGrassSpawnMaxY.toFixed(3),
         terrainMin: terrain.stats().min,
         terrainMax: terrain.stats().max,
+        waterCells: waterStats.wetCells,
+        waterVolume: waterStats.volume,
+        waterMaxDepth: waterStats.maxDepth,
+        waterSurface: waterStats.highestSurface,
+        waterRunoff: waterStats.runoff,
       }
     },
     clearGrass,
@@ -901,6 +985,31 @@ export function createGardenTools(
             if (terrain.level(x, z, radius, LEVEL_STRENGTH * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
           }
         }
+      }
+      // Water settles on the same 30 Hz cadence as the ground. It is a full
+      // priority flood plus pool solve, so it is throttled for the same reason
+      // the terrain re-derivation is: a 60 Hz version costs more than the rest
+      // of the frame and the pond does not visibly move any faster.
+      if (water?.dirty) {
+        waterApplyTimer += deltaSeconds
+        if (waterApplyTimer >= TERRAIN_APPLY_INTERVAL) {
+          water.settle()
+          // Grass has to follow the new surface. Only the wet cells moved, so
+          // the work is bounded by the pond rather than the whole lawn.
+          const wet = water.wetCells()
+          for (const cell of wet) {
+            const gx = cell % terrain.gridCols
+            const gz = (cell - gx) / terrain.gridCols
+            submergeGrass(
+              waterCellX(gx),
+              waterCellZ(gz),
+              terrain.cellSize * 1.5,
+            )
+          }
+          waterApplyTimer = 0
+        }
+      } else {
+        waterApplyTimer = 0
       }
       if (terrain.dirty) {
         terrainApplyTimer += deltaSeconds

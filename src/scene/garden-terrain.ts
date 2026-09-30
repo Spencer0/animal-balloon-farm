@@ -22,6 +22,14 @@ const TERRAIN_CELL = 0.55
 const TERRAIN_MAX_SLOPE = 0.75
 const EDGE_KEEP_OUT = 0.9
 const EDGE_FADE_WIDTH = 0.6
+// A raised bed edge runs just inside the active bounds, the way a real garden
+// has a lipped border. It is what makes a pond dug against the edge hold water
+// instead of quietly draining off the parcel: the water solver treats the grid
+// border as an open outlet, so without a lip every edge pond would be a leak.
+// EDGE_KEEP_OUT already stops the shovel reaching it, so the lip is something
+// you can lean on, not something you can breach.
+const BED_LIP_HEIGHT = 0.42
+const BED_LIP_WIDTH = 1.3
 // Slope-clamp sweep bounds: the box around an edit is padded far beyond how
 // far one correction wave can travel, sweeps stop as soon as a sweep makes no
 // progress, and 60 sweeps is a hard backstop. Digging holds run ~12 splats per
@@ -50,10 +58,18 @@ export interface GardenTerrain {
   readonly gridCols: number
   readonly gridRows: number
   heightAt(x: number, z: number): number
+  /**
+   * Raw ground height at a grid cell, lip included. The water field samples the
+   * terrain through this so a pond's basin and spill level see the same ground
+   * the player sees, rather than the edit layer alone.
+   */
+  cellHeightAt(gx: number, gz: number): number
   splat(x: number, z: number, radius: number, amount: number): number
   smooth(x: number, z: number, radius: number, strength: number): number
   level(x: number, z: number, radius: number, strength: number): number
   applyToMeshes(): void
+  /** Re-derive the bed lip after the garden bounds change. Returns true if it moved. */
+  syncBounds(): boolean
   readonly dirty: boolean
   clear(): void
   clearSoilBandColors(): void
@@ -95,7 +111,11 @@ export function createGardenTerrain(
   getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
 ): GardenTerrain {
   const heights = new Float32Array(GRID_COLS * GRID_ROWS)
+  const bedLip = new Float32Array(GRID_COLS * GRID_ROWS)
+  const outsideParcel = new Uint8Array(GRID_COLS * GRID_ROWS)
   let dirty = false
+  let lipBoundsHalfWidth = 0
+  let lipBoundsHalfDepth = 0
 
   function gridX(x: number): number {
     return (x - GRID_ORIGIN_X) / TERRAIN_CELL
@@ -122,6 +142,52 @@ export function createGardenTerrain(
     return Math.min(fadeX, fadeZ)
   }
 
+  /**
+   * Height of the raised bed edge at a cell, easing down to grade as it moves
+   * inward. Recomputed whenever the active bounds change, so revealing a new
+   * parcel moves the lip outward with the garden.
+   */
+  function bedLipAt(gx: number, gz: number): number {
+    const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
+    const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
+    const bounds = getActiveBounds()
+    const insetX = bounds.halfWidth - Math.abs(worldX)
+    const insetZ = bounds.halfDepth - Math.abs(worldZ)
+    const inset = Math.min(insetX, insetZ)
+    if (inset >= BED_LIP_WIDTH) return 0
+    // Smoothstep so the lip rises out of the lawn instead of stepping up.
+    const t = 1 - Math.min(1, Math.max(0, inset / BED_LIP_WIDTH))
+    return BED_LIP_HEIGHT * t * t * (3 - 2 * t)
+  }
+
+  /**
+   * The lip is stored separately from the player's edits so a `clear()` or a
+   * re-reveal can reset the sculpting without ever erasing the border, and so
+   * a filled-in bed edge is always refilled to its full height.
+   */
+  function rebuildBedLip(): void {
+    const bounds = getActiveBounds()
+    for (let gz = 0; gz < GRID_ROWS; gz += 1) {
+      for (let gx = 0; gx < GRID_COLS; gx += 1) {
+        const index = gz * GRID_COLS + gx
+        bedLip[index] = bedLipAt(gx, gz)
+        // Ground outside the active parcel is not part of the garden at all; it
+        // stays at the lip height rather than being dug into.
+        if (Math.abs(GRID_ORIGIN_X + gx * TERRAIN_CELL) > bounds.halfWidth
+          || Math.abs(GRID_ORIGIN_Z + gz * TERRAIN_CELL) > bounds.halfDepth) {
+          outsideParcel[index] = 1
+        } else {
+          outsideParcel[index] = 0
+        }
+      }
+    }
+  }
+
+  /** True when the cell lies beyond the active garden bounds. */
+  function isOutsideParcel(gx: number, gz: number): boolean {
+    return outsideParcel[gz * GRID_COLS + gx] === 1
+  }
+
   function heightAt(x: number, z: number): number {
     const fx = gridX(x)
     const fz = gridZ(z)
@@ -131,11 +197,18 @@ export function createGardenTerrain(
     const jz = clampZ(iz + 1)
     const tx = Math.min(1, Math.max(0, fx - ix))
     const tz = Math.min(1, Math.max(0, fz - iz))
-    const h00 = heights[iz * GRID_COLS + ix]
-    const h10 = heights[iz * GRID_COLS + jx]
-    const h01 = heights[jz * GRID_COLS + ix]
-    const h11 = heights[jz * GRID_COLS + jx]
+    const h00 = heights[iz * GRID_COLS + ix] + bedLip[iz * GRID_COLS + ix]
+    const h10 = heights[iz * GRID_COLS + jx] + bedLip[iz * GRID_COLS + jx]
+    const h01 = heights[jz * GRID_COLS + ix] + bedLip[jz * GRID_COLS + ix]
+    const h11 = heights[jz * GRID_COLS + jx] + bedLip[jz * GRID_COLS + jx]
     return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
+  }
+
+  function cellHeightAt(gx: number, gz: number): number {
+    const ix = clampX(gx)
+    const iz = clampZ(gz)
+    const index = iz * GRID_COLS + ix
+    return heights[index] + bedLip[index]
   }
 
   /** Bring one neighbor pair within the slope limit; returns the excess fixed. */
@@ -152,8 +225,11 @@ export function createGardenTerrain(
       // Honor the floor so slope redistribution can never dig a cell below it
       // (TERRAIN_MIN_H is deep enough for large ponds). The max(0, …) matters:
       // a cell already AT the floor must absorb nothing (not a negative
-      // "drop", which would raise it and boost the neighbor).
-      const drop = Math.max(0, Math.min(excess / 2, heights[index] - terrainFloor()))
+      // "drop", which would raise it and boost the neighbor). The bed lip
+      // raises the floor locally, so a deep dig beside the border can never
+      // slope down under it and breach the garden edge.
+      const floor = Math.max(terrainFloor(), -bedLip[index])
+      const drop = Math.max(0, Math.min(excess / 2, heights[index] - floor))
       heights[index] -= drop
       heights[neighbor] += excess - drop
     }
@@ -209,6 +285,9 @@ export function createGardenTerrain(
         const effect = weight * edge
         if (effect <= 0) continue
         const index = gz * GRID_COLS + gx
+        // The bed lip is the garden's border, not something the player owns:
+        // edits never reach it and never lower it, so the border always holds.
+        if (outsideParcel[index] === 1) continue
         const before = heights[index]
         const after = Math.min(TERRAIN_MAX_H, Math.max(TERRAIN_MIN_H, before + amount * effect))
         if (after === before) continue
@@ -244,6 +323,7 @@ export function createGardenTerrain(
         if (distance > radius) continue
         const weight = (1 - smoothstep(0.6, 1, distance / radius)) * cellEdgeFade(gx, gz)
         if (weight <= 0) continue
+        if (isOutsideParcel(gx, gz)) continue
         indices.push(gz * GRID_COLS + gx)
         weights.push(weight)
         weightSum += weight
@@ -384,6 +464,7 @@ export function createGardenTerrain(
 
   function clear(): void {
     heights.fill(0)
+    rebuildBedLip()
     dirty = true
   }
 
@@ -407,15 +488,39 @@ export function createGardenTerrain(
     return { min, max, changedCells, depthBands: bands.size, maxNeighborDelta: +maxNeighborDelta.toFixed(3) }
   }
 
+  /**
+   * Re-derive the bed lip when the garden has been re-revealed at a new size.
+   * Cheap (one pass over the grid) and only runs on an expansion boundary, not
+   * per frame. Returns true when the lip actually moved, so the caller can
+   * decide whether the water needs re-solving — asking every frame would
+   * otherwise pin the water field permanently dirty and cost a full priority
+   * flood on every tick.
+   */
+  function syncBounds(): boolean {
+    const bounds = getActiveBounds()
+    if (bounds.halfWidth === lipBoundsHalfWidth && bounds.halfDepth === lipBoundsHalfDepth) return false
+    lipBoundsHalfWidth = bounds.halfWidth
+    lipBoundsHalfDepth = bounds.halfDepth
+    rebuildBedLip()
+    dirty = true
+    return true
+  }
+
+  rebuildBedLip()
+  lipBoundsHalfWidth = getActiveBounds().halfWidth
+  lipBoundsHalfDepth = getActiveBounds().halfDepth
+
   return {
     cellSize: TERRAIN_CELL,
     gridCols: GRID_COLS,
     gridRows: GRID_ROWS,
     heightAt,
+    cellHeightAt,
     splat,
     smooth,
     level,
     applyToMeshes,
+    syncBounds,
     get dirty() {
       return dirty
     },

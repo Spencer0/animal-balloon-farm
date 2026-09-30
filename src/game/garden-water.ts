@@ -167,6 +167,18 @@ export interface GardenWaterField {
   isDamp(x: number, z: number): boolean
   /** Every cell currently holding visible water, in row-major order. */
   wetCells(): number[]
+  /**
+   * A smoothed view of the water for rendering: per grid cell, the surface
+   * height of the pool it belongs to and how solidly wet it is.
+   *
+   * Rendering straight from the raw cell depth produces a spiky starburst at
+   * the shoreline, because a dry cell next to a deep pool sits at *terrain*
+   * height — well above the water — and the triangles between them tilt up into
+   * a saw. Instead the surface is extended outward past the shoreline at the
+   * pool's own level, and opacity falls off with horizontal distance from the
+   * water, so the edge fades flat instead of tearing.
+   */
+  shoreField(): { readonly level: Float32Array; readonly wetness: Float32Array }
   summary(): WaterFieldSummary
   clear(): void
 }
@@ -624,6 +636,60 @@ export function createGardenWaterField(
     return found
   }
 
+  // Scratch for the shore field: a breadth-first distance transform outward
+  // from the wet cells, so the shoreline fade is a smooth radial falloff rather
+  // than whatever the cell grid happens to look like.
+  const shoreQueue = new Int32Array(cellCount)
+  const shoreDistance = new Int32Array(cellCount)
+  const shoreLevel = new Float32Array(cellCount)
+  const shoreWetness = new Float32Array(cellCount)
+
+  function shoreField(): { level: Float32Array; wetness: Float32Array } {
+    shoreLevel.fill(Number.NaN)
+    let head = 0
+    let tail = 0
+    for (let index = 0; index < cellCount; index += 1) {
+      if (depth[index] <= WATER_MIN_VISIBLE_DEPTH) {
+        shoreDistance[index] = -1
+        continue
+      }
+      shoreDistance[index] = 0
+      shoreLevel[index] = surface[index]
+      if (tail < cellCount) shoreQueue[tail++] = index
+    }
+    // Water spreads this many cells past the shoreline before fading out.
+    const reach = Math.max(1, Math.round(WATER_SHORE_BAND / cellSize))
+    while (head < tail) {
+      const index = shoreQueue[head++]
+      const distance = shoreDistance[index]
+      if (distance >= reach) continue
+      const gx = index % gridCols
+      const gz = (index - gx) / gridCols
+      for (const [dx, dz] of NEIGHBOURS) {
+        const nx = gx + dx
+        const nz = gz + dz
+        if (nx < 0 || nz < 0 || nx >= gridCols || nz >= gridRows) continue
+        const neighbour = nz * gridCols + nx
+        if (shoreDistance[neighbour] >= 0 && shoreDistance[neighbour] <= distance + 1) continue
+        shoreDistance[neighbour] = distance + 1
+        // The fade keeps the nearest pool's level, so the sheet stays flat
+        // right out to where it disappears.
+        shoreLevel[neighbour] = shoreLevel[index]
+        if (tail < cellCount) shoreQueue[tail++] = neighbour
+      }
+    }
+    for (let index = 0; index < cellCount; index += 1) {
+      const distance = shoreDistance[index]
+      if (distance < 0) {
+        shoreWetness[index] = 0
+        continue
+      }
+      const t = 1 - distance / (reach + 1)
+      shoreWetness[index] = t * t * (3 - 2 * t)
+    }
+    return { level: shoreLevel, wetness: shoreWetness }
+  }
+
   function isDamp(x: number, z: number): boolean {
     const reach = Math.max(1, Math.ceil(WATER_SHORE_BAND / cellSize))
     const gx = clampGx(Math.floor((x - cellOriginX) / cellSize))
@@ -692,6 +758,7 @@ export function createGardenWaterField(
     },
     isDamp,
     wetCells,
+    shoreField,
     summary,
     clear,
   }
