@@ -5,7 +5,7 @@ import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
-import { advanceAnimalTravel, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
+import { advanceAnimalTravel, canAnimalLeaveFarm, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
 
 export type AnimalClip = 'IDLE' | 'WALK'
 export type AnimalAppearance = 'standard' | 'wild'
@@ -697,15 +697,15 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           const completedDirection = travelDirection
           travelSide = completedDirection === 'leave' ? 'carnival' : 'farm'
           travelDirection = null
-          travelCooldown = stage >= 3 ? 28 + random() * 18 : stage === 2 ? 8 + random() * 8 : 0
+          travelCooldown = canAnimalLeaveFarm(stage) ? 8 + random() * 8 : 0
           target.set(wrapper.position.x, 0, wrapper.position.z)
           setAnimation('IDLE', 0.22)
         }
       } else {
-        // A stage-two visitor can browse both sides of the gate. Residents are
-        // kept to the garden; carnival and farm wander bounds change smoothly
-        // only after a route has carried the animal through the entrance.
-        if (stage >= 2 && travelCooldown > 0) {
+        // Only stage-two visitors browse both sides of the gate. Settled
+        // residents stay inside; the visitor's bounds change only after a
+        // route has carried it through the entrance.
+        if (canAnimalLeaveFarm(stage) && travelCooldown > 0) {
           travelCooldown = Math.max(0, travelCooldown - delta)
           if (travelCooldown === 0) beginTravel(travelSide === 'farm' ? 'leave' : 'enter')
         }

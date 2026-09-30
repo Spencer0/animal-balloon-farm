@@ -27,6 +27,11 @@ export interface AnimalTravelStep {
 const GATE_CLEARANCE = 3.7
 const APPROACH_CLEARANCE = 2.4
 
+/** Stage 2 is a visitor; settled/breedable residents stay on the farm. */
+export function canAnimalLeaveFarm(stage: number): boolean {
+  return stage === 2
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value))
 }

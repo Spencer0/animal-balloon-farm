@@ -11,6 +11,14 @@ const { outputFiles } = await build({
 })
 const travel = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 
+test('settled residents stay on the farm while stage-two visitors may come and go', () => {
+  assert.equal(travel.canAnimalLeaveFarm(0), false)
+  assert.equal(travel.canAnimalLeaveFarm(1), false)
+  assert.equal(travel.canAnimalLeaveFarm(2), true, 'visitors may wander outside')
+  assert.equal(travel.canAnimalLeaveFarm(3), false, 'a settled animal is home')
+  assert.equal(travel.canAnimalLeaveFarm(4), false, 'a breeding animal is home')
+})
+
 test('entering the farm walks through the nearest gate without position snapping', () => {
   const start = { x: 24, z: 8 }
   const route = travel.createAnimalTravelRoute('enter', { halfWidth: 14, halfDepth: 9.5 }, start)
