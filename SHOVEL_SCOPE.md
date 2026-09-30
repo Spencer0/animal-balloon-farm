@@ -1,21 +1,28 @@
 # Shovel (Tool #2) — Scope & Technical Plan
 
-Status: **scoped, not started.** Decisions below were made by Spencer on 2026-09-29.
+Status: **milestone 2 shipped** (2026-09-29): dig=down / fill=up with depth
+rings. Decisions below were made by Spencer on 2026-09-29; the 2026-09-29
+"scrap the piles" decision supersedes the original pile-carrying controls.
 Companion to [`SPEC.md`](SPEC.md) §5.1 (terrain types), §6 (input direction), §11 (guardrails).
 
 ## What the shovel is
 
-The second garden tool. It sculpts the garden ground by **digging up dirt into
-piles, carrying the pile, and depositing it elsewhere** — dirt is conserved,
-movement is physical and readable, and every state change is player-initiated.
+The second garden tool. It sculpts the garden ground with two verbs:
+**left-hold digs the ground down, right-hold fills it back up** — no dirt
+entities, no carrying, no inventory. Depth is made legible by **contour rings**
+baked into the soil (one darker band per 0.35 m below grade), so a hole reads
+as "down", not "wet dirt", and future pond beds come pre-shaded.
 
-### Decisions (locked 2026-09-29)
+### Decisions
 
 | Question | Decision |
 | --- | --- |
-| Controls | **Dig piles, move dirt** — left-click digs, click a pile to pick it up, click ground to deposit. Not continuous raise/lower. |
-| Terrain range | **Gentle storybook hills** — max ~+1.2 raised / ~−0.8 sunk, tuned to the miniature diorama camera. |
-| Steep slopes | **Always walkable** — deformation clamps slope steepness so cliffs can never form; animals always reach everywhere. |
+| Controls | **Dig = down, fill = up** (2026-09-29, supersedes pile carrying) — left-hold digs down, right-hold fills up. Simple to reason about; no dirt conservation bookkeeping. |
+| Leveling | **Middle-hold = level** (2026-09-29) — pulls every cell in the brush disc toward the disc's weighted average height, so a patch mixing raised and lowered ground resolves into one flat plane. Smooth-style blur could not do this. |
+| Terrain range | **Pond-capable depth, storybook hills up** — max +1.2 raised / **−2.6 sunk**, deep enough for large ponds in a later water milestone. |
+| Depth legibility | **Contour rings** (2026-09-29) — soil vertex colors step darker/wetter every 0.35 m of depth; under-garden planes were opened (parcel cap hollowed into a rim wall + pit floor) so depth is actually visible rather than capped by a flat brown floor at y≈−0.04. |
+| Smoothing | **Dropped** for now — right-click is fill. Revisit a smooth binding (e.g. a modifier key or tool #3) if lumpy terrain becomes a real complaint. |
+| Steep slopes | **Always walkable** — deformation clamps slope steepness (≈23°) so cliffs can never form; animals always reach everywhere. |
 | First milestone | **Terrain + animals together** — diggable, walkable hills in one slice; animals sample ground height from day one. |
 
 ## Player-facing behavior
@@ -23,22 +30,19 @@ movement is physical and readable, and every state change is player-initiated.
 1. **Select shovel** (hotkey `2`). The circular cursor gains a shovel head; the
    HUD card swaps to shovel copy. Tapping `2` cycles the shared brush sizes 1–5
    exactly like the seeder (0.5×…4× radius).
-2. **Left-click-hold on ground digs.** A small mound of dirt gathers under the
-   cursor; the ground sinks slightly where you dig. After a short hold (or
-   enough depth), a **dirt pile** pops out of the hole and sits on the ground
-   as a real object.
-3. **Click a pile to pick it up.** The pile rides under the cursor (the shovel
-   head carries a visible dirt load), the dig cursor shows a soft "deposit"
-   tint over the garden and a red "no" tint over paths/edges.
-4. **Click ground to dump.** The pile empties where you stand the cursor,
-   raising the ground there. Dirt is conserved: piles are the only way to
-   raise ground, digging is the only way to lower it. (Cheap to reason about,
-   naturally balances terrain, and the pile-carrying reads as play.)
-5. **Right-click** smooths/flattens under the cursor (no dirt created or
-   destroyed) — the "undo my lumpy mess" button, held like the seeder's trim.
-6. **Undo guardrail:** digging/depositing is chunky (discrete piles) rather
-   than continuous, which keeps the height field honest; a later milestone can
-   snapshot the height grid before each pile for true undo.
+2. **Left-click-hold digs down.** The ground sinks under the cursor while held;
+   the sink rate (~−0.28 m/s center, eased at the rim) is tuned so a full-size
+   pond basin takes a satisfying but not exhausting hold.
+3. **Depth rings form as you dig.** Every 0.35 m below grade the soil steps one
+   contour band darker (dry tan → wet brown), like terraced earth — this is the
+   primary "you are going DOWN" signal.
+4. **Right-click-hold fills up.** The inverse verb: ground mounds back up
+   (~+0.22 m/s), so mistakes are recoverable in place with no inventory.
+5. **Middle-click-hold levels.** Everything under the brush eases toward the
+   patch's own average height — the fix for an uneven circle where part is
+   raised and part lowered.
+5. **Undo guardrail:** edits are continuous but slow and radius-bound; a later
+   milestone can snapshot the height grid per stroke for true undo.
 
 ## Interaction with existing systems
 
@@ -51,8 +55,8 @@ movement is physical and readable, and every state change is player-initiated.
   each frame and add it to `wrapper.position.y`, with slope-smoothing so they
   don't jitter on grades. Bounds stay rectangular; clamped slopes guarantee
   reachability so no pathfinding is needed yet.
-- **Cursor ring:** brush size levels scale the dig/deposit/smooth radius; the
-  ring already pops on size cycling and will tint per-mode (dig/carry/deposit).
+- **Cursor ring:** brush size levels scale the dig/fill radius; the ring pops
+  on size cycling and tints per-mode (dig amber / fill gold).
 
 ## Technical design
 
@@ -80,24 +84,22 @@ movement is physical and readable, and every state change is player-initiated.
 
 ### Guardrails (baked into the field, not conventions)
 
-- `MIN_H = −0.8`, `MAX_H = +1.2` clamped on every splat.
+- `MIN_H = −2.6` (pond floor), `MAX_H = +1.2` clamped on every splat; slope
+  redistribution also honors the floor.
 - Keep-out ring: height edits are faded to zero within ~0.9 m of the garden
   edge so the boundary trim, apron, and cutaway base never tear.
-- Dig floor: digging stops producing piles when the cell hits `MIN_H` (the
-  cursor shows a "bedrock" tint instead of silently eating clicks).
-- One pile = a fixed, modest amount of dirt (≈ 6–10 grid cells' worth) so a
-  hill takes a visible, satisfying number of trips rather than one click.
-- Max ~12 active piles; oldest pile fades back into the ground (returned to
-  its origin cells) if the player abandons it, keeping the garden tidy.
+- Dig floor: splat clamps at `MIN_H` (the pond basin simply stops deepening).
 
-### Piles as entities
+### Depth rings & opened under-garden
 
-- A pile is a small `THREE.Group` (squashed sphere of dirt, same soil palette)
-  with a garden-space position and its dirt amount. Registry lives next to the
-  height field, not inside the renderer.
-- Carrying state lives on the shovel tool: `idle → digging → carrying → (deposit | drop-back)`.
-  Dropping (releasing the button mid-carry) returns the pile to where it was
-  picked up — no dirt is ever lost by accident.
+- The soil mesh gains an RGBA vertex-color attribute; `applyToMeshes` writes one
+  contour shade per vertex from its sampled height (bands every 0.35 m, easing
+  from dry `#96744e` toward wet `#4c3524`). Flat ground keeps the plain soil
+  color; only dug areas band.
+- The raised parcel was a solid extrusion whose cap sat at y≈−0.04 — it hid
+  anything deeper than 4 cm. It is now a rim wall (`DoubleSide`, garden hole)
+  plus a dedicated pit floor at −2.45 m below `MIN_H`, so a full-depth pond is
+  visible top to bottom. Meadow/outer-lawn planes got matching garden cutouts.
 
 ### Animal ground sampling
 
@@ -109,9 +111,10 @@ movement is physical and readable, and every state change is player-initiated.
 
 ### Testing hooks (following the garden-debug pattern)
 
-- `__gardenDebug.dig(x, y)`, `.deposit(x, y)`, `.smooth(x, y)`,
-  `.heightsSummary()` (min/max/changed cells), and `pickReport` gains height
-  readout. Deterministic seeds like the grass seeder so checks are repeatable.
+- `__gardenDebug.dig(x, y, holdMs)`, `.fill(x, y, holdMs)`,
+  `.heightsSummary()` (min/max/changed cells/tool/action), and `pickReport`
+  gains height readout. Deterministic seeds like the grass seeder so checks are
+  repeatable.
 
 ## Explicitly out of scope (next milestones)
 
@@ -125,14 +128,13 @@ movement is physical and readable, and every state change is player-initiated.
 
 ## Milestone 1 acceptance checklist
 
-1. Dig → hole sinks, pile appears; carry → pile follows cursor; deposit →
-   ground rises; dirt conserved (heights min/max shift as expected).
-2. Repeat deposits can raise terrain to `MAX_H`; repeated digs reach `MIN_H`;
-   no combination of edits can produce a slope steeper than the clamp.
+1. Dig → hole sinks with visible contour rings forming per 0.35 m band; fill →
+   ground rises back; heights min/max shift as expected.
+2. Repeated fills can raise terrain to `MAX_H`; repeated digs reach `MIN_H`
+   (−2.6); no combination of edits can produce a slope steeper than the clamp.
 3. All six balloon animals walk over a deposited mound smoothly (no snapping,
    no falling through, no getting stuck) and reach every reachable point.
 4. Grass inside a deformed radius re-projects correctly; edges keep the clean
    alpha fade (no white halo regression).
-5. Right-drag smooths lumps without changing total dirt.
-6. `tsc --noEmit` and `npm run build` clean; debug-harness checks pass;
+5. `tsc --noEmit` and `npm run build` clean; debug-harness checks pass;
    screenshot per AGENTS.md rules (≤1280×720, never fullPage).

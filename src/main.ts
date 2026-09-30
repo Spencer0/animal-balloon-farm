@@ -1,15 +1,17 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
+import { getAnimalSceneOptions } from './animals/animal-catalog'
 import { createFarmExpansionUI } from './game/farm-expansion-ui'
 import type { FarmExpansionState } from './game/farm-expansion'
 import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from './scene/fairground'
-import { createCaptureShowcaseStage, SHOWCASE_ANIMALS } from './scene/capture-showcase'
+import { createCaptureShowcaseStage } from './scene/capture-showcase'
 import { createCaptureShowcaseUI, createShowcaseLaunchButton } from './ui/capture-showcase-ui'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createGardenToolsUI } from './ui/garden-tools-ui'
+import { createJournalUI } from './ui/journal-ui'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
@@ -91,7 +93,7 @@ let currentGardenBounds: typeof GARDEN_BOUNDS = GARDEN_BOUNDS
 const activeGardenBounds = (): typeof GARDEN_BOUNDS => currentGardenBounds
 const gardenTerrain = !showcaseMode && fairground.gardenSurface && fairground.gardenSoil
   ? createGardenTerrain([
-      { mesh: fairground.gardenSoil, offset: -0.012 },
+      { mesh: fairground.gardenSoil, offset: -0.012, soilRings: true },
       { mesh: fairground.gardenSurface },
     ], activeGardenBounds)
   : null
@@ -101,10 +103,6 @@ const gardenTools: GardenTools | null = !showcaseMode && fairground.gardenSurfac
   : null
 if (gardenTools) scene.add(gardenTools.root)
 const gardenToolsUI = gardenTools ? createGardenToolsUI(gardenTools.selectedTool) : null
-const farmExpansionUI = fairground.farmExpansion
-  ? createFarmExpansionUI(window.innerWidth, window.innerHeight, fairground.farmExpansion.state)
-  : null
-let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
 const pressedKeys = new Set<string>()
 let pointerPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
 let pointerWasSeen = false
@@ -138,45 +136,24 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
   return false
 }
 
-// Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
-// their palette through a shared 6.8-second paint-bucket reveal.
-const animalSceneOptions = {
-  canvas: gameCanvas,
+const farmExpansionUI = fairground.farmExpansion
+  ? createFarmExpansionUI(window.innerWidth, window.innerHeight, fairground.farmExpansion.state)
+  : null
+const journalUI = !showcaseMode ? createJournalUI(gameCanvas) : null
+let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
+
+// Catalog entries stay the single source of truth; attach live garden bounds
+// and HUD hit testing so animals roam into newly opened land safely.
+const animals: BalloonAnimal[] = await Promise.all(getAnimalSceneOptions(
+  showcaseMode,
+  gameCanvas,
   camera,
-  groundSampler: gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
+  gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
+).map((options) => createBalloonAnimal(fairground.root, {
+  ...options,
   getGardenBounds: activeGardenBounds,
   isPointerBlocked: isOverGameHUD,
-} as const
-const animalDefinitions = [
-  {
-    id: 'pig', assetUrl: 'assets/animals/balloon-pig.glb', name: 'pig', spawn: showcaseMode ? SHOWCASE_ANIMALS.pig.spawn : [-7, -3.8] as const,
-    groundY: GARDEN_LAWN_Y, seed: 5104, size: 2.05, speed: 1.25, bounds: { x: 11.2, z: 6.5 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'sheep', assetUrl: 'assets/animals/balloon-sheep.glb', name: 'sheep', spawn: showcaseMode ? SHOWCASE_ANIMALS.sheep.spawn : [-3.2, 2.1] as const,
-    groundY: GARDEN_LAWN_Y, seed: 861, size: 2.1, speed: 0.88, bounds: { x: 10.9, z: 6.2 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'cow', assetUrl: 'assets/animals/balloon-cow.glb', name: 'cow', spawn: showcaseMode ? SHOWCASE_ANIMALS.cow.spawn : [4.4, 2.8] as const,
-    groundY: GARDEN_LAWN_Y, seed: 1402, size: 2.7, speed: 0.72, bounds: { x: 10.7, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'chicken', assetUrl: 'assets/animals/balloon-chicken.glb', name: 'chicken', spawn: showcaseMode ? SHOWCASE_ANIMALS.chicken.spawn : [7.4, -1.1] as const,
-    groundY: GARDEN_LAWN_Y, seed: 2406, size: 1.85, speed: 1.02, bounds: { x: 10.5, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'duck', assetUrl: 'assets/animals/balloon-duck.glb', name: 'duck', spawn: showcaseMode ? SHOWCASE_ANIMALS.duck.spawn : [-8.0, 3.5] as const,
-    groundY: GARDEN_LAWN_Y, seed: 3128, size: 2.0, speed: 0.92, bounds: { x: 10.5, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-  {
-    id: 'goose', assetUrl: 'assets/animals/balloon-goose.glb', name: 'goose', spawn: showcaseMode ? SHOWCASE_ANIMALS.goose.spawn : [0.4, -5.0] as const,
-    groundY: GARDEN_LAWN_Y, seed: 4801, size: 2.35, speed: 0.8, bounds: { x: 10.5, z: 6.1 }, wandering: !showcaseMode, captureOnClick: !showcaseMode, replayCaptureOnClick: showcaseMode,
-  },
-] as const
-const animals: BalloonAnimal[] = await Promise.all(animalDefinitions.map((definition) =>
-  createBalloonAnimal(fairground.root, { ...animalSceneOptions, ...definition }),
-))
-
+})))
 const animalById = new Map(animals.map((animal) => [animal.id, animal]))
 if (!showcaseMode) {
   createShowcaseLaunchButton(() => {
@@ -333,12 +310,14 @@ function applyExpansionCameraShake(deltaSeconds: number, elapsedSeconds: number)
 }
 
 function orbitPointerDown(event: PointerEvent): void {
+  if (journalUI?.pointerDown(event, gameCanvas)) return
   if (showcaseMode) {
     if (event.button === 0 && gardenToolsUI?.pointerDown(event, gameCanvas)) return
     return
   }
   if (event.button === 0 && event.detail >= 2) return
-  if (event.button !== 0 && event.button !== 2) return
+  // Middle click levels with the shovel; Space+left-drag explicitly orbits the camera.
+  if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
   const cameraGesture = event.button === 2 || (event.button === 0 && spaceHeld)
   if (!cameraGesture && event.button === 0 && gardenToolsUI?.pointerDown(event, gameCanvas)) {
     // A HUD card click may have switched tools; keep the 3D tool in sync.
@@ -359,6 +338,7 @@ function orbitPointerDown(event: PointerEvent): void {
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
     return
   }
+  if (event.button === 1) return
   if (gardenDebugMode && !event.isTrusted) return
   dragPointer = event.pointerId
   dragMode = event.button === 2 ? 'pan' : 'orbit'
@@ -367,6 +347,7 @@ function orbitPointerDown(event: PointerEvent): void {
 }
 
 function orbitPointerMove(event: PointerEvent): void {
+  if (journalUI?.pointerMove(event, gameCanvas)) return
   if (isOverGameHUD(event.clientX, event.clientY)) gardenTools?.pointerLeave()
   else gardenTools?.pointerMove(event)
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
@@ -420,18 +401,64 @@ function heightsSummary(): Record<string, unknown> | null {
   const tool = gardenTools.debugState()
   return {
     ...stats,
-    dirtPiles: tool.dirtPiles,
-    carryingDirt: tool.carryingDirt,
-    pilePositions: tool.pilePositions,
     tool: tool.selectedTool,
+    action: tool.activeAction,
   }
 }
 
-function gardenScreenPoint(x: number, z: number): { readonly x: number; readonly y: number } {
-  return gardenScreenPosition(x, z)
+/**
+ * Hold a shovel button over a GARDEN-SPACE point for holdMs, re-projecting the
+ * point to screen every tick. Stays on target even when the camera drifted or
+ * the terrain moves under the cursor, so harness holds land where intended.
+ */
+async function holdWorldButton(wx: number, wz: number, button: number, holdMs: number): Promise<void> {
+  const buttons = button === 0 ? 1 : button === 1 ? 4 : 2
+  const project = (): { x: number; y: number } => {
+    const y = GARDEN_LAWN_Y + (gardenTerrain ? gardenTerrain.heightAt(wx, wz) : 0) + 0.008
+    const world = new THREE.Vector3(wx, y, wz).project(camera)
+    return { x: (world.x + 1) * window.innerWidth / 2, y: (1 - world.y) * window.innerHeight / 2 }
+  }
+  const moveOnce = (): void => {
+    const point = project()
+    gameCanvas.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: point.x,
+      clientY: point.y,
+      pointerId: 9001,
+      pointerType: 'mouse',
+      buttons,
+    }))
+  }
+  // The first synthetic move can absorb a one-time camera sync in the orbit
+  // handler; project the press point only after that has settled.
+  moveOnce()
+  const start = performance.now()
+  const downPoint = project()
+  gameCanvas.dispatchEvent(new PointerEvent('pointerdown', {
+    bubbles: true,
+    cancelable: true,
+    clientX: downPoint.x,
+    clientY: downPoint.y,
+    pointerId: 9001,
+    pointerType: 'mouse',
+    button,
+    buttons,
+  }))
+  while (performance.now() - start < Math.max(200, holdMs)) {
+    await new Promise((resolve) => window.setTimeout(resolve, 80))
+    moveOnce()
+  }
+  const upPoint = project()
+  gameCanvas.dispatchEvent(new PointerEvent('pointerup', {
+    bubbles: true,
+    clientX: upPoint.x,
+    clientY: upPoint.y,
+    pointerId: 9001,
+    pointerType: 'mouse',
+    button,
+    buttons: 0,
+  }))
 }
-
-
 
 function isTextInputTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement
@@ -439,6 +466,11 @@ function isTextInputTarget(target: EventTarget | null): boolean {
 }
 
 function handleToolKeyboard(event: KeyboardEvent): void {
+  if (journalUI?.isOpen) {
+    journalUI.handleKeyDown(event)
+    return
+  }
+  if (journalUI?.handleKeyDown(event)) return
   if (event.altKey || event.ctrlKey || event.metaKey || isTextInputTarget(event.target)) return
   if (event.code === 'Space') {
     spaceHeld = true
@@ -464,6 +496,7 @@ function handleToolKeyboard(event: KeyboardEvent): void {
 function handleKeyUp(event: KeyboardEvent): void {
   pressedKeys.delete(event.key.toLowerCase())
   if (event.code === 'Space') spaceHeld = false
+  if (journalUI?.isOpen) return
   if (!isTextInputTarget(event.target) && ['arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(event.key.toLowerCase())) {
     event.preventDefault()
   }
@@ -546,8 +579,14 @@ interface GardenDebugHarness {
   trim(x: number, y: number): void
   pickReport(x: number, y: number): unknown
   dig(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
-  deposit(x: number, y: number): Record<string, unknown> | null
-  smooth(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  fill(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  level(x: number, y: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  digAt(wx: number, wz: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  fillAt(wx: number, wz: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  levelAt(wx: number, wz: number, holdMs?: number): Promise<Record<string, unknown> | null>
+  heightAt(wx: number, wz: number): number
+  splatDirect(wx: number, wz: number, radius: number, amount: number): number
+  levelDirect(wx: number, wz: number, radius: number, strength: number): number
   heightsSummary(): Record<string, unknown> | null
   animalsSummary(): { id: string; y: number }[]
   drag(points: readonly { readonly x: number; readonly y: number }[], holdMs?: number): Promise<ReturnType<GardenDebugHarness['state']> | null>
@@ -597,7 +636,7 @@ if (gardenDebugMode) {
         pointerId: 9001,
         pointerType: 'mouse',
         button,
-        buttons: button === 2 ? 2 : 1,
+        buttons: button === 0 ? 1 : button === 1 ? 4 : 2,
       }))
     },
     trim(x, y): void {
@@ -615,12 +654,9 @@ if (gardenDebugMode) {
       debugHarness.down(x, y)
       await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
       debugHarness.up()
-      return { ...heightsSummary(), carrying: gardenTools.debugState().carryingDirt }
+      return heightsSummary()
     },
-    deposit(x, y): Record<string, unknown> | null {
-      return depositNearestPile(x, y)
-    },
-    async smooth(x: number, y: number, holdMs = 700): Promise<Record<string, unknown> | null> {
+    async fill(x, y, holdMs = 900): Promise<Record<string, unknown> | null> {
       if (!gardenTools || !gardenTerrain) return null
       debugHarness.up()
       debugHarness.move(x, y)
@@ -628,6 +664,47 @@ if (gardenDebugMode) {
       await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
       debugHarness.up()
       return heightsSummary()
+    },
+    async level(x, y, holdMs = 1200): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      debugHarness.move(x, y)
+      debugHarness.down(x, y, 1)
+      await new Promise((resolve) => window.setTimeout(resolve, Math.max(200, holdMs)))
+      debugHarness.up()
+      return heightsSummary()
+    },
+    // World-space hold commands: they re-project the garden point to screen
+    // every tick, so they stay on target no matter how the camera drifted —
+    // unlike the screen-space variants, which trust a single projection.
+    async digAt(wx, wz, holdMs = 700): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      await holdWorldButton(wx, wz, 0, holdMs)
+      return heightsSummary()
+    },
+    async fillAt(wx, wz, holdMs = 900): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      await holdWorldButton(wx, wz, 2, holdMs)
+      return heightsSummary()
+    },
+    async levelAt(wx, wz, holdMs = 1200): Promise<Record<string, unknown> | null> {
+      if (!gardenTools || !gardenTerrain) return null
+      debugHarness.up()
+      await holdWorldButton(wx, wz, 1, holdMs)
+      return heightsSummary()
+    },
+    heightAt(wx, wz): number {
+      return gardenTerrain ? gardenTerrain.heightAt(wx, wz) : 0
+    },
+    // Direct terrain-math calls (no pointer path, no render loop): let checks
+    // exercise splat/level deterministically even when the tab is throttled.
+    splatDirect(wx, wz, radius, amount): number {
+      return gardenTerrain ? gardenTerrain.splat(wx, wz, radius, amount) : 0
+    },
+    levelDirect(wx, wz, radius, strength): number {
+      return gardenTerrain ? gardenTerrain.level(wx, wz, radius, strength) : 0
     },
     heightsSummary(): Record<string, unknown> | null {
       return heightsSummary()
@@ -756,29 +833,7 @@ if (gardenDebugMode) {
   Object.defineProperty(window, '__gardenDebug', { value: debugHarness, configurable: true })
   window.dispatchEvent(new CustomEvent('garden-debug-ready'))
 
-  function depositNearestPile(x: number, z: number): Record<string, unknown> | null {
-  if (!gardenTools || !gardenTerrain) return null
-  debugHarness.up()
-  const summary = heightsSummary()
-  const piles = (summary?.pilePositions as readonly { x: number; z: number }[] | undefined) ?? []
-  if (!piles.length) return summary ?? null
-  const nearest = piles.reduce((best, pile) => {
-    const bestDistance = (best.x - x) ** 2 + (best.z - z) ** 2
-    const distance = (pile.x - x) ** 2 + (pile.z - z) ** 2
-    return distance < bestDistance ? pile : best
-  })
-  const screen = gardenScreenPoint(nearest.x, nearest.z)
-  debugHarness.move(screen.x, screen.y)
-  debugHarness.down(screen.x, screen.y)
-  debugHarness.up()
-  const destination = gardenScreenPoint(x, z)
-  debugHarness.move(destination.x, destination.y)
-  debugHarness.down(destination.x, destination.y)
-  debugHarness.up()
-  return heightsSummary()
-}
-
-  console.info('[Garden Debug] Ready at window.__gardenDebug (move/down/trim/drag/sampleGarden/up/state/clearGrass/focusGarden)')
+  console.info('[Garden Debug] Ready at window.__gardenDebug (move/down/dig/fill/trim/drag/sampleGarden/up/state/clearGrass/focusGarden/heightsSummary)')
 }
 
 
@@ -786,11 +841,13 @@ window.addEventListener('resize', () => {
   updateCameraProjection()
   gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
   farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
+  journalUI?.resize(window.innerWidth, window.innerHeight)
 })
 
 updateCameraProjection()
 gardenToolsUI?.resize(window.innerWidth, window.innerHeight)
 farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
+journalUI?.resize(window.innerWidth, window.innerHeight)
 
 let previousTime = performance.now()
 function frame(now: number): void {
@@ -827,6 +884,12 @@ function frame(now: number): void {
       renderer.clearDepth()
       renderer.render(farmExpansionUI.scene, farmExpansionUI.camera)
     }
+    renderer.autoClear = true
+  }
+  if (journalUI) {
+    renderer.autoClear = false
+    renderer.clearDepth()
+    renderer.render(journalUI.scene, journalUI.camera)
     renderer.autoClear = true
   }
   requestAnimationFrame(frame)

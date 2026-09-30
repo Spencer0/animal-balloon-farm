@@ -1,5 +1,9 @@
 # Animal Balloon Farm — agent instructions
 
+## Adding an animal
+
+Read [`ANIMAL_PIPELINE.md`](ANIMAL_PIPELINE.md) first. It maps the whole path (Blender authoring script -> `.blend`/`.glb`/review PNG -> one `ANIMAL_CATALOG` entry plus three compiler-enforced TypeScript records -> browser and journal verification) and lists the few registration points that are *not* compiler-enforced and fail silently. Use its checklist rather than rediscovering the wiring.
+
 ## Screenshots (do not skip)
 
 - A large screenshot permanently poisons an agent thread: once an oversized image is in the transcript, every later request re-uploads it and fails with "Downloaded image content cannot exceed 30MB" until the thread is abandoned.

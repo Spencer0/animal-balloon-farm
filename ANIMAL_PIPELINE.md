@@ -1,0 +1,336 @@
+# Animal pipeline
+
+How an animal gets from a Python script to a wandering, catchable creature in the garden — and how to
+add the next one. The end goal is that an agent can go from "add a llama" to a reviewed, playable
+species without hand-holding.
+
+Current catalog: **6 species** (pig, sheep, cow, chicken, duck, goose).
+
+## The 5 stages
+
+| # | Stage | Lives in | Produces |
+|---|-------|----------|----------|
+| 1 | Author + rig + animate | `art/blender/balloon_friends.py` | scene in memory |
+| 2 | Export | same script | `public/assets/animals/balloon-<id>.{blend,glb}` + `balloon-<id>-review.png` |
+| 3 | Register | `src/animals/animal-catalog.ts` + 3 records | new member of `BalloonAnimalId` |
+| 4 | Verify | browser | animal wandering the garden, in the showcase, and in the journal |
+| 5 | Journal | *derived from the catalog* | discoverable species record |
+
+Stages 1–2 are art. Stage 3 is wiring — and since the catalog refactor it is **one array entry plus
+three compiler-enforced records**. Stages 4–5 need no new code at all: the showcase, the capture
+card, the journal page, and the species count string all derive from the catalog.
+
+---
+
+## Stage 1–2 · Blender authoring
+
+### One-time environment check
+
+```sh
+blender --version   # 4.2.3 LTS is the known-good version
+```
+
+If `blender` is not on `PATH`, the historical executable is
+`C:\Users\Spencer\Documents\Playground\tools\blender\blender-4.2.3-windows-x64\blender.exe`
+(check it still exists before using it).
+
+Scripts run under Blender's **embedded** Python. Do not try to `import bpy` from system Python.
+
+### Adding a species to `balloon_friends.py`
+
+Follow the existing `make_duck()` shape. Five edits:
+
+1. **`materials(name)`** — add an `elif` branch overriding the base palette. Each species needs a
+   distinct body/head/material set; this is what makes the capture reveal worth watching.
+2. **`make_<id>()`** — build the animal. The shared helpers do the heavy lifting:
+   - `sphere(name, position, size, material, parent)` — UV sphere, parented, smooth-shaded
+   - `curve(name, points, width, material, parent)` — bevelled Bezier; use for legs, tails, seams, rings
+   - `pivot(name, position, parent)` — an Empty that acts as a rig joint
+   - `add_face_details(head, m, animal)` — eyes, pupils, catchlights, brows, cheeks. Faces point **+X**
+   - `make_legs(...)` / `add_waterfowl_legs(...)` — quadruped or biped leg sets
+   - `add_collar(body, neck, m, animal)` — the signature brass bell, returns a pivot
+3. **Root custom properties** — `root["asset_id"] = "animal_balloon_<id>"` and a `root["description"]`.
+   These are metadata only, but keep them consistent.
+4. **`animate(...)`** — pass every pivoted object. See *Animation contract* below.
+5. **`portrait(name, m)`** then **`export_asset(root, name)`** as the last two lines.
+
+Then register the maker:
+
+```python
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken,
+          "duck": make_duck, "goose": make_goose, "llama": make_llama}
+```
+
+### Run it
+
+```sh
+# Regenerate only the animals you name (safe — approved assets are preserved)
+blender --background --factory-startup --python art/blender/balloon_friends.py -- llama
+
+# Bare invocation regenerates only duck + goose, deliberately
+blender --background --factory-startup --python art/blender/balloon_friends.py
+```
+
+**This is a destructive, file-writing command.** It overwrites the `.blend`, `.glb`, and review PNG
+for each named animal. Check `git status` first and never run it on animals you did not intend to
+rebuild. The script clears only temporary in-memory scenes, but it writes to `public/assets/animals/`.
+
+### Animation contract
+
+The runtime only looks for two clips, matched by **substring on the uppercased clip name**
+(`src/animals/balloon-animal.ts`): a name containing `WALK`, and one containing `IDLE`. The exporter
+emits exactly `WALK` and `IDLE` because the NLA tracks are named that way.
+
+- `FRAMES = (1, 7, 13, 19, 25)` / `PHASES = (0, π/2, π, 3π/2, 2π)` — five keyframes per full cycle.
+  First and last must match for a clean loop.
+- `animate()` writes a **real gait**, not a mesh bob: body bob and roll, head counter-motion, tail
+  follow-through, bell swing, diagonal leg pairs offset by π, hoof-hinge lift.
+- Birds use `forward_gait=True` (foot plants forward, rolls back, lifts, swings forward).
+  Quadrupeds use the default rearward-first cycle.
+- Wings/ears are the `ears` argument — for birds these become flapping wing pivots.
+- `finish_action()` pushes each action into an NLA track named after the clip, then clears
+  `data.action`. The exporter is configured for `NLA_TRACKS`, so **an action that never reaches an
+  NLA track will not be exported.**
+
+### Naming contract (do not break this)
+
+The capture flourish finds rig joints by **matching object-name substrings**
+(`buildRigPose` in `src/animals/balloon-capture.ts`):
+
+```
+DUCK RIG · bright emerald head   → matches 'rig' + 'bright emerald head'
+CHICKEN RIG · near flapping wing  → matches 'rig' + 'wing', side from 'near'/'far'
+```
+
+So:
+- Rig joints must contain `RIG` and the descriptive phrase the TS side looks for.
+- Laterals must be labelled `near` / `far` — that is how `side` is derived.
+- **Renaming a rig pivot silently breaks the capture animation.** It is not a compile error and
+  there is no warning. Keep the phrase, or update `buildRigPose` in the same commit.
+- A species with **no** `buildRigPose` branch still works — it simply gets no secondary head/wing
+  motion during capture. It is an enhancement, not a registration requirement.
+
+### Stage 2 outputs
+
+Three files, always regenerated together:
+
+```
+public/assets/animals/balloon-<id>.blend          editable source (keep in git)
+public/assets/animals/balloon-<id>-review.png     1200x1000 art-review portrait
+public/assets/animals/balloon-<id>.glb            runtime asset (no cameras, no lights)
+```
+
+Blender also drops a `balloon-<id>.blend1` backup next to the `.blend`. Several are already committed; that is expected, not stray output.
+
+### Review gate
+
+Inspect the **exported GLB**, not the Blender viewport:
+
+- `[Animal Balloon Farm] <name> asset` in the browser console logs dimensions and
+  `clips: [{name, duration}]` — both must be present and sane (~1–2s per clip).
+- `[Animal Balloon Farm] <name> ground clearance` logs `finalBounds.min.y`; it should be `0.0000`.
+- Open the review PNG for silhouette, expression, leg/ear/tail attachment, balloon sheen, hoof
+  separation.
+- Watch it walk in the garden at real camera distance. Blender's render is a reference, not a claim
+  about the runtime — Three.js is authoritative.
+
+---
+
+## Stage 3 · Register the species in TypeScript
+
+### One file declares an animal
+
+`src/animals/animal-catalog.ts` holds `ANIMAL_CATALOG`, an array of species objects. It is the
+single source of truth, and almost everything else is derived from it:
+
+| Derived from the catalog | Where |
+|--------------------------|-------|
+| `BalloonAnimalId` (`typeof ANIMAL_CATALOG[number]['id']`) | `animal-catalog.ts` |
+| `SHOWCASE_ANIMALS` (plinth spawn + ring/accent color) | `balloon-catalog.ts` |
+| scene options for garden **and** showcase | `getAnimalSceneOptions()` |
+| the showcase card list | `capture-showcase-ui.ts:5` — `const ANIMALS = ANIMAL_CATALOG` |
+| the journal's animal chapter | `journal-ui.ts:42` — `ANIMAL_CATALOG.map(...)` |
+| the "N personalities" copy string | `capture-showcase-ui.ts:32` — `${ANIMAL_CATALOG.length}` |
+
+Append one object to the array and the animal gets a type id, a showcase plinth, a capture card, a
+journal page, and a correct species count — for free.
+
+### The catalog entry
+
+```ts
+{
+  id: 'llama',                                    // becomes part of BalloonAnimalId
+  name: 'Llama',                                  // display name (journal + cards)
+  label: 'llama',                                 // lowercase label used in-scene
+  spriteUrl: 'assets/animals/balloon-llama-review.png',
+  subtitle: 'The tall drinker',                   // journal chapter title
+  description: 'A long-necked visitor with a very calm outlook.',
+  note: 'A gentle hum while it grazes.',           // journal flavour line
+  color: '#c98f5a',                               // journal + showcase accent
+  gesture: 'Stands tall',                         // shown on the capture card
+  assetUrl: 'assets/animals/balloon-llama.glb',   // document-relative, NOT /assets/...
+  spawn: [2, -4],                                 // garden [x, z]
+  showcaseSpawn: [-4, 3.2],                       // plinth position in ?showcase=1
+  seed: 777,                                      // any int; fixes the wander pattern
+  size: 2.4,                                      // LONGEST SIDE in world units
+  speed: 0.9,                                     // garden units/second
+  bounds: { x: 10.5, z: 6.1 },                    // wander rectangle, roughly the lawn
+}
+```
+
+Per-field notes:
+
+- `size` is **not** the raw Blender scale. `createBalloonAnimal` measures the GLB, scales the longest
+  side to `size`, centers it on X/Z, and grounds it so `min.y` is exactly 0. Author the model at any
+  comfortable scale; just keep proportions sane.
+- `assetUrl` and `spriteUrl` must stay document-relative. Root-absolute `/assets/...` breaks the
+  GitHub Pages subpath.
+- `bounds` is per-animal and roughly the lawn half-extents (`GARDEN_BOUNDS` is 14 x 9.5). Shrink it
+  slightly so animals do not clip the fence. `getAnimalSceneOptions` supplies `groundY:
+  GARDEN_LAWN_Y` (0.03) for you — do not add it to the entry.
+- `speed` is what makes a species read as a species — a chicken should visibly outpace a cow.
+- `showcaseSpawn` must not collide with another species' plinth. The six current ones use a 3x2 ring
+  at roughly `[-7, 0, 7] x [-3.2, 3.2]`; a 7th animal needs a new free spot.
+
+### Three compiler-enforced records
+
+These are keyed `Record<BalloonAnimalId, …>` or exhaustive switches, so adding the catalog entry
+produces **exactly three errors** — confirmed by experiment on the merged tree (adding a `llama`
+entry yields 3 errors and nothing else):
+
+```
+src/animals/balloon-animal.ts(55,7): error TS2741: Property 'llama' is missing … Record<…, MeshStandardMaterial>
+src/animals/balloon-capture.ts(6,7):  error TS2741: Property 'llama' is missing … Record<…, readonly [string, string]>
+src/animals/balloon-capture.ts(164,79): error TS2366: Function lacks ending return statement …
+```
+
+That is the whole checklist:
+
+| File | Symbol | What it is |
+|------|--------|-----------|
+| `src/animals/balloon-animal.ts:55` | `BODY_MATERIALS` | placeholder color, used **only** if the GLB fails to load |
+| `src/animals/balloon-capture.ts:6` | `PAINT_PALETTES` | `[primary, secondary]` paint colors for the capture pour |
+| `src/animals/balloon-capture.ts:164` | `captureGesture` | exhaustive `switch` with no `default` — TS reports "function lacks ending return statement" |
+
+`captureGesture` returns a `CapturePose`:
+
+```ts
+case 'llama':
+  return { fill, lift: active * 0.04, pitch: Math.sin(time * 2.2) * 0.06 * active, roll: 0, yaw: 0 }
+```
+
+where `fill` is the pre-computed paint-progress term and `active` the in-animation envelope — both
+already in scope at the top of the function.
+
+Then `npm run typecheck` until green. Every error mentioning a missing property for your new id is a
+registration point you have not filled in yet.
+
+### Registration points that are NOT compiler-enforced
+
+Only two remain, and both fail silently:
+
+- **`src/animals/balloon-capture.ts:210`** — `buildRigPose` name matching (see the naming contract).
+  Missing it costs you flourish, not function.
+- **`src/style.css:134`** — `grid-template-columns: repeat(6, minmax(110px, 1fr))`. The showcase card
+  row is still hardcoded to 6 columns; the 7th animal overflows instead of wrapping. The copy strings
+  are already derived from `ANIMAL_CATALOG.length`, so this is the last hardcoded six.
+
+---
+
+## Stage 4 · Verify in the browser
+
+```sh
+npm run dev     # http://127.0.0.1:8000/
+```
+
+- `http://127.0.0.1:8000/` — normal garden. The animal wanders; click it to trigger capture.
+- `http://127.0.0.1:8000/?showcase=1` — capture viewer. Its card replays one animal; **Play all**
+  runs every species at once. This is the fastest way to eyeball the whole catalog.
+- Click the journal book in the world → **Animals** chapter. Your species should appear with its
+  portrait, subtitle, and note, derived straight from the catalog entry.
+
+**Screenshots (project rule, non-negotiable):** resize the viewport to ~1280x720 first, take **one**
+screenshot per state change, and **never** `fullPage` a game canvas. A single oversized image
+permanently poisons the agent thread with a 30MB upload error.
+
+---
+
+## Stage 5 · Journal entry
+
+**Nothing to do.** The journal is a Three.js book rendered in-scene (`src/ui/journal-ui.ts`); its
+animal chapter maps `ANIMAL_CATALOG` directly. Filling in `subtitle`, `description`, `note`,
+`color`, `gesture`, and `spriteUrl` in the catalog entry *is* the journal entry.
+
+The one caveat: the journal is currently a **static record book**. `SPEC.md` (§5.3, §5.4, and the
+milestone list in §9) calls for data-driven species conditions and the progression
+
+```
+Unknown clue → discovered clue → requirement met → action/result
+```
+
+with an `Appears` condition, a `Visits` invitation, and a `Resides` requirement set per species.
+None of that exists yet — there is no unlock or condition system in `journal-ui.ts`. `SPEC.md:83` is
+explicit that a mandatory condition must never be hidden behind unexplained randomness, so treat the
+progression as **known missing work**, not as something the catalog entry can satisfy. Do not invent
+a registration step for it.
+
+---
+
+## Checklist
+
+Stages 1–2, art:
+
+- [ ] `materials()` branch with a distinct, readable palette
+- [ ] `make_<id>()` uses the shared helpers; root has `asset_id` + `description`
+- [ ] Rig joints named `... RIG · <phrase>` with `near` / `far` laterals
+- [ ] `animate()` called with every pivot; WALK is a real gait, first/last poses match
+- [ ] `portrait()` + `export_asset()` called
+- [ ] Registered in `MAKERS`
+- [ ] Ran with `-- <id>` only; `git status` shows only that animal's three files changed
+- [ ] Review PNG inspected; GLB console log shows both clips and `0.0000` ground clearance
+
+Stage 3, code:
+
+- [ ] One object appended to `ANIMAL_CATALOG` in `src/animals/animal-catalog.ts`
+- [ ] `assetUrl` / `spriteUrl` are document-relative, not `/assets/...`
+- [ ] `showcaseSpawn` does not collide with an existing plinth
+- [ ] `BODY_MATERIALS` entry (placeholder color)
+- [ ] `PAINT_PALETTES` entry (two paint colors)
+- [ ] `captureGesture` `case` added
+- [ ] `npm run check` green
+- [ ] `src/style.css:134` `repeat(6, …)` widened **if** this is the 7th animal
+- [ ] `buildRigPose` branch added **only if** you want head/wing secondary motion
+
+Stages 4–5, verify:
+
+- [ ] Watched walking in `?showcase=1` and clicked to capture in the garden
+- [ ] Species appears in the journal's Animals chapter with its portrait and note
+
+---
+
+## Known friction for a large catalog
+
+These are the things that will bite at 20+ species, recorded now so they are not rediscovered.
+Items 1 and 3 are **partly fixed** by the catalog refactor; the rest still stand.
+
+1. **The showcase card grid is still hardcoded to 6.** The copy strings and card list are now
+   derived, but `src/style.css:134` is literally `repeat(6, …)`. Needs a responsive grid or a
+   `--catalog-count` custom property.
+2. **Rig matching is by string.** `buildRigPose` couples Blender object names to TypeScript literals.
+   Every new species either reuses an existing phrase (`wing`, `leg`) or gets a new branch. There is
+   no registry and no validation that a signature pose actually found its joints — a typo is silent.
+   A manifest field like `rigParts: ['head', 'wing']` would remove the coupling entirely.
+3. **No asset manifest.** Registration is now one array, but it does not reach the Python side:
+   `MAKERS` in `balloon_friends.py` is still a hand-maintained dict that can drift from
+   `ANIMAL_CATALOG`. A shared `animals/manifest.json` read by both would close the loop, per the
+   `AGENTS.md` rule about data-driving species conditions.
+4. **No asset validation script.** Nothing checks that every `assetUrl`/`spriteUrl` exists on disk,
+   that every GLB has both clips, or that every `BalloonAnimalId` has a Blender maker. A
+   `npm run animals:check` that does all three is the highest-value addition.
+5. **Each `.blend` + `.glb` + PNG is ~1.5–2.2 MB.** Twenty species is ~40 MB of committed binaries and
+   a slow `?showcase=1` cold load. Worth a decimation pass or Draco compression before scaling up.
+6. **Capture is 6.8s per animal** and starts on click. With a large catalog, "Play all" is a 6.8s
+   parade, not a test.
+7. **The journal has no progression.** Every species is documented from the first frame. The SPEC's
+   `Unknown → discovered → met → resolved` arc is unimplemented, so a big catalog currently reads as
+   a spoiler rather than a collection.

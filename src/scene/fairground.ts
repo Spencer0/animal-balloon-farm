@@ -175,6 +175,18 @@ export function makeGardenLawnGeometry(bounds: GardenBounds = GARDEN_MAX_BOUNDS)
   return geometry
 }
 
+/** Axis-aligned rectangle with the buildable garden cut out as a hole. */
+function rectangleWithGardenHole(width: number, depth: number, outset: number): THREE.Shape {
+  const shape = new THREE.Shape()
+  shape.moveTo(-width / 2, -depth / 2)
+  shape.lineTo(width / 2, -depth / 2)
+  shape.lineTo(width / 2, depth / 2)
+  shape.lineTo(-width / 2, depth / 2)
+  shape.closePath()
+  shape.holes.push(gardenHolePath(outset))
+  return shape
+}
+
 function makeSoilTexture(seed: number): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = 512
@@ -264,6 +276,19 @@ function roundedRectangleCurve(width: number, depth: number, radius: number, y: 
   return new THREE.CatmullRomCurve3(points, true, 'centripetal')
 }
 
+/** The buildable garden footprint as a path, outset outward by `outset`. */
+function gardenHolePath(outset: number): THREE.Path {
+  const halfWidth = GARDEN_BOUNDS.halfWidth + outset
+  const halfDepth = GARDEN_BOUNDS.halfDepth + outset
+  const hole = new THREE.Path()
+  hole.moveTo(-halfWidth, -halfDepth)
+  hole.lineTo(-halfWidth, halfDepth)
+  hole.lineTo(halfWidth, halfDepth)
+  hole.lineTo(halfWidth, -halfDepth)
+  hole.closePath()
+  return hole
+}
+
 function roundedRectangleDistance(x: number, z: number, bounds: GardenBounds): number {
   const radius = Math.min(PLOT_CORNER_RADIUS, bounds.halfWidth, bounds.halfDepth)
   const cornerX = bounds.halfWidth - radius
@@ -271,25 +296,6 @@ function roundedRectangleDistance(x: number, z: number, bounds: GardenBounds): n
   const qx = Math.abs(x) - cornerX
   const qz = Math.abs(z) - cornerZ
   return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - radius
-}
-
-function gardenHolePath(bounds: GardenBounds, inset = 0): THREE.Path {
-  const halfWidth = bounds.halfWidth - inset
-  const halfDepth = bounds.halfDepth - inset
-  const radius = Math.min(PLOT_CORNER_RADIUS, halfWidth, halfDepth)
-  const hole = new THREE.Path()
-  // Trace clockwise so ShapeGeometry treats this as a hole, with curves that
-  // match the rounded garden silhouette rather than a hard-cornered cutout.
-  hole.moveTo(-halfWidth + radius, -halfDepth)
-  hole.quadraticCurveTo(-halfWidth, -halfDepth, -halfWidth, -halfDepth + radius)
-  hole.lineTo(-halfWidth, halfDepth - radius)
-  hole.quadraticCurveTo(-halfWidth, halfDepth, -halfWidth + radius, halfDepth)
-  hole.lineTo(halfWidth - radius, halfDepth)
-  hole.quadraticCurveTo(halfWidth, halfDepth, halfWidth, halfDepth - radius)
-  hole.lineTo(halfWidth, -halfDepth + radius)
-  hole.quadraticCurveTo(halfWidth, -halfDepth, halfWidth - radius, -halfDepth)
-  hole.closePath()
-  return hole
 }
 
 function addTufts(parent: THREE.Group, random: () => number, count: number, insideGarden: boolean, material: THREE.MeshStandardMaterial): void {
@@ -627,25 +633,38 @@ export function createFairground(): Fairground {
 
   const far=makeGrassTexture(37,'#7ba95d','#466f49')
   far.repeat.set(90,90)
-  const meadow=new THREE.Mesh(new THREE.PlaneGeometry(520,520),new THREE.MeshStandardMaterial({color:'#a7ba6d',map:far,roughness:1}))
-  meadow.rotation.x=-Math.PI/2
+  // Meadow and outer lawn are ring planes with the garden cut out, so deep
+  // digs (future ponds) stay visible instead of being capped by a grass plane.
+  // Insets are NEGATIVE: the cutouts must extend BEYOND the deformable region
+  // (edits reach ±13.1/±8.6 through the edge fade), or edge/corner pits dip
+  // below these flat planes and they occlude the hole (green-through).
+  const meadowGeo=new THREE.ShapeGeometry(rectangleWithGardenHole(520,520,-2),2)
+  meadowGeo.rotateX(-Math.PI/2)
+  const meadow=new THREE.Mesh(meadowGeo,new THREE.MeshStandardMaterial({color:'#a7ba6d',map:far,roughness:1,side:THREE.DoubleSide}))
   meadow.position.y=-.22
   meadow.receiveShadow=true
   root.add(meadow)
   const outerTexture=makeGrassTexture(73,'#88bb69','#578e53')
   outerTexture.repeat.set(18,14)
-  const outer=new THREE.Mesh(new THREE.PlaneGeometry(115,82),new THREE.MeshStandardMaterial({color:'#7bb766',map:outerTexture,roughness:1}))
-  outer.rotation.x=-Math.PI/2
+  const outerGeo=new THREE.ShapeGeometry(rectangleWithGardenHole(115,82,-1.8),2)
+  outerGeo.rotateX(-Math.PI/2)
+  const outer=new THREE.Mesh(outerGeo,new THREE.MeshStandardMaterial({color:'#7bb766',map:outerTexture,roughness:1,side:THREE.DoubleSide}))
   outer.position.y=-.13
   outer.receiveShadow=true
   root.add(outer)
 
   // A visibly cut-away raised parcel contains buildable lawn; outside is the shared fairground.
+  // The parcel is a rim around an open pit: deep digs (future ponds) stay
+  // visible instead of hiding behind a flat brown floor. The hole is outset
+  // past the deformable region (±13.1/±8.6) so no dig ever passes under the
+  // cap ring — an earlier smaller hole is what made edge pits show flat brown.
   const baseShape=roundedRectangle(30.8,22.4,1.3)
+  baseShape.holes.push(gardenHolePath(0.8))
   const baseGeo=new THREE.ExtrudeGeometry(baseShape,{depth:.60,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.12,bevelThickness:.08,curveSegments:8})
   baseGeo.rotateX(-Math.PI/2)
   const base=new THREE.Mesh(baseGeo,standard('#855a3e',.87))
   // The wood-and-soil plinth grows with the parcel; its local Y maps to world Z.
+  base.material.side=THREE.DoubleSide
   // Depth (.60) plus bevelThickness (.08) puts the cap at local y .68; keep it
   // below the lawn plane (GARDEN_LAWN_Y .03) or the soil occludes the lawn.
   base.position.y=-.72
@@ -653,11 +672,20 @@ export function createFairground(): Fairground {
   base.castShadow=base.receiveShadow=true
   root.add(base)
 
+  // Pit backstop well below the deepest diggable surface (grid min −2.6 →
+  // soil world ≈ −2.61), so a max-depth pond bed never bottoms out against
+  // an under-garden plane. A plain slab: everything above it is opaque.
+  const underSoil=new THREE.Mesh(new THREE.PlaneGeometry(34,26),standard('#6e4c33',.95))
+  underSoil.rotation.x=-Math.PI/2
+  underSoil.position.y=-2.85
+  underSoil.receiveShadow=true
+  root.add(underSoil)
+
   const pathMat=standard('#d4bb83',.92)
   const pathEdge=standard('#8b714e',.95)
   // The ivory boundary is the level-one build limit. The revealed gravel apron is outside it.
   const apronShape=roundedRectangle(GARDEN_BOUNDS.halfWidth*2+2.35,GARDEN_BOUNDS.halfDepth*2+2.5,1.05)
-  apronShape.holes.push(gardenHolePath(GARDEN_BOUNDS))
+  apronShape.holes.push(gardenHolePath(0))
   const gravel=new THREE.Mesh(new THREE.ShapeGeometry(apronShape,12),pathMat)
   gravel.rotation.x=-Math.PI/2
   gravel.position.y=.018

@@ -2,6 +2,8 @@
 
 This folder contains deterministic Blender authoring scripts for Animal Balloon Farm. Keep modeling, rig/animation, export, and a review render in source control as an editable source plus generated outputs.
 
+This file covers the Blender side only. For the end-to-end path — including the TypeScript registration points, garden placement, and the checklist for adding a new species — see [`../../ANIMAL_PIPELINE.md`](../../ANIMAL_PIPELINE.md).
+
 ## Confirm the CLI
 
 Blender 4.2.3 LTS is available on this PC through `blender` in the shell PATH. Verify when starting a fresh environment:

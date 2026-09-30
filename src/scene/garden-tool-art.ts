@@ -6,13 +6,26 @@ export interface GardenToolDefinition {
   readonly id: GardenToolId
   readonly hotkey: string
   readonly label: string
+  readonly subtitle: string
+  readonly description: string
+  readonly note: string
   readonly tint: string
   readonly accent: string
 }
 
 export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
-  { id: 'grass', hotkey: '1', label: 'Grass Seeder', tint: '#b7d97a', accent: '#f3d78a' },
-  { id: 'shovel', hotkey: '2', label: 'Shovel', tint: '#d9a06b', accent: '#e8c78f' },
+  {
+    id: 'grass', hotkey: '1', label: 'Grass Seeder', subtitle: 'A little green goes a long way',
+    description: 'A trusty hand tool for turning bare soil into a soft patch of meadow.',
+    note: 'Hold and drag to sow grass. Right-click to gently trim it back.',
+    tint: '#b7d97a', accent: '#f3d78a',
+  },
+  {
+    id: 'shovel', hotkey: '2', label: 'Shovel', subtitle: 'Lift, turn, and tidy the soil',
+    description: 'A sturdy garden shovel for digging up a planting spot and moving soil around.',
+    note: 'Click the ground to dig a hole, then drop a seed or a friend right into it.',
+    tint: '#d9a06b', accent: '#e8c78f',
+  },
 ]
 
 export function createGardenToolModel(id: GardenToolId): THREE.Group {
@@ -89,7 +102,6 @@ function createShovelModel(): THREE.Group {
   const brass = new THREE.MeshStandardMaterial({ color: '#d7b765', roughness: 0.3, metalness: 0.48 })
   const steel = new THREE.MeshStandardMaterial({ color: '#c8cdd4', roughness: 0.34, metalness: 0.62 })
   const steelDark = new THREE.MeshStandardMaterial({ color: '#9aa3ad', roughness: 0.42, metalness: 0.55 })
-  const dirt = new THREE.MeshStandardMaterial({ color: '#8a6a49', roughness: 0.95 })
 
   // Shaft rises from the blade toward the cursor ring's grip corner.
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.042, 0.92, 10), wood)
@@ -122,14 +134,6 @@ function createShovelModel(): THREE.Group {
   bladeTip.scale.set(1.15, 1, 0.55)
   bladeTip.rotation.set(0, Math.PI / 4, 0.5)
   model.add(bladeTip)
-
-  // A little carried dirt inside the scoop.
-  const load = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), dirt)
-  load.position.set(-0.1, 0.17, 0)
-  load.scale.set(1, 0.55, 0.9)
-  load.visible = false
-  load.name = 'Shovel dirt load'
-  model.add(load)
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {
