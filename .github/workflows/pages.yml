@@ -62,6 +62,7 @@ jobs:
           if (( ${#branches[@]} > 0 )); then
             mapfile -t branches < <(printf '%s\n' "${branches[@]}" | sort -u)
           fi
+          published=()
 
           for branch in "${branches[@]}"; do
             if [[ "$branch" != debug/* && "$branch" != feature/* ]]; then
@@ -73,23 +74,30 @@ jobs:
             mkdir -p "$preview_dir"
             git fetch --no-tags --depth=1 "$repo_url" "refs/heads/${branch}:refs/remotes/previews/${slug}"
             git archive "refs/remotes/previews/${slug}" | tar -x -C "$preview_dir"
-            (
+            # A preview is a convenience, not a gate: a stale branch that no
+            # longer builds must never block the production deploy.
+            if ! (
               cd "$preview_dir"
               npm ci
               npm run check
               # A preview build also enables the debug harness, so its frame
               # timing overlay is reachable at the preview URL.
               PAGES_OUTDIR=dist PAGES_BASE_PATH="${repo_name}/previews/${slug}" npm run build
-            )
+            ); then
+              echo "::warning::Skipping preview for $branch: it no longer builds"
+              published=()
+              continue
+            fi
             mkdir -p "site/previews/${slug}"
             cp -a "$preview_dir/dist/." "site/previews/${slug}/"
+            published+=("$branch")
           done
 
           mkdir -p site/previews
           {
             printf '<!doctype html><meta charset="utf-8"><title>Animal Balloon Farm previews</title>'
             printf '<h1>Animal Balloon Farm previews</h1><ul>'
-            for branch in "${branches[@]}"; do
+            for branch in "${published[@]}"; do
               slug="${branch//\//-}"
               printf '<li><a href="%s/">%s</a></li>' "$slug" "$branch"
             done
