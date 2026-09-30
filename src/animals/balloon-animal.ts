@@ -3,6 +3,8 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
 import { FARM_EXPANSION_CONFIG } from '../game/farm-expansion'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
+import { clearHeartEyes, setHeartEyes } from './animal-eyes'
+import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 
 export type AnimalClip = 'IDLE' | 'WALK'
 export type AnimalAppearance = 'standard' | 'wild'
@@ -31,6 +33,19 @@ export interface BalloonAnimalOptions {
   readonly wandering?: boolean
   readonly captureOnClick?: boolean
   readonly replayCaptureOnClick?: boolean
+  /** Heart-eye tint, taken from the catalog so each species reads distinctly. */
+  readonly eyeColor?: string
+  /** Starting rung on the condition ladder. */
+  readonly stage?: AnimalStage
+  /**
+   * How far the animal is allowed to wander, and whether it is loose at the
+   * carnival or fenced into the plot. Stage 1 (up at the tents) is loose; from
+   * stage 2 on it is clamped to the farm, which is what physically expresses
+   * "visited the farm, inside the carnival".
+   */
+  readonly isLoose?: () => boolean
+  /** Half-extents to roam when loose at the carnival. */
+  readonly carnivalBounds?: { readonly x: number; readonly z: number }
   /** Terrain height at garden (x, z); enables walking over deformed ground. */
   readonly groundSampler?: (x: number, z: number) => number
 }
@@ -45,6 +60,13 @@ export interface BalloonAnimal {
   readonly isCaptured: boolean
   readonly isCapturing: boolean
   readonly captureProgress: number
+  /**
+   * Where this animal sits on the four-condition ladder. Drives appearance and
+   * heart eyes, and is the single thing the progression engine pokes.
+   */
+  stage: AnimalStage
+  /** Accent color used for the heart eyes. */
+  readonly eyeColor: string
   update(deltaSeconds: number): void
   dispose(): void
 }
@@ -384,18 +406,33 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const random = seededRandom(options.seed)
   const upAxis = new THREE.Vector3(0, 1, 0)
 
-  const chooseTarget = (): void => {
-    const angle = random() * Math.PI * 2
-    const radius = 2.4 + random() * 5.8
+  /**
+   * Where this animal is allowed to be right now.
+   *
+   * At the carnival it is loose and roams a wide ring around the tents. Once it
+   * has visited the farm it is fenced to the plot, so "visiting the farm"
+   * becomes something you can see happen rather than a flag flipping.
+   */
+  function leash(): { readonly x: number; readonly z: number } {
+    if (options.isLoose?.()) {
+      return options.carnivalBounds ?? { x: 30, z: 30 }
+    }
     const gardenBounds = options.getGardenBounds?.()
     const expansionX = Math.max(0, (gardenBounds?.halfWidth ?? FARM_EXPANSION_CONFIG.startBounds.halfWidth) - FARM_EXPANSION_CONFIG.startBounds.halfWidth)
     const expansionZ = Math.max(0, (gardenBounds?.halfDepth ?? FARM_EXPANSION_CONFIG.startBounds.halfDepth) - FARM_EXPANSION_CONFIG.startBounds.halfDepth)
     const halfWidth = Math.min(options.bounds.x + expansionX, Math.max(0, (gardenBounds?.halfWidth ?? options.bounds.x) - 1.2))
     const halfDepth = Math.min(options.bounds.z + expansionZ, Math.max(0, (gardenBounds?.halfDepth ?? options.bounds.z) - 1.2))
+    return { x: halfWidth, z: halfDepth }
+  }
+
+  const chooseTarget = (): void => {
+    const angle = random() * Math.PI * 2
+    const radius = 2.4 + random() * 5.8
+    const limits = leash()
     target.set(
-      THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -halfWidth, halfWidth),
+      THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -limits.x, limits.x),
       0,
-      THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -halfDepth, halfDepth),
+      THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -limits.z, limits.z),
     )
     nextDecision = 2 + random() * 2.4
   }
@@ -482,6 +519,53 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     }
   }
 
+  /**
+   * The heart-eyes half of the last condition. Kept separate from
+   * `setAppearance` because it is keyed on the GLB's node names and has to be
+   * reversible: the harness demotes a species to re-run the transition.
+   */
+  const applyHeartEyes = (wanted: boolean): void => {
+    const root = modelRoot ?? posePivot
+    if (wanted) {
+      const converted = setHeartEyes(root, { color: options.eyeColor ?? '#ff5d7a' })
+      if (converted === 0) console.warn(`[Animal Balloon Farm] ${options.name} has no pupil nodes to convert to hearts`)
+    } else {
+      clearHeartEyes(root)
+    }
+  }
+
+  let stage: AnimalStage = options.stage ?? 1
+
+  /**
+   * Move an animal to a rung of the condition ladder.
+   *
+   * The wild -> standard change reuses the existing 6.8s paint-reveal flourish
+   * as its transition animation, because that flourish was already exactly
+   * "this creature is committing to the farm" and rebuilding it would have
+   * thrown away reviewed work. Reaching the final rung swaps the black pupils
+   * for hearts, which is the only visual change in the game that is not a
+   * material mask.
+   */
+  const setStage = (next: AnimalStage): void => {
+    if (next === stage) return
+    const becomingResident = next >= 3 && stage < 3
+    const becomingWild = next <= 2 && stage >= 3
+    if (becomingResident) {
+      // Play the reveal. beginCapture refuses while another is running, which
+      // is what we want: a second settle arriving mid-flourish should queue on
+      // the next stage change rather than snap.
+      if (beginCapture()) {
+        stage = next
+        applyHeartEyes(stageHasHeartEyes(next))
+        return
+      }
+    }
+    if (becomingWild) setAppearance('wild')
+    else if (next >= 3) setAppearance('standard')
+    stage = next
+    applyHeartEyes(stageHasHeartEyes(next))
+  }
+
   const onPointerDown = (event: PointerEvent): void => {
     if (options.captureOnClick === false || event.button !== 0 || event.detail >= 2
       || options.isPointerBlocked?.(event.clientX, event.clientY)
@@ -506,12 +590,15 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     id: options.id,
     root: wrapper,
     get gltf(): AnimalGLTF | null { return gltf },
+    eyeColor: options.eyeColor ?? BODY_MATERIALS[options.id].color.getHexString(),
     setAnimation,
     setAppearance,
     beginCapture,
     get isCaptured(): boolean { return captured },
     get isCapturing(): boolean { return Boolean(capture && !capture.finished) },
     get captureProgress(): number { return lastCaptureProgress },
+    get stage(): AnimalStage { return stage },
+    set stage(next: AnimalStage) { setStage(next) },
     update(deltaSeconds): void {
       const delta = Math.min(deltaSeconds, 0.05)
       elapsed += delta
@@ -549,15 +636,12 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         nextDecision -= delta
       }
 
-      const gardenBounds = options.getGardenBounds?.()
-      if (gardenBounds) {
-        const expansionX = Math.max(0, gardenBounds.halfWidth - FARM_EXPANSION_CONFIG.startBounds.halfWidth)
-        const expansionZ = Math.max(0, gardenBounds.halfDepth - FARM_EXPANSION_CONFIG.startBounds.halfDepth)
-        const maxX = Math.min(options.bounds.x + expansionX, Math.max(0, gardenBounds.halfWidth - 1.2))
-        const maxZ = Math.min(options.bounds.z + expansionZ, Math.max(0, gardenBounds.halfDepth - 1.2))
-        wrapper.position.x = THREE.MathUtils.clamp(wrapper.position.x, -maxX, maxX)
-        wrapper.position.z = THREE.MathUtils.clamp(wrapper.position.z, -maxZ, maxZ)
-      }
+      // Keep the animal inside whatever it is currently allowed to roam. At
+      // the carnival that is a wide ring; once it is on the farm it is the
+      // plot, so an animal that has settled can never wander back out.
+      const limits = leash()
+      wrapper.position.x = THREE.MathUtils.clamp(wrapper.position.x, -limits.x, limits.x)
+      wrapper.position.z = THREE.MathUtils.clamp(wrapper.position.z, -limits.z, limits.z)
       direction.subVectors(target, wrapper.position)
       direction.y = 0
       const distance = direction.length()
@@ -595,6 +679,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       capture?.dispose()
       capture = null
       captureVerticalRange = null
+      clearHeartEyes(modelRoot ?? posePivot)
       options.canvas.removeEventListener('pointerdown', onPointerDown)
       wrapper.parent?.remove(wrapper)
       wrapper.traverse((object) => {

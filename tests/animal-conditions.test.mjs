@@ -202,7 +202,7 @@ test('a fresh plot satisfies no area condition on its own', () => {
 function tickFor(progress, farm, seconds, step = 1 / 30) {
   const events = []
   for (let elapsed = 0; elapsed < seconds; elapsed += step) {
-    events.push(...progress.tick({ ...farm, state: farm.state }))
+    events.push(...progress.tick(farm, step))
   }
   return events
 }
@@ -230,7 +230,7 @@ test('visiting the farm and calling it home are separate beats', () => {
   progress.discover('cow')
 
   // Not yet: the visit delay has not elapsed.
-  progress.tick(snapshot(EMPTY_FARM))
+  progress.tick(snapshot(EMPTY_FARM), 1/30)
   assert.equal(progress.progressOf('cow').stage, 1)
 
   tickFor(progress, snapshot(EMPTY_FARM), 3)
@@ -241,32 +241,32 @@ test('visiting the farm and calling it home are separate beats', () => {
 })
 
 test('the cow settles once 15 m2 of tall grass exists, and loves the farm at 30', () => {
-  const progress = createAnimalProgress(SPECIES, { deltaSeconds: 1 / 30, enterFarmSeconds: 0 })
+  const progress = createAnimalProgress(SPECIES, { enterFarmSeconds: 0 })
   progress.discover('cow')
   progress.setStage('cow', 2)
 
   assert.equal(requirementMet(getSpeciesConditions('cow')[2].requirement, snapshot({ ...EMPTY_FARM, tallGrassArea: 14.9 })), false)
   assert.equal(requirementMet(getSpeciesConditions('cow')[2].requirement, snapshot({ ...EMPTY_FARM, tallGrassArea: 15 })), true)
 
-  const settle = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 16 })).filter((event) => event.species === 'cow')
+  const settle = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 16 }), 1/30).filter((event) => event.species === 'cow')
   assert.deepEqual(settle.map((event) => event.kind), ['settle'])
   assert.equal(progress.progressOf('cow').stage, 3)
   assert.equal(progress.progressOf('cow').appearance, 'standard')
   assert.equal(progress.progressOf('cow').heartEyes, false)
 
-  const love = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 31 })).filter((event) => event.species === 'cow')
+  const love = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 31 }), 1/30).filter((event) => event.species === 'cow')
   assert.deepEqual(love.map((event) => event.kind), ['fallInLove'])
   assert.equal(progress.progressOf('cow').stage, 4)
   assert.equal(progress.progressOf('cow').heartEyes, true)
 })
 
 test('the pig cannot settle until a cow is a resident', () => {
-  const progress = createAnimalProgress(SPECIES, { deltaSeconds: 1 / 30, enterFarmSeconds: 0 })
+  const progress = createAnimalProgress(SPECIES, { enterFarmSeconds: 0 })
   progress.setStage('pig', 2)
 
   // Plenty of grass, but no cow: the pig stays a visitor.
   const noCow = snapshot({ ...EMPTY_FARM, tallGrassArea: 40 })
-  assert.deepEqual(progress.tick(noCow), [])
+  assert.deepEqual(progress.tick(noCow, 1/30), [])
   assert.equal(progress.progressOf('pig').stage, 2)
 
   // The cow settles; now the pig's condition is met. The resident set is part
@@ -276,14 +276,14 @@ test('the pig cannot settle until a cow is a resident', () => {
   // the grass draws the goose over as well, so the whole tick is busy. Only
   // the pig's own settle is asserted here.
   progress.setStage('cow', 3)
-  const events = progress.tick(makeFarmSnapshot(noCow.state, progress))
+  const events = progress.tick(makeFarmSnapshot(noCow.state, progress), 1/30)
   const pigEvents = events.filter((event) => event.species === 'pig' && event.stage === 3)
   assert.deepEqual(pigEvents.map((event) => event.kind), ['settle'])
   assert.equal(progress.progressOf('pig').stage, 3)
 })
 
 test('requirements stay hidden until the previous condition is reached', () => {
-  const progress = createAnimalProgress(['cow'], { deltaSeconds: 1 / 30, enterFarmSeconds: 0 })
+  const progress = createAnimalProgress(['cow'], { enterFarmSeconds: 0 })
   const fresh = progress.statusOf('cow')
   assert.deepEqual(fresh.map((status) => status.revealed), [true, false, false, false])
   assert.equal(fresh[3].target, null, 'a hidden requirement reports no target')
@@ -293,7 +293,7 @@ test('requirements stay hidden until the previous condition is reached', () => {
   assert.deepEqual(visited.map((status) => status.revealed), [true, true, false, false])
 
   progress.setStage('cow', 2)
-  progress.tick(snapshot(EMPTY_FARM))
+  progress.tick(snapshot(EMPTY_FARM), 1/30)
   const farmed = progress.statusOf('cow')
   assert.deepEqual(farmed.map((status) => status.revealed), [true, true, true, false])
   // Now the cow's grass requirement is visible, with live numbers.
@@ -305,29 +305,29 @@ test('a species nobody has seen is still findable', () => {
   // The pig and the goose do not start at the carnival. If nothing could ever
   // move them off stage 0 their conditions would be unsatisfiable, which is
   // just a hidden requirement with extra steps.
-  const progress = createAnimalProgress(SPECIES, { deltaSeconds: 1 / 30, visitDelaySeconds: 0, enterFarmSeconds: 0 })
+  const progress = createAnimalProgress(SPECIES, { visitDelaySeconds: 0, enterFarmSeconds: 0 })
   assert.equal(progress.progressOf('pig').stage, 0)
   assert.equal(progress.progressOf('goose').stage, 0)
 
   // Bare soil reveals nobody.
-  assert.deepEqual(progress.tick(snapshot(EMPTY_FARM)), [])
+  assert.deepEqual(progress.tick(snapshot(EMPTY_FARM), 1/30), [])
 
   // A little grass draws the pig over; a little water draws the goose.
-  const withGrass = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 9 }))
+  const withGrass = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 9 }), 1/30)
     .filter((event) => event.kind === 'arriveCarnival')
   assert.deepEqual(withGrass.map((event) => event.species), ['pig'])
   assert.equal(withGrass[0].discovered, true, 'a discovered arrival is flagged as earned')
 
-  const withWater = progress.tick(snapshot({ ...EMPTY_FARM, waterArea: 6 }))
+  const withWater = progress.tick(snapshot({ ...EMPTY_FARM, waterArea: 6 }), 1/30)
     .filter((event) => event.kind === 'arriveCarnival')
   assert.deepEqual(withWater.map((event) => event.species), ['goose'])
 })
 
 test('the journal reports a live progress bar against the target', () => {
-  const progress = createAnimalProgress(['cow'], { deltaSeconds: 1 / 30, enterFarmSeconds: 0 })
+  const progress = createAnimalProgress(['cow'], { enterFarmSeconds: 0 })
   progress.discover('cow')
   progress.setStage('cow', 2)
-  progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 12.4 }))
+  progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 12.4 }), 1/30)
   const [callingHome] = progress.statusOf('cow').slice(2)
   assert.equal(callingHome.target, 15)
   assert.equal(callingHome.current, 12.4)
@@ -335,10 +335,10 @@ test('the journal reports a live progress bar against the target', () => {
 })
 
 test('a requirement already met is reported as met, not as unknown', () => {
-  const progress = createAnimalProgress(['cow'], { deltaSeconds: 1 / 30, enterFarmSeconds: 0 })
+  const progress = createAnimalProgress(['cow'], { enterFarmSeconds: 0 })
   progress.discover('cow')
   progress.setStage('cow', 2)
-  progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 20 }))
+  progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 20 }), 1/30)
   const statuses = progress.statusOf('cow')
   assert.equal(statuses[2].met, true, 'the reached condition reads as met')
 })
@@ -373,7 +373,7 @@ test('an unknown species still has a usable four-step ladder', () => {
 
 test('a naive, direct progression run reaches the full four-step arc', () => {
   // The whole loop end to end, the way the game actually plays it.
-  const progress = createAnimalProgress(SPECIES, { deltaSeconds: 1 / 30, visitDelaySeconds: 0, enterFarmSeconds: 0 })
+  const progress = createAnimalProgress(SPECIES, { visitDelaySeconds: 0, enterFarmSeconds: 0 })
   const seen = []
   // The starters are already at the carnival on frame one, so their arrival is
   // part of the arc too.
@@ -386,7 +386,7 @@ test('a naive, direct progression run reaches the full four-step arc', () => {
     // Sow grass, then dig a pond, as a player would.
     const state = { tallGrassArea: Math.min(40, step * 0.5), waterArea: Math.min(25, step * 0.5), flatGrassArea: Math.min(40, step * 0.5) }
     farm = makeFarmSnapshot(state, progress)
-    seen.push(...progress.tick(farm).map((event) => `${event.species}:${event.kind}`))
+    seen.push(...progress.tick(farm, step).map((event) => `${event.species}:${event.kind}`))
   }
 
   // Every starter species made it to a heart-eyed, breeding-ready animal.

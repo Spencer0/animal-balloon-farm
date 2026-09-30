@@ -1,9 +1,12 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
-import { getAnimalSceneOptions } from './animals/animal-catalog'
+import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
 import { createFarmExpansionUI } from './game/farm-expansion-ui'
-import { createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairground'
+import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
+import { createAnimalProgress, makeFarmSnapshot, startingCarnivalSpecies } from './game/animal-progress'
+import { measureFarmState, type FarmState, type LawnSample, type TerrainSample } from './game/farm-state'
+import { stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
@@ -160,15 +163,37 @@ let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
 // Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
 // each animal's palette through a shared 6.8-second paint-bucket reveal. Scene options come from
 // the single ANIMAL_CATALOG source; groundSampler lets them follow the garden terrain height.
+//
+// The condition ladder is what now drives that transition. `progress` is the
+// pure state machine; this file is only responsible for reading the farm,
+// feeding it in, and acting on the events it returns.
+const speciesIds = getAnimalSceneOptions(false, gameCanvas, camera).map((options) => options.id)
+const progress = createAnimalProgress(speciesIds)
+/** Stages 0 and 1 live at the carnival; 2 and up are inside the fence. */
+const isLoose = (species: string): boolean => progress.progressOf(species).stage < 2
+
 const animals: BalloonAnimal[] = await Promise.all(getAnimalSceneOptions(
   false,
   gameCanvas,
   camera,
   gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
 ).map((options) =>
-  createBalloonAnimal(fairground.root, options),
+  createBalloonAnimal(fairground.root, {
+    ...options,
+    // Start every species at the carnival, loose, and let progression decide
+    // who comes in. `carnivalSpawn` points out by the tents.
+    stage: 0,
+    spawn: (ANIMAL_CATALOG.find((animal) => animal.id === options.id)?.carnivalSpawn
+      ?? options.spawn) as readonly [number, number],
+    isLoose: () => isLoose(options.id),
+    getGardenBounds: activeGardenBounds,
+  }),
 ))
 const animalById = new Map(animals.map((animal) => [animal.id, animal]))
+
+// Four species are already at the carnival when the game opens; the rest have
+// to be drawn over by the farm itself.
+for (const species of startingCarnivalSpecies(speciesIds)) progress.discover(species)
 
 // The animals are created once and live in the fairground. The viewer borrows
 // them onto its own plinths, so remember the farm transform to put it back.
@@ -181,6 +206,84 @@ const viewerStands = new Map(animals.map((animal) => {
   const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
   return [animal.id, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z)]
 }))
+
+// ------------------------------------------------------- farm measurement --
+
+/**
+ * The lawn's own vertex grids, read straight out of the tool that maintains
+ * them. This is the seam between the renderer and the simulation: the pure
+ * condition code never sees a Three.js object, it only ever sees these arrays.
+ */
+function currentLawnSample(): LawnSample | null {
+  const lawn = fairground.gardenSurface
+  if (!lawn) return null
+  const positions = lawn.geometry.getAttribute('position') as THREE.BufferAttribute
+  const colors = lawn.geometry.getAttribute('color') as THREE.BufferAttribute | undefined
+  if (!colors) return null
+  const count = positions.count
+  const xs = new Float32Array(count)
+  const zs = new Float32Array(count)
+  const coverage = new Float32Array(count)
+  for (let index = 0; index < count; index += 1) {
+    xs[index] = positions.getX(index)
+    // The lawn geometry is authored in the XZ plane with +Y mapping to -Z.
+    zs[index] = -positions.getY(index)
+    coverage[index] = colors.getW(index)
+  }
+  return { count, xs, zs, coverage }
+}
+
+function currentTerrainSample(): TerrainSample | null {
+  if (!gardenTerrain) return null
+  // The height field's own grid; `cellSize`/`cols`/`rows` describe it exactly.
+  const cols = gardenTerrain.gridCols
+  const rows = gardenTerrain.gridRows
+  const cellSize = gardenTerrain.cellSize
+  const originX = -(GARDEN_MAX_BOUNDS.halfWidth + 0.08)
+  const originZ = -(GARDEN_MAX_BOUNDS.halfDepth + 0.08)
+  const heights = new Float32Array(cols * rows)
+  for (let gz = 0; gz < rows; gz += 1) {
+    for (let gx = 0; gx < cols; gx += 1) {
+      heights[gz * cols + gx] = gardenTerrain.heightAt(
+        originX + gx * cellSize,
+        originZ + gz * cellSize,
+      )
+    }
+  }
+  return { heights, cols, rows, cellSize, originX, originZ }
+}
+
+/** The last measured farm, kept so the journal and harness can read it. */
+let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0 }
+
+function measureFarm(): FarmState {
+  const lawn = currentLawnSample()
+  const terrain = currentTerrainSample()
+  if (!lawn || !terrain) return lastFarmState
+  lastFarmState = measureFarmState(lawn, terrain)
+  return lastFarmState
+}
+
+/**
+ * Advance every animal one step and play whatever transition it earned.
+ *
+ * This is the only place the scene learns that a condition was met, and it
+ * does so by setting `animal.stage` -- the animal then runs its own reveal.
+ * Keeping the event handling here means `balloon-animal.ts` never has to know
+ * that a condition system exists.
+ */
+function updateAnimalProgress(deltaSeconds: number): void {
+  if (mode === 'viewer' || menu.isOpen) return
+  const events = progress.tick(makeFarmSnapshot(measureFarm(), progress), deltaSeconds)
+  for (const event of events) {
+    const animal = animalById.get(event.species as (typeof animals)[number]['id'])
+    if (!animal) continue
+    animal.stage = event.stage
+    if (event.kind === 'settle' || event.kind === 'fallInLove') {
+      console.info(`[Animal Balloon Farm] ${event.species} -> ${stageTitle(event.species, event.stage)}`)
+    }
+  }
+}
 
 // ---------------------------------------------------------------- game modes --
 // The farm and the animal viewer are the same scene with different staging, so
@@ -1048,6 +1151,9 @@ function frame(now: number): void {
   viewerStage?.update(delta)
   updateMenuDrift(delta, now / 1000)
   animals.forEach((animal) => animal.update(delta))
+  // The condition ladder runs after the animals have moved, so a settle
+  // triggered this frame is applied against the farm as it is right now.
+  updateAnimalProgress(delta)
   // The animals keep walking and following garden terrain on their own, so in
   // the viewer we pin them back onto their plinths after the update.
   if (mode === 'viewer') {

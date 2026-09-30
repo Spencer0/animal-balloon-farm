@@ -73,8 +73,6 @@ export interface FarmSnapshot {
 }
 
 export interface AnimalProgressOptions {
-  /** Seconds of simulated time per tick, for the staged delays. */
-  readonly deltaSeconds?: number
   readonly visitDelaySeconds?: number
   readonly enterFarmSeconds?: number
 }
@@ -84,7 +82,8 @@ export interface AnimalProgress {
   all(): readonly SpeciesProgress[]
   /** Requirement checklist for the journal, disclosure already applied. */
   statusOf(species: string): readonly RequirementStatus[]
-  tick(farm: FarmSnapshot): readonly ProgressEvent[]
+  /** Advance the world by `deltaSeconds` and return what changed. */
+  tick(farm: FarmSnapshot, deltaSeconds: number): readonly ProgressEvent[]
   /** Force a species to a stage — the debug harness and the tests use this. */
   setStage(species: string, stage: AnimalStage): readonly ProgressEvent[]
   /** Grant the carnival stage, as happens for species that start the game there. */
@@ -222,10 +221,10 @@ export function createAnimalProgress(
       }
       return events
     },
-    tick(farm) {
+    tick(farm, deltaSeconds) {
       lastFarm = farm
       const events: ProgressEvent[] = []
-      const delta = options.deltaSeconds ?? 0
+      const delta = Number.isFinite(deltaSeconds) && deltaSeconds > 0 ? Math.min(deltaSeconds, 0.25) : 0
       for (const entry of Array.from(progress.values())) {
         const stages = conditionsFor(entry.species)
         if (entry.stage === 0) {
