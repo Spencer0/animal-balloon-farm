@@ -53,6 +53,39 @@ interface JournalEntry {
   readonly gesture?: string
 }
 
+/**
+ * What the journal needs to draw a species' four conditions.
+ *
+ * This is a structural copy of `RequirementStatus` from the progression model
+ * rather than an import, so the journal keeps rendering the same way whether
+ * or not the conditions system is wired in. The model owns the rules; this
+ * only reads them.
+ */
+export interface JournalConditionRow {
+  readonly stage: number
+  readonly title: string
+  /** False until the previous condition is reached. */
+  readonly revealed: boolean
+  readonly current: number | null
+  readonly target: number | null
+  readonly met: boolean
+  readonly result: string
+  /** Plain-language hint, e.g. "Wants 15 m² of tall grass". */
+  readonly hint: string
+  /** A species this condition is waiting on, if it is a social one. */
+  readonly waitingOn?: { readonly species: string; readonly name: string; readonly resident: boolean }
+}
+
+export interface JournalSpeciesConditions {
+  readonly stage: number
+  readonly rows: readonly JournalConditionRow[]
+}
+
+export interface JournalConditionSource {
+  /** Current conditions for a species, or null if it is not in the world. */
+  get(species: string): JournalSpeciesConditions | null
+}
+
 const ANIMALS: readonly JournalEntry[] = ANIMAL_CATALOG.map((animal) => ({
   id: animal.id,
   name: animal.name,
@@ -121,6 +154,13 @@ const BOOK_SCALE = 1.05
 export interface JournalPanel extends UIPanel {
   readonly isOpen: boolean
   /**
+   * Live condition data for a species, supplied by main.ts. The journal stays
+   * a renderer: it draws whatever the progression model says is currently
+   * true, and re-renders when that changes so a progress bar is live while the
+   * player is holding the seeder.
+   */
+  setConditionsSource(source: JournalConditionSource | null): void
+  /**
    * Shows or hides the 3D launcher. The main menu calls this so the book does not
    * sit on top of the menu, and so its hit box goes with it.
    */
@@ -181,6 +221,20 @@ export function createJournalPanel(
   let dragScrollGrabOffset = 0
   let disposed = false
   let hoverClose = false
+  /** Set by main.ts; null means the conditions system is not wired in. */
+  let conditionsSource: JournalConditionSource | null = null
+  /** Last-drawn signature, so live progress only repaints when it changes. */
+  let lastConditionsSignature = ''
+  /**
+   * Where the last-drawn entry page actually ended, in spread-local pixels.
+   *
+   * A fixed height per page type is a guess, and the conditions checklist makes
+   * the guess wrong: the old constant let the player scroll a third of a page
+   * into blank paper. Measuring the real bottom and refining the scroll range
+   * on the next frame is self-correcting and needs no duplicate layout math.
+   */
+  let measuredEntryBottom = 0
+  let heightCorrectionUsed = false
 
   // ---------------------------------------------------------------- drawing --
 
@@ -190,7 +244,7 @@ export function createJournalPanel(
 
   function contentHeight(): number {
     if (!category) return SCROLL_VIEW.height
-    if (selectedEntry) return category === 'animals' ? 700 : 650
+    if (selectedEntry) return Math.max(SCROLL_VIEW.height, measuredEntryBottom || 700)
     if (category === 'animals') return Math.max(SCROLL_VIEW.height, 105 + categoryEntries().length * (LIST_ROW_HEIGHT + LIST_ROW_GAP) + 12)
     return SCROLL_VIEW.height
   }
@@ -687,6 +741,13 @@ export function createJournalPanel(
       y = wrapText(context, entry.gesture, imageBox.x + 3, y, imageBox.width - 14, 22)
     }
 
+    // The four conditions come last: they are the live part of the page, and
+    // the field notes read better above them.
+    if (category === 'animals' && conditionsSource?.get(entry.id)) {
+      y += 22
+      y = drawConditions(context, entry, y)
+    }
+
     y += 25
     context.strokeStyle = 'rgba(148, 102, 66, .3)'
     context.lineWidth = 0.7
@@ -699,6 +760,98 @@ export function createJournalPanel(
     context.font = 'italic 12px Georgia, "Times New Roman", serif'
     context.fillText('FIELD NOTES  ·  ' + pageNumber(), imageBox.x + imageBox.width - 2, y + 21)
     context.restore()
+    // Record where the page really ended so the scroll range can be corrected.
+    measuredEntryBottom = Math.max(measuredEntryBottom, y + 34)
+  }
+
+  /**
+   * The four conditions, drawn as a checklist.
+   *
+   * Progressive disclosure is the whole point, so an unrevealed condition is
+   * not drawn as a greyed-out line with its number attached: it is a sealed
+   * line that says nothing. You are not told what a creature needs to stay
+   * until it has already come in to look around, which is the rule SPEC 5.3
+   * asks for and the thing the static record book got wrong.
+   */
+  function drawConditions(context: CanvasRenderingContext2D, entry: JournalEntry, top: number): number {
+    const conditions = conditionsSource?.get(entry.id)
+    if (!conditions) return top
+    const left = imageLeft() + 3
+    const width = imageWidth() - 14
+
+    context.textAlign = 'left'
+    context.fillStyle = '#a1744c'
+    context.font = '700 8px Georgia, "Times New Roman", serif'
+    withTracking(context, 1.25, () => {
+      context.fillText('FOUR CONDITIONS', left, top)
+    })
+    let y = top + 24
+
+    for (const row of conditions.rows) {
+      const done = row.met && row.revealed
+      if (!row.revealed) {
+        // Sealed. No title, no number, nothing to read.
+        context.strokeStyle = 'rgba(148, 102, 66, .3)'
+        context.lineWidth = 0.8
+        context.beginPath()
+        context.moveTo(left, y + 4)
+        context.lineTo(left + width, y + 4)
+        context.stroke()
+        context.fillStyle = '#b39a7d'
+        context.font = 'italic 12px Georgia, "Times New Roman", serif'
+        context.fillText('a condition not yet met', left, y)
+        y += 22
+        continue
+      }
+
+      drawPaw(context, left + 5, y - 4, 9, done ? '#c9552f' : '#cbb08d')
+      context.fillStyle = done ? '#8a5a2b' : '#604732'
+      context.font = `${done ? '700 ' : ''}14px Georgia, "Times New Roman", serif`
+      context.fillText(row.title, left + 18, y)
+
+      context.fillStyle = done ? '#7d6a52' : '#8a6b4e'
+      context.font = '13px Georgia, "Times New Roman", serif'
+      // wrapText returns the y of the line *after* the block it drew.
+      y = wrapText(context, done ? row.result : row.hint, left + 18, y + 16, width - 24, 16) + 2
+
+      // A live bar, but only where there is a number to fill. A social
+      // condition has nothing to meter, so it gets a plain state line instead.
+      if (row.target !== null && row.current !== null) {
+        const barWidth = width - 24
+        const ratio = Math.max(0, Math.min(1, row.current / Math.max(row.target, 0.0001)))
+        context.fillStyle = 'rgba(140, 100, 66, .16)'
+        context.fillRect(left + 18, y, barWidth, 6)
+        context.fillStyle = done ? '#6f9d54' : '#c99a4e'
+        context.fillRect(left + 18, y, barWidth * ratio, 6)
+        context.strokeStyle = 'rgba(120, 84, 54, .34)'
+        context.lineWidth = 0.6
+        context.strokeRect(left + 18, y, barWidth, 6)
+        context.fillStyle = '#8a6b4e'
+        context.font = '11px Georgia, "Times New Roman", serif'
+        context.fillText(`${row.current.toFixed(1)} / ${row.target.toFixed(0)} m²`, left + 18, y + 17)
+        y += 24
+      } else if (row.waitingOn) {
+        context.fillStyle = row.waitingOn.resident ? '#6f9d54' : '#a5713f'
+        context.font = 'italic 12px Georgia, "Times New Roman", serif'
+        context.fillText(
+          row.waitingOn.resident ? `${row.waitingOn.name} lives here` : `no ${row.waitingOn.name} here yet`,
+          left + 18,
+          y + 14,
+        )
+        y += 22
+      }
+      y += 10
+    }
+    return y
+  }
+
+  /** Where the entry page's art column starts, shared by the two callers. */
+  function imageLeft(): number {
+    return SCROLL_VIEW.x + 10
+  }
+
+  function imageWidth(): number {
+    return SCROLL_VIEW.width - 32
   }
 
   function loadSprite(entry: JournalEntry): void {
@@ -725,6 +878,25 @@ export function createJournalPanel(
   // ----------------------------------------------------------------- layout --
 
   /** Positions the parchment, the scrim and the launcher from one fit. */
+  /**
+   * Repaint the open page if the conditions moved.
+   *
+   * The journal is a static canvas texture, so a progress bar that only updates
+   * when the page is opened would show a stale number while the player sows
+   * grass. A cheap signature check keeps this to one comparison per frame.
+   */
+  function refreshConditions(): void {
+    if (!isOpen || !conditionsSource || !selectedEntry) return
+    const conditions = conditionsSource.get(selectedEntry.id)
+    if (!conditions) return
+    const signature = conditions.rows
+      .map((row) => `${row.stage}:${row.revealed ? 1 : 0}:${row.met ? 1 : 0}:${row.current ?? '-'}`)
+      .join('|')
+    if (signature === lastConditionsSignature) return
+    lastConditionsSignature = signature
+    renderPage()
+  }
+
   function layout(): void {
     spread = fitAspectRect(viewport, SPREAD_ASPECT, SPREAD_MARGIN)
     spreadScale = spread.width / SPREAD_WIDTH
@@ -746,7 +918,8 @@ export function createJournalPanel(
       return
     }
 
-    pageContentHeight = contentHeight()
+    const heightBefore = contentHeight()
+    pageContentHeight = heightBefore
     scrollOffset = THREE.MathUtils.clamp(scrollOffset, 0, maxScroll())
     drawPanelFrame(context)
     drawLeafPage(context)
@@ -772,6 +945,15 @@ export function createJournalPanel(
     context.restore()
     texture.needsUpdate = true
     if (selectedEntry) loadSprite(selectedEntry)
+
+    // One correction pass: the checklist's height is only known after it has
+    // been drawn, so re-render once with the real scroll range. Guarded so a
+    // layout that oscillates cannot spin.
+    if (selectedEntry && !heightCorrectionUsed && Math.abs(contentHeight() - heightBefore) > 1) {
+      heightCorrectionUsed = true
+      scrollOffset = THREE.MathUtils.clamp(scrollOffset, 0, maxScroll())
+      renderPage()
+    }
   }
 
   /** Design space -> spread-local drawing pixels. */
@@ -827,6 +1009,9 @@ export function createJournalPanel(
 
   function setEntry(entry: JournalEntry | null): void {
     selectedEntry = entry
+    // A different page has a different height; re-measure it from scratch.
+    measuredEntryBottom = 0
+    heightCorrectionUsed = false
     scrollOffset = 0
     renderPage()
   }
@@ -864,6 +1049,11 @@ export function createJournalPanel(
       if (launcherVisible === visible) return
       launcherVisible = visible
       layout()
+    },
+    setConditionsSource(source) {
+      conditionsSource = source
+      lastConditionsSignature = ''
+      if (isOpen) renderPage()
     },
     get blocksGarden(): boolean {
       return isOpen
@@ -977,7 +1167,9 @@ export function createJournalPanel(
       return true
     },
     update(): void {
-      // The journal is canvas-driven; nothing to advance per frame.
+      // The journal is canvas-driven; the only thing to advance per frame is
+      // the live conditions checklist.
+      refreshConditions()
     },
     resize(cssWidth: number, cssHeight: number): void {
       viewport.resize(cssWidth, cssHeight)

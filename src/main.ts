@@ -6,7 +6,7 @@ import { createFarmExpansionUI } from './game/farm-expansion-ui'
 import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
 import { createAnimalProgress, makeFarmSnapshot, startingCarnivalSpecies } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample } from './game/farm-state'
-import { stageTitle } from './game/animal-conditions'
+import { stageDefinition, stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
@@ -355,6 +355,45 @@ const viewer = createViewerPanel({
 }, window.innerWidth, window.innerHeight)
 
 const panels: UIPanel[] = [toolsHud, menu, viewer, journal]
+
+/**
+ * Hand the journal a live view of the condition ladder.
+ *
+ * The translation lives here rather than in the journal so the UI keeps no
+ * knowledge of the progression model -- it draws rows, and the model decides
+ * what a row says and whether it is sealed yet.
+ */
+journal.setConditionsSource({
+  get: (species) => {
+    const conditions = progress.statusOf(species)
+    if (!conditions.length) return null
+    return {
+      stage: progress.progressOf(species).stage,
+      rows: conditions.map((row) => {
+        const definition = stageDefinition(species, row.stage as 0 | 1 | 2 | 3 | 4)
+        // A social condition has no area to meter, so name the friend instead.
+        const wantsSpecies = row.requirement?.kind === 'residentSpecies' ? row.requirement.species : undefined
+        return {
+          stage: row.stage,
+          title: row.title,
+          revealed: row.revealed,
+          current: row.current,
+          target: row.target,
+          met: row.met,
+          result: row.result,
+          hint: definition?.hint ?? '',
+          ...(wantsSpecies ? {
+            waitingOn: {
+              species: wantsSpecies,
+              name: ANIMAL_CATALOG.find((animal) => animal.id === wantsSpecies)?.name ?? wantsSpecies,
+              resident: progress.all().some((entry) => entry.species === wantsSpecies && entry.stage >= 3),
+            },
+          } : {}),
+        }
+      }),
+    }
+  },
+})
 
 /** Where the pointer was last seen, so the cursor can be re-resolved on a
  * mode or visibility change without waiting for the mouse to move again. */

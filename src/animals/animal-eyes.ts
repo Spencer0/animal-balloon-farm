@@ -28,7 +28,6 @@ export interface HeartEyeOptions {
 interface HeartEyes {
   readonly hearts: readonly THREE.Mesh[]
   readonly material: THREE.Material
-  dispose(): void
 }
 
 const installed = new WeakMap<THREE.Object3D, HeartEyes>()
@@ -123,14 +122,7 @@ export function setHeartEyes(root: THREE.Object3D, options: HeartEyeOptions): nu
     if (isMesh(object) && CATCHLIGHT_MATCH.test(object.name)) object.visible = false
   })
 
-  installed.set(root, {
-    hearts,
-    material,
-    dispose() {
-      material.dispose()
-      installed.delete(root)
-    },
-  })
+  installed.set(root, { hearts, material })
   return converted
 }
 
@@ -151,11 +143,15 @@ export function clearHeartEyes(root: THREE.Object3D): void {
     if (!isMesh(object)) return
     if (PUPIL_MATCH.test(object.name) || CATCHLIGHT_MATCH.test(object.name)) object.visible = true
   })
+  // Fully undo, including the bookkeeping. Leaving the entry behind kept the
+  // hearts off the face but still reported them, which made the debug report
+  // claim a species was breeding when it was not.
+  existing.material.dispose()
+  installed.delete(root)
 }
 
 function disposeHeartEyes(root: THREE.Object3D): void {
   clearHeartEyes(root)
-  installed.get(root)?.dispose()
 }
 
 export { disposeHeartEyes }

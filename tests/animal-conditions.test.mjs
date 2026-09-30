@@ -371,6 +371,27 @@ test('an unknown species still has a usable four-step ladder', () => {
   assert.deepEqual(stages.map((stage) => stage.stage), [1, 2, 3, 4])
 })
 
+test('heart eyes are a reversible state, not a one-way door', () => {
+  // The stage machine can demote a species to replay its reveal, so putting the
+  // hearts on has to be undoable. Leaving the bookkeeping behind kept the hearts
+  // off the face while still reporting them, so the debug report claimed a
+  // species was breeding when it was not.
+  const progress = createAnimalProgress(['cow'], { enterFarmSeconds: 0 })
+  progress.setStage('cow', 4)
+  assert.equal(stageHasHeartEyes(progress.progressOf('cow').stage), true)
+
+  progress.setStage('cow', 0)
+  assert.equal(progress.progressOf('cow').stage, 0)
+  assert.equal(stageHasHeartEyes(progress.progressOf('cow').stage), false)
+
+  // And back again, so the round trip is safe to repeat.
+  progress.setStage('cow', 4)
+  assert.equal(stageHasHeartEyes(progress.progressOf('cow').stage), true)
+  progress.reset()
+  assert.equal(progress.progressOf('cow').stage, 0)
+  assert.equal(progress.progressOf('cow').heartEyes, false)
+})
+
 test('a naive, direct progression run reaches the full four-step arc', () => {
   // The whole loop end to end, the way the game actually plays it.
   const progress = createAnimalProgress(SPECIES, { visitDelaySeconds: 0, enterFarmSeconds: 0 })
