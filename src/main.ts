@@ -586,6 +586,7 @@ interface GardenFrameTiming {
 interface GardenPerformanceSummary {
   readonly samples: number
   readonly fps: number
+  readonly cadenceMs: number
   readonly droppedFrames: number
   readonly zoom: number
   readonly bufferWidth: number
@@ -638,7 +639,6 @@ interface PerformanceOverlay {
 
 const frameTimingSamples: GardenFrameTiming[] = []
 const FRAME_TIMING_SAMPLE_LIMIT = 180
-const FRAME_DROP_THRESHOLD_MS = 20
 const PERF_OVERLAY_REFRESH_MS = 400
 const PERF_LOG_INTERVAL_MS = 2000
 
@@ -706,7 +706,7 @@ function createPerformanceOverlay(): PerformanceOverlay {
       context.font = '26px ui-monospace, SFMono-Regular, Menlo, monospace'
       context.fillStyle = '#fff3d7'
       context.fillText(
-        `frame p95 ${summary?.intervalMs.p95.toFixed(1) ?? '--'}ms · drops ${summary?.droppedFrames ?? '--'}`,
+        `frame p95 ${summary?.intervalMs.p95.toFixed(1) ?? '--'}ms · drops ${summary?.droppedFrames ?? '--'} @ ${summary?.cadenceMs.toFixed(1) ?? '--'}ms`,
         26,
         104,
       )
@@ -744,13 +744,17 @@ function summarizeFrameTimings(): GardenPerformanceSummary | null {
   const intervals = get('intervalMs').filter((value) => value > 0)
   if (intervals.length === 0) return null
   const averageInterval = intervals.reduce((total, value) => total + value, 0) / intervals.length
+  // Adapt to the browser/display's actual rAF cadence (e.g. 30 Hz remote browser
+  // previews) so ordinary 33 ms frames are not mislabeled as missed 60 Hz frames.
+  const cadenceMs = percentile(intervals, 0.1)
   const drawingBuffer = renderer.getDrawingBufferSize(new THREE.Vector2())
   const summarize = (values: readonly number[]) => ({ p50: percentile(values, 0.5), p95: percentile(values, 0.95), max: max(values) })
   const summarizeTail = (values: readonly number[]) => ({ p95: percentile(values, 0.95), max: max(values) })
   return {
     samples: intervals.length,
     fps: +(1000 / averageInterval).toFixed(1),
-    droppedFrames: intervals.filter((value) => value > FRAME_DROP_THRESHOLD_MS).length,
+    cadenceMs,
+    droppedFrames: intervals.filter((value) => value > cadenceMs * 1.5).length,
     zoom: +(normalViewHeight / (viewHalfHeight * 2)).toFixed(2),
     bufferWidth: drawingBuffer.x,
     bufferHeight: drawingBuffer.y,
