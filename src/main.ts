@@ -1110,7 +1110,7 @@ function frame(now: number): void {
       lastPerformanceLogAt = now
       const summary = summarizeFrameTimings()
       if (summary) {
-        console.info('[Frame Performance]', summary)
+        console.info(`[Frame Performance] ${JSON.stringify(summary)}`)
       }
     }
   }
