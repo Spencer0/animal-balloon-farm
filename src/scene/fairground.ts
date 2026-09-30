@@ -273,7 +273,12 @@ function addFlowerPatches(parent: THREE.Group, random: () => number): void {
   }
   stems.receiveShadow = true
   centers.castShadow = true
-  petals.forEach((mesh) => { mesh.castShadow = true; parent.add(mesh) })
+  // Each petal bucket is allocated the full count*5 capacity but only receives
+  // the flowers that happened to pick its color, so trim `count` to what was
+  // actually written. Leftover instances keep the identity matrix three.js
+  // seeds them with, which stacks hundreds of unit-radius spheres at the world
+  // origin — a white boulder sitting in the middle of the garden, shadow and all.
+  petals.forEach((mesh, i) => { mesh.count = indices[i]; mesh.castShadow = true; parent.add(mesh) })
   parent.add(stems, centers)
 }
 
