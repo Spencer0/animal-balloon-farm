@@ -37,6 +37,12 @@ export interface GardenToolDebugState {
 export interface GardenTools {
   readonly root: THREE.Group
   readonly selectedTool: GardenToolId
+  /**
+   * Whether the in-world brush ring is on screen. The UI layer reads this to
+   * decide between hiding the OS pointer (the ring *is* the pointer) and
+   * showing the hand, so the menu and journal are not left with no cursor.
+   */
+  readonly cursorVisible: boolean
   selectTool(id: GardenToolId): void
   cycleBrushSize(): void
   pointerMove(event: GardenPointerMove): void
@@ -142,9 +148,10 @@ function insideGarden(x: number, z: number): boolean {
 }
 
 export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camera, lawn: THREE.Mesh, terrain: GardenTerrain): GardenTools {
-  // The painted ring IS the cursor inside the garden; the OS arrow would just
-  // clutter the meadow scene.
-  canvas.style.cursor = 'none'
+  // The painted ring is the cursor inside the garden, but it only exists while
+  // the tools are live. Hiding the OS pointer here unconditionally left the main
+  // menu, the journal and the viewer with no pointer at all, so the UI layer now
+  // owns the cursor and asks whether the ring is showing before hiding it.
   const root = new THREE.Group()
   root.name = 'Grass seeder and garden brush cursor'
   root.add(lawn)
@@ -688,6 +695,7 @@ export function createGardenTools(canvas: HTMLCanvasElement, camera: THREE.Camer
   return {
     root,
     get selectedTool(): GardenToolId { return selectedTool },
+    get cursorVisible(): boolean { return cursorVisible },
     selectTool(id): void {
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
