@@ -856,6 +856,60 @@ interface GardenDebugHarness {
   readonly scene: THREE.Scene
   readonly uiScene: THREE.Scene
   layout(): Record<string, unknown>
+  /** Animal conditions: every rung, whether it is revealed, and live numbers. */
+  conditions(): AnimalConditionReport
+  /** What the farm currently measures, in square meters. */
+  farmState(): FarmState
+  /**
+   * Force a species onto a rung of the ladder and play whatever transition it
+   * earns. This is how a specific condition gets exercised on demand.
+   */
+  setStage(species: string, stage: number): AnimalConditionReport
+  /** Sow a disc of grass, in the same units the cow's 15 m2 is measured in. */
+  sowGrass(x: number, z: number, radius: number): FarmState
+  /** Dig a pond of the given radius, which is what the water conditions want. */
+  digPond(x: number, z: number, radius: number): FarmState
+  /** Run the progression tick `steps` times, optionally with a time jump. */
+  advance(steps?: number, secondsPerStep?: number): AnimalConditionReport
+  /** Forget everything: no grass, no pond, every animal back to the carnival. */
+  resetConditions(): void
+  /** Where each animal is, and what it looks like right now. */
+  animalReport(): Record<string, unknown>[]
+  /** Frame a species closely, for inspecting eyes and other small details. */
+  focusSpecies(species: string, height?: number): void
+}
+
+interface AnimalConditionReport {
+  readonly farm: FarmState
+  readonly species: Record<string, {
+    readonly stage: number
+    readonly appearance: string
+    readonly heartEyes: boolean
+    readonly isCaptured: boolean
+    readonly invited: boolean
+    readonly position: { x: number; z: number }
+    readonly conditions: ReturnType<typeof progress.statusOf>
+  }>
+}
+
+/** Everything the condition harness and the journal both need to draw. */
+function reportConditions(): AnimalConditionReport {
+  // Measuring here (rather than reusing the last frame's) means a harness
+  // caller sees the farm as it is at the moment it asked.
+  const farm = measureFarm()
+  const species: AnimalConditionReport['species'] = {}
+  for (const animal of animals) {
+    species[animal.id] = {
+      stage: progress.progressOf(animal.id).stage,
+      appearance: progress.progressOf(animal.id).appearance,
+      heartEyes: animal.heartEyeCount > 0,
+      isCaptured: animal.isCaptured,
+      invited: progress.progressOf(animal.id).invited,
+      position: { x: +animal.root.position.x.toFixed(2), z: +animal.root.position.z.toFixed(2) },
+      conditions: progress.statusOf(animal.id),
+    }
+  }
+  return { farm, species }
 }
 
 interface GardenFrameTiming {
@@ -1075,6 +1129,78 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       gardenWaterMesh?.update(performance.now() * 0.001)
     },
     waterSummary: () => gardenWater?.summary() ?? null,
+    farmState: () => measureFarm(),
+    conditions: () => reportConditions(),
+    setStage: (species, stage) => {
+      const target = Math.max(0, Math.min(4, Math.floor(stage))) as 0 | 1 | 2 | 3 | 4
+      // Demote first so a re-run replays the reveal from the top, then walk up
+      // one rung at a time so the transition animation actually plays.
+      for (let rung = 0; rung < target; rung += 1) {
+        progress.setStage(species, rung as 0 | 1 | 2 | 3 | 4)
+        const animal = animalById.get(species as (typeof animals)[number]['id'])
+        if (animal) animal.stage = rung as 0 | 1 | 2 | 3 | 4
+      }
+      progress.setStage(species, target)
+      const animal = animalById.get(species as (typeof animals)[number]['id'])
+      if (animal) animal.stage = target
+      // One more tick so a settled animal is reflected in the resident set the
+      // next species is judged against.
+      progress.tick(makeFarmSnapshot(measureFarm(), progress), 0)
+      return reportConditions()
+    },
+    sowGrass: (x, z, radius) => {
+      gardenTools?.sowGrassDisc(x, z, radius)
+      return measureFarm()
+    },
+    digPond: (x, z, radius) => {
+      gardenTools?.digBasin(x, z, radius, -1.1)
+      return measureFarm()
+    },
+    advance: (steps = 1, secondsPerStep = 1 / 30) => {
+      for (let step = 0; step < steps; step += 1) {
+        const events = progress.tick(makeFarmSnapshot(measureFarm(), progress), secondsPerStep)
+        for (const event of events) {
+          const animal = animalById.get(event.species as (typeof animals)[number]['id'])
+          if (animal) animal.stage = event.stage
+        }
+      }
+      return reportConditions()
+    },
+    resetConditions: () => {
+      gardenTools?.clearGrass()
+      progress.reset()
+      for (const animal of animals) {
+        // Demote through the transitions so the heart eyes and the paint mask
+        // are actually torn down, rather than left behind on the model.
+        animal.stage = 0
+        animal.setAppearance('wild')
+      }
+      for (const species of startingCarnivalSpecies(speciesIds)) progress.discover(species)
+      measureFarm()
+      reportConditions()
+    },
+    animalReport: () => animals.map((animal) => ({
+      id: animal.id,
+      stage: animal.stage,
+      appearance: animal.isCaptured ? 'standard' : 'wild',
+      heartEyes: animal.heartEyeCount > 0,
+      heartCount: animal.heartEyeCount,
+      x: +animal.root.position.x.toFixed(2),
+      z: +animal.root.position.z.toFixed(2),
+      loose: isLoose(animal.id),
+    })),
+    focusSpecies: (species, height = 4.5) => {
+      const animal = animalById.get(species as (typeof animals)[number]['id'])
+      if (!animal) return
+      cameraTarget.copy(animal.root.position).setY(GARDEN_LAWN_Y + 1.1)
+      viewHalfHeight = height / 2
+      camera.position.copy(cameraTarget).add(initialOffset)
+      viewDirection.copy(initialOffset).normalize()
+      cameraDistance = initialOffset.length()
+      camera.lookAt(cameraTarget)
+      camera.updateMatrixWorld()
+      updateCameraProjection()
+    },
     scene,
     uiScene: ui.scene,
     // Reports where every surface actually landed, so layout can be checked at

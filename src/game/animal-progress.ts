@@ -86,6 +86,8 @@ export interface AnimalProgress {
   tick(farm: FarmSnapshot, deltaSeconds: number): readonly ProgressEvent[]
   /** Force a species to a stage — the debug harness and the tests use this. */
   setStage(species: string, stage: AnimalStage): readonly ProgressEvent[]
+  /** Return every species to undiscovered and forget the last farm snapshot. */
+  reset(): void
   /** Grant the carnival stage, as happens for species that start the game there. */
   discover(species: string): readonly ProgressEvent[]
 }
@@ -220,6 +222,12 @@ export function createAnimalProgress(
         progress.set(species, step)
       }
       return events
+    },
+    reset() {
+      for (const species of progress.keys()) {
+        progress.set(species, { species, stage: 0, elapsed: 0, appearance: 'wild', heartEyes: false, invited: false })
+      }
+      lastFarm = null
     },
     tick(farm, deltaSeconds) {
       lastFarm = farm

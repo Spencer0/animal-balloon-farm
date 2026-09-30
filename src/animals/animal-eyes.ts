@@ -26,7 +26,8 @@ export interface HeartEyeOptions {
 }
 
 interface HeartEyes {
-  readonly group: THREE.Group
+  readonly hearts: readonly THREE.Mesh[]
+  readonly material: THREE.Material
   dispose(): void
 }
 
@@ -75,40 +76,39 @@ function isMesh(object: THREE.Object3D): object is THREE.Mesh {
 export function setHeartEyes(root: THREE.Object3D, options: HeartEyeOptions): number {
   const existing = installed.get(root)
   if (existing) {
-    existing.group.visible = true
-    existing.group.traverse((object) => {
-      if (!isMesh(object)) return
-      const material = object.material as THREE.MeshStandardMaterial
-      material.color.set(options.color)
-    })
-    return countPupils(root)
+    (existing.material as THREE.MeshStandardMaterial).color.set(options.color)
+    return existing.hearts.length
   }
 
-  const group = new THREE.Group()
-  group.name = 'Breedable heart eyes'
   const material = new THREE.MeshStandardMaterial({
     color: options.color,
     roughness: 0.24,
     metalness: 0.02,
     emissive: new THREE.Color(options.color).multiplyScalar(0.18),
   })
+  const hearts: THREE.Mesh[] = []
   let converted = 0
 
   root.traverse((object) => {
     if (!isMesh(object) || !PUPIL_MATCH.test(object.name)) return
     const heart = new THREE.Mesh(heartGeometry(), material)
     heart.name = `heart for ${object.name}`
-    // Match the pupil's placement and size, then let the heart sit slightly
-    // proud of the face so it never z-fights with the eye it covers.
+    // The heart is added as a *sibling* of the pupil, copying its local
+    // transform. Pupils are children of a head rig pivot, so parenting to the
+    // pivot is what makes the heart follow the head's idle and walk motion
+    // automatically -- and it avoids any world-matrix math, which is how the
+    // first attempt ended up hanging off in root space.
+    if (!object.parent) return
+    object.parent.add(heart)
     heart.position.copy(object.position)
     heart.quaternion.copy(object.quaternion)
-    const longest = longestSide(object)
-    heart.scale.setScalar((options.scale ?? 1.15) * longest)
-    object.updateWorldMatrix(true, false)
-    heart.updateWorldMatrix(true, false)
-    heart.position.y += longest * 0.12
+    // The heart geometry is unit-sized, so matching the pupil's own scale is
+    // what keeps it the same size on the face whatever the model's scale is.
+    heart.scale.copy(object.scale).multiplyScalar(options.scale ?? 1.1)
+    // Sit slightly proud of the face so it never z-fights with the eye.
+    heart.position.y += (options.scale ?? 1.1) * 0.06
     object.visible = false
-    group.add(heart)
+    hearts.push(heart)
     converted += 1
   })
 
@@ -123,36 +123,30 @@ export function setHeartEyes(root: THREE.Object3D, options: HeartEyeOptions): nu
     if (isMesh(object) && CATCHLIGHT_MATCH.test(object.name)) object.visible = false
   })
 
-  group.visible = true
   installed.set(root, {
-    group,
+    hearts,
+    material,
     dispose() {
       material.dispose()
       installed.delete(root)
     },
   })
-  attachHearts(root, group)
   return converted
 }
 
-/** Put the heart group back where the model root lives so it inherits scale. */
-function attachHearts(root: THREE.Object3D, group: THREE.Group): void {
-  const parent = (root as THREE.Group).parent
-  if (!parent) return
-  parent.add(group)
-  root.updateWorldMatrix(true, true)
-  const rootInverse = new THREE.Matrix4().copy(root.matrixWorld).invert()
-  for (const heart of group.children) {
-    heart.updateWorldMatrix(true, false)
-    heart.applyMatrix4(rootInverse)
-  }
+/** How many heart eyes a species is currently wearing, for the debug report. */
+export function heartEyeCount(root: THREE.Object3D): number {
+  return installed.get(root)?.hearts.length ?? 0
 }
 
 export function clearHeartEyes(root: THREE.Object3D): void {
   const existing = installed.get(root)
   if (!existing) return
-  for (const heart of existing.group.children) heart.visible = false
-  existing.group.visible = false
+  for (const heart of existing.hearts) {
+    // Detach rather than just hide: the heart is a sibling of the pupil under
+    // the head pivot, so removing it is what actually takes it off the face.
+    heart.parent?.remove(heart)
+  }
   root.traverse((object) => {
     if (!isMesh(object)) return
     if (PUPIL_MATCH.test(object.name) || CATCHLIGHT_MATCH.test(object.name)) object.visible = true
@@ -160,26 +154,8 @@ export function clearHeartEyes(root: THREE.Object3D): void {
 }
 
 function disposeHeartEyes(root: THREE.Object3D): void {
-  const existing = installed.get(root)
-  if (!existing) return
-  existing.group.parent?.remove(existing.group)
-  existing.dispose()
-}
-
-function countPupils(root: THREE.Object3D): number {
-  let count = 0
-  root.traverse((object) => {
-    if (isMesh(object) && PUPIL_MATCH.test(object.name)) count += 1
-  })
-  return count
-}
-
-function longestSide(mesh: THREE.Mesh): number {
-  mesh.geometry.computeBoundingBox()
-  const box = mesh.geometry.boundingBox
-  if (!box) return 0.1
-  const size = box.getSize(new THREE.Vector3())
-  return Math.max(size.x, size.y, size.z) || 0.1
+  clearHeartEyes(root)
+  installed.get(root)?.dispose()
 }
 
 export { disposeHeartEyes }

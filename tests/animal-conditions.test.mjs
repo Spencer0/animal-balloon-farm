@@ -410,6 +410,20 @@ test('a naive, direct progression run reaches the full four-step arc', () => {
   )
 })
 
+test('the grid pitch is not read off the rounded corner', () => {
+  // The lawn is a rounded rectangle, so the first row is the corner bevel and
+  // its steps are short. Taking vertices 0 and 1 as the pitch under-reported
+  // every area by ~4x, which would have quietly halved the cow's 15 m2 and
+  // let a third of the lawn settle it.
+  const rounded = lawn(1, 12, 12)
+  const xs = rounded.xs
+  // Overwrite the first few x values with a tight bevel, as the mesh really is.
+  xs[1] = xs[0] + 0.241
+  const bevel = measureTallGrass(rounded)
+  const straight = measureTallGrass(lawn(1, 12, 12))
+  assert.equal(bevel, straight, 'a corner bevel must not change the measured area')
+})
+
 test('the measured lawn the tools already maintain converts to the cow threshold', () => {
   // 15 m2 at the lawn's 0.58 vertex spacing is 45 vertices of full grass.
   const cellsNeeded = 15 / (0.58 * 0.58)

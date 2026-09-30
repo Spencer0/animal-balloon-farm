@@ -3,7 +3,7 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
 import { FARM_EXPANSION_CONFIG } from '../game/farm-expansion'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
-import { clearHeartEyes, setHeartEyes } from './animal-eyes'
+import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 
 export type AnimalClip = 'IDLE' | 'WALK'
@@ -67,6 +67,8 @@ export interface BalloonAnimal {
   stage: AnimalStage
   /** Accent color used for the heart eyes. */
   readonly eyeColor: string
+  /** How many heart eyes are currently worn, for the debug report. */
+  readonly heartEyeCount: number
   update(deltaSeconds: number): void
   dispose(): void
 }
@@ -591,6 +593,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     root: wrapper,
     get gltf(): AnimalGLTF | null { return gltf },
     eyeColor: options.eyeColor ?? BODY_MATERIALS[options.id].color.getHexString(),
+    get heartEyeCount(): number { return countHeartEyes(modelRoot ?? posePivot) },
     setAnimation,
     setAppearance,
     beginCapture,

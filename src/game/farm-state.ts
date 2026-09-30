@@ -68,10 +68,41 @@ export function heightAtWorld(terrain: TerrainSample, x: number, z: number): num
   return terrain.heights[gz * terrain.cols + gx]
 }
 
-/** One lawn vertex covers a constant area, derived from the grid's own pitch. */
+/**
+ * One lawn vertex covers a constant area, derived from the grid's own pitch.
+ *
+ * The pitch cannot be read off vertices 0 and 1: the lawn is a *rounded*
+ * rectangle, so the first row is the corner bevel and its steps are short and
+ * irregular. Taking that as the grid pitch under-reported every area by ~4x,
+ * which quietly halved the cow's 15 m2. Instead take the most common
+ * consecutive step, which is the real row pitch everywhere past the corners.
+ */
 function lawnCellArea(sample: LawnSample): number {
-  const spacing = sample.count > 1 ? Math.abs(sample.xs[1] - sample.xs[0]) : 0.58
+  const spacing = estimateLawnPitch(sample)
   return spacing * spacing
+}
+
+function estimateLawnPitch(sample: LawnSample): number {
+  // Count consecutive steps. On a regular grid one step value dominates by a
+  // wide margin; the corner bevel contributes a handful of odd sizes.
+  const steps = new Map<number, number>()
+  const limit = Math.min(sample.count - 1, 4000)
+  for (let index = 1; index < limit; index += 1) {
+    const dx = Math.abs(sample.xs[index] - sample.xs[index - 1])
+    if (dx <= 0) continue
+    // Quantize so float noise does not split one real step into many buckets.
+    const bucket = Math.round(dx * 1000) / 1000
+    steps.set(bucket, (steps.get(bucket) ?? 0) + 1)
+  }
+  let best = 0
+  let bestCount = 0
+  for (const [value, count] of steps) {
+    if (count > bestCount) {
+      best = value
+      bestCount = count
+    }
+  }
+  return bestCount > 0 ? best : 0.58
 }
 
 /** Is this vertex's grass grown past the maturity bar? */

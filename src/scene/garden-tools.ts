@@ -60,6 +60,15 @@ export interface GardenTools {
   debugState(): GardenToolDebugState
   pickReport(clientX: number, clientY: number): unknown
   clearGrass(): void
+  /**
+   * Sow a disc of grass straight to full height, bypassing the per-frame
+   * growth. This exists for the condition harness: a condition is measured in
+   * square meters, and verifying one by hand-dragging the seeder for a minute
+   * per test is not a repeatable loop. Gameplay still grows grass over time.
+   */
+  sowGrassDisc(x: number, z: number, radius: number): void
+  /** Dig a flat-bottomed basin, which is what a water condition needs. */
+  digBasin(x: number, z: number, radius: number, depth: number): void
   update(deltaSeconds: number): void
   dispose(): void
 }
@@ -989,6 +998,50 @@ export function createGardenTools(
       }
     },
     clearGrass,
+    sowGrassDisc(x, z, radius) {
+      if (!insideGarden(x, z, getActiveBounds()) || radius <= 0) return
+      // Seed densely enough that the disc reads as a lawn.
+      const steps = 24
+      for (let index = 0; index < steps; index += 1) {
+        const angle = (index / steps) * Math.PI * 2
+        addGrass(x + Math.cos(angle) * radius * 0.72, z + Math.sin(angle) * radius * 0.72, radius * 0.42, 34)
+      }
+      addGrass(x, z, radius, 48)
+      // Force every seeded blade to its cap. growGrass is time-based and
+      // brush-radius-bound, so it cannot express "this disc is already tall".
+      const matrix = new THREE.Matrix4()
+      const position = new THREE.Vector3()
+      const rotation = new THREE.Quaternion()
+      const scale = new THREE.Vector3()
+      const touched = new Set<THREE.InstancedMesh>()
+      for (const cell of occupancy.values()) {
+        for (const blade of cell) {
+          if ((blade.x - x) ** 2 + (blade.z - z) ** 2 > radius * radius) continue
+          blade.mesh.getMatrixAt(blade.tileIndex, matrix)
+          matrix.decompose(position, rotation, scale)
+          scale.y = MAX_BLADE_HEIGHT
+          matrix.compose(position, rotation, scale)
+          blade.mesh.setMatrixAt(blade.tileIndex, matrix)
+          blade.height = MAX_BLADE_HEIGHT
+          touched.add(blade.mesh)
+        }
+      }
+      touched.forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true })
+      // Paint the ground cover in one go so the measured area matches what the
+      // player can see.
+      updateLawnCoverage(x, z, radius, 1)
+    },
+    digBasin(x, z, radius, depth) {
+      if (!insideGarden(x, z, getActiveBounds()) || radius <= 0) return
+      // A few passes so the slope clamp settles the walls rather than shearing
+      // a single perfect cone, which the clamp would immediately flatten. The
+      // update loop re-derives the meshes from the grid when it is dirty.
+      const passes = Math.max(1, Math.ceil(Math.abs(depth) / 0.25))
+      for (let pass = 0; pass < passes; pass += 1) {
+        terrain.splat(x, z, radius, depth / passes)
+      }
+      demolishGrass(x, z, radius * 1.2)
+    },
     update(deltaSeconds): void {
       if (isPointerDown && cursorVisible && activeAction && lastSeedPoint) {
         paintTimer += deltaSeconds
