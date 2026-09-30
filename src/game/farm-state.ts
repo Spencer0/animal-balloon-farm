@@ -5,13 +5,13 @@
  * Three quantities matter, all in square meters:
  *
  *   tallGrassArea    lawn covered by grass past a maturity threshold
- *   waterArea        pond surface: cells dug below the waterline
+ *   waterArea        visible pond surface: cells holding actual water
  *   flatGrassArea    level, walkable, *grassy* ground — open pasture
  *
- * Everything is measured on the lawn's own vertex grid, because that is the
- * grid the tools already maintain and the only one the player can paint. The
- * height field is sampled at each vertex, so grass and terrain are combined in
- * one pass rather than by trying to reconcile two differently-sized grids.
+ * Grass is measured on the lawn's vertex grid; terrain is sampled there for
+ * pasture, while pond surface uses the water solver's native cell grid. Each
+ * tool's own authoritative grid is retained instead of estimating one from
+ * another, differently-sized mesh.
  *
  * `flatGrassArea` deliberately requires grass. A freshly dug plot is perfectly
  * flat everywhere, and a condition measured on bare dirt would be satisfied the
@@ -21,8 +21,8 @@
 /** A grass cell only counts once it is at least this mature. */
 export const DEFAULT_MATURITY = 0.75
 
-/** A cell counts as water once it is dug at least this far below grade. */
-export const WATERLINE_DEPTH = 0.35
+/** Ground this far below grade is not walkable pasture, even if the pit is dry. */
+export const MAX_PASTURE_DEPRESSION = 0.35
 
 /** A cell counts as flat when no neighbor rises more than this above it. */
 export const FLAT_MAX_SLOPE = 0.12
@@ -54,6 +54,12 @@ export interface TerrainSample {
   readonly cellSize: number
   readonly originX: number
   readonly originZ: number
+}
+
+export interface WaterSample {
+  /** Number of water-grid cells with a rendered pond surface. */
+  readonly visibleWetCells: number
+  readonly cellSize: number
 }
 
 /**
@@ -121,13 +127,10 @@ export function measureTallGrass(lawn: LawnSample, maturity = DEFAULT_MATURITY):
   return round2(area)
 }
 
-export function measureWater(terrain: TerrainSample, waterline = WATERLINE_DEPTH): number {
-  const cellArea = terrain.cellSize * terrain.cellSize
-  let area = 0
-  for (let index = 0; index < terrain.heights.length; index += 1) {
-    if (-terrain.heights[index] >= waterline) area += cellArea
-  }
-  return round2(area)
+export function measureWater(water: WaterSample | null | undefined): number {
+  if (!water) return 0
+  const cellArea = water.cellSize * water.cellSize
+  return round2(water.visibleWetCells * cellArea)
 }
 
 /**
@@ -140,7 +143,7 @@ export function measureFlatGrassArea(
   terrain: TerrainSample,
   maturity = DEFAULT_MATURITY,
   maxSlope = FLAT_MAX_SLOPE,
-  waterline = WATERLINE_DEPTH,
+  maxDepression = MAX_PASTURE_DEPRESSION,
 ): number {
   const cellArea = lawnCellArea(lawn)
   const slopeLimit = maxSlope * terrain.cellSize
@@ -148,7 +151,7 @@ export function measureFlatGrassArea(
   for (let index = 0; index < lawn.count; index += 1) {
     if (!isMature(lawn, index, maturity)) continue
     const height = heightAtWorld(terrain, lawn.xs[index], lawn.zs[index])
-    if (-height >= waterline) continue
+    if (-height >= maxDepression) continue
     // A spot is only "open" if nothing nearby towers over it.
     let steepest = 0
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
@@ -160,10 +163,10 @@ export function measureFlatGrassArea(
   return round2(area)
 }
 
-export function measureFarmState(lawn: LawnSample, terrain: TerrainSample): FarmState {
+export function measureFarmState(lawn: LawnSample, terrain: TerrainSample, water?: WaterSample | null): FarmState {
   return {
     tallGrassArea: measureTallGrass(lawn),
-    waterArea: measureWater(terrain),
+    waterArea: measureWater(water),
     flatGrassArea: measureFlatGrassArea(lawn, terrain),
   }
 }

@@ -261,18 +261,89 @@ permanently poisons the agent thread with a 30MB upload error.
 animal chapter maps `ANIMAL_CATALOG` directly. Filling in `subtitle`, `description`, `note`,
 `color`, `gesture`, and `spriteUrl` in the catalog entry *is* the journal entry.
 
-The one caveat: the journal is currently a **static record book**. `SPEC.md` (§5.3, §5.4, and the
-milestone list in §9) calls for data-driven species conditions and the progression
+The one caveat: the journal is **no longer a static record book**, but the part it draws is not
+derived from the catalog. It reads the condition model described below, so filling in `subtitle` and
+friends still writes the field notes, while the checklist under them comes from
+`src/game/animal-conditions.ts`. A species with no entry in `SPECIES_CONDITIONS` falls back to a
+default four-step ladder, so the page still renders — but the numbers on it will be invented rather
+than designed. Put the species in `SPECIES_CONDITIONS` as part of stage 3.
 
-```
-Unknown clue → discovered clue → requirement met → action/result
+---
+
+## Animal conditions
+
+Every species climbs four rungs before it belongs to the farm:
+
+| Stage | Condition | Appearance |
+|-------|-----------|------------|
+| 0 | undiscovered | not in the world |
+| 1 | visit the carnival | wild balloon red |
+| 2 | visit the farm | wild balloon red |
+| 3 | call the farm home | its own colours |
+| 4 | love the farm | own colours + heart eyes |
+
+Three pure modules own this, and none of them import Three.js — which is why the whole loop is
+covered by `tests/animal-conditions.test.mjs` rather than only by eye in a browser.
+
+| File | Owns |
+|------|------|
+| `src/game/animal-conditions.ts` | the ladder, `SPECIES_CONDITIONS`, `DISCOVERY` |
+| `src/game/farm-state.ts` | lawn coverage + heights → m² of grass, water, pasture |
+| `src/game/animal-progress.ts` | the state machine and what the journal may reveal |
+
+`main.ts` owns the seam: `measureFarm()` reads the renderer's arrays into plain ones, ticks the
+model, and applies whatever stage each animal reaches. `balloon-animal.ts` knows nothing about
+conditions beyond its own `stage` property.
+
+Three things that are easy to get wrong here:
+
+- **A requirement below the current stage reports a null target.** That is the disclosure rule, and
+  it lives in the model so the UI cannot leak a number by accident.
+- **Pasture means grassy flat ground.** Measuring flatness on bare dirt is satisfied by a plot the
+  moment the game starts, and the sheep settles onto an empty field for free.
+- **The grid pitch must be the *most common* vertex step.** The lawn is a rounded rectangle, so its
+  first row is a corner bevel; reading the pitch off vertices 0 and 1 under-reports every area ~4x.
+
+### Adding a species to `SPECIES_CONDITIONS`
+
+One entry, four `StageDefinition`s. Stages 1 and 2 have `requirement: null` — they ask nothing of the
+player. Stage 3 and 4 each need one, and both are re-checked every frame, so keep them honest:
+
+```ts
+duck: {
+  stages: withStageNumbers([
+    CARNIVAL,
+    ENTER_FARM('Heads straight for the low ground and paddles in.'),
+    CALL_HOME('waterArea', 8, 'Wants a proper pool to swim in, not just damp soil.', 0.75),
+    LOVE_THE_FARM('waterArea', 16, 'Wants a bigger pond and plenty of grass at the waterline.', 0.75),
+  ]),
+},
 ```
 
-with an `Appears` condition, a `Visits` invitation, and a `Resides` requirement set per species.
-None of that exists yet — there is no unlock or condition system in `journal-ui.ts`. `SPEC.md:83` is
-explicit that a mandatory condition must never be hidden behind unexplained randomness, so treat the
-progression as **known missing work**, not as something the catalog entry can satisfy. Do not invent
-a registration step for it.
+A social condition uses `REQUIRE_RESIDENT('cow', 'Cow')` instead, which is how the pig is made to
+wait on a resident cow. To let a species that is *not* a `CARNIVAL_STARTER` ever appear, give it a
+`DISCOVERY` entry — otherwise it sits at stage 0 forever and its conditions are unsatisfiable.
+
+### Verifying conditions in the browser
+
+With `?gardenDebug=1`, `window.__gardenDebug` grows a few verbs aimed at this system:
+
+```js
+const d = window.__gardenDebug
+d.closeMenu()
+d.sowGrass(0, 0, 3.4)      // a disc of tall grass, straight to full height
+d.digPond(-6, 4, 3)        // a basin, for the water conditions
+d.advance(400, 1 / 30)     // run the clock; returns the new stages
+d.conditions()            // every rung, revealed or not, with live numbers
+d.setStage('duck', 4)      // force a species up the ladder, transition and all
+d.resetConditions()        // back to a bare plot and the carnival
+d.focusSpecies('sheep', 6) // frame one closely, to check the heart eyes
+```
+
+`sowGrass` and `digPond` go through the real tool code, so the harness grows genuine geometry
+instead of writing a coverage array behind the renderer's back. Do not verify a condition by
+hand-dragging the seeder: it is not a repeatable loop, and every area bug found while building this
+was found by the harness rather than by looking.
 
 ---
 
@@ -331,6 +402,8 @@ Items 1 and 3 are **partly fixed** by the catalog refactor; the rest still stand
    a slow `?showcase=1` cold load. Worth a decimation pass or Draco compression before scaling up.
 6. **Capture is 6.8s per animal** and starts on click. With a large catalog, "Play all" is a 6.8s
    parade, not a test.
-7. **The journal has no progression.** Every species is documented from the first frame. The SPEC's
-   `Unknown → discovered → met → resolved` arc is unimplemented, so a big catalog currently reads as
-   a spoiler rather than a collection.
+7. ~~**The journal has no progression.**~~ **Fixed.** Every species now climbs four conditions with
+   progressive disclosure, so a big catalog reads as a collection rather than a spoiler. The
+   remaining version of this problem is that `SPECIES_CONDITIONS` is still hand-written per species
+   — the `ANIMAL_CATALOG` entry does not carry its own requirements, so a new species silently falls
+   back to a default ladder and gets invented numbers on its journal page.

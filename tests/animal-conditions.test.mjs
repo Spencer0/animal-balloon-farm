@@ -29,7 +29,7 @@ const {
   stageAppearance,
   stageHasHeartEyes,
 } = conditions
-const { measureTallGrass, measureWater, measureFlatGrassArea, DEFAULT_MATURITY } = farmState
+const { measureTallGrass, measureWater, measureFlatGrassArea, measureFarmState, DEFAULT_MATURITY } = farmState
 const { createAnimalProgress, requirementMet, startingCarnivalSpecies, makeFarmSnapshot } = progressModule
 
 const SPECIES = ['pig', 'sheep', 'cow', 'chicken', 'duck', 'goose']
@@ -151,19 +151,43 @@ test('tall grass is measured in square meters and needs maturity', () => {
   assert.equal(DEFAULT_MATURITY, 0.75)
 })
 
-test('water is measured below the waterline, not by total pit volume', () => {
+test('water measures visibly filled pond cells, never empty holes', () => {
   const terrain = flatTerrain()
-  // Dig a 2x2 block of cells a metre down: 4 cells at 0.55 -> 1.21 m2.
+  // A deep, empty 2x2 excavation is still dry and cannot satisfy a water need.
   for (let z = 4; z < 6; z += 1) {
     for (let x = 4; x < 6; x += 1) terrain.heights[z * terrain.cols + x] = -1
   }
-  const area = measureWater(terrain)
-  assert.ok(Math.abs(area - 4 * 0.55 * 0.55) < 0.01, `expected ~1.21, got ${area}`)
+  assert.equal(measureWater(null), 0, 'dug terrain without simulated water is dry')
+  assert.equal(measureFarmState(lawn(0), terrain, null).waterArea, 0,
+    'a deep empty excavation contributes no pond surface')
+  assert.equal(measureWater({ cellSize: 0.55, visibleWetCells: 0 }), 0)
+  assert.equal(requirementMet(getSpeciesConditions('duck')[2].requirement, snapshot({ ...EMPTY_FARM, waterArea: measureWater(null) })), false,
+    'a dry excavation leaves the duck waiting for a pond')
 
-  // A shallow scrape is not a pond.
-  const shallow = flatTerrain()
-  shallow.heights[0] = -0.2
-  assert.equal(measureWater(shallow), 0)
+  // Only actual, rendered water contributes pond surface area.
+  const area = measureWater({ cellSize: 0.55, visibleWetCells: 40 })
+  assert.ok(Math.abs(area - 40 * 0.55 * 0.55) < 0.01, `expected ~12.1, got ${area}`)
+  assert.equal(requirementMet(getSpeciesConditions('duck')[2].requirement, snapshot({ ...EMPTY_FARM, waterArea: area })), true,
+    'a filled pond with enough visible surface satisfies the duck')
+})
+
+test('journal metric labels describe the revealed habitat without exposing hidden needs', () => {
+  const progress = createAnimalProgress(['cow', 'duck', 'sheep'])
+  for (const species of ['cow', 'duck', 'sheep']) progress.discover(species)
+  progress.tick(snapshot(EMPTY_FARM), 1 / 30)
+  for (const species of ['cow', 'duck', 'sheep']) {
+    const rows = progress.statusOf(species)
+    assert.equal(rows[2].revealed, false)
+    assert.equal(rows[2].metricLabel, null, `${species} habitat stays hidden`)
+  }
+
+  progress.setStage('cow', 2)
+  progress.setStage('duck', 2)
+  progress.setStage('sheep', 2)
+  progress.tick(snapshot(EMPTY_FARM), 1 / 30)
+  assert.equal(progress.statusOf('cow')[2].metricLabel, 'Mature tall grass')
+  assert.equal(progress.statusOf('duck')[2].metricLabel, 'Visible pond water')
+  assert.equal(progress.statusOf('sheep')[2].metricLabel, 'Level grassy pasture')
 })
 
 test('flat ground means grassy flat ground, not bare dirt', () => {

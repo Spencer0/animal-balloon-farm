@@ -5,7 +5,7 @@ import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
 import { createFarmExpansionUI } from './game/farm-expansion-ui'
 import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
 import { createAnimalProgress, makeFarmSnapshot, startingCarnivalSpecies } from './game/animal-progress'
-import { measureFarmState, type FarmState, type LawnSample, type TerrainSample } from './game/farm-state'
+import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
 import { stageDefinition, stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
@@ -194,6 +194,13 @@ const animalById = new Map(animals.map((animal) => [animal.id, animal]))
 // Four species are already at the carnival when the game opens; the rest have
 // to be drawn over by the farm itself.
 for (const species of startingCarnivalSpecies(speciesIds)) progress.discover(species)
+// Sync the scene to the model's opening state. Without this an animal sits at
+// visual stage 0 while the model already has it at the carnival, and nothing
+// ever corrects it -- progression only pushes stages on *change*.
+for (const animal of animals) {
+  const entry = progress.progressOf(animal.id)
+  if (entry.stage > 0) animal.stage = entry.stage
+}
 
 // The animals are created once and live in the fairground. The viewer borrows
 // them onto its own plinths, so remember the farm transform to put it back.
@@ -256,11 +263,17 @@ function currentTerrainSample(): TerrainSample | null {
 /** The last measured farm, kept so the journal and harness can read it. */
 let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0 }
 
+function currentWaterSample(): WaterSample | null {
+  if (!gardenWater) return null
+  const summary = gardenWater.summary()
+  return { visibleWetCells: summary.visibleWetCells, cellSize: gardenWater.cellSize }
+}
+
 function measureFarm(): FarmState {
   const lawn = currentLawnSample()
   const terrain = currentTerrainSample()
   if (!lawn || !terrain) return lastFarmState
-  lastFarmState = measureFarmState(lawn, terrain)
+  lastFarmState = measureFarmState(lawn, terrain, currentWaterSample())
   return lastFarmState
 }
 
@@ -382,6 +395,7 @@ journal.setConditionsSource({
           met: row.met,
           result: row.result,
           hint: definition?.hint ?? '',
+          ...(row.metricLabel ? { metricLabel: row.metricLabel } : {}),
           ...(wantsSpecies ? {
             waitingOn: {
               species: wantsSpecies,

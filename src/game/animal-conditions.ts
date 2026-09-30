@@ -39,6 +39,17 @@ export interface ConditionRequirement {
   readonly maturity?: number
 }
 
+/** Plain-language name for the habitat a numeric condition measures. */
+export function conditionMetricLabel(requirement: ConditionRequirement | null): string | null {
+  if (!requirement) return null
+  switch (requirement.kind) {
+    case 'grassArea': return 'Mature tall grass'
+    case 'waterArea': return 'Visible pond water'
+    case 'flatArea': return 'Level grassy pasture'
+    case 'residentSpecies': return null
+  }
+}
+
 export interface StageDefinition {
   readonly stage: AnimalStage
   /** Short journal label, e.g. "Call the farm home". */

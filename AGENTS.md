@@ -37,6 +37,7 @@ Read [`ANIMAL_PIPELINE.md`](ANIMAL_PIPELINE.md) first. It maps the whole path (B
 - Pin Three.js and compatible addons/types together. Do not adopt another rendering framework or add dependencies before confirming they fit the spec.
 - Keep simulation/data separate from Three.js scene state. Define canonical garden units and tested garden↔world↔screen transforms early.
 - Data-drive plant/species conditions and the journal's discovered/missing requirement clues. Provide deterministic seeded test gardens and preserve the user's live save.
+- The animal condition ladder (four rungs, progressive disclosure) is `src/game/animal-conditions.ts` + `animal-progress.ts` + `farm-state.ts`. Those three modules are **pure on purpose** -- no Three.js, no DOM -- so the whole mechanic is testable in `tests/animal-conditions.test.mjs`. Keep them pure; the moment one imports `three` the loop can only be verified by eye again.
 - Keep the game original: broad ecosystem-garden inspiration is fine; do not copy Viva Piñata IP (names, art, species designs, writing, audio, or exact content).
 
 ## Game UI: the centralized layer
@@ -55,6 +56,7 @@ Rules that keep the layer honest:
 
 - Aspect-locked art (the journal spread, the menu) is placed with `fitAspectRect` and one uniform scale factor. If a surface can end up a different shape at a different window size, it is wrong.
 - Test layout with the `?gardenDebug=1` harness -- `window.__gardenDebug.layout()` reports every panel's real rect. Compare `journal.spread.aspect` (must stay 1.7778) and `journal.bookRelToSpread` (must not move) across window sizes. This is far more reliable than eyeballing a screenshot, especially since screenshots are easy to poison in a long thread.
+- The same harness drives the **animal condition system** -- `conditions()`, `farmState()`, `sowGrass()`, `digPond()`, `setStage()`, `advance()`, `resetConditions()`, `focusSpecies()`. Use these instead of hand-driving the tools; a condition is measured in square meters and is not a repeatable loop by hand. See the "Animal conditions" section of `ANIMAL_PIPELINE.md`.
 - `npm run dev` writes to `dist-<branch>` on any branch other than `main` (see `scripts/outdir.mjs`). Do not "fix" this by sharing `dist/`: several agents run dev servers at once, and a shared output directory is how a browser ends up serving someone else's bundle.
 
 ## First build milestone

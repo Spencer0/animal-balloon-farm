@@ -5,6 +5,7 @@ import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
+import { advanceAnimalTravel, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
 
 export type AnimalClip = 'IDLE' | 'WALK'
 export type AnimalAppearance = 'standard' | 'wild'
@@ -60,6 +61,8 @@ export interface BalloonAnimal {
   readonly isCaptured: boolean
   readonly isCapturing: boolean
   readonly captureProgress: number
+  /** True after the walking route has carried this animal onto the farm. */
+  readonly isAtFarm: boolean
   /**
    * Where this animal sits on the four-condition ladder. Drives appearance and
    * heart eyes, and is the single thing the progression engine pokes.
@@ -407,6 +410,32 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const modelForward = new THREE.Vector3(1, 0, 0)
   const random = seededRandom(options.seed)
   const upAxis = new THREE.Vector3(0, 1, 0)
+  let stage: AnimalStage = options.stage ?? 1
+  let travelRoute: AnimalTravelRoute | null = null
+  let travelDirection: 'enter' | 'leave' | null = null
+  let travelCooldown = 0
+  let travelSide: 'carnival' | 'farm' = stage >= 2 ? 'farm' : 'carnival'
+
+  function beginTravel(direction: 'enter' | 'leave'): void {
+    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
+    if (direction === 'enter' && Math.abs(wrapper.position.x) < bounds.halfWidth && Math.abs(wrapper.position.z) < bounds.halfDepth) {
+      // A carnival wanderer may already have crossed the open ground before
+      // its timed visit arrives; never send it back out just to re-enter.
+      travelSide = 'farm'
+      travelDirection = null
+      travelRoute = null
+      travelCooldown = stage >= 3 ? 28 + random() * 18 : 8 + random() * 8
+      return
+    }
+    if (direction === 'enter') travelSide = 'carnival'
+    travelDirection = direction
+    travelRoute = createAnimalTravelRoute(direction, bounds, { x: wrapper.position.x, z: wrapper.position.z })
+    const first = travelRoute.waypoints[travelRoute.nextWaypoint]
+    target.set(first.x, 0, first.z)
+    nextDecision = 0
+    paused = 0
+    setAnimation('WALK', 0.22)
+  }
 
   /**
    * Where this animal is allowed to be right now.
@@ -416,7 +445,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    * becomes something you can see happen rather than a flag flipping.
    */
   function leash(): { readonly x: number; readonly z: number } {
-    if (options.isLoose?.()) {
+    if (options.isLoose?.() || travelSide === 'carnival' || travelDirection !== null) {
       return options.carnivalBounds ?? { x: 30, z: 30 }
     }
     const gardenBounds = options.getGardenBounds?.()
@@ -536,8 +565,6 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     }
   }
 
-  let stage: AnimalStage = options.stage ?? 1
-
   /**
    * Move an animal to a rung of the condition ladder.
    *
@@ -550,8 +577,18 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    */
   const setStage = (next: AnimalStage): void => {
     if (next === stage) return
+    const previous = stage
     const becomingResident = next >= 3 && stage < 3
     const becomingWild = next <= 2 && stage >= 3
+    if (previous < 2 && next === 2) beginTravel('enter')
+    if (previous < 3 && next >= 3 && travelSide === 'carnival' && travelDirection !== 'enter') {
+      beginTravel('enter')
+    }
+    if (previous >= 3 && next < 2) {
+      travelRoute = null
+      travelDirection = null
+      travelSide = 'farm'
+    }
     if (becomingResident) {
       // Play the reveal. beginCapture refuses while another is running, which
       // is what we want: a second settle arriving mid-flourish should queue on
@@ -600,6 +637,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isCaptured(): boolean { return captured },
     get isCapturing(): boolean { return Boolean(capture && !capture.finished) },
     get captureProgress(): number { return lastCaptureProgress },
+    get isAtFarm(): boolean { return travelSide === 'farm' && travelRoute === null },
     get stage(): AnimalStage { return stage },
     set stage(next: AnimalStage) { setStage(next) },
     update(deltaSeconds): void {
@@ -639,30 +677,60 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         nextDecision -= delta
       }
 
-      // Keep the animal inside whatever it is currently allowed to roam. At
-      // the carnival that is a wide ring; once it is on the farm it is the
-      // plot, so an animal that has settled can never wander back out.
-      const limits = leash()
-      wrapper.position.x = THREE.MathUtils.clamp(wrapper.position.x, -limits.x, limits.x)
-      wrapper.position.z = THREE.MathUtils.clamp(wrapper.position.z, -limits.z, limits.z)
-      direction.subVectors(target, wrapper.position)
-      direction.y = 0
-      const distance = direction.length()
-      if (paused <= 0) {
-        if (distance < 0.48 || nextDecision <= 0) {
-          if (active !== 'IDLE') {
-            setAnimation('IDLE', 0.28)
-            paused = pauseDurations.min + random() * (pauseDurations.max - pauseDurations.min)
-            nextDecision = 0
-          } else {
-            chooseTarget()
-          }
-        } else {
+      if (travelRoute) {
+        const previousPosition = wrapper.position.clone()
+        const step = advanceAnimalTravel(
+          { x: wrapper.position.x, z: wrapper.position.z },
+          travelRoute,
+          options.speed * delta,
+        )
+        wrapper.position.set(step.position.x, wrapper.position.y, step.position.z)
+        direction.set(step.position.x - previousPosition.x, 0, step.position.z - previousPosition.z)
+        if (direction.lengthSq() > 1e-8) {
           direction.normalize()
           const targetFacing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
           wrapper.quaternion.slerp(targetFacing, 1 - Math.exp(-4.5 * delta))
-          wrapper.position.addScaledVector(direction, Math.min(options.speed * delta, distance))
           setAnimation('WALK', 0.24)
+        }
+        travelRoute = step.route
+        if (step.completed) {
+          const completedDirection = travelDirection
+          travelSide = completedDirection === 'leave' ? 'carnival' : 'farm'
+          travelDirection = null
+          travelCooldown = stage >= 3 ? 28 + random() * 18 : stage === 2 ? 8 + random() * 8 : 0
+          target.set(wrapper.position.x, 0, wrapper.position.z)
+          setAnimation('IDLE', 0.22)
+        }
+      } else {
+        // A stage-two visitor can browse both sides of the gate. Residents are
+        // kept to the garden; carnival and farm wander bounds change smoothly
+        // only after a route has carried the animal through the entrance.
+        if (stage >= 2 && travelCooldown > 0) {
+          travelCooldown = Math.max(0, travelCooldown - delta)
+          if (travelCooldown === 0) beginTravel(travelSide === 'farm' ? 'leave' : 'enter')
+        }
+        const limits = leash()
+        wrapper.position.x = THREE.MathUtils.clamp(wrapper.position.x, -limits.x, limits.x)
+        wrapper.position.z = THREE.MathUtils.clamp(wrapper.position.z, -limits.z, limits.z)
+        direction.subVectors(target, wrapper.position)
+        direction.y = 0
+        const distance = direction.length()
+        if (paused <= 0) {
+          if (distance < 0.48 || nextDecision <= 0) {
+            if (active !== 'IDLE') {
+              setAnimation('IDLE', 0.28)
+              paused = pauseDurations.min + random() * (pauseDurations.max - pauseDurations.min)
+              nextDecision = 0
+            } else {
+              chooseTarget()
+            }
+          } else {
+            direction.normalize()
+            const targetFacing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
+            wrapper.quaternion.slerp(targetFacing, 1 - Math.exp(-4.5 * delta))
+            wrapper.position.addScaledVector(direction, Math.min(options.speed * delta, distance))
+            setAnimation('WALK', 0.24)
+          }
         }
       }
 

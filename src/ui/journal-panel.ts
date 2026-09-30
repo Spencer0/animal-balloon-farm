@@ -72,6 +72,8 @@ export interface JournalConditionRow {
   readonly result: string
   /** Plain-language hint, e.g. "Wants 15 m² of tall grass". */
   readonly hint: string
+  /** Habitat metric named beside the progress bar. */
+  readonly metricLabel?: string
   /** A species this condition is waiting on, if it is a social one. */
   readonly waitingOn?: { readonly species: string; readonly name: string; readonly resident: boolean }
 }
@@ -827,8 +829,8 @@ export function createJournalPanel(
         context.lineWidth = 0.6
         context.strokeRect(left + 18, y, barWidth, 6)
         context.fillStyle = '#8a6b4e'
-        context.font = '11px Georgia, "Times New Roman", serif'
-        context.fillText(`${row.current.toFixed(1)} / ${row.target.toFixed(0)} m²`, left + 18, y + 17)
+        context.font = '12px Georgia, "Times New Roman", serif'
+        context.fillText(`${row.metricLabel ?? 'Habitat'} · ${row.current.toFixed(1)} / ${row.target.toFixed(0)} m²`, left + 18, y + 17)
         y += 24
       } else if (row.waitingOn) {
         context.fillStyle = row.waitingOn.resident ? '#6f9d54' : '#a5713f'

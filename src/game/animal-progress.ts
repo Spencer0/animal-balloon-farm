@@ -14,6 +14,7 @@
 
 import {
   CARNIVAL_STARTERS,
+  conditionMetricLabel,
   DISCOVERY,
   getSpeciesConditions,
   stageAppearance,
@@ -46,6 +47,8 @@ export interface RequirementStatus {
   /** False until the previous stage is reached — the disclosure rule. */
   readonly revealed: boolean
   readonly requirement: ConditionRequirement | null
+  /** Human-readable habitat label, hidden until this requirement is revealed. */
+  readonly metricLabel: string | null
   /** Current value of the metric, or null when not applicable. */
   readonly current: number | null
   /** Required value, or null when not applicable. */
@@ -126,6 +129,7 @@ function statusFor(definition: StageDefinition, currentStage: AnimalStage, farm:
     title: definition.title,
     revealed,
     requirement,
+    metricLabel: revealed && target !== null ? conditionMetricLabel(requirement) : null,
     current,
     target,
     met: reached && (farm ? requirementMet(requirement, farm) : false),

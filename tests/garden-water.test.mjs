@@ -91,6 +91,7 @@ test('a bowl pins its level at the rim and refuses to rise above it', () => {
   fillBasin(field, 0, 0, 1, 0.5)
   const first = field.summary()
   assert.ok(first.wetCells > 0, 'the bowl should hold water')
+  assert.ok(first.visibleWetCells > 0, 'a filled bowl has rendered pond surface')
   assert.ok(
     Math.abs(first.highestSurface - rim) < 1e-3,
     `level should sit at the rim (${rim}), got ${first.highestSurface}`,
@@ -337,6 +338,7 @@ test('thin films read as damp, not as water', () => {
   field.pour(0, 0, 1, WATER_MIN_VISIBLE_DEPTH * 0.5)
   settleFully(field)
   assert.equal(field.summary().wetCells, 0, 'a sub-visible film should not register as water')
+  assert.equal(field.summary().visibleWetCells, 0, 'a sub-render-threshold film has no pond surface')
 })
 
 test('a small bucket click does not render a broad wet halo before a pool has depth', () => {
@@ -345,6 +347,7 @@ test('a small bucket click does not render a broad wet halo before a pool has de
   settleFully(field)
   const summary = field.summary()
   assert.ok(summary.wetCells > 0, 'a shallow film can still be tracked by the water simulation')
+  assert.equal(summary.visibleWetCells, 0, 'a shallow film must not count as visible pond habitat')
   assert.ok(summary.maxDepth < WATER_MIN_RENDER_DEPTH,
     `the test pour should remain below the render threshold (${summary.maxDepth})`)
   const { level, wetness } = field.shoreField()

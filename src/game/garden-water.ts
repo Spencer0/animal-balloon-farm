@@ -132,6 +132,8 @@ class MinHeap {
 export interface WaterFieldSummary {
   /** Cells holding at least one visible drop of water. */
   readonly wetCells: number
+  /** Cells with enough water to render as an actual pond surface. */
+  readonly visibleWetCells: number
   /** Total water on the field, in cubic metres. */
   readonly volume: number
   /** Deepest single cell, in metres. */
@@ -718,6 +720,7 @@ export function createGardenWaterField(
 
   function summary(): WaterFieldSummary {
     let wet = 0
+    let visibleWet = 0
     let volume = 0
     let maxDepth = 0
     let highestSurface = -Infinity
@@ -725,12 +728,14 @@ export function createGardenWaterField(
       const value = depth[index]
       if (value <= WATER_MIN_VISIBLE_DEPTH) continue
       wet += 1
+      if (value >= WATER_MIN_RENDER_DEPTH) visibleWet += 1
       volume += value * cellArea
       if (value > maxDepth) maxDepth = value
       if (surface[index] > highestSurface) highestSurface = surface[index]
     }
     return {
       wetCells: wet,
+      visibleWetCells: visibleWet,
       volume: +volume.toFixed(5),
       maxDepth: +maxDepth.toFixed(4),
       highestSurface: highestSurface === -Infinity ? 0 : +highestSurface.toFixed(3),
