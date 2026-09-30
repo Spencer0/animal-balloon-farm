@@ -1,6 +1,5 @@
 import * as THREE from 'three'
-import { GARDEN_LAWN_Y } from './fairground'
-import { makeGardenLawnGeometry } from './fairground'
+import { GARDEN_LAWN_Y, makeGardenLawnGeometry } from './fairground'
 import type { GardenWaterField } from '../game/garden-water'
 import type { GardenTerrain } from './garden-terrain'
 
@@ -8,14 +7,11 @@ import type { GardenTerrain } from './garden-terrain'
  * The visible water surface.
  *
  * One extra mesh spans the whole garden and is driven per-vertex, exactly like
- * the soil and lawn planes already are:
- *
- * - `y = ground + depth`, so where the solver has levelled a pool the surface is
- *   dead flat for free, and where it has not, the sheet hugs the ground.
- * - `alpha = smoothstep(0, EDGE_FADE, depth)`, so the mesh covers dry ground
- *   too but is fully transparent there. That buys a soft, organically shaped
- *   shoreline instead of the hard polygon edge a clipped contour would give,
- *   in a single draw call, with no marching-squares pass.
+ * the soil and lawn planes already are. Its vertices bilinearly sample a
+ * rounded shore-distance field and carry the closest pool level outward. Even
+ * alpha-zero vertices keep a finite coplanar level because the GPU interpolates
+ * across triangles before blending; leaving dry vertices at grade creates a
+ * slanted translucent fringe around ponds.
  *
  * It is deliberately plain-shaded for this milestone: a real ripple/normal map
  * is a follow-up, and getting the silhouette and the shoreline right matters
@@ -62,45 +58,60 @@ export function createGardenWaterMesh(
   mesh.rotation.x = -Math.PI / 2
   mesh.position.y = GARDEN_LAWN_Y
   mesh.receiveShadow = false
-  // Drawn after the lawn and soil so the wet ground reads through the water.
-  mesh.renderOrder = 3
+  // The plane is kept in the ground draw group; per-vertex alpha defines its shore.
+  mesh.renderOrder = 0
   mesh.frustumCulled = false
 
   let dirty = true
 
   function update(elapsedSeconds: number): void {
-    // The shore field is the whole point: it carries the pool's own level out
-    // past the waterline, so the sheet stays flat while it fades, instead of
-    // teetering on the terrain and shredding into a saw of spikes.
+    // Keep the surface level on every vertex, including transparent vertices:
+    // zero alpha does not stop vertex-position interpolation. Resetting dry
+    // vertices to grade tears the triangles at a pool's fading edge.
     const { level, wetness } = water.shoreField()
     const originX = -(water.gridCols * water.cellSize) / 2
     const originZ = -(water.gridRows * water.cellSize) / 2
+    const sampleWater = (values: Float32Array, worldX: number, worldZ: number): number => {
+      // Water values live at cell centres, unlike terrain heights which live
+      // at grid vertices. Interpolate between those centres to remove the
+      // blocky, angular shoreline from nearest-cell sampling.
+      const fx = (worldX - originX) / water.cellSize - 0.5
+      const fz = (worldZ - originZ) / water.cellSize - 0.5
+      const gx = THREE.MathUtils.clamp(Math.floor(fx), 0, water.gridCols - 2)
+      const gz = THREE.MathUtils.clamp(Math.floor(fz), 0, water.gridRows - 2)
+      const tx = THREE.MathUtils.clamp(fx - gx, 0, 1)
+      const tz = THREE.MathUtils.clamp(fz - gz, 0, 1)
+      const h00 = values[gz * water.gridCols + gx]
+      const h10 = values[gz * water.gridCols + gx + 1]
+      const h01 = values[(gz + 1) * water.gridCols + gx]
+      const h11 = values[(gz + 1) * water.gridCols + gx + 1]
+      if (![h00, h10, h01, h11].every(Number.isFinite)) return Number.NaN
+      return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
+    }
     for (let index = 0; index < positions.count; index += 1) {
       const worldX = positions.getX(index)
       const worldZ = -positions.getY(index)
-      const gx = Math.min(water.gridCols - 1, Math.max(0, Math.floor((worldX - originX) / water.cellSize)))
-      const gz = Math.min(water.gridRows - 1, Math.max(0, Math.floor((worldZ - originZ) / water.cellSize)))
-      const cell = gz * water.gridCols + gx
-      const alpha = wetness[cell]
-      const height = level[cell]
-      if (alpha <= 0.001 || Number.isNaN(height)) {
-        positions.setZ(index, 0)
+      const alpha = sampleWater(wetness, worldX, worldZ)
+      const height = sampleWater(level, worldX, worldZ)
+      if (!Number.isFinite(height) || !Number.isFinite(alpha) || alpha <= 0.001) {
+        positions.setZ(index, -mesh.position.y + SURFACE_OFFSET)
         colors.setXYZW(index, 1, 1, 1, 0)
         continue
       }
       // A slow, shallow shimmer keeps a still pond from looking like glass.
+      // It fades with coverage so distant transparent vertices do not disturb
+      // the waterline geometry.
       const shimmer = Math.sin(worldX * 1.7 + elapsedSeconds * SHIMMER_SPEED)
-        * Math.sin(worldZ * 1.3 - elapsedSeconds * SHIMMER_SPEED * 0.7)
-      // The sheet is placed at the pool's own level even where that is below
-      // the surrounding bank. It is NOT clamped up to the terrain: on a steep
-      // shore that clamp tilts the edge vertices up into a fringe of spikes.
-      // The soil is drawn first and writes depth, so the bank simply occludes
-      // the part of the sheet that has sunk into it.
+        * Math.sin(worldZ * 1.3 - elapsedSeconds * SHIMMER_SPEED * 0.7) * alpha
       positions.setZ(index, height - mesh.position.y + SURFACE_OFFSET + shimmer * SHIMMER_AMPLITUDE)
-      // Deeper water reads more solid, so a pond has a gradient rather than one
-      // flat wash of colour.
-      const depth = Math.max(0, height - terrain.heightAt(worldX, worldZ))
-      colors.setXYZW(index, 1, 1, 1, alpha * Math.min(1, 0.62 + depth * 0.5))
+      // The ground paint sheets are transparent and do not write depth, so
+      // suppress water below a raised bank explicitly. Water and terrain share
+      // the same tessellation; this per-vertex clip follows the actual bank and
+      // avoids the long triangular shards from a pool-level sheet showing over it.
+      const depth = height - terrain.heightAt(worldX, worldZ)
+      const bankFade = THREE.MathUtils.smoothstep(depth, -0.06, 0.04)
+      const minimumDepthFade = THREE.MathUtils.smoothstep(depth, 0.015, 0.08)
+      colors.setXYZW(index, 1, 1, 1, alpha * bankFade * minimumDepthFade * Math.min(1, 0.62 + Math.max(0, depth) * 0.5))
     }
     positions.needsUpdate = true
     colors.needsUpdate = true

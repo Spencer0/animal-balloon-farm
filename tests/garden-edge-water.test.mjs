@@ -38,12 +38,6 @@ function makeGarden(bounds = START) {
     gridRows: terrain.gridRows,
     cellHeight: (gx, gz) => terrain.cellHeightAt(gx, gz),
   })
-  // The shovel tells the water when the ground moved; do the same here.
-  const edit = (mutate) => {
-    mutate()
-    terrain.markEdited?.()
-    water.markTerrainChanged()
-  }
   return {
     terrain,
     water,
@@ -69,44 +63,41 @@ function makeGarden(bounds = START) {
   }
 }
 
-test('the garden is ringed by a raised bed lip', () => {
+test('the full plot edge stays level at grade until the player sculpts it', () => {
   const { terrain } = makeGarden()
-  // The very edge stands proud of grade...
-  const edge = terrain.heightAt(START.halfWidth - 0.2, 0)
-  assert.ok(edge > 0.2, `the edge should be raised, got ${edge}`)
-  // ...and it eases back down to grade well inside the plot.
-  const inside = terrain.heightAt(START.halfWidth - 3, 0)
-  assert.ok(Math.abs(inside) < 0.01, `the interior should be at grade, got ${inside}`)
-})
-
-test('the lip rises smoothly rather than stepping', () => {
-  const { terrain } = makeGarden()
-  let previous = terrain.heightAt(START.halfWidth - 0.05, 0)
-  for (let inset = 0.2; inset < 1.4; inset += 0.1) {
-    const next = terrain.heightAt(START.halfWidth - inset, 0)
-    // No cliff anywhere along the lip: each step down is gentle.
-    assert.ok(
-      Math.abs(previous - next) < 0.12,
-      `lip step at inset ${inset} was too steep (${previous} -> ${next})`,
-    )
-    previous = next
+  for (let inset = 0.1; inset <= 1.2; inset += 0.1) {
+    const edge = terrain.heightAt(START.halfWidth - inset, 0)
+    assert.ok(Math.abs(edge) < 0.001, `edge at inset ${inset} should be at grade, got ${edge}`)
   }
+  assert.equal(terrain.heightAt(START.halfWidth + 0.2, 0), 0,
+    'the ground outside the parcel must stay fixed at grade')
+  assert.equal(terrain.splat(START.halfWidth + 0.5, 0, 0.2, -0.8), 0,
+    'the ground outside the parcel must not be editable')
 })
 
-test('a pond dug against the edge holds water instead of draining away', () => {
+test('ordinary edge and center pours drain on flat, unsculpted ground', () => {
   const garden = makeGarden()
-  // Dig a basin hard up against the +x edge, inside the keep-out ring.
-  const edgeX = START.halfWidth - 1.1
-  for (let i = 0; i < 60; i += 1) garden.dig(edgeX, 0, 1.4, -0.3)
+  garden.water.pour(START.halfWidth - 0.3, 0, 0.65, 0.5)
+  garden.water.pour(0, 0, 0.65, 0.5)
   garden.settle()
-  for (let i = 0; i < 12; i += 1) garden.water.pour(edgeX, 0, 1, 0.3)
+  assert.equal(garden.water.summary().wetCells, 0, 'flat ground should not retain a water film')
+  assert.ok(garden.water.summary().runoff > 0, 'flat-ground water should escape')
+})
+
+test('a deliberately dug corner basin contains water below the flat grade edge', () => {
+  const garden = makeGarden()
+  const cornerX = START.halfWidth - 0.8
+  const cornerZ = START.halfDepth - 0.8
+  for (let i = 0; i < 55; i += 1) garden.dig(cornerX, cornerZ, 1.8, -0.3)
+  garden.settle()
+  for (let i = 0; i < 10; i += 1) garden.water.pour(cornerX, cornerZ, 0.9, 0.3)
   garden.settle()
   const summary = garden.water.summary()
-  assert.ok(summary.wetCells > 0, 'an edge pond should hold water, not leak')
-  assert.ok(summary.runoff < 0.05, `the lip should retain the water, runoff was ${summary.runoff}`)
+  assert.ok(summary.wetCells > 0, 'a dug corner basin below grade should retain water')
+  assert.ok(summary.runoff < 0.05, `corner basin overflowed unexpectedly (${summary.runoff})`)
 })
 
-test('a pond in the middle of the garden is unaffected by the lip', () => {
+test('a pond in the middle of the garden holds as usual', () => {
   const garden = makeGarden()
   for (let i = 0; i < 60; i += 1) garden.dig(0, 0, 2, -0.3)
   garden.settle()
@@ -115,31 +106,18 @@ test('a pond in the middle of the garden is unaffected by the lip', () => {
   assert.ok(garden.water.summary().wetCells > 0, 'a mid-garden pond should hold')
 })
 
-test('the shovel cannot dig through the lip', () => {
+test('editing at the boundary creates a normal basin and clearing restores flat grade', () => {
   const garden = makeGarden()
-  const edgeX = START.halfWidth - 0.3
-  for (let i = 0; i < 80; i += 1) garden.dig(edgeX, 0, 1.5, -0.4)
+  const edgeX = START.halfWidth - 0.8
+  for (let i = 0; i < 25; i += 1) garden.dig(edgeX, 0, 1.3, -0.25)
   garden.settle()
-  const lowest = garden.terrain.heightAt(edgeX, 0)
-  assert.ok(
-    lowest > 0,
-    `digging at the edge must not breach the border (height went to ${lowest})`,
-  )
+  assert.ok(garden.terrain.heightAt(edgeX, 0) < -0.5, 'the player can sculpt near the edge')
+  garden.terrain.clear()
+  garden.settle()
+  assert.ok(Math.abs(garden.terrain.heightAt(edgeX, 0)) < 0.001, 'clear restores grade')
 })
 
-test('filling the border back in restores the full lip', () => {
-  const garden = makeGarden()
-  const edgeX = START.halfWidth - 0.4
-  for (let i = 0; i < 40; i += 1) garden.fill(edgeX, 0, 1.5, 0.4)
-  garden.settle()
-  const height = garden.terrain.heightAt(edgeX, 0)
-  assert.ok(
-    height > 0.2,
-    `the lip should be back to full height after filling, got ${height}`,
-  )
-})
-
-test('clearing the garden keeps the lip and drops the player edits', () => {
+test('clearing the garden drops the player edits', () => {
   const garden = makeGarden()
   for (let i = 0; i < 60; i += 1) garden.dig(0, 0, 2, -0.3)
   garden.settle()
@@ -150,13 +128,9 @@ test('clearing the garden keeps the lip and drops the player edits', () => {
     Math.abs(garden.terrain.heightAt(0, 0)) < 0.01,
     'clearing should flatten the middle back to grade',
   )
-  assert.ok(
-    garden.terrain.heightAt(START.halfWidth - 0.2, 0) > 0.2,
-    'clearing must not erase the bed lip',
-  )
 })
 
-test('revealing a new parcel moves the lip outward with the garden', () => {
+test('revealing a new parcel moves the flat editable edge outward with the garden', () => {
   const garden = makeGarden()
   const grown = { halfWidth: START.halfWidth + 1.6, halfDepth: START.halfDepth + 1.1 }
   garden.setBounds(grown)
@@ -165,12 +139,15 @@ test('revealing a new parcel moves the lip outward with the garden', () => {
     Math.abs(garden.terrain.heightAt(START.halfWidth - 0.2, 0)) < 0.02,
     'the former edge should be flat once the parcel is revealed',
   )
-  // ...and the new edge carries the lip.
-  const newEdge = garden.terrain.heightAt(grown.halfWidth - 0.2, 0)
-  assert.ok(newEdge > 0.2, `the new edge should be lipped, got ${newEdge}`)
+  // ...and the new edge is also at grade, without a hidden rim.
+  const newEdgeX = grown.halfWidth - 0.2
+  const newEdge = garden.terrain.heightAt(newEdgeX, 0)
+  assert.ok(Math.abs(newEdge) < 0.001, `the new edge should be flat, got ${newEdge}`)
+  assert.ok(garden.terrain.splat(newEdgeX, 0, 1.2, -0.4) > 0,
+    'the newly revealed edge should be editable')
 })
 
-test('a pond dug before an expansion does not leak once the lip moves out', () => {
+test('expanding the parcel preserves a previously dug edge pond', () => {
   const garden = makeGarden()
   const edgeX = START.halfWidth - 1.1
   for (let i = 0; i < 60; i += 1) garden.dig(edgeX, 0, 1.4, -0.3)
@@ -183,6 +160,6 @@ test('a pond dug before an expansion does not leak once the lip moves out', () =
   assert.ok(after.wetCells > 0, 'the pond should survive the expansion')
   assert.ok(
     after.runoff - before.runoff < 0.05,
-    `the pond should not suddenly leak (runoff ${before.runoff} -> ${after.runoff})`,
+    `the pond should not suddenly leak during expansion (runoff ${before.runoff} -> ${after.runoff})`,
   )
 })

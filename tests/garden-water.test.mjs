@@ -10,7 +10,7 @@ const { outputFiles } = await build({
   write: false,
 })
 const waterModule = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
-const { createGardenWaterField, WATER_MIN_VISIBLE_DEPTH } = waterModule
+const { createGardenWaterField, WATER_MIN_RENDER_DEPTH, WATER_MIN_VISIBLE_DEPTH } = waterModule
 
 const CELL = 0.5
 const COLS = 21
@@ -73,7 +73,7 @@ function slope(range) {
   return (x) => -range * (x / 10)
 }
 
-test('flat ground holds nothing: poured water runs off the parcel', () => {
+test('flat ground holds nothing: poured water runs off the simulation border', () => {
   const field = makeField(() => 0)
   // The plate is the whole grid, and the grid border is an open outlet, so a
   // film of water poured on flat ground has nowhere to sit.
@@ -288,6 +288,33 @@ test('the same pours produce an identical field twice (determinism)', () => {
   assert.deepEqual(first, second, 'two identical pour sequences must match exactly')
 })
 
+test('shore field carries the nearest pool level through transparent vertices', () => {
+  const field = makeField(bowl(2.5, -1))
+  fillBasin(field, 0, 0, 0.8, 0.35)
+  const { level, wetness } = field.shoreField()
+  const wet = field.wetCells()
+  assert.ok(wet.length > 0)
+  const poolLevel = field.surfaceAt(...cellCentre(wet[0]))
+  const dryFarCell = 0
+  assert.equal(wetness[dryFarCell], 0, 'far dry ground remains transparent')
+  assert.ok(Number.isFinite(level[dryFarCell]), 'transparent geometry vertices need a finite carried height')
+  const farPoint = cellCentre(dryFarCell)
+  assert.ok(Math.abs(level[dryFarCell] - poolLevel) < 1e-4,
+    'carried vertices must remain coplanar instead of forming long triangular ramps')
+  const diagonalShore = wet
+    .flatMap((index) => {
+      const gx = index % COLS
+      const gz = (index - gx) / COLS
+      return [[gx + 1, gz + 1], [gx + 1, gz - 1], [gx - 1, gz + 1], [gx - 1, gz - 1]]
+    })
+    .filter(([gx, gz]) => gx >= 0 && gz >= 0 && gx < COLS && gz < ROWS)
+    .map(([gx, gz]) => wetness[cellAt(gx, gz)])
+    .find((alpha) => alpha > 0)
+  assert.notEqual(diagonalShore, undefined,
+    'water should fade in roundly around diagonal corners, not as Manhattan diamonds')
+  assert.ok(Number.isFinite(farPoint[0]))
+})
+
 test('a thick pour onto a slope drains entirely rather than sheeting uphill', () => {
   const field = makeField(slope(0.6))
   field.pour(-4, 0, 1.5, 3)
@@ -312,6 +339,19 @@ test('thin films read as damp, not as water', () => {
   assert.equal(field.summary().wetCells, 0, 'a sub-visible film should not register as water')
 })
 
+test('a small bucket click does not render a broad wet halo before a pool has depth', () => {
+  const field = makeField(bowl(2.5, -1))
+  field.pour(0, 0, 0.8, WATER_MIN_RENDER_DEPTH * 0.1)
+  settleFully(field)
+  const summary = field.summary()
+  assert.ok(summary.wetCells > 0, 'a shallow film can still be tracked by the water simulation')
+  assert.ok(summary.maxDepth < WATER_MIN_RENDER_DEPTH,
+    `the test pour should remain below the render threshold (${summary.maxDepth})`)
+  const { level, wetness } = field.shoreField()
+  assert.equal(Math.max(...wetness), 0, 'sub-threshold water must not seed a visible shore fade')
+  assert.ok(level.every(Number.isNaN), 'there should be no render surface until water reaches minimum depth')
+})
+
 test('a pour with no radius or no volume is a no-op', () => {
   const field = makeField(bowl(2.5, -1))
   assert.equal(field.pour(0, 0, 0, 1), 0)
@@ -332,6 +372,11 @@ test('clear empties the field and resets runoff', () => {
   assert.equal(summary.volume, 0)
   assert.equal(summary.runoff, 0)
 })
+
+/** Row-major index at a grid coordinate. */
+function cellAt(gx, gz) {
+  return gz * COLS + gx
+}
 
 /** World-space centre of a row-major cell index. */
 function cellCentre(index) {

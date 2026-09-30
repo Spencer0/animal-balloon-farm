@@ -20,16 +20,9 @@ const TERRAIN_CELL = 0.55
 // a 2.6 m-deep pond needs ~2 m of bank per side, leaving room for a real
 // flat bottom in the 28×19 m plot. (At 0.42 a max-depth pond is ALL bank.)
 const TERRAIN_MAX_SLOPE = 0.75
-const EDGE_KEEP_OUT = 0.9
-const EDGE_FADE_WIDTH = 0.6
-// A raised bed edge runs just inside the active bounds, the way a real garden
-// has a lipped border. It is what makes a pond dug against the edge hold water
-// instead of quietly draining off the parcel: the water solver treats the grid
-// border as an open outlet, so without a lip every edge pond would be a leak.
-// EDGE_KEEP_OUT already stops the shovel reaching it, so the lip is something
-// you can lean on, not something you can breach.
-const BED_LIP_HEIGHT = 0.42
-const BED_LIP_WIDTH = 1.3
+// The complete parcel is sculptable up to its edge. Ground beyond that edge
+// is fixed at grade, so only a real terrain basin—not an artificial rim or
+// faded shovel radius—can hold water in the corners.
 // Slope-clamp sweep bounds: the box around an edit is padded far beyond how
 // far one correction wave can travel, sweeps stop as soon as a sweep makes no
 // progress, and 60 sweeps is a hard backstop. Digging holds run ~12 splats per
@@ -58,17 +51,13 @@ export interface GardenTerrain {
   readonly gridCols: number
   readonly gridRows: number
   heightAt(x: number, z: number): number
-  /**
-   * Raw ground height at a grid cell, lip included. The water field samples the
-   * terrain through this so a pond's basin and spill level see the same ground
-   * the player sees, rather than the edit layer alone.
-   */
+  /** Ground height at a grid cell. Water samples the same edited surface shown to the player. */
   cellHeightAt(gx: number, gz: number): number
   splat(x: number, z: number, radius: number, amount: number): number
   smooth(x: number, z: number, radius: number, strength: number): number
   level(x: number, z: number, radius: number, strength: number): number
   applyToMeshes(): void
-  /** Re-derive the bed lip after the garden bounds change. Returns true if it moved. */
+  /** Rebuild the editable parcel mask after bounds change. Returns true if it moved. */
   syncBounds(): boolean
   readonly dirty: boolean
   clear(): void
@@ -111,11 +100,11 @@ export function createGardenTerrain(
   getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
 ): GardenTerrain {
   const heights = new Float32Array(GRID_COLS * GRID_ROWS)
-  const bedLip = new Float32Array(GRID_COLS * GRID_ROWS)
   const outsideParcel = new Uint8Array(GRID_COLS * GRID_ROWS)
+  const initialBounds = getActiveBounds()
   let dirty = false
-  let lipBoundsHalfWidth = 0
-  let lipBoundsHalfDepth = 0
+  let parcelBoundsHalfWidth = 0
+  let parcelBoundsHalfDepth = 0
 
   function gridX(x: number): number {
     return (x - GRID_ORIGIN_X) / TERRAIN_CELL
@@ -133,52 +122,17 @@ export function createGardenTerrain(
     return Math.min(GRID_ROWS - 1, Math.max(0, index))
   }
 
-  function cellEdgeFade(gx: number, gz: number): number {
-    const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
-    const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
-    const bounds = getActiveBounds()
-    const fadeX = Math.min(1, Math.max(0, (bounds.halfWidth - EDGE_KEEP_OUT - Math.abs(worldX)) / EDGE_FADE_WIDTH))
-    const fadeZ = Math.min(1, Math.max(0, (bounds.halfDepth - EDGE_KEEP_OUT - Math.abs(worldZ)) / EDGE_FADE_WIDTH))
-    return Math.min(fadeX, fadeZ)
-  }
-
-  /**
-   * Height of the raised bed edge at a cell, easing down to grade as it moves
-   * inward. Recomputed whenever the active bounds change, so revealing a new
-   * parcel moves the lip outward with the garden.
-   */
-  function bedLipAt(gx: number, gz: number): number {
-    const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
-    const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
-    const bounds = getActiveBounds()
-    const insetX = bounds.halfWidth - Math.abs(worldX)
-    const insetZ = bounds.halfDepth - Math.abs(worldZ)
-    const inset = Math.min(insetX, insetZ)
-    if (inset >= BED_LIP_WIDTH) return 0
-    // Smoothstep so the lip rises out of the lawn instead of stepping up.
-    const t = 1 - Math.min(1, Math.max(0, inset / BED_LIP_WIDTH))
-    return BED_LIP_HEIGHT * t * t * (3 - 2 * t)
-  }
-
-  /**
-   * The lip is stored separately from the player's edits so a `clear()` or a
-   * re-reveal can reset the sculpting without ever erasing the border, and so
-   * a filled-in bed edge is always refilled to its full height.
-   */
-  function rebuildBedLip(): void {
+  /** Mark grid cells outside the active plot; those cells remain flat at grade. */
+  function rebuildParcelMask(): void {
     const bounds = getActiveBounds()
     for (let gz = 0; gz < GRID_ROWS; gz += 1) {
       for (let gx = 0; gx < GRID_COLS; gx += 1) {
         const index = gz * GRID_COLS + gx
-        bedLip[index] = bedLipAt(gx, gz)
-        // Ground outside the active parcel is not part of the garden at all; it
-        // stays at the lip height rather than being dug into.
-        if (Math.abs(GRID_ORIGIN_X + gx * TERRAIN_CELL) > bounds.halfWidth
-          || Math.abs(GRID_ORIGIN_Z + gz * TERRAIN_CELL) > bounds.halfDepth) {
-          outsideParcel[index] = 1
-        } else {
-          outsideParcel[index] = 0
-        }
+        const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
+        const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
+        const outside = Math.abs(worldX) > bounds.halfWidth || Math.abs(worldZ) > bounds.halfDepth
+        outsideParcel[index] = outside ? 1 : 0
+        if (outside) heights[index] = 0
       }
     }
   }
@@ -197,26 +151,37 @@ export function createGardenTerrain(
     const jz = clampZ(iz + 1)
     const tx = Math.min(1, Math.max(0, fx - ix))
     const tz = Math.min(1, Math.max(0, fz - iz))
-    const h00 = heights[iz * GRID_COLS + ix] + bedLip[iz * GRID_COLS + ix]
-    const h10 = heights[iz * GRID_COLS + jx] + bedLip[iz * GRID_COLS + jx]
-    const h01 = heights[jz * GRID_COLS + ix] + bedLip[jz * GRID_COLS + ix]
-    const h11 = heights[jz * GRID_COLS + jx] + bedLip[jz * GRID_COLS + jx]
+    const h00 = heights[iz * GRID_COLS + ix]
+    const h10 = heights[iz * GRID_COLS + jx]
+    const h01 = heights[jz * GRID_COLS + ix]
+    const h11 = heights[jz * GRID_COLS + jx]
     return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
   }
 
   function cellHeightAt(gx: number, gz: number): number {
     const ix = clampX(gx)
     const iz = clampZ(gz)
-    const index = iz * GRID_COLS + ix
-    return heights[index] + bedLip[index]
+    return heights[iz * GRID_COLS + ix]
   }
 
-  /** Bring one neighbor pair within the slope limit; returns the excess fixed. */
+  /** Bring one neighbor pair within the slope limit; outside cells stay at grade. */
   function clampPair(index: number, neighbor: number, limit: number): number {
+    const indexOutside = outsideParcel[index] === 1
+    const neighborOutside = outsideParcel[neighbor] === 1
+    if (indexOutside && neighborOutside) return 0
+    if (indexOutside) return clampPair(neighbor, index, limit)
     const delta = heights[neighbor] - heights[index]
     const excess = Math.abs(delta) - limit
     if (excess <= 0) return 0
-    if (delta > 0) {
+    if (neighborOutside) {
+      // The parcel edge meets flat surrounding ground; slope correction moves
+      // only the in-plot cell, never creates a hidden bank outside the fence.
+      if (delta > 0) {
+        heights[index] += Math.min(excess, TERRAIN_MAX_H - heights[index])
+      } else {
+        heights[index] -= Math.max(0, Math.min(excess, heights[index] - terrainFloor()))
+      }
+    } else if (delta > 0) {
       // neighbor is higher: lower it, raise this cell as far as allowed.
       const lift = Math.max(0, Math.min(excess / 2, TERRAIN_MAX_H - heights[index]))
       heights[index] += lift
@@ -225,11 +190,8 @@ export function createGardenTerrain(
       // Honor the floor so slope redistribution can never dig a cell below it
       // (TERRAIN_MIN_H is deep enough for large ponds). The max(0, …) matters:
       // a cell already AT the floor must absorb nothing (not a negative
-      // "drop", which would raise it and boost the neighbor). The bed lip
-      // raises the floor locally, so a deep dig beside the border can never
-      // slope down under it and breach the garden edge.
-      const floor = Math.max(terrainFloor(), -bedLip[index])
-      const drop = Math.max(0, Math.min(excess / 2, heights[index] - floor))
+      // "drop", which would raise it and boost the neighbor).
+      const drop = Math.max(0, Math.min(excess / 2, heights[index] - terrainFloor()))
       heights[index] -= drop
       heights[neighbor] += excess - drop
     }
@@ -281,12 +243,9 @@ export function createGardenTerrain(
         if (distance > radius) continue
         // Full effect through the middle, easing out over the rim.
         const weight = 1 - smoothstep(0.6, 1, distance / radius)
-        const edge = cellEdgeFade(gx, gz)
-        const effect = weight * edge
+        const effect = weight
         if (effect <= 0) continue
         const index = gz * GRID_COLS + gx
-        // The bed lip is the garden's border, not something the player owns:
-        // edits never reach it and never lower it, so the border always holds.
         if (outsideParcel[index] === 1) continue
         const before = heights[index]
         const after = Math.min(TERRAIN_MAX_H, Math.max(TERRAIN_MIN_H, before + amount * effect))
@@ -321,7 +280,7 @@ export function createGardenTerrain(
         const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
         const distance = Math.hypot(worldX - x, worldZ - z)
         if (distance > radius) continue
-        const weight = (1 - smoothstep(0.6, 1, distance / radius)) * cellEdgeFade(gx, gz)
+        const weight = 1 - smoothstep(0.6, 1, distance / radius)
         if (weight <= 0) continue
         if (isOutsideParcel(gx, gz)) continue
         indices.push(gz * GRID_COLS + gx)
@@ -364,8 +323,8 @@ export function createGardenTerrain(
         const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
         const distance = Math.hypot(worldX - x, worldZ - z)
         if (distance > radius) continue
-        const weight = (1 - smoothstep(0.6, 1, distance / radius)) * cellEdgeFade(gx, gz)
-        if (weight <= 0) continue
+        const weight = 1 - smoothstep(0.6, 1, distance / radius)
+        if (weight <= 0 || isOutsideParcel(gx, gz)) continue
         let sum = 0
         let count = 0
         for (let dz = -1; dz <= 1; dz += 1) {
@@ -464,7 +423,7 @@ export function createGardenTerrain(
 
   function clear(): void {
     heights.fill(0)
-    rebuildBedLip()
+    rebuildParcelMask()
     dirty = true
   }
 
@@ -489,26 +448,37 @@ export function createGardenTerrain(
   }
 
   /**
-   * Re-derive the bed lip when the garden has been re-revealed at a new size.
-   * Cheap (one pass over the grid) and only runs on an expansion boundary, not
-   * per frame. Returns true when the lip actually moved, so the caller can
-   * decide whether the water needs re-solving — asking every frame would
-   * otherwise pin the water field permanently dirty and cost a full priority
-   * flood on every tick.
+   * Update the editable parcel mask after a bounds change. Cheap (one pass over
+   * the grid) and only runs when the plot changes, not per frame. Returns true
+   * when it moved so the caller can re-solve water against the new grade edge.
    */
   function syncBounds(): boolean {
     const bounds = getActiveBounds()
-    if (bounds.halfWidth === lipBoundsHalfWidth && bounds.halfDepth === lipBoundsHalfDepth) return false
-    lipBoundsHalfWidth = bounds.halfWidth
-    lipBoundsHalfDepth = bounds.halfDepth
-    rebuildBedLip()
+    if (bounds.halfWidth === parcelBoundsHalfWidth && bounds.halfDepth === parcelBoundsHalfDepth) return false
+    parcelBoundsHalfWidth = bounds.halfWidth
+    parcelBoundsHalfDepth = bounds.halfDepth
+    rebuildParcelMask()
+    clampSlope(0, GRID_COLS - 1, 0, GRID_ROWS - 1)
     dirty = true
     return true
   }
 
-  rebuildBedLip()
-  lipBoundsHalfWidth = getActiveBounds().halfWidth
-  lipBoundsHalfDepth = getActiveBounds().halfDepth
+  parcelBoundsHalfWidth = initialBounds.halfWidth
+  parcelBoundsHalfDepth = initialBounds.halfDepth
+  rebuildParcelMask()
+  // Ground outside the startup parcel is immutable at grade. Keep the first
+  // editable row level too, so a flat edge pour drains cleanly and dug corner
+  // basins remain held only by their intentionally shaped terrain.
+  for (let gz = 0; gz < GRID_ROWS; gz += 1) {
+    for (let gx = 0; gx < GRID_COLS; gx += 1) {
+      const index = gz * GRID_COLS + gx
+      if (outsideParcel[index] === 1) continue
+      const nextOutside = gx + 1 < GRID_COLS && outsideParcel[index + 1] === 1
+      const belowOutside = gz + 1 < GRID_ROWS && outsideParcel[index + GRID_COLS] === 1
+      if (nextOutside || belowOutside) heights[index] = 0
+    }
+  }
+  clampSlope(0, GRID_COLS - 1, 0, GRID_ROWS - 1)
 
   return {
     cellSize: TERRAIN_CELL,

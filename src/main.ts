@@ -7,6 +7,8 @@ import { createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairgrou
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
+import { createGardenWaterField } from './game/garden-water'
+import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { type GardenToolId } from './scene/garden-tool-art'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { createJournalPanel } from './ui/journal-panel'
@@ -119,8 +121,30 @@ const gardenTerrain = fairground.gardenSurface && fairground.gardenSoil
     ], activeGardenBounds)
   : null
 gardenTerrain?.applyToMeshes()
+// Water shares the terrain grid so it sees the flat parcel edge and every sculpt.
+const gardenWater = gardenTerrain
+  ? createGardenWaterField({
+      cellSize: gardenTerrain.cellSize,
+      gridCols: gardenTerrain.gridCols,
+      gridRows: gardenTerrain.gridRows,
+      cellHeight: (gx, gz) => gardenTerrain.cellHeightAt(gx, gz),
+    })
+  : null
+const gardenWaterMesh = gardenTerrain && gardenWater ? createGardenWaterMesh(gardenTerrain, gardenWater) : null
+if (gardenWaterMesh) {
+  scene.add(gardenWaterMesh.mesh)
+  gardenWaterMesh.update(0)
+}
 const gardenTools: GardenTools | null = fairground.gardenSurface && fairground.gardenSoil && gardenTerrain
-  ? createGardenTools(gameCanvas, camera, fairground.gardenSurface, gardenTerrain, activeGardenBounds)
+  ? createGardenTools(
+      gameCanvas,
+      camera,
+      fairground.gardenSurface,
+      gardenTerrain,
+      activeGardenBounds,
+      gardenWater ?? undefined,
+      () => gardenWaterMesh?.markDirty(),
+    )
   : null
 if (gardenTools) scene.add(gardenTools.root)
 
@@ -176,7 +200,6 @@ let toolPointer: number | null = null
 let previousPointer = { x: 0, y: 0 }
 let dragMode: 'orbit' | 'pan' | null = null
 let spaceHeld = false
-
 const pressedKeys = new Set<string>()
 let pointerPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
 let pointerWasSeen = false
@@ -340,7 +363,7 @@ function pointerDesign(event: PointerEvent) {
  * Blender-authored props, which have no cursor to give -- gets the hand.
  */
 function updateCursor(point: DesignPoint | null): void {
-  if (gardenTools?.cursorVisible) {
+  if (gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
     setCursor('hidden', gameCanvas)
     return
   }
@@ -499,9 +522,15 @@ function orbitPointerDown(event: PointerEvent): void {
   if (event.button === 0 && event.detail >= 2) return
   // Middle click levels with the shovel; Space+left-drag explicitly orbits.
   if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
-  const cameraGesture = event.button === 2 || (event.button === 0 && spaceHeld)
-  // The UI is drawn in front of the garden, so a click on it must not leak
-  // through as planting, digging or a camera drag.
+  if (event.button === 2 && !isOverGameHUD(event.clientX, event.clientY) && gardenTools?.pointerDown(event)) {
+    event.preventDefault()
+    toolPointer = event.pointerId
+    if (event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
+    return
+  }
+  // Tool selections are handled by the shared HUD above. Right-click belongs
+  // to the active garden tool inside the plot; outside the plot it remains a pan.
+  const cameraGesture = event.button === 0 && spaceHeld
   if (!spaceHeld && isOverGameHUD(event.clientX, event.clientY)) {
     event.preventDefault()
     return
@@ -512,7 +541,7 @@ function orbitPointerDown(event: PointerEvent): void {
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
     return
   }
-  if (gardenTools?.pointerDown(event)) {
+  if (event.button === 1 && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
@@ -571,7 +600,6 @@ function orbitPointerUp(event: PointerEvent): void {
 }
 
 function preventCanvasMenu(event: MouseEvent): void {
-  if (gardenTools && gardenTools.handleContextMenu(event)) return
   event.preventDefault()
 }
 
@@ -716,6 +744,11 @@ interface GardenDebugHarness {
   openJournal(): void
   closeMenu(): void
   openViewer(): void
+  /** Direct water/terrain controls for repeatable visual checks, compiled out in production. */
+  digAt(x: number, z: number, radius: number, amount: number): number
+  pourAt(x: number, z: number, radius: number, amount: number): unknown
+  clearGarden(): void
+  waterSummary(): unknown
   /** Live scene graph, for poking at a panel that is not drawing. */
   readonly scene: THREE.Scene
   readonly uiScene: THREE.Scene
@@ -912,6 +945,33 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     closeMenu: () => menu.close(),
     openJournal: () => journal.open(),
     openViewer: () => setMode('viewer'),
+    digAt: (x, z, radius, amount) => {
+      if (!gardenTerrain || !gardenWater) return 0
+      const changed = gardenTerrain.splat(x, z, radius, amount)
+      gardenTerrain.applyToMeshes()
+      gardenWater.markTerrainChanged()
+      for (let pass = 0; pass < 40 && gardenWater.dirty; pass += 1) gardenWater.settle()
+      gardenWaterMesh?.markDirty()
+      gardenWaterMesh?.update(performance.now() * 0.001)
+      return changed
+    },
+    pourAt: (x, z, radius, amount) => {
+      if (!gardenWater) return null
+      gardenWater.pour(x, z, radius, amount)
+      for (let pass = 0; pass < 40 && gardenWater.dirty; pass += 1) gardenWater.settle()
+      gardenWaterMesh?.markDirty()
+      gardenWaterMesh?.update(performance.now() * 0.001)
+      return gardenWater.summary()
+    },
+    clearGarden: () => {
+      gardenTerrain?.clear()
+      gardenTerrain?.applyToMeshes()
+      gardenWater?.clear()
+      gardenWater?.settle()
+      gardenWaterMesh?.markDirty()
+      gardenWaterMesh?.update(performance.now() * 0.001)
+    },
+    waterSummary: () => gardenWater?.summary() ?? null,
     scene,
     uiScene: ui.scene,
     // Reports where every surface actually landed, so layout can be checked at
@@ -995,7 +1055,16 @@ function frame(now: number): void {
   }
   const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
+  // A farm expansion moves the editable parcel edge; re-solve ponds only when
+  // bounds actually change, never on every frame.
+  if (gardenTerrain?.syncBounds()) {
+    gardenWater?.markTerrainChanged()
+    gardenWaterMesh?.markDirty()
+  }
   gardenTools?.update(delta)
+  if (gardenWaterMesh && (gardenWater?.dirty || gardenWaterMesh.dirty)) {
+    gardenWaterMesh.update(now * 0.001)
+  }
   const expansionState = fairground.farmExpansion?.state
   if (expansionState) {
     if (expansionState.level > lastExpansionLevel) {

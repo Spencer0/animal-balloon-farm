@@ -20,7 +20,7 @@ export interface GardenToolDebugState {
   readonly cursor: { readonly x: number; readonly y: number; readonly z: number } | null
   readonly isPointerDown: boolean
   readonly holdSeconds: number
-  readonly activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | null
+  readonly activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | null
   readonly grassBatches: number
   readonly grassBlades: number
   readonly grassCapacity: number
@@ -118,6 +118,10 @@ const LEVEL_STRENGTH = 6
 const DIG_DROP = -0.5
 const FILL_RADIUS_FACTOR = 0.9
 const FILL_RISE = 0.4
+// Per-cell metres per second: the pour is deliberately a steady stream;
+// the disc-wide total naturally grows with brush area.
+const WATER_POUR_RATE = 0.42
+const WATER_DRAIN_RATE = 0.58
 const GROUND_GREEN = new THREE.Color('#6db254')
 const GRASS_RANDOM_SEED = 471903
 
@@ -164,6 +168,7 @@ export function createGardenTools(
   terrain: GardenTerrain,
   getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
   water?: GardenWaterField,
+  onWaterChanged: () => void = () => {},
 ): GardenTools {
   // The pointer used to be hidden outright for the whole canvas, which left the
   // menu, the journal and the viewer with no cursor at all, and was then
@@ -210,6 +215,7 @@ export function createGardenTools(
   const toolModels: Record<GardenToolId, THREE.Group> = {
     grass: createGardenToolModel('grass'),
     shovel: createGardenToolModel('shovel'),
+    water: createGardenToolModel('water'),
   }
   let selectedTool: GardenToolId = 'grass'
   const brushLevels = new Map<GardenToolId, number>()
@@ -236,7 +242,7 @@ export function createGardenTools(
 
   let cursorVisible = false
   let isPointerDown = false
-  let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | null = null
+  let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | null = null
   let lastPaintPoint: THREE.Vector3 | null = null
   let lastSeedPoint: THREE.Vector3 | null = null
   let hoverTint: string | null = null
@@ -383,6 +389,18 @@ export function createGardenTools(
   actionGlow.position.y = 0.09
   actionGlow.visible = false
   cursor.add(actionGlow)
+  const waterRipples: THREE.Mesh[] = []
+  for (let index = 0; index < 3; index += 1) {
+    const ripple = new THREE.Mesh(
+      new THREE.TorusGeometry(0.25 + index * 0.18, 0.018, 6, 32),
+      new THREE.MeshBasicMaterial({ color: '#8ce7ef', transparent: true, opacity: 0, depthWrite: false }),
+    )
+    ripple.rotation.x = Math.PI / 2
+    ripple.position.y = 0.1 + index * 0.003
+    ripple.visible = false
+    cursor.add(ripple)
+    waterRipples.push(ripple)
+  }
   for (let index = 0; index < 4; index += 1) {
     const angle = index / 4 * Math.PI * 2
     const pip = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 7), new THREE.MeshBasicMaterial({ color: '#fff3d7' }))
@@ -786,6 +804,7 @@ export function createGardenTools(
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
       selectedTool = id
+      hoverTint = id === 'water' ? '#77c9d5' : id === 'shovel' ? '#d9a06b' : '#b7d97a'
       for (const [key, model] of Object.entries(toolModels)) model.visible = key === id
     },
     cycleBrushSize(): void {
@@ -799,10 +818,16 @@ export function createGardenTools(
         lastSeedPoint = null
         return
       }
+      if (selectedTool === 'grass') hoverTint = '#b7d97a'
       if (selectedTool === 'shovel') {
         // Digging and filling follow the pointer continuously.
         if (activeAction === 'dig' || activeAction === 'fill' || activeAction === 'level') lastSeedPoint = position.clone()
         hoverTint = '#d9a06b'
+        return
+      }
+      if (selectedTool === 'water') {
+        if (activeAction === 'pour' || activeAction === 'drain') lastSeedPoint = position.clone()
+        hoverTint = '#77c9d5'
         return
       }
       // Moving while growing drags a seed trail: each stamp greens the ground and
@@ -844,6 +869,18 @@ export function createGardenTools(
         actionAccumulator = 0
         lastPaintDuration = 0
         activeAction = event.button === 0 ? 'dig' : event.button === 1 ? 'level' : 'fill'
+        return true
+      }
+      if (selectedTool === 'water') {
+        if (event.button !== 0 && event.button !== 2) return false
+        if (!water) return false
+        isPointerDown = true
+        lastPaintPoint = position.clone()
+        lastSeedPoint = position.clone()
+        paintTimer = 0
+        actionAccumulator = 0
+        lastPaintDuration = 0
+        activeAction = event.button === 0 ? 'pour' : 'drain'
         return true
       }
       activeAction = event.button === 0 ? 'grow' : 'trim'
@@ -983,6 +1020,10 @@ export function createGardenTools(
           } else if (activeAction === 'level') {
             const radius = brushRadius() * LEVEL_RADIUS_FACTOR
             if (terrain.level(x, z, radius, LEVEL_STRENGTH * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
+          } else if (activeAction === 'pour' && water) {
+            water.pour(x, z, brushRadius(), WATER_POUR_RATE * ACTION_INTERVAL)
+          } else if (activeAction === 'drain' && water) {
+            water.drain(x, z, brushRadius(), WATER_DRAIN_RATE * ACTION_INTERVAL)
           }
         }
       }
@@ -994,6 +1035,7 @@ export function createGardenTools(
         waterApplyTimer += deltaSeconds
         if (waterApplyTimer >= TERRAIN_APPLY_INTERVAL) {
           water.settle()
+          onWaterChanged()
           // Grass has to follow the new surface. Only the wet cells moved, so
           // the work is bounded by the pond rather than the whole lawn.
           const wet = water.wetCells()
@@ -1038,11 +1080,25 @@ export function createGardenTools(
         : activeAction === 'dig' ? '#e0b080'
         : activeAction === 'level' ? '#cfe4ee'
         : activeAction === 'fill' ? '#e8c78f'
+        : activeAction === 'pour' ? '#8ce7ef'
+        : activeAction === 'drain' ? '#5798d3'
         : '#fff3d7')
+      const isWaterAction = activeAction === 'pour' || activeAction === 'drain'
+      waterRipples.forEach((ripple, index) => {
+        ripple.visible = cursorVisible && isWaterAction
+        const material = ripple.material as THREE.MeshBasicMaterial
+        material.color.set(activeAction === 'drain' ? '#5798d3' : '#9beef2')
+        const phase = (time * 2.8 + index * (Math.PI * 2 / waterRipples.length)) % (Math.PI * 2)
+        material.opacity = ripple.visible ? 0.08 + Math.max(0, Math.sin(phase)) * 0.42 : 0
+        ripple.scale.setScalar(0.72 + (0.5 + 0.5 * Math.sin(phase)) * 0.48)
+      })
       ;(cursorShadow.material as THREE.MeshBasicMaterial).opacity = isPointerDown && activeAction === 'grow' ? 0.19 + pulse * 0.1 : 0.14
       // hoverTint is refreshed by pointerMove; re-applying it here keeps a stale
       // hover tint from leaking into later frames.
-      outerMaterial.color.set(isPointerDown && activeAction === 'trim' ? '#f3b287' : hoverTint ?? '#b7d97a')
+      outerMaterial.color.set(activeAction === 'pour' ? '#77c9d5'
+        : activeAction === 'drain' ? '#5798d3'
+        : isPointerDown && activeAction === 'trim' ? '#f3b287'
+        : hoverTint ?? '#b7d97a')
       cursor.rotation.y = Math.sin(time * 1.6) * 0.026
     },
     dispose,

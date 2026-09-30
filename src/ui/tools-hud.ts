@@ -13,7 +13,8 @@ import { createSurface, fillRoundRect, strokeRoundRect } from './ui-theme'
  * The tool is already a model, so the bar just shows the model: the seeder and
  * the shovel float above the lawn, tipped toward the camera so they read as
  * objects rather than as icons on a list. The only text left is the key number
- * beside each one, because that is the one thing a player cannot guess.
+ * beside each one, because that is the one thing a player cannot guess. The
+ * bucket joins the seeder and shovel as a plain, readable tool silhouette.
  *
  * Selecting a tool lights it: a golden outline shell grows around the model's
  * silhouette and a warm halo blooms behind it.
@@ -216,7 +217,7 @@ export function createToolsHud(
       press: 0,
       glow: 0,
       outlineAmount: 0,
-      // Stagger the idle bob so the two tools do not breathe in lockstep.
+      // Stagger the idle bob so the tools do not breathe in lockstep.
       bob: index * 1.9,
     }
   })

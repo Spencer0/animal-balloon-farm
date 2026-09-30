@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 
-export type GardenToolId = 'grass' | 'shovel'
+export type GardenToolId = 'grass' | 'shovel' | 'water'
 
 export interface GardenToolDefinition {
   readonly id: GardenToolId
@@ -26,10 +26,18 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
     note: 'Click the ground to dig a hole, then drop a seed or a friend right into it.',
     tint: '#d9a06b', accent: '#e8c78f',
   },
+  {
+    id: 'water', hotkey: '3', label: 'Water Bucket', subtitle: 'Pour a puddle, or bail it away',
+    description: 'A little water goes where the garden dips, settling into a still, level pond.',
+    note: 'Hold left-click to pour. Hold right-click to drain.',
+    tint: '#77c9d5', accent: '#b3edf0',
+  },
 ]
 
 export function createGardenToolModel(id: GardenToolId): THREE.Group {
-  return id === 'shovel' ? createShovelModel() : createGrassSeederModel()
+  if (id === 'shovel') return createShovelModel()
+  if (id === 'water') return createWaterBucketModel()
+  return createGrassSeederModel()
 }
 
 function createGrassSeederModel(): THREE.Group {
@@ -83,6 +91,45 @@ function createGrassSeederModel(): THREE.Group {
     seed.scale.set(1, 0.76, 0.86)
     model.add(seed)
   }
+
+  model.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.castShadow = true
+      object.receiveShadow = true
+    }
+  })
+  return model
+}
+
+function createWaterBucketModel(): THREE.Group {
+  const model = new THREE.Group()
+  model.name = 'Handmade garden water bucket'
+
+  const copper = new THREE.MeshStandardMaterial({ color: '#ba8257', roughness: 0.4, metalness: 0.42 })
+  const rimMaterial = new THREE.MeshStandardMaterial({ color: '#e0bd85', roughness: 0.34, metalness: 0.38 })
+  const water = new THREE.MeshStandardMaterial({ color: '#62c5d5', roughness: 0.2, metalness: 0.08 })
+
+  const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.12, 0.27, 18, 1, true), copper)
+  bucket.position.set(-0.05, 0.19, 0)
+  model.add(bucket)
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.035, 18), rimMaterial)
+  base.position.set(-0.05, 0.055, 0)
+  model.add(base)
+
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 22), rimMaterial)
+  rim.position.set(-0.05, 0.325, 0)
+  model.add(rim)
+
+  const waterSurface = new THREE.Mesh(new THREE.CircleGeometry(0.13, 18), water)
+  waterSurface.rotation.x = -Math.PI / 2
+  waterSurface.position.set(-0.05, 0.29, 0)
+  model.add(waterSurface)
+
+  const bail = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.014, 7, 20, Math.PI), rimMaterial)
+  bail.position.set(-0.05, 0.3, 0)
+  bail.rotation.set(Math.PI / 2, 0, 0)
+  model.add(bail)
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {

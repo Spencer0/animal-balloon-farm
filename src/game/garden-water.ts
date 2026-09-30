@@ -31,14 +31,16 @@
  *
  * ## Note on the garden border
  *
- * The border is treated as an open outlet, not a wall — water reaches the edge
- * of the parcel and leaves. That is why a slope and a flat plate drain instead
- * of sheeting, and why the terrain's edge keep-out ring matters here too.
+ * The outer simulation grid is an open outlet. The visible parcel sits inside
+ * that grid, with surrounding ground fixed at grade: a flat-edge pour drains,
+ * while a deliberately dug corner basin can hold water below that grade.
  */
 
 /** Thinner than this and a cell reads as damp soil rather than water. */
 export const WATER_MIN_VISIBLE_DEPTH = 0.002
-/** Damp soil extends this far past a wet cell, softening the shoreline. */
+/** Ignore tiny simulation films when choosing rendered pool/shoreline seeds. */
+export const WATER_MIN_RENDER_DEPTH = 0.04
+/** Damp soil extends this far past a rendered wet cell, softening the shoreline. */
 export const WATER_SHORE_BAND = 0.25
 /** Bisection steps for the level solve: 24 pins a metre of range to ~0.06 µm. */
 const LEVEL_SOLVE_STEPS = 24
@@ -168,15 +170,12 @@ export interface GardenWaterField {
   /** Every cell currently holding visible water, in row-major order. */
   wetCells(): number[]
   /**
-   * A smoothed view of the water for rendering: per grid cell, the surface
-   * height of the pool it belongs to and how solidly wet it is.
-   *
-   * Rendering straight from the raw cell depth produces a spiky starburst at
-   * the shoreline, because a dry cell next to a deep pool sits at *terrain*
-   * height — well above the water — and the triangles between them tilt up into
-   * a saw. Instead the surface is extended outward past the shoreline at the
-   * pool's own level, and opacity falls off with horizontal distance from the
-   * water, so the edge fades flat instead of tearing.
+   * A smoothed view of the water for rendering: per grid cell, the nearest
+   * pool's surface height and how solidly wet it is. Surface height is carried
+   * over the entire field, even where wetness is zero, because transparent
+   * vertices still participate in triangle interpolation. Only wetness fades
+   * across the shore band; the flat carried level avoids angular ramps at the
+   * last partially transparent triangles.
    */
   shoreField(): { readonly level: Float32Array; readonly wetness: Float32Array }
   summary(): WaterFieldSummary
@@ -636,56 +635,68 @@ export function createGardenWaterField(
     return found
   }
 
-  // Scratch for the shore field: a breadth-first distance transform outward
-  // from the wet cells, so the shoreline fade is a smooth radial falloff rather
-  // than whatever the cell grid happens to look like.
-  const shoreQueue = new Int32Array(cellCount)
-  const shoreDistance = new Int32Array(cellCount)
+  // Scratch for the shore field: a two-pass 8-neighbour chamfer transform
+  // finds a rounded distance to water instead of diamond-shaped Manhattan
+  // rings made by a 4-neighbour flood fill.
+  const shoreDistance = new Float32Array(cellCount)
+  const shoreSource = new Int32Array(cellCount)
   const shoreLevel = new Float32Array(cellCount)
   const shoreWetness = new Float32Array(cellCount)
 
   function shoreField(): { level: Float32Array; wetness: Float32Array } {
+    shoreDistance.fill(Infinity)
+    shoreSource.fill(-1)
     shoreLevel.fill(Number.NaN)
-    let head = 0
-    let tail = 0
     for (let index = 0; index < cellCount; index += 1) {
-      if (depth[index] <= WATER_MIN_VISIBLE_DEPTH) {
-        shoreDistance[index] = -1
-        continue
-      }
+      // The water solver still keeps tiny films for gameplay, but they should
+      // not start a wide translucent shore sheet until a cell has a visible,
+      // meaningful amount of water.
+      if (depth[index] < WATER_MIN_RENDER_DEPTH) continue
       shoreDistance[index] = 0
-      shoreLevel[index] = surface[index]
-      if (tail < cellCount) shoreQueue[tail++] = index
+      shoreSource[index] = index
     }
-    // Water spreads this many cells past the shoreline before fading out.
-    const reach = Math.max(1, Math.round(WATER_SHORE_BAND / cellSize))
-    while (head < tail) {
-      const index = shoreQueue[head++]
-      const distance = shoreDistance[index]
-      if (distance >= reach) continue
-      const gx = index % gridCols
-      const gz = (index - gx) / gridCols
-      for (const [dx, dz] of NEIGHBOURS) {
-        const nx = gx + dx
-        const nz = gz + dz
-        if (nx < 0 || nz < 0 || nx >= gridCols || nz >= gridRows) continue
-        const neighbour = nz * gridCols + nx
-        if (shoreDistance[neighbour] >= 0 && shoreDistance[neighbour] <= distance + 1) continue
-        shoreDistance[neighbour] = distance + 1
-        // The fade keeps the nearest pool's level, so the sheet stays flat
-        // right out to where it disappears.
-        shoreLevel[neighbour] = shoreLevel[index]
-        if (tail < cellCount) shoreQueue[tail++] = neighbour
+
+    const diagonal = Math.SQRT2
+    const relax = (index: number, neighbour: number, cost: number): void => {
+      const candidate = shoreDistance[neighbour] + cost
+      if (candidate >= shoreDistance[index]) return
+      shoreDistance[index] = candidate
+      shoreSource[index] = shoreSource[neighbour]
+    }
+    // Forward chamfer pass.
+    for (let gz = 0; gz < gridRows; gz += 1) {
+      for (let gx = 0; gx < gridCols; gx += 1) {
+        const index = gz * gridCols + gx
+        if (gx > 0) relax(index, index - 1, 1)
+        if (gz > 0) {
+          relax(index, index - gridCols, 1)
+          if (gx > 0) relax(index, index - gridCols - 1, diagonal)
+          if (gx + 1 < gridCols) relax(index, index - gridCols + 1, diagonal)
+        }
       }
     }
+    // Backward chamfer pass.
+    for (let gz = gridRows - 1; gz >= 0; gz -= 1) {
+      for (let gx = gridCols - 1; gx >= 0; gx -= 1) {
+        const index = gz * gridCols + gx
+        if (gx + 1 < gridCols) relax(index, index + 1, 1)
+        if (gz + 1 < gridRows) {
+          relax(index, index + gridCols, 1)
+          if (gx > 0) relax(index, index + gridCols - 1, diagonal)
+          if (gx + 1 < gridCols) relax(index, index + gridCols + 1, diagonal)
+        }
+      }
+    }
+
+    const fadeEnd = WATER_SHORE_BAND + cellSize * 1.1
     for (let index = 0; index < cellCount; index += 1) {
-      const distance = shoreDistance[index]
-      if (distance < 0) {
+      const source = shoreSource[index]
+      if (source < 0) {
         shoreWetness[index] = 0
         continue
       }
-      const t = 1 - distance / (reach + 1)
-      shoreWetness[index] = t * t * (3 - 2 * t)
+      shoreLevel[index] = surface[source]
+      shoreWetness[index] = 1 - smoothstep(WATER_SHORE_BAND, fadeEnd, shoreDistance[index] * cellSize)
     }
     return { level: shoreLevel, wetness: shoreWetness }
   }

@@ -1,7 +1,6 @@
 # Water Bucket (Tool #3) — Scope & Technical Plan
 
-Status: **M1 + bed lip + plain water surface shipped** (2026-09-29). M3 (the tool
-itself) and the Blender ripple texture remain.
+Status: **M1 + flat parcel edge + plain water surface + bucket tool shipped** (2026-09-30). The Blender ripple texture remains.
 Companion to [`SHOVEL_SCOPE.md`](SHOVEL_SCOPE.md) (terrain + contour rings),
 [`SPEC.md`](SPEC.md) §5.1 (terrain types include "shallow water/pond"),
 §5.2 (watering as a low-friction action), §10.3 (plant / water / harvest).
@@ -121,12 +120,12 @@ bound with a small positive offset so it never z-fights the lawn paint.
   into a spike fringe. One draw call, and a soft organically shaped edge.
 - The sheet is deliberately *not* clamped up to the surrounding bank. The soil
   is drawn first and writes depth, so a bank occludes whatever has sunk into it.
-- Material: `MeshStandardMaterial`, transparent, `depthWrite: false`, drawn
-  after the lawn so the contour rings read *through* the water — the payoff
-  for the shovel having pre-shaded the pond beds.
-- Known artifact: on a very steep bank a few shoreline triangles still poke
-  through. Harmless at play scale; the ripple/normal pass is the natural place
-  to revisit it.
+- Material: `MeshStandardMaterial`, transparent, drawn after ground. Because
+  ground sheets are transparent and do not write depth, vertex coverage is
+  suppressed when the pool level sits under a raised bank.
+- Surface heights propagate over the full field even at alpha-zero vertices;
+  pool level/coverage are bilinearly sampled from a rounded shore-distance field
+  to soften the shoreline contour.
 
 ### Interaction with existing systems
 
@@ -224,8 +223,8 @@ component count), and `state()` gains `waterCells` / `waterMaxDepth`.
    milestone. Confirmed.
 4. **Water surface texture:** to be authored in Blender (ripple/normal map) and
    iterated against the in-browser pond, same pipeline as the animals.
-5. **Garden border:** Spencer's call — a pond dug right against the edge must
-   hold, not leak. The garden carries a raised bed lip just inside the active
-   bounds (Viva Piñata-style); the shovel cannot breach it, and the slope clamp
-   treats it as a local floor so a deep dig cannot slope underneath. Pinned by
-   `tests/garden-bed-lip.test.mjs`.
+5. **Garden border:** the full plot edge stays flat at grade; ordinary water
+   poured onto the unsculpted ground drains instead of encountering a hidden
+   depression or raised lip. The player can dig basins right into parcel corners;
+   the surrounding grade contains water below zero until it reaches the ground
+   level and spills outward. Pinned by `tests/garden-edge-water.test.mjs`.
