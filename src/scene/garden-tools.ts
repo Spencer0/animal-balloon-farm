@@ -54,6 +54,11 @@ export interface GardenTools {
   debugState(): GardenToolDebugState
   pickReport(clientX: number, clientY: number): unknown
   clearGrass(): void
+  /**
+   * Seeds up to `target` blades across the active plot and returns the new
+   * blade total. Debug/stress-testing only; gameplay seeds by painting.
+   */
+  seedGrass(target: number): number
   update(deltaSeconds: number): void
   dispose(): void
 }
@@ -706,10 +711,38 @@ export function createGardenTools(
     materials.forEach((material) => material.dispose())
   }
 
+  /**
+   * Fills the active plot with roughly `target` blades and returns the new
+   * total. Used by the debug harness to reach the blade ceiling in one call
+   * instead of hand-painting it; nothing in the game itself calls this.
+   */
+  function seedGrass(target: number): number {
+    const bounds = getActiveBounds()
+    const wanted = Math.max(0, Math.min(Math.floor(target), MAX_GRASS_BLADES - totalGrassBlades))
+    if (wanted === 0) return totalGrassBlades
+    // Lay patches on a grid sized so patch count x per-patch lands on `wanted`.
+    // The seeder still rejects blades that land too close together, so a dense
+    // request saturates at the occupancy limit rather than over-reporting.
+    const area = Math.max(0.01, bounds.halfWidth * 2 * bounds.halfDepth * 2)
+    const spacing = Math.max(GRASS_CELL_SPACING, Math.sqrt(area / wanted))
+    const columns = Math.max(1, Math.ceil((bounds.halfWidth * 2) / spacing))
+    const rows = Math.max(1, Math.ceil((bounds.halfDepth * 2) / spacing))
+    const perPatch = Math.max(1, Math.round(wanted / (columns * rows)))
+    for (let row = 0; row < rows && totalGrassBlades < MAX_GRASS_BLADES; row += 1) {
+      for (let column = 0; column < columns && totalGrassBlades < MAX_GRASS_BLADES; column += 1) {
+        const x = -bounds.halfWidth + (column + 0.5) * spacing
+        const z = -bounds.halfDepth + (row + 0.5) * spacing
+        addGrass(x, z, spacing * 0.7, perPatch)
+      }
+    }
+    return totalGrassBlades
+  }
+
   return {
     root,
     get selectedTool(): GardenToolId { return selectedTool },
     get cursorVisible(): boolean { return cursorVisible },
+    seedGrass,
     selectTool(id): void {
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return

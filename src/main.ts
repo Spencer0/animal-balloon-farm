@@ -720,6 +720,22 @@ interface GardenDebugHarness {
   readonly scene: THREE.Scene
   readonly uiScene: THREE.Scene
   layout(): Record<string, unknown>
+  /**
+   * Fills the garden to a target size to find the scaling limits: clones
+   * animals up to `animals` and seeds grass up to `grass` blades. Returns the
+   * resulting scene composition. Debug/stress-testing only.
+   */
+  stress(options?: { readonly animals?: number; readonly grass?: number }): GardenStressReport
+}
+
+/** What the scene actually contains after `stress()` runs. */
+interface GardenStressReport {
+  readonly animals: number
+  readonly grassBlades: number
+  readonly meshes: number
+  readonly instancedMeshes: number
+  readonly drawCalls: number
+  readonly triangles: number
 }
 
 interface GardenFrameTiming {
@@ -898,8 +914,53 @@ function summarizeFrameTimings(): GardenPerformanceSummary | null {
 }
 
 if (__GARDEN_DEBUG__ && gardenDebugMode) {
+  const stressClones: THREE.Group[] = []
   const debugHarness: GardenDebugHarness = {
     enabled: true,
+    stress(options = {}): GardenStressReport {
+      const animalTarget = Math.max(0, Math.floor(options.animals ?? 200))
+      const grassTarget = Math.max(0, Math.floor(options.grass ?? 0))
+
+      // Clones share geometry and materials with the originals, so this adds
+      // draw calls and submission work without inventing new GPU memory. That
+      // is exactly the cost we want to measure.
+      const prototypes = animals.map((animal) => animal.root)
+      for (let index = stressClones.length; index < animalTarget; index += 1) {
+        const prototype = prototypes[index % prototypes.length]
+        const clone = prototype.clone(true)
+        clone.name = `Stress animal ${index}`
+        // Scatter across the plot on a jittered grid so they do not stack.
+        const ring = 4 + (index % 12) * 3.1
+        const angle = index * 2.399963
+        clone.position.set(
+          Math.cos(angle) * ring,
+          GARDEN_LAWN_Y,
+          Math.sin(angle) * ring * 0.72,
+        )
+        clone.rotation.y = angle
+        scene.add(clone)
+        stressClones.push(clone)
+      }
+
+      const grassBlades = grassTarget > 0 ? (gardenTools?.seedGrass(grassTarget) ?? 0) : 0
+      renderer.info.reset()
+      renderer.render(scene, camera)
+
+      let meshes = 0
+      let instancedMeshes = 0
+      scene.traverse((object) => {
+        if (object instanceof THREE.InstancedMesh) instancedMeshes += 1
+        else if (object instanceof THREE.Mesh) meshes += 1
+      })
+      return {
+        animals: animals.length + stressClones.length,
+        grassBlades,
+        meshes,
+        instancedMeshes,
+        drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+      }
+    },
     state: () => ({
       mode,
       menuOpen: menu.isOpen,

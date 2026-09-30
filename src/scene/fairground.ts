@@ -871,6 +871,10 @@ export function createSkyDome():THREE.Mesh {
   const sky=new THREE.Mesh(new THREE.SphereGeometry(450,32,20),mat)
   sky.name='Carnival fairground pastel sky'
   sky.frustumCulled=false
-  sky.renderOrder=-1000
+  // No `renderOrder = -1000` here on purpose. Drawing the dome *first* makes
+  // every pixel on screen run the sky shader and then get painted over by the
+  // meadow. In the default opaque queue it sorts back-to-front with the rest of
+  // the scene, so early-Z discards the pixels the ground already covers. The
+  // dome keeps `depthWrite: false`, so it still never occludes anything.
   return sky
 }

@@ -92,6 +92,19 @@ npm run build && grep -c "__gardenDebug" dist*/main-*.js   # expect 0
 
 Builds land in `dist/` on `main` and in `dist-<branch>/` on any other branch (see `scripts/outdir.mjs`), so that several agents can run `npm run dev` from different checkouts without overwriting each other's bundle. CI pins `PAGES_OUTDIR=dist`.
 
+### Scaling and stress testing
+
+[SCALE_TO_THE_MOON.md](SCALE_TO_THE_MOON.md) records what actually limits this
+scene, measured: 6 animals cost 360 draw calls (60 meshes each), 38,246 grass
+blades cost 104, and at 206 animals the frame is almost entirely draw-call
+submission (~19 µs per call). It also covers the debug-only stress harness:
+
+```js
+await window.__gardenDebug.stress({ animals: 200, grass: 120000 })
+```
+
+which returns the resulting composition and lets you watch draw calls scale.
+
 ### Branch previews on GitHub Pages
 
 `.github/workflows/pages.yml` deploys `main` to the site root and builds every `debug/*` and `feature/*` branch into its own package under `/previews/<branch-slug>/`, listed at `/previews/`. So a branch is deployed and shareable at:
