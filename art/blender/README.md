@@ -53,6 +53,26 @@ The sheep's vanilla balloon fleece is individually curled, with an apricot face,
 
 The runtime uses a single glossy red balloon material as the **wild carnival mask** for all six species. Every model preserves its standard GLB materials; call `animal.setAppearance('standard')` on capture to restore its authored palette (`'wild'` reapplies the full-red mask). This reversible switch is available now; the red-to-color capture transition will be animated later.
 
+## UI props: source, contact sheet, GLBs
+
+- Authoring script: [`ui_props.py`](ui_props.py)
+- Editable Blender project: `../../public/assets/ui/ui-props.blend`
+- Contact-sheet review render: `../../public/assets/ui/ui-props-review.png`
+- Runtime GLBs: `../../public/assets/ui/ui-button.glb`, `ui-signboard.glb`, `ui-bunting.glb`, `ui-mailbox.glb`
+- Verifier: `node scripts/inspect-glb.mjs public/assets/ui/ui-button.glb`
+
+Run from the project root:
+
+```powershell
+blender --background --factory-startup --python art/blender/ui_props.py
+```
+
+These four props are every piece of woodwork in the game: the carved barn-board button used by the main menu, the journal launcher and the garden tool bar, plus the menu's signboard, bunting and mailbox. The Three.js side fits each mesh to a declared design box at load time, so the numbers in the `UI_PROPS` table in `src/ui/ui-props.ts` are the contract between this script and the UI layer -- change a prop's proportions and update them together.
+
+**Orientation convention.** Props are authored already standing in Blender's Z-up frame: width along +X, height along +Z, thickness along Y with the painted face toward -Y. The glTF exporter's Z-up to Y-up conversion then lands each prop in Three.js with width +X, height +Y and the face toward +Z, which is what the orthographic UI layer needs.
+
+Author standing rather than laying a prop flat and tipping the export root. An earlier version of this script used a `+90 deg X` rotation on each export root, and `export_apply` baked that rotation into some assets and not others -- the signboard came out with its roof pointing backwards while the button looked fine. `scripts/inspect-glb.mjs` exists to catch that class of mistake without opening a 3D viewer; run it after any change to the authoring or export step.
+
 ## Iteration quality gate
 
 - Review front and three-quarter silhouette, facial expression, leg/ear/tail attachment, balloon sheen, shadow grounding, and hoof separation.

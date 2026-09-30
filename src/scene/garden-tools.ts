@@ -38,6 +38,12 @@ export interface GardenToolDebugState {
 export interface GardenTools {
   readonly root: THREE.Group
   readonly selectedTool: GardenToolId
+  /**
+   * Whether the in-world brush ring is on screen. The UI layer reads this to
+   * decide between hiding the OS pointer (the ring *is* the pointer) and
+   * showing the hand, so the menu and journal are not left with no cursor.
+   */
+  readonly cursorVisible: boolean
   selectTool(id: GardenToolId): void
   cycleBrushSize(): void
   pointerMove(event: GardenPointerMove): void
@@ -152,9 +158,11 @@ export function createGardenTools(
   terrain: GardenTerrain,
   getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
 ): GardenTools {
-  // The painted ring IS the cursor inside the garden; the OS arrow would just
-  // clutter the meadow scene. Restore the system pointer outside the plot.
-  canvas.style.cursor = ''
+  // The pointer used to be hidden outright for the whole canvas, which left the
+  // menu, the journal and the viewer with no cursor at all, and was then
+  // restored to the system arrow outside the plot. Both were treating the
+  // symptom from in here; the UI layer now owns the cursor end to end and asks
+  // `cursorVisible` whether the in-world ring is on screen before hiding it.
   const root = new THREE.Group()
   root.name = 'Grass seeder and garden brush cursor'
   root.add(lawn)
@@ -639,7 +647,6 @@ export function createGardenTools(
       cursor.visible = false
       cursorVisible = false
       actionGlow.visible = false
-      canvas.style.cursor = ''
       return null
     }
     const position = floorPosition()
@@ -647,11 +654,9 @@ export function createGardenTools(
       cursor.visible = false
       cursorVisible = false
       actionGlow.visible = false
-      canvas.style.cursor = ''
       return null
     }
     cursorVisible = true
-    canvas.style.cursor = 'none'
     cursor.position.set(position.x, position.y + 0.008, position.z)
     cursor.scale.setScalar(brushRadius())
     toolModels[selectedTool].scale.setScalar(1 / brushRadius())
@@ -704,6 +709,7 @@ export function createGardenTools(
   return {
     root,
     get selectedTool(): GardenToolId { return selectedTool },
+    get cursorVisible(): boolean { return cursorVisible },
     selectTool(id): void {
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
@@ -795,7 +801,6 @@ export function createGardenTools(
       cursor.visible = false
       cursorVisible = false
       actionGlow.visible = false
-      canvas.style.cursor = ''
       if (!isPointerDown) return
       // The pointer left the garden mid-stroke: pause painting until it returns.
       lastSeedPoint = null

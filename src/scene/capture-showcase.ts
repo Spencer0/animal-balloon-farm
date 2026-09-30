@@ -4,6 +4,8 @@ import type { BalloonAnimalId } from '../animals/animal-catalog'
 import type { Fairground } from './fairground'
 import { GARDEN_LAWN_Y } from './fairground'
 
+export { GARDEN_LAWN_Y }
+
 export { SHOWCASE_ANIMALS } from '../animals/balloon-catalog'
 
 function standard(color: THREE.ColorRepresentation, roughness = 0.62): THREE.MeshStandardMaterial {
@@ -14,8 +16,11 @@ export function createCaptureShowcaseStage(): Fairground {
   const root = new THREE.Group()
   root.name = 'Balloon animal capture showcase stage'
 
+  // A finite disc, not an endless plane: the orthographic camera sees far past
+  // the stage, and an infinite ground filled the whole screen with flat green
+  // so the viewer never showed the sky behind the set.
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(240, 240),
+    new THREE.CircleGeometry(44, 96),
     new THREE.MeshStandardMaterial({ color: '#77b96a', roughness: 0.96 }),
   )
   ground.name = 'Soft green showcase ground'

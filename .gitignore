@@ -7,8 +7,13 @@
 # Generated dependencies and output
 node_modules/
 dist/
+# Per-branch build output (see scripts/outdir.mjs), so parallel agents and
+# worktrees never overwrite each other's bundle.
+dist-*/
 coverage/
 *.log
+# Blender's automatic backup of the previous .blend
+*.blend1
 .DS_Store
 .vscode/
 .idea/
