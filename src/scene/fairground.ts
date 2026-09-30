@@ -1,9 +1,22 @@
 import * as THREE from 'three'
+import { createFarmExpansion, farmBoundsAtLevel, FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS, type FarmExpansion, type GardenBounds } from '../game/farm-expansion'
 
-export const GARDEN_BOUNDS = {
-  halfWidth: 14,
-  halfDepth: 9.5,
-} as const
+export const GARDEN_BOUNDS = FARM_EXPANSION_CONFIG.startBounds
+export { FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS }
+const PLOT_CORNER_RADIUS = 0.9
+const PLOT_EDGE_INSET = 0.08
+
+export function containsGardenPoint(x: number, z: number, bounds: GardenBounds, inset = PLOT_EDGE_INSET): boolean {
+  const halfWidth = bounds.halfWidth - inset
+  const halfDepth = bounds.halfDepth - inset
+  const absX = Math.abs(x)
+  const absZ = Math.abs(z)
+  if (absX > halfWidth || absZ > halfDepth) return false
+  const cornerX = halfWidth - PLOT_CORNER_RADIUS
+  const cornerZ = halfDepth - PLOT_CORNER_RADIUS
+  if (absX <= cornerX || absZ <= cornerZ) return true
+  return Math.hypot(absX - cornerX, absZ - cornerZ) <= PLOT_CORNER_RADIUS
+}
 
 export const GARDEN_LAWN_Y = 0.03
 
@@ -11,7 +24,100 @@ export interface Fairground {
   readonly root: THREE.Group
   readonly gardenSurface?: THREE.Mesh
   readonly gardenSoil?: THREE.Mesh
+  readonly farmExpansion?: FarmExpansion
   update(deltaSeconds: number): void
+}
+
+interface SlidingProp {
+  readonly group: THREE.Group
+  readonly originX: number
+  readonly originZ: number
+  readonly radius: number
+}
+
+function trackSlidingProp(group: THREE.Group, radius: number): SlidingProp {
+  return { group, originX: group.position.x, originZ: group.position.z, radius }
+}
+
+function updateSlidingProp(prop: SlidingProp, bounds: GardenBounds, deltaSeconds: number): void {
+  const requiredX = Math.max(0, bounds.halfWidth + prop.radius + 1.5 - Math.abs(prop.originX))
+  const requiredZ = Math.max(0, bounds.halfDepth + prop.radius + 1.5 - Math.abs(prop.originZ))
+  const moveAlongX = requiredX > 0 && (requiredZ <= 0 || requiredX <= requiredZ)
+  const moveAlongZ = requiredZ > 0 && (requiredX <= 0 || requiredZ < requiredX)
+  const targetX = prop.originX + Math.sign(prop.originX || 1) * (moveAlongX ? requiredX : 0)
+  const targetZ = prop.originZ + Math.sign(prop.originZ || 1) * (moveAlongZ ? requiredZ : 0)
+  const smoothing = 1 - Math.exp(-2.6 * Math.max(0, deltaSeconds))
+  prop.group.position.x = THREE.MathUtils.lerp(prop.group.position.x, targetX, smoothing)
+  prop.group.position.z = THREE.MathUtils.lerp(prop.group.position.z, targetZ, smoothing)
+}
+
+function createExpansionFlowerBed(seed: number, tint: string): THREE.Group {
+  const random = seededRandom(seed)
+  const bed = new THREE.Group()
+  bed.name = 'New acreage · first flower bed'
+  const edging = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.56, 0.61, 0.11, 24),
+    standard('#b58b59', 0.86),
+  )
+  edging.position.y = 0.035
+  edging.receiveShadow = true
+  bed.add(edging)
+  const earth = new THREE.Mesh(new THREE.CircleGeometry(0.53, 24), standard('#97754f', 0.94))
+  earth.rotation.x = -Math.PI / 2
+  earth.position.y = 0.092
+  earth.receiveShadow = true
+  bed.add(earth)
+
+  // Each flower bed is just five flowers, but instance their repeated stems,
+  // centers, and petals so parcel reveals don't flood the scene with draw calls.
+  const flowerCount = 5
+  const petalsPerFlower = 5
+  const stems = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.018, 0.026, 1, 6),
+    standard('#538e50', 0.82),
+    flowerCount,
+  )
+  const centers = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.072, 12, 8),
+    standard('#f5d16a', 0.47),
+    flowerCount,
+  )
+  const petals = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 10, 7),
+    standard(tint, 0.58),
+    flowerCount * petalsPerFlower,
+  )
+  stems.castShadow = true
+  centers.castShadow = true
+  petals.castShadow = true
+  const flower = new THREE.Object3D()
+  let petalIndex = 0
+  for (let index = 0; index < flowerCount; index += 1) {
+    const angle = index / flowerCount * Math.PI * 2 + random() * 0.5
+    const radius = 0.15 + random() * 0.24
+    const x = Math.cos(angle) * radius
+    const z = Math.sin(angle) * radius
+    const height = 0.24 + random() * 0.16
+    flower.position.set(x, 0.12 + height / 2, z)
+    flower.scale.set(1, height, 1)
+    flower.updateMatrix()
+    stems.setMatrixAt(index, flower.matrix)
+    flower.position.set(x, 0.12 + height, z)
+    flower.scale.setScalar(1)
+    flower.updateMatrix()
+    centers.setMatrixAt(index, flower.matrix)
+    for (let petal = 0; petal < petalsPerFlower; petal += 1) {
+      const petalAngle = petal / petalsPerFlower * Math.PI * 2
+      flower.position.set(x + Math.cos(petalAngle) * 0.11, 0.11 + height, z + Math.sin(petalAngle) * 0.11)
+      flower.rotation.set(0, -petalAngle, 0)
+      flower.scale.set(0.075, 0.035, 0.05)
+      flower.updateMatrix()
+      petals.setMatrixAt(petalIndex, flower.matrix)
+      petalIndex += 1
+    }
+  }
+  bed.add(stems, centers, petals)
+  return bed
 }
 
 const COLORS = {
@@ -35,9 +141,9 @@ function standard(color: THREE.ColorRepresentation, roughness = 0.85): THREE.Mes
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.02 })
 }
 
-export function makeGardenLawnGeometry(): THREE.BufferGeometry {
-  const width = GARDEN_BOUNDS.halfWidth * 2 + 0.16
-  const depth = GARDEN_BOUNDS.halfDepth * 2 + 0.16
+export function makeGardenLawnGeometry(bounds: GardenBounds = GARDEN_MAX_BOUNDS): THREE.BufferGeometry {
+  const width = bounds.halfWidth * 2 + 0.16
+  const depth = bounds.halfDepth * 2 + 0.16
   const radius = 0.9
   const geometry = new THREE.PlaneGeometry(width, depth, 96, 66)
   const positions = geometry.getAttribute('position')
@@ -48,8 +154,8 @@ export function makeGardenLawnGeometry(): THREE.BufferGeometry {
   for (let index = 0; index < positions.count; index += 1) {
     let x = positions.getX(index)
     let y = positions.getY(index)
-    const centerX = Math.sign(x) * (GARDEN_BOUNDS.halfWidth + 0.08 - radius)
-    const centerY = Math.sign(y) * (GARDEN_BOUNDS.halfDepth + 0.08 - radius)
+    const centerX = Math.sign(x) * (bounds.halfWidth + 0.08 - radius)
+    const centerY = Math.sign(y) * (bounds.halfDepth + 0.08 - radius)
     if (Math.abs(x) > Math.abs(centerX) && Math.abs(y) > Math.abs(centerY)) {
       const dx = x - centerX
       const dy = y - centerY
@@ -67,19 +173,6 @@ export function makeGardenLawnGeometry(): THREE.BufferGeometry {
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
   geometry.computeVertexNormals()
   return geometry
-}
-
-/** The buildable garden footprint as a path, outset outward by `outset`. */
-function gardenHolePath(outset: number): THREE.Path {
-  const halfWidth = GARDEN_BOUNDS.halfWidth + outset
-  const halfDepth = GARDEN_BOUNDS.halfDepth + outset
-  const hole = new THREE.Path()
-  hole.moveTo(-halfWidth, -halfDepth)
-  hole.lineTo(-halfWidth, halfDepth)
-  hole.lineTo(halfWidth, halfDepth)
-  hole.lineTo(halfWidth, -halfDepth)
-  hole.closePath()
-  return hole
 }
 
 /** Axis-aligned rectangle with the buildable garden cut out as a hole. */
@@ -183,6 +276,28 @@ function roundedRectangleCurve(width: number, depth: number, radius: number, y: 
   return new THREE.CatmullRomCurve3(points, true, 'centripetal')
 }
 
+/** The buildable garden footprint as a path, outset outward by `outset`. */
+function gardenHolePath(outset: number): THREE.Path {
+  const halfWidth = GARDEN_BOUNDS.halfWidth + outset
+  const halfDepth = GARDEN_BOUNDS.halfDepth + outset
+  const hole = new THREE.Path()
+  hole.moveTo(-halfWidth, -halfDepth)
+  hole.lineTo(-halfWidth, halfDepth)
+  hole.lineTo(halfWidth, halfDepth)
+  hole.lineTo(halfWidth, -halfDepth)
+  hole.closePath()
+  return hole
+}
+
+function roundedRectangleDistance(x: number, z: number, bounds: GardenBounds): number {
+  const radius = Math.min(PLOT_CORNER_RADIUS, bounds.halfWidth, bounds.halfDepth)
+  const cornerX = bounds.halfWidth - radius
+  const cornerZ = bounds.halfDepth - radius
+  const qx = Math.abs(x) - cornerX
+  const qz = Math.abs(z) - cornerZ
+  return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - radius
+}
+
 function addTufts(parent: THREE.Group, random: () => number, count: number, insideGarden: boolean, material: THREE.MeshStandardMaterial): void {
   const geometry = new THREE.BufferGeometry()
   const positions: number[] = []
@@ -211,7 +326,7 @@ function addTufts(parent: THREE.Group, random: () => number, count: number, insi
     attempts += 1
     const x = insideGarden ? (random() * 2 - 1) * (GARDEN_BOUNDS.halfWidth - .5) : (random() * 2 - 1) * 72
     const z = insideGarden ? (random() * 2 - 1) * (GARDEN_BOUNDS.halfDepth - .5) : (random() * 2 - 1) * 65
-    if (!insideGarden && Math.abs(x) < 19 && Math.abs(z) < 14) continue
+    if (!insideGarden && Math.abs(x) < GARDEN_MAX_BOUNDS.halfWidth + 1 && Math.abs(z) < GARDEN_MAX_BOUNDS.halfDepth + 1) continue
     if (!insideGarden && Math.abs(x) > 65 && Math.abs(z) > 58) continue
     dummy.position.set(x, insideGarden ? .045 : -.07, z)
     dummy.rotation.y = random() * Math.PI * 2
@@ -248,7 +363,7 @@ function addFlowerPatches(parent: THREE.Group, random: () => number): void {
       x = (random() * 2 - 1) * 61
       z = (random() * 2 - 1) * 53
       tries += 1
-    } while (tries < 30 && Math.abs(x) < 18 && Math.abs(z) < 13)
+    } while (tries < 30 && Math.abs(x) < GARDEN_MAX_BOUNDS.halfWidth + 1 && Math.abs(z) < GARDEN_MAX_BOUNDS.halfDepth + 1)
     const scale = .55 + random() * .8
     const y = .32 * scale
     dummy.position.set(x, .15 * scale, z)
@@ -312,7 +427,7 @@ function addBunting(parent: THREE.Group, start: THREE.Vector3, end: THREE.Vector
   }
 }
 
-function addTent(parent: THREE.Group, x: number, z: number, scale: number, variant: number): void {
+function addTent(parent: THREE.Group, x: number, z: number, scale: number, variant: number): THREE.Group {
   const tent = new THREE.Group()
   tent.name = 'Striped carnival tent'
   tent.position.set(x, -.08, z)
@@ -376,6 +491,7 @@ function addTent(parent: THREE.Group, x: number, z: number, scale: number, varia
   tent.add(finial)
   tent.traverse((object) => { if (object instanceof THREE.Mesh) object.receiveShadow = true })
   parent.add(tent)
+  return tent
 }
 
 function createFerrisWheel(parent: THREE.Group): { group: THREE.Group; rotor: THREE.Group; cabins: THREE.Group[]; radius: number; centerY: number; angle: number } {
@@ -435,7 +551,7 @@ function createFerrisWheel(parent: THREE.Group): { group: THREE.Group; rotor: TH
   return {group,rotor,cabins,radius,centerY,angle:0}
 }
 
-function addBalloonBunch(parent: THREE.Group,x:number,z:number,scale:number,seed:number):void {
+function addBalloonBunch(parent: THREE.Group,x:number,z:number,scale:number,seed:number):THREE.Group {
   const random = seededRandom(seed)
   const group = new THREE.Group()
   group.position.set(x,-.05,z)
@@ -453,9 +569,10 @@ function addBalloonBunch(parent: THREE.Group,x:number,z:number,scale:number,seed
     group.add(new THREE.Mesh(new THREE.TubeGeometry(line,8,.012*scale,5,false),standard('#e4d4ad',.58)))
   }
   parent.add(group)
+  return group
 }
 
-function addLantern(parent:THREE.Group,x:number,z:number,hue:string):void {
+function addLantern(parent:THREE.Group,x:number,z:number,hue:string):THREE.Group {
   const group=new THREE.Group()
   group.position.set(x,-.05,z)
   const wood=standard('#84604a',.7)
@@ -467,6 +584,7 @@ function addLantern(parent:THREE.Group,x:number,z:number,hue:string):void {
   lamp.position.set(.55,2.91,0)
   group.add(post,arm,lamp)
   parent.add(group)
+  return group
 }
 
 function addHill(parent:THREE.Group,x:number,z:number,sx:number,sy:number,sz:number,hue:string,seed:number):void {
@@ -481,6 +599,42 @@ export function createFairground(): Fairground {
   const root=new THREE.Group()
   root.name='Animal Balloon Farm carnival grounds and expandable garden'
   const random=seededRandom(20260927)
+  const farmExpansion=createFarmExpansion()
+  const slidingProps:SlidingProp[]=[]
+  const apron=new THREE.Group()
+  apron.name='Expandable gravel apron'
+  root.add(apron)
+  const activeBoundary=new THREE.Group()
+  activeBoundary.name='Growing farm frontier'
+  root.add(activeBoundary)
+  const boundaryStakes=new THREE.Group()
+  boundaryStakes.name='Boundary stakes · follow the new acres'
+  root.add(boundaryStakes)
+  const parcelDecorations=FARM_EXPANSION_CONFIG.steps.map((step,index)=>{
+    const group=new THREE.Group()
+    group.name=`Parcel reveal · ${step.name}`
+    group.visible=false
+    const beds=Array.from({length:2},(_,bedIndex)=>{
+      const bed=createExpansionFlowerBed(20261001+index*19+bedIndex,COLORS.petals[(index+bedIndex)%COLORS.petals.length])
+      bed.scale.setScalar(0.001)
+      group.add(bed)
+      return bed
+    })
+    root.add(group)
+    return {group,beds}
+  })
+  const borderMaterial=new THREE.MeshStandardMaterial({color:'#fff5d5',roughness:.48,emissive:'#d7ca9a',emissiveIntensity:.14})
+  const frontierGlow=new THREE.MeshStandardMaterial({color:'#dcb965',roughness:.42,metalness:.1,emissive:'#efc95d',emissiveIntensity:.13})
+  let decoratedLevel=0
+  const propRadius=(object:THREE.Object3D,fallback:number):number=>{
+    const bounds=new THREE.Box3().setFromObject(object)
+    if(bounds.isEmpty())return fallback
+    const size=bounds.getSize(new THREE.Vector3())
+    return Math.max(fallback,Math.hypot(size.x,size.z)*.5)
+  }
+  function trackProp(group:THREE.Group,fallbackRadius:number):void{
+    slidingProps.push(trackSlidingProp(group,propRadius(group,fallbackRadius)))
+  }
 
   const far=makeGrassTexture(37,'#7ba95d','#466f49')
   far.repeat.set(90,90)
@@ -514,6 +668,7 @@ export function createFairground(): Fairground {
   const baseGeo=new THREE.ExtrudeGeometry(baseShape,{depth:.60,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.12,bevelThickness:.08,curveSegments:8})
   baseGeo.rotateX(-Math.PI/2)
   const base=new THREE.Mesh(baseGeo,standard('#855a3e',.87))
+  // The wood-and-soil plinth grows with the parcel; its local Y maps to world Z.
   base.material.side=THREE.DoubleSide
   // Depth (.60) plus bevelThickness (.08) puts the cap at local y .68; keep it
   // below the lawn plane (GARDEN_LAWN_Y .03) or the soil occludes the lawn.
@@ -534,23 +689,17 @@ export function createFairground(): Fairground {
   const pathMat=standard('#d4bb83',.92)
   const pathEdge=standard('#8b714e',.95)
   // The ivory boundary is the level-one build limit. The revealed gravel apron is outside it.
-  const apronShape=roundedRectangle(30.35,22.0,1.05)
-  const apronHole=new THREE.Path()
-  apronHole.moveTo(-GARDEN_BOUNDS.halfWidth,-GARDEN_BOUNDS.halfDepth)
-  apronHole.lineTo(-GARDEN_BOUNDS.halfWidth,GARDEN_BOUNDS.halfDepth)
-  apronHole.lineTo(GARDEN_BOUNDS.halfWidth,GARDEN_BOUNDS.halfDepth)
-  apronHole.lineTo(GARDEN_BOUNDS.halfWidth,-GARDEN_BOUNDS.halfDepth)
-  apronHole.closePath()
-  apronShape.holes.push(apronHole)
+  const apronShape=roundedRectangle(GARDEN_BOUNDS.halfWidth*2+2.35,GARDEN_BOUNDS.halfDepth*2+2.5,1.05)
+  apronShape.holes.push(gardenHolePath(0))
   const gravel=new THREE.Mesh(new THREE.ShapeGeometry(apronShape,12),pathMat)
   gravel.rotation.x=-Math.PI/2
   gravel.position.y=.018
   gravel.receiveShadow=true
-  root.add(gravel)
+  apron.add(gravel)
 
   // Bare tilled soil is the untouched garden ground; the growable lawn above it
   // is a transparent paint layer that only turns green where the seeder works.
-  const soil=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),roughness:1}))
+  const soil=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false,roughness:1}))
   soil.material.map!.repeat.set(6,4)
   soil.rotation.x=-Math.PI/2
   soil.position.y=.012
@@ -584,14 +733,16 @@ export function createFairground(): Fairground {
   root.add(road)
 
   const boundaryCurve=roundedRectangleCurve(GARDEN_BOUNDS.halfWidth*2+.20,GARDEN_BOUNDS.halfDepth*2+.20,.92,.14)
-  const boundary=new THREE.Mesh(new THREE.TubeGeometry(boundaryCurve,180,.075,8,true),new THREE.MeshStandardMaterial({color:'#fff5d5',roughness:.48,emissive:'#d7ca9a',emissiveIntensity:.14}))
+  const boundary=new THREE.Mesh(new THREE.TubeGeometry(boundaryCurve,180,.075,8,true),borderMaterial)
   boundary.name='Ivory starter garden expansion limit'
-  root.add(boundary)
-  root.add(new THREE.Mesh(new THREE.TubeGeometry(roundedRectangleCurve(GARDEN_BOUNDS.halfWidth*2+.44,GARDEN_BOUNDS.halfDepth*2+.44,1,.075),180,.034,6,true),standard('#dcb965',.47)))
+  activeBoundary.add(boundary)
+  const goldFrontier=new THREE.Mesh(new THREE.TubeGeometry(roundedRectangleCurve(GARDEN_BOUNDS.halfWidth*2+.44,GARDEN_BOUNDS.halfDepth*2+.44,1,.075),180,.034,6,true),frontierGlow)
+  goldFrontier.name='Gilded edge · growing garden frontier'
+  activeBoundary.add(goldFrontier)
 
   const stakeColors=['#ed6970','#f5d16a','#61aaa3'].map((color)=>standard(color,.54))
-  const stakes:[number,number][]=[[-13.8,-9.1],[0,-9.55],[13.8,-9.1],[13.9,0],[13.8,9.1],[0,9.55],[-13.8,9.1],[-13.9,0]]
-  stakes.forEach(([x,z],i)=>{
+  const stakePositions:[number,number][]=[[-13.8,-9.1],[0,-9.55],[13.8,-9.1],[13.9,0],[13.8,9.1],[0,9.55],[-13.8,9.1],[-13.9,0]]
+  stakePositions.forEach(([x,z],i)=>{
     const stake=new THREE.Group()
     stake.position.set(x,0,z)
     const pole=new THREE.Mesh(new THREE.CylinderGeometry(.07,.1,.85,9),standard('#f8eed5',.63))
@@ -602,7 +753,7 @@ export function createFairground(): Fairground {
     pennant.position.set(.18,.92,0)
     pennant.rotation.z=-Math.PI/2
     stake.add(pennant)
-    root.add(stake)
+    boundaryStakes.add(stake)
   })
 
   const hills:[number,number,number,number,number,string][]=[[-67,-69,31,18,25,'#83a768'],[-25,-82,37,23,29,'#99b66c'],[25,-88,42,20,34,'#83a666'],[72,-68,34,18,27,'#a6bb70'],[-82,-4,28,17,23,'#8eae65'],[88,8,30,18,26,'#92ad63'],[-65,66,33,21,29,'#92ae67'],[0,84,45,22,30,'#9bb66d'],[69,68,35,20,27,'#84a566']]
@@ -611,11 +762,11 @@ export function createFairground(): Fairground {
   addTufts(root,random,2700,false,tufts)
   addFlowerPatches(root,random)
 
-  addTent(root,21.5,-17.5,1.02,0)
-  addTent(root,29,3,.82,2)
-  addTent(root,-31.5,6.5,.88,4)
-  addTent(root,23.5,17.5,.66,1)
-  addTent(root,-28.5,-30,.62,3)
+  trackProp(addTent(root,21.5,-17.5,1.02,0),4.5)
+  trackProp(addTent(root,29,3,.82,2),4)
+  trackProp(addTent(root,-31.5,6.5,.88,4),4.2)
+  trackProp(addTent(root,23.5,17.5,.66,1),3.2)
+  trackProp(addTent(root,-28.5,-30,.62,3),3.2)
   const palette=COLORS.tent.map((color)=>standard(color,.65))
   addBunting(root,new THREE.Vector3(-17.5,5.9,-18),new THREE.Vector3(-7.5,5.5,-19),palette)
   addBunting(root,new THREE.Vector3(8.3,6.3,-19),new THREE.Vector3(18.5,5.8,-18.5),palette)
@@ -623,10 +774,11 @@ export function createFairground(): Fairground {
   addBunting(root,new THREE.Vector3(-25.2,5.4,-7),new THREE.Vector3(-25.5,4.8,8),palette)
   addBunting(root,new THREE.Vector3(-21,4.7,13.5),new THREE.Vector3(-9,5.8,18.1),palette)
   addBunting(root,new THREE.Vector3(8,5.7,18),new THREE.Vector3(20.5,4.8,14.5),palette)
-  for(const [x,z,scale,seed] of [[-18.5,-12.5,1.05,30],[17.5,-12.8,1,33],[-23.5,11.8,1.12,37],[22.7,11.2,.9,42]] as const)addBalloonBunch(root,x,z,scale,seed)
+  for(const [x,z,scale,seed] of [[-18.5,-12.5,1.05,30],[17.5,-12.8,1,33],[-23.5,11.8,1.12,37],[22.7,11.2,.9,42]] as const)trackProp(addBalloonBunch(root,x,z,scale,seed),1)
   const lamps=['#ffe48c','#f6a879','#82d7cd','#ffda7b']
-  ;[[-18.5,-17.5],[-7.5,-19],[8,-19],[19,-13],[24,-3],[24,9],[14,18],[-5,19],[-19,16],[-24,1]].forEach(([x,z],i)=>addLantern(root,x,z,lamps[i%4]))
+  ;[[-18.5,-17.5],[-7.5,-19],[8,-19],[19,-13],[24,-3],[24,9],[14,18],[-5,19],[-19,16],[-24,1]].forEach(([x,z],i)=>trackProp(addLantern(root,x,z,lamps[i%4]),.6))
   const wheel=createFerrisWheel(root)
+  trackProp(wheel.group,6.8)
 
   const skyPuffs=new THREE.Group()
   const cloudMat=new THREE.MeshStandardMaterial({color:'#fff3d9',roughness:.94,transparent:true,opacity:.76})
@@ -636,7 +788,79 @@ export function createFairground(): Fairground {
     skyPuffs.add(cloud)
   }
   root.add(skyPuffs)
-  return {root,gardenSurface:lawn,gardenSoil:soil,update(delta){wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2);wheel.rotor.rotation.z=wheel.angle;wheel.cabins.forEach((c,i)=>{const a=i/wheel.cabins.length*Math.PI*2+wheel.angle;c.position.set(Math.cos(a)*wheel.radius,wheel.centerY+Math.sin(a)*wheel.radius,0);c.rotation.z=-wheel.angle})}}
+
+  const soilColors = soil.geometry.getAttribute('color') as THREE.BufferAttribute
+  const soilPositions = soil.geometry.getAttribute('position') as THREE.BufferAttribute
+  let lastRevealWidth = -1
+  let lastRevealDepth = -1
+  function updateLandReveal(bounds: GardenBounds): void {
+    if (bounds.halfWidth === lastRevealWidth && bounds.halfDepth === lastRevealDepth) return
+    lastRevealWidth = bounds.halfWidth
+    lastRevealDepth = bounds.halfDepth
+    for (let index = 0; index < soilPositions.count; index += 1) {
+      const distance = roundedRectangleDistance(soilPositions.getX(index), -soilPositions.getY(index), bounds)
+      const alpha = 1 - THREE.MathUtils.smoothstep(distance, 0, 0.38)
+      soilColors.setXYZW(index, 1, 1, 1, alpha)
+    }
+    soilColors.needsUpdate = true
+  }
+  updateLandReveal(farmExpansion.state.bounds)
+
+  return {
+    root,
+    gardenSurface:lawn,
+    gardenSoil:soil,
+    farmExpansion,
+    update(delta):void{
+      wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2)
+      wheel.rotor.rotation.z=wheel.angle
+      wheel.cabins.forEach((c,i)=>{
+        const angle=i/wheel.cabins.length*Math.PI*2+wheel.angle
+        c.position.set(Math.cos(angle)*wheel.radius,wheel.centerY+Math.sin(angle)*wheel.radius,0)
+        c.rotation.z=-wheel.angle
+      })
+      farmExpansion.update(delta)
+      const state=farmExpansion.state
+      const scaleX=state.bounds.halfWidth/GARDEN_BOUNDS.halfWidth
+      const scaleZ=state.bounds.halfDepth/GARDEN_BOUNDS.halfDepth
+      // All footprint dressing shares the plot's scale so the apron cutout,
+      // soil reveal, boundary tubes, and wooden plinth remain aligned as one piece.
+      apron.scale.set(scaleX,1,scaleZ)
+      activeBoundary.scale.set(scaleX,1,scaleZ)
+      boundaryStakes.scale.set(scaleX,1,scaleZ)
+      base.scale.set(scaleX,1,scaleZ)
+      lowerReveal.scale.set(scaleX,1,scaleZ)
+      slidingProps.forEach((prop)=>updateSlidingProp(prop,state.bounds,delta))
+      updateLandReveal(state.bounds)
+      borderMaterial.emissiveIntensity=.14+(state.isAnimating?Math.sin(state.progress*Math.PI)*.58:0)
+      frontierGlow.emissiveIntensity=.13+(state.isAnimating?Math.sin(state.progress*Math.PI)*.78:0)
+      while(decoratedLevel<state.level){
+        const parcel=parcelDecorations[decoratedLevel]
+        parcel.group.visible=true
+        decoratedLevel+=1
+      }
+      parcelDecorations.forEach((parcel,index)=>{
+        const stepNumber=index+1
+        const from=farmBoundsAtLevel(index)
+        const active=state.isAnimating&&state.level===stepNumber
+        const reveal=stepNumber<state.level?1:active?state.progress:state.level>=stepNumber?1:0
+        if(reveal<=0)return
+        const pop=THREE.MathUtils.clamp(reveal/.74,0,1)
+        const bounce=pop*(1+.16*Math.sin(pop*Math.PI)*(1-pop))
+        const step=FARM_EXPANSION_CONFIG.steps[index]
+        parcel.beds.forEach((bed,bedIndex)=>{
+          const side=index%2===0?1:-1
+          if(bedIndex===0){
+            bed.position.set(side*(from.halfWidth+step.width*.5),GARDEN_LAWN_Y,-side*from.halfDepth*.28)
+          }else{
+            bed.position.set(-side*from.halfWidth*.32,GARDEN_LAWN_Y,-side*(from.halfDepth+step.depth*.5))
+          }
+          bed.scale.setScalar(bounce)
+          bed.rotation.y=(side+bedIndex)*.12*reveal
+        })
+      })
+    },
+  }
 }
 
 export function createSkyDome():THREE.Mesh {

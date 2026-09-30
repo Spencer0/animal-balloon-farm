@@ -2,6 +2,7 @@ import { context } from 'esbuild'
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 
 const outdir = 'dist'
+const port = Number(process.env.PORT || 8000)
 await mkdir(outdir, { recursive: true })
 await writeFile(`${outdir}/index.html`, await readFile('index.html', 'utf8'))
 await cp('public', outdir, { recursive: true, force: true }).catch((error) => {
@@ -20,7 +21,6 @@ const ctx = await context({
 })
 
 await ctx.watch()
-const port = Number(process.env.PORT ?? 8000)
 const server = await ctx.serve({ host: '127.0.0.1', port, servedir: outdir })
 console.log(`Animal Balloon Farm ready at http://${server.hosts[0]}:${server.port}/`)
 
