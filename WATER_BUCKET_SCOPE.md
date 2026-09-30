@@ -1,7 +1,7 @@
 # Water Bucket (Tool #3) — Scope & Technical Plan
 
-Status: **approved by Spencer 2026-09-29** — M1 in progress. Decisions below are
-signed off; the three open questions at the end were resolved as proposed.
+Status: **M1 + bed lip + plain water surface shipped** (2026-09-29). M3 (the tool
+itself) and the Blender ripple texture remain.
 Companion to [`SHOVEL_SCOPE.md`](SHOVEL_SCOPE.md) (terrain + contour rings),
 [`SPEC.md`](SPEC.md) §5.1 (terrain types include "shallow water/pond"),
 §5.2 (watering as a low-friction action), §10.3 (plant / water / harvest).
@@ -114,21 +114,19 @@ The soil and lawn are already displaced planes re-derived from the grid
 (`TerrainMeshBinding`). Water gets a third one — same `PlaneGeometry(96, 66)`,
 bound with a small positive offset so it never z-fights the lawn paint.
 
-- Per-vertex `y = heightAt + depthAt`, so the surface is **flat automatically**
-  wherever the solver has equalized, and rides the terrain where it hasn't.
-- **Per-vertex alpha = `smoothstep(0, 0.03, depth)`**, 0 on dry cells. The
-  mesh spans the whole garden; only wet cells are opaque. This gives a soft
-  shoreline for free instead of a clipped polygon edge, and one draw call.
-  Transparent + `depthWrite: false` + a render order after the lawn, so the
-  contour rings and soil texture read *through* the water — which is exactly
-  the payoff for the shovel having pre-shaded the pond beds.
-- Material: `MeshStandardMaterial`, transparent, low roughness, gentle blue-green
-  tint, plus a slow vertex-shimmer (a small sine on the surface normal/color) so
-  a still pond is not dead.
-- **Shoreline damp band.** The existing `soilBandColor` path gains a second
-  input: cells within ~0.25 m horizontally of a wet cell get a small extra
-  darkening. Reuses the ratio-based vertex-colour trick, so the untouched garden
-  stays pixel-identical.
+- Per-vertex `y` comes from a **shore field**, not the raw cell depth: the pool's
+  own surface level is carried outward past the waterline while opacity falls
+  off with horizontal distance. Sampling raw depth instead put dry shore
+  vertices at terrain height — well above the water — which tore the shoreline
+  into a spike fringe. One draw call, and a soft organically shaped edge.
+- The sheet is deliberately *not* clamped up to the surrounding bank. The soil
+  is drawn first and writes depth, so a bank occludes whatever has sunk into it.
+- Material: `MeshStandardMaterial`, transparent, `depthWrite: false`, drawn
+  after the lawn so the contour rings read *through* the water — the payoff
+  for the shovel having pre-shaded the pond beds.
+- Known artifact: on a very steep bank a few shoreline triangles still poke
+  through. Harmless at play scale; the ripple/normal pass is the natural place
+  to revisit it.
 
 ### Interaction with existing systems
 
@@ -226,3 +224,8 @@ component count), and `state()` gains `waterCells` / `waterMaxDepth`.
    milestone. Confirmed.
 4. **Water surface texture:** to be authored in Blender (ripple/normal map) and
    iterated against the in-browser pond, same pipeline as the animals.
+5. **Garden border:** Spencer's call — a pond dug right against the edge must
+   hold, not leak. The garden carries a raised bed lip just inside the active
+   bounds (Viva Piñata-style); the shovel cannot breach it, and the slope clamp
+   treats it as a local floor so a deep dig cannot slope underneath. Pinned by
+   `tests/garden-bed-lip.test.mjs`.
