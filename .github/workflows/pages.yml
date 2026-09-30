@@ -2,16 +2,17 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'debug/**', 'feature/**']
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Additional debug or feature branch to include on the next production publish
+        required: false
+        default: debug/frame-diagnostics
 
-# Allow the Pages deployment to mint the OIDC token and publish artifacts.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Never cancel an in-flight production deploy; queue instead.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -19,19 +20,89 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install production dependencies
         run: npm ci
 
-      - name: Typecheck and build
+      - name: Typecheck and build production site
+        env:
+          # Always publish from dist/, whatever branch the runner happens to be on.
+          PAGES_OUTDIR: dist
         run: npm run check
+
+      - name: Assemble production site and active branch packages
+        env:
+          REQUESTED_REF: ${{ github.event.inputs.ref }}
+        run: |
+          mkdir -p site
+          cp -a dist/. site/
+
+          repo_name="${GITHUB_REPOSITORY##*/}"
+          repo_url="https://github.com/${GITHUB_REPOSITORY}.git"
+          mapfile -t branches < <(git ls-remote --heads "$repo_url" | awk '{ sub("refs/heads/", "", $2); if ($2 ~ /^(debug|feature)\//) print $2 }')
+          if [[ "$GITHUB_REF_NAME" != "main" ]]; then
+            branches+=("$GITHUB_REF_NAME")
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && -n "$REQUESTED_REF" && "$REQUESTED_REF" != "main" ]]; then
+            branches+=("$REQUESTED_REF")
+          fi
+          if (( ${#branches[@]} > 0 )); then
+            mapfile -t branches < <(printf '%s\n' "${branches[@]}" | sort -u)
+          fi
+
+          for branch in "${branches[@]}"; do
+            if [[ "$branch" != debug/* && "$branch" != feature/* ]]; then
+              echo "Refusing to publish unsupported preview branch: $branch" >&2
+              exit 1
+            fi
+            slug="${branch//\//-}"
+            preview_dir="${RUNNER_TEMP}/preview-${slug}"
+            mkdir -p "$preview_dir"
+            git fetch --no-tags --depth=1 "$repo_url" "refs/heads/${branch}:refs/remotes/previews/${slug}"
+            git archive "refs/remotes/previews/${slug}" | tar -x -C "$preview_dir"
+            (
+              cd "$preview_dir"
+              npm ci
+              npm run check
+              # A preview build also enables the debug harness, so its frame
+              # timing overlay is reachable at the preview URL.
+              PAGES_OUTDIR=dist PAGES_BASE_PATH="${repo_name}/previews/${slug}" npm run build
+            )
+            mkdir -p "site/previews/${slug}"
+            cp -a "$preview_dir/dist/." "site/previews/${slug}/"
+          done
+
+          mkdir -p site/previews
+          {
+            printf '<!doctype html><meta charset="utf-8"><title>Animal Balloon Farm previews</title>'
+            printf '<h1>Animal Balloon Farm previews</h1><ul>'
+            for branch in "${branches[@]}"; do
+              slug="${branch//\//-}"
+              printf '<li><a href="%s/">%s</a></li>' "$slug" "$branch"
+            done
+            printf '</ul>'
+          } > site/previews/index.html
+
+      - name: Upload assembled site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-site
+          path: site
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -39,15 +110,19 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy production root and branch previews
         id: deployment
         uses: actions/deploy-pages@v4
