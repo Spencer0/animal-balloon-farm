@@ -44,6 +44,12 @@ export function animalSaleValue(species: BalloonAnimalId, stage: number): number
 export interface Wallet {
   readonly balance: number
   credit(amount: number): number
+  /**
+   * Spend coins. Returns the new balance, or `null` when the wallet cannot
+   * cover the cost so the caller can refuse the purchase without an exception.
+   */
+  debit(amount: number): number | null
+  canAfford(amount: number): boolean
 }
 
 export function createWallet(initialBalance = 0): Wallet {
@@ -54,6 +60,17 @@ export function createWallet(initialBalance = 0): Wallet {
       if (!Number.isFinite(amount) || amount < 0) throw new RangeError('Wallet credits must be a non-negative finite amount')
       balance += Math.floor(amount)
       return balance
+    },
+    debit(amount): number | null {
+      if (!Number.isFinite(amount) || amount < 0) throw new RangeError('Wallet debits must be a non-negative finite amount')
+      const cost = Math.floor(amount)
+      if (cost > balance) return null
+      balance -= cost
+      return balance
+    },
+    canAfford(amount): boolean {
+      if (!Number.isFinite(amount) || amount < 0) return false
+      return Math.floor(amount) <= balance
     },
   }
 }

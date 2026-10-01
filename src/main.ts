@@ -12,7 +12,9 @@ import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
+import { createGardenProps, type GardenProps } from './scene/garden-props'
 import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, type PlantId, type PlantSubstrate } from './game/plants'
+import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
 import { animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
@@ -21,6 +23,8 @@ import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
 import { createToolsHud } from './ui/tools-hud'
 import { createSeedboxPanel } from './ui/seedbox-panel'
 import { createSalePanel } from './ui/sale-panel'
+import { createShopPanel } from './ui/shop-panel'
+import { createPropboxPanel } from './ui/propbox-panel'
 import { setCursor } from './ui/ui-cursor'
 import type { DesignPoint } from './ui/ui-viewport'
 import { createViewerPanel } from './ui/viewer-panel'
@@ -226,6 +230,26 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
     },
   )
   scene.add(gardenPlants.root)
+}
+
+/**
+ * The shop stands on the apron beyond the plot, outside even the fully expanded
+ * bounds, so no amount of farm growth can swallow it. It faces +Z, which is the
+ * side the farm camera watches from.
+ */
+let gardenProps: GardenProps | null = null
+if (fairground.gardenSurface && gardenTerrain && gardenWater) {
+  gardenProps = createGardenProps({
+    canvas: gameCanvas,
+    camera,
+    lawn: fairground.gardenSurface,
+    terrain: gardenTerrain,
+    water: gardenWater,
+    getBounds: activeGardenBounds,
+    shop: { x: 2.5, z: 18, rotationY: 0.08, url: 'assets/buildings/farm-shop.glb', size: 6.4 },
+    onChange: () => refreshShopUi(),
+  })
+  scene.add(gardenProps.root)
 }
 
 let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
@@ -503,7 +527,72 @@ const seedbox = createSeedboxPanel(
 )
 seedbox.setSeedsSource((species) => gardenPlants?.simulation.seedsFor(species) ?? 0)
 
-const panels: UIPanel[] = [toolsHud, seedbox, menu, viewer, journal, salePanel]
+/** Keep the shop and the Propbox showing the same counts the world does. */
+function refreshShopUi(): void {
+  shopPanel?.refresh()
+  propboxPanel?.refresh()
+}
+
+const propboxPanel = createPropboxPanel(
+  (id: PropId) => {
+    if (!gardenProps) return
+    gardenProps.beginPlacement(id)
+    gardenPlants?.cancelPlacement()
+    gardenTools?.setPlantingMode(false)
+    seedbox.setPlacementActive(false)
+    propboxPanel.setPlacementActive(true)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  window.innerWidth,
+  window.innerHeight,
+  (isOpen) => {
+    if (isOpen && gardenProps?.placingId) gardenProps.cancelPlacement()
+    if (isOpen) {
+      gardenPlants?.cancelPlacement()
+      gardenTools?.setPlantingMode(false)
+    }
+    syncFarmChrome()
+    refreshCursor()
+  },
+)
+propboxPanel.setCountsSource((id) => gardenProps?.inventory.count(id) ?? 0)
+
+const shopPanel = createShopPanel(
+  (id: PropId) => {
+    if (!gardenProps) return { ok: false, reason: 'The shopkeeper is still unpacking.', balance: wallet.balance }
+    const result = purchaseProp(wallet, gardenProps.inventory, id)
+    if (result.ok) {
+      salePanel.setWallet(wallet.balance)
+      seedbox.refresh()
+      propboxPanel.refresh()
+    }
+    return {
+      ok: result.ok,
+      reason: result.ok
+        ? null
+        : `Not enough coins for the ${PROP_CATALOG[id].name} — it costs ${PROP_CATALOG[id].price}.`,
+      balance: wallet.balance,
+    }
+  },
+  window.innerWidth,
+  window.innerHeight,
+  (isOpen) => {
+    if (isOpen) {
+      gardenProps?.cancelPlacement()
+      gardenPlants?.cancelPlacement()
+      gardenTools?.setPlantingMode(false)
+      seedbox.setPlacementActive(false)
+      propboxPanel.setPlacementActive(false)
+    }
+    syncFarmChrome()
+    refreshCursor()
+  },
+)
+shopPanel.setCountsSource((id) => gardenProps?.inventory.count(id) ?? 0)
+shopPanel.setWallet(wallet.balance)
+
+const panels: UIPanel[] = [toolsHud, seedbox, propboxPanel, menu, viewer, journal, salePanel, shopPanel]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -553,7 +642,9 @@ for (const panel of panels) ui.add(panel)
 
 function selectGardenTool(id: GardenToolId): void {
   gardenPlants?.cancelPlacement()
+  gardenProps?.cancelPlacement()
   seedbox.setPlacementActive(false)
+  propboxPanel.setPlacementActive(false)
   gardenTools?.setPlantingMode(false)
   if (gardenTools) {
     // Tapping the active tool's hotkey again cycles its brush size rather than
@@ -580,7 +671,10 @@ function setMode(next: GameMode): void {
   if (next !== 'farm') {
     salePanel.close()
     seedbox.close()
+    propboxPanel.setPlacementActive(false)
+    shopPanel.close()
     gardenPlants?.cancelPlacement()
+    gardenProps?.cancelPlacement()
     seedbox.setPlacementActive(false)
     gardenTools?.setPlantingMode(false)
   }
@@ -642,10 +736,15 @@ function focusCamera(): void {
  */
 function syncFarmChrome(): void {
   const farmOnly = mode === 'farm' && !menu.isOpen
-  toolsHud.setVisible(farmOnly && !journal.isOpen && !seedbox.isOpen && !salePanel.isOpen)
-  seedbox.setVisible(farmOnly && !journal.isOpen && !gardenPlants?.selectedSpecies)
+  // The main menu owns the screen outright, so the storefront must not out-rank it.
+  if (menu.isOpen && shopPanel.isOpen) shopPanel.close()
+  const shopOpen = shopPanel.isOpen
+  toolsHud.setVisible(farmOnly && !journal.isOpen && !seedbox.isOpen && !salePanel.isOpen && !shopOpen && !gardenProps?.placingId)
+  seedbox.setVisible(farmOnly && !journal.isOpen && !shopOpen && !gardenPlants?.selectedSpecies)
   seedbox.setInteractEnabled(toolsHud.selectedTool === 'hand')
-  journal.setLauncherVisible(farmOnly && !seedbox.isOpen)
+  propboxPanel.setVisible(farmOnly && !journal.isOpen && !shopOpen)
+  propboxPanel.setInteractEnabled(toolsHud.selectedTool === 'hand')
+  journal.setLauncherVisible(farmOnly && !seedbox.isOpen && !propboxPanel.isOpen && !shopOpen)
   if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
   refreshCursor()
 }
@@ -754,12 +853,14 @@ function refreshCursor(): void {
  * rectangle is measured in device pixels.
  */
 function isOverGameHUD(clientX: number, clientY: number): boolean {
-  if (menu.isOpen || journal.isOpen || mode === 'viewer') return true
+  if (menu.isOpen || journal.isOpen || mode === 'viewer' || shopPanel.isOpen) return true
   const point = ui.viewport.toDesign(clientX, clientY, gameCanvas.getBoundingClientRect())
-  if (point && ((toolsHud.isVisible && toolsHud.hitTest?.(point)) || seedbox.contains(point) || salePanel.hitTest?.(point))) return true
-  const expansionScale = THREE.MathUtils.clamp((window.innerWidth - 36) / 404, 0.5, 1)
-  return clientX >= 18 && clientX <= 18 + 404 * expansionScale
-    && clientY >= 18 && clientY <= 18 + 112 * expansionScale
+  return Boolean(point && (
+    (toolsHud.isVisible && toolsHud.hitTest?.(point))
+    || seedbox.contains(point)
+    || propboxPanel.contains(point)
+    || salePanel.hitTest?.(point)
+  ))
 }
 
 function updateCameraPan(deltaSeconds: number): void {
@@ -849,6 +950,33 @@ function orbitPointerDown(event: PointerEvent): void {
   if (menu.isOpen || mode === 'viewer') return
   const selectedTool = gardenTools?.selectedTool ?? 'hand'
   if (event.button === 0 && selectedTool === 'hand' && !isOverGameHUD(event.clientX, event.clientY)) {
+    // Placement owns the click outright while a prop is on the ghost.
+    if (gardenProps?.placingId) {
+      event.preventDefault()
+      gardenProps.pointerMove(event)
+      gardenProps.pointerDown(event)
+      gardenProps.update(0)
+      propboxPanel.refresh()
+      syncFarmChrome()
+      return
+    }
+    if (!journal.isOpen && !seedbox.isOpen && !propboxPanel.isOpen) {
+      // Hand-tool pick-up first, then the shop door. Both are the same grab the
+      // sale panel already trained the player to make.
+      if (gardenProps?.pickUpAt(event.clientX, event.clientY)) {
+        propboxPanel.refresh()
+        syncFarmChrome()
+        return
+      }
+      if (gardenProps?.pickShop(event.clientX, event.clientY)) {
+        salePanel.close()
+        shopPanel.setWallet(wallet.balance)
+        shopPanel.refresh()
+        shopPanel.open()
+        syncFarmChrome()
+        return
+      }
+    }
     const markerKind = gardenPlants?.markerKindAt(event.clientX, event.clientY)
     if (markerKind) {
       gardenPlants?.pointerDown(event)
@@ -934,6 +1062,7 @@ function orbitPointerDown(event: PointerEvent): void {
 
 function orbitPointerMove(event: PointerEvent): void {
   if (uiPointerMove(event)) return
+  if (gardenProps?.placingId) gardenProps.pointerMove(event)
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove(event)
   gardenTools?.pointerMove(event)
   updateCursor(pointerDesign(event))
@@ -967,6 +1096,11 @@ function orbitPointerMove(event: PointerEvent): void {
 
 function orbitPointerUp(event: PointerEvent): void {
   uiPointerUp(event)
+  if (gardenProps?.placingId) {
+    gardenProps.pointerUp()
+    propboxPanel.refresh()
+    syncFarmChrome()
+  }
   if (toolPointer === event.pointerId) {
     gardenTools?.pointerUp()
     toolPointer = null
@@ -1017,6 +1151,22 @@ function handleKeyDown(event: KeyboardEvent): void {
   // Topmost panel first, so a key never reaches the farm while a screen owns it.
   for (let index = panels.length - 1; index >= 0; index -= 1) {
     if (panels[index].keyDown?.(event)) return
+  }
+  // A prop on the ghost answers R (rotate) and Escape (cancel) before anything else.
+  if (gardenProps?.placingId && !menu.isOpen && !journal.isOpen) {
+    if (event.key.toLowerCase() === 'r' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault()
+      gardenProps.rotate()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      gardenProps.cancelPlacement()
+      propboxPanel.setPlacementActive(false)
+      refreshShopUi()
+      syncFarmChrome()
+      return
+    }
   }
   if (event.altKey || event.ctrlKey || event.metaKey || isTextInputTarget(event.target)) return
   if (event.code === 'Space') {
@@ -1191,6 +1341,18 @@ interface GardenDebugHarness {
   animalReport(): Record<string, unknown>[]
   /** Frame a species closely, for inspecting eyes and other small details. */
   focusSpecies(species: string, height?: number): void
+  /** Put coins in the wallet without farming for them, so the shop can be driven. */
+  grantCoins(amount: number): number
+  /** Open the storefront screen without walking up to the building. */
+  shop(): void
+  /** Buy one prop from the shared wallet, exactly as the Buy button does. */
+  buy(id: string): unknown
+  propCounts(): Record<string, number>
+  placeProp(id: string, cellX: number, cellZ: number, rotation?: number): unknown
+  placeFence(fromX: number, fromZ: number, toX: number, toZ: number): unknown
+  propReport(): unknown
+  /** Hand-tool pick-up at a client point; returns the prop returned to the box. */
+  pickUpProp(clientX: number, clientY: number): string | null
 }
 
 interface AnimalConditionReport {
@@ -1409,6 +1571,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       menuOpen: menu.isOpen,
       journalOpen: journal.isOpen,
       viewerOpen: viewer.isOpen,
+      shopOpen: shopPanel.isOpen,
+      propboxOpen: propboxPanel.isOpen,
+      placing: gardenProps?.placingId ?? null,
       performance: summarizeFrameTimings(),
     }),
     focusGarden: focusCamera,
@@ -1516,6 +1681,33 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       camera.updateMatrixWorld()
       updateCameraProjection()
     },
+    grantCoins: (amount) => {
+      const balance = wallet.credit(amount)
+      salePanel.setWallet(balance)
+      shopPanel.setWallet(balance)
+      return balance
+    },
+    shop: () => {
+      shopPanel.setWallet(wallet.balance)
+      shopPanel.refresh()
+      shopPanel.open()
+      syncFarmChrome()
+      return shopPanel.describe?.() ?? null
+    },
+    buy: (id) => {
+      if (!gardenProps) return null
+      const result = purchaseProp(wallet, gardenProps.inventory, id as PropId)
+      salePanel.setWallet(wallet.balance)
+      shopPanel.setWallet(wallet.balance)
+      shopPanel.refresh()
+      propboxPanel.refresh()
+      return result
+    },
+    propCounts: () => (gardenProps ? { ...gardenProps.inventory.counts } : {}),
+    placeProp: (id, cellX, cellZ, rotation = 0) => gardenProps?.placeProp(id as PropId, cellX, cellZ, rotation) ?? null,
+    placeFence: (fromX, fromZ, toX, toZ) => gardenProps?.placeFence(fromX, fromZ, toX, toZ) ?? null,
+    propReport: () => gardenProps?.report() ?? null,
+    pickUpProp: (clientX, clientY) => gardenProps?.pickUpAt(clientX, clientY) ?? null,
     scene,
     uiScene: ui.scene,
     // Reports where every surface actually landed, so layout can be checked at
@@ -1621,7 +1813,9 @@ function frame(now: number): void {
     }
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
+  gardenProps?.update(delta)
   if (!gardenPlants?.selectedSpecies && !seedbox.isOpen) gardenTools?.setPlantingMode(false)
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shopPanel.isOpen) refreshShopUi()
   seedbox.refresh()
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
@@ -1629,9 +1823,11 @@ function frame(now: number): void {
   applyExpansionCameraShake(delta, now / 1000)
   if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
     if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
+    gardenProps?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
     gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
   } else {
     gardenPlants?.pointerLeave()
+    gardenProps?.pointerLeave()
     gardenTools?.pointerLeave()
   }
   const otherUpdateMs = timingEnabled ? performance.now() - stageStartedAt : 0

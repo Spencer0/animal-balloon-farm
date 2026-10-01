@@ -73,6 +73,27 @@ These four props are every piece of woodwork in the game: the carved barn-board 
 
 Author standing rather than laying a prop flat and tipping the export root. An earlier version of this script used a `+90 deg X` rotation on each export root, and `export_apply` baked that rotation into some assets and not others -- the signboard came out with its roof pointing backwards while the button looked fine. `scripts/inspect-glb.mjs` exists to catch that class of mistake without opening a 3D viewer; run it after any change to the authoring or export step.
 
+## The shop: building, garden props, storefront furniture
+
+- Authoring scripts: [`shop_building.py`](shop_building.py), [`shop_props.py`](shop_props.py), [`shop_interior.py`](shop_interior.py)
+- Building source / portrait / runtime GLB: `../../public/assets/buildings/farm-shop.blend`, `farm-shop-review.png`, `farm-shop.glb` (placed and picked in `src/scene/garden-props.ts`)
+- Garden props source / contact sheet / GLBs: `../../public/assets/props/shop-props.blend`, `shop-props-review.png`, and `fountain.glb`, `statue.glb`, `fence.glb`, `coop.glb`
+- Storefront furniture source / contact sheet / GLBs: `../../public/assets/ui/shop-interior.blend`, `shop-interior-review.png`, and `ui-counter.glb`, `ui-shelf.glb`, `ui-crate.glb`
+
+Run each from the repository root (they are three separate generators, so re-running one never rebuilds another's art):
+
+```powershell
+blender --background --factory-startup --python art/blender/shop_building.py
+blender --background --factory-startup --python art/blender/shop_props.py
+blender --background --factory-startup --python art/blender/shop_interior.py
+```
+
+The building is authored facing Blender `-Y`, so it lands in Three.js facing `+Z`, and rests on `z = 0` centred in X/Y. The garden props follow the same rule; the fence alone spans exactly 2 m along X so a single segment lines up with one lattice edge. The storefront furniture follows the **UI prop** convention above (authored standing, painted face toward `-Y`).
+
+`shop_interior.py` is a separate script rather than an extension of `ui_props.py` on purpose: `ui_props.py` regenerates all four approved menu props in one destructive run, and the pipeline rule is not to re-run a generator over art you did not intend to rebuild. Add the new props to the `UI_PROPS` table in `src/ui/ui-props.ts` when you change their proportions.
+
+**Flattening before export.** `shop_*.py` call `flatten_material_colours()` after saving the `.blend` and rendering the portrait, and before writing the GLB. glTF cannot carry a noise-to-ramp node graph, so a `Base Color` driven by one exports as white -- which is why the older `ui_props.py` woodwork arrives in the game as pale plaster. The `.blend` and the review render keep the grain; only the runtime GLB falls back to the material's flat tone. `ui_props.py` is left as it is: its four props are approved and it is not this change's business to rebuild them.
+
 ## Iteration quality gate
 
 - Review front and three-quarter silhouette, facial expression, leg/ear/tail attachment, balloon sheen, shadow grounding, and hoof separation.

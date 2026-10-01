@@ -19,7 +19,14 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
  *    prop out of its box -- which is exactly what the menu's layout was doing.
  */
 
-export type UIPropId = 'ui-button' | 'ui-signboard' | 'ui-bunting' | 'ui-mailbox'
+export type UIPropId =
+  | 'ui-button'
+  | 'ui-signboard'
+  | 'ui-bunting'
+  | 'ui-mailbox'
+  | 'ui-counter'
+  | 'ui-shelf'
+  | 'ui-crate'
 
 export interface UIPropSpec {
   readonly id: UIPropId
@@ -40,6 +47,11 @@ export const UI_PROPS: Readonly<Record<UIPropId, UIPropSpec>> = {
   'ui-signboard': { id: 'ui-signboard', url: 'assets/ui/ui-signboard.glb', designWidth: 860, designHeight: 317, anchorBelow: 0.62 },
   'ui-bunting': { id: 'ui-bunting', url: 'assets/ui/ui-bunting.glb', designWidth: 1180, designHeight: 199, anchorBelow: 1 },
   'ui-mailbox': { id: 'ui-mailbox', url: 'assets/ui/ui-mailbox.glb', designWidth: 300, designHeight: 549, anchorBelow: 1 },
+  // The storefront's furniture, authored by art/blender/shop_interior.py. Each
+  // rests on the ground, so its anchor hangs the whole box below the origin.
+  'ui-counter': { id: 'ui-counter', url: 'assets/ui/ui-counter.glb', designWidth: 380, designHeight: 200, anchorBelow: 1 },
+  'ui-shelf': { id: 'ui-shelf', url: 'assets/ui/ui-shelf.glb', designWidth: 262, designHeight: 311, anchorBelow: 1 },
+  'ui-crate': { id: 'ui-crate', url: 'assets/ui/ui-crate.glb', designWidth: 150, designHeight: 118, anchorBelow: 1 },
 }
 
 /** The box a caller wants a prop fitted into. */
