@@ -70,6 +70,7 @@ export interface PlantSimulation {
   countPlants(species?: PlantId): number
   placementResult(species: PlantId, x: number, z: number, surface: PlantSurface): PlantPlacementResult
   plant(species: PlantId, x: number, z: number, surface: PlantSurface): GardenPlant | null
+  remove(instanceId: number): GardenPlant | null
   resolveCare(instanceId: number, care: PlantCare): boolean
   tick(deltaSeconds: number): void
 }
@@ -158,6 +159,11 @@ export function createPlantSimulation(): PlantSimulation {
       plants.push(plant)
       seedCounts.set(species, (seedCounts.get(species) ?? 0) - 1)
       return snapshot(plant)
+    },
+    remove(instanceId): GardenPlant | null {
+      const index = plants.findIndex((plant) => plant.instanceId === instanceId)
+      if (index < 0) return null
+      return snapshot(plants.splice(index, 1)[0])
     },
     resolveCare(instanceId, care): boolean {
       const plant = plants.find((entry) => entry.instanceId === instanceId)

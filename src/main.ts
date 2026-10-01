@@ -2,9 +2,8 @@ import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
 import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
-import { createFarmExpansionUI } from './game/farm-expansion-ui'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
-import { createAnimalProgress, makeFarmSnapshot, startingCarnivalSpecies } from './game/animal-progress'
+import { createAnimalProgress, startingCarnivalSpecies, type FarmSnapshot } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
 import { stageDefinition, stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
@@ -13,13 +12,15 @@ import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
-import { PLANT_WATER_MIN_DEPTH, type PlantId, type PlantSubstrate } from './game/plants'
+import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, type PlantId, type PlantSubstrate } from './game/plants'
+import { animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { createJournalPanel } from './ui/journal-panel'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
 import { createToolsHud } from './ui/tools-hud'
 import { createSeedboxPanel } from './ui/seedbox-panel'
+import { createSalePanel } from './ui/sale-panel'
 import { setCursor } from './ui/ui-cursor'
 import type { DesignPoint } from './ui/ui-viewport'
 import { createViewerPanel } from './ui/viewer-panel'
@@ -153,6 +154,23 @@ const gardenTools: GardenTools | null = fairground.gardenSurface && fairground.g
     )
   : null
 if (gardenTools) scene.add(gardenTools.root)
+const worldRaycaster = new THREE.Raycaster()
+const worldPointer = new THREE.Vector2()
+function pickAnimal(clientX: number, clientY: number): BalloonAnimal | null {
+  const rect = gameCanvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  worldPointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
+  worldRaycaster.setFromCamera(worldPointer, camera)
+  const candidates = animals.filter((animal) => !animal.isSold && animal.root.visible).flatMap((animal) => {
+    const meshes: THREE.Mesh[] = []
+    animal.root.traverse((object) => { if (object instanceof THREE.Mesh && object.visible) meshes.push(object) })
+    return meshes
+  })
+  const hit = worldRaycaster.intersectObjects(candidates, false)[0]
+  if (!hit) return null
+  return animals.find((animal) => animal.root === hit.object || animal.root.getObjectById(hit.object.id) !== undefined) ?? null
+}
+
 
 let gardenPlants: GardenPlants | null = null
 if (fairground.gardenSurface && gardenTerrain && gardenWater) {
@@ -210,13 +228,6 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
   scene.add(gardenPlants.root)
 }
 
-// The expansion progress card still renders from its own scene, in its own
-// 1280x720 space. Folding it into the shared layer is worth doing, but not in
-// the same change as the UI rewrite -- leaving it exactly as it was is what
-// keeps the feature working.
-const farmExpansionUI = fairground.farmExpansion
-  ? createFarmExpansionUI(window.innerWidth, window.innerHeight, fairground.farmExpansion.state)
-  : null
 let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
 
 // Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
@@ -231,6 +242,8 @@ const progress = createAnimalProgress(speciesIds)
 /** Stages 0 and 1 live at the carnival; 2 and up are inside the fence. */
 const isLoose = (species: string): boolean => progress.progressOf(species).stage < 2
 
+const generatedAnimalNames = generateAnimalNames(ANIMAL_CATALOG.length)
+const animalNames = new Map(ANIMAL_CATALOG.map((animal, index) => [animal.id, generatedAnimalNames[index]]))
 const animals: BalloonAnimal[] = await Promise.all(getAnimalSceneOptions(
   false,
   gameCanvas,
@@ -239,6 +252,7 @@ const animals: BalloonAnimal[] = await Promise.all(getAnimalSceneOptions(
 ).map((options) =>
   createBalloonAnimal(fairground.root, {
     ...options,
+    name: animalNames.get(options.id) ?? options.name,
     // Start every species at the carnival, loose, and let progression decide
     // who comes in. `carnivalSpawn` points out by the tents.
     stage: 0,
@@ -249,6 +263,7 @@ const animals: BalloonAnimal[] = await Promise.all(getAnimalSceneOptions(
   }),
 ))
 const animalById = new Map(animals.map((animal) => [animal.id, animal]))
+const wallet = createWallet()
 
 // Four species are already at the carnival when the game opens; the rest have
 // to be drawn over by the farm itself.
@@ -344,12 +359,19 @@ function measureFarm(): FarmState {
  * Keeping the event handling here means `balloon-animal.ts` never has to know
  * that a condition system exists.
  */
+function currentFarmSnapshot(): FarmSnapshot {
+  const residentSpecies = new Set(progress.all()
+    .filter((entry) => entry.stage >= 3 && !animalById.get(entry.species as BalloonAnimal['id'])?.isSold)
+    .map((entry) => entry.species))
+  return { state: measureFarm(), residentSpecies }
+}
+
 function updateAnimalProgress(deltaSeconds: number): void {
-  if (mode === 'viewer' || menu.isOpen) return
-  const events = progress.tick(makeFarmSnapshot(measureFarm(), progress), deltaSeconds)
+  if (mode === 'viewer' || menu.isOpen || salePanel.isOpen) return
+  const events = progress.tick(currentFarmSnapshot(), deltaSeconds)
   for (const event of events) {
     const animal = animalById.get(event.species as (typeof animals)[number]['id'])
-    if (!animal) continue
+    if (!animal || animal.isSold) continue
     animal.stage = event.stage
     if (event.kind === 'settle' || event.kind === 'fallInLove') {
       console.info(`[Animal Balloon Farm] ${event.species} -> ${stageTitle(event.species, event.stage)}`)
@@ -400,7 +422,7 @@ const journal = createJournalPanel(window.innerWidth, window.innerHeight, () => 
   syncFarmChrome()
 })
 const toolsHud = createToolsHud(
-  gardenTools?.selectedTool ?? 'grass',
+  gardenTools?.selectedTool ?? 'hand',
   (id: GardenToolId) => selectGardenTool(id),
   window.innerWidth,
   window.innerHeight,
@@ -409,22 +431,53 @@ const menu = createMenuPanel(handleMenuChoice, window.innerWidth, window.innerHe
   syncFarmChrome()
 })
 const viewer = createViewerPanel({
-  getAnimals: () => animals,
+  getAnimals: () => animals.filter((animal) => !animal.isSold),
+  getAnimalName: (id) => animalNames.get(id) ?? id,
   playAll: () => {
-    for (const animal of animals) {
+    for (const animal of animals.filter((entry) => !entry.isSold)) {
       if (animal.isCaptured) animal.setAppearance('wild')
       animal.beginCapture()
     }
   },
-  resetAll: () => animals.forEach((animal) => animal.setAppearance('wild')),
+  resetAll: () => animals.filter((animal) => !animal.isSold).forEach((animal) => animal.setAppearance('wild')),
   exit: () => setMode('farm'),
   replay: (id) => {
     const animal = animalById.get(id)
-    if (!animal) return
+    if (!animal || animal.isSold) return
     if (animal.isCaptured) animal.setAppearance('wild')
     animal.beginCapture()
   },
 }, window.innerWidth, window.innerHeight)
+
+const salePanel = createSalePanel((target) => {
+  if (target.kind === 'animal') {
+    const animal = animalById.get(target.id as BalloonAnimal['id'])
+    if (!animal || !animal.canSell || !animal.sell()) return null
+    const balance = wallet.credit(target.price)
+    salePanel.setWallet(balance)
+    return balance
+  }
+  const plantId = Number(target.id)
+  const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantId)
+  if (!plant || !gardenPlants?.removePlant(plantId)) return null
+  seedbox.refresh()
+  const balance = wallet.credit(plantSaleValue(plant.species, plant.growth))
+  salePanel.setWallet(balance)
+  return balance
+}, window.innerWidth, window.innerHeight, (isOpen) => {
+  if (typeof toolsHud !== 'undefined') {
+    if (isOpen) {
+      gardenPlants?.cancelPlacement()
+      gardenTools?.setPlantingMode(false)
+      seedbox.setPlacementActive(false)
+    } else {
+      gardenPlants?.clearSelection()
+    }
+    toolsHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && !isOpen)
+    refreshCursor()
+  }
+})
+salePanel.setWallet(wallet.balance)
 
 const seedbox = createSeedboxPanel(
   (species: PlantId) => {
@@ -439,7 +492,7 @@ const seedbox = createSeedboxPanel(
   window.innerWidth,
   window.innerHeight,
   (isOpen) => {
-    toolsHud.object.visible = mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOpen
+    toolsHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOpen && !salePanel.isOpen)
     journal.setLauncherVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOpen)
     if (isOpen) {
       gardenPlants?.cancelPlacement()
@@ -450,7 +503,7 @@ const seedbox = createSeedboxPanel(
 )
 seedbox.setSeedsSource((species) => gardenPlants?.simulation.seedsFor(species) ?? 0)
 
-const panels: UIPanel[] = [toolsHud, seedbox, menu, viewer, journal]
+const panels: UIPanel[] = [toolsHud, seedbox, menu, viewer, journal, salePanel]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -461,6 +514,7 @@ const panels: UIPanel[] = [toolsHud, seedbox, menu, viewer, journal]
  */
 journal.setConditionsSource({
   get: (species) => {
+    if (animalById.get(species as BalloonAnimal['id'])?.isSold) return null
     const conditions = progress.statusOf(species)
     if (!conditions.length) return null
     return {
@@ -483,7 +537,7 @@ journal.setConditionsSource({
             waitingOn: {
               species: wantsSpecies,
               name: ANIMAL_CATALOG.find((animal) => animal.id === wantsSpecies)?.name ?? wantsSpecies,
-              resident: progress.all().some((entry) => entry.species === wantsSpecies && entry.stage >= 3),
+              resident: progress.all().some((entry) => entry.species === wantsSpecies && entry.stage >= 3 && !animalById.get(wantsSpecies as BalloonAnimal['id'])?.isSold),
             },
           } : {}),
         }
@@ -501,12 +555,15 @@ function selectGardenTool(id: GardenToolId): void {
   gardenPlants?.cancelPlacement()
   seedbox.setPlacementActive(false)
   gardenTools?.setPlantingMode(false)
+  if (gardenTools) {
+    // Tapping the active tool's hotkey again cycles its brush size rather than
+    // re-selecting what is already selected. Hand has no brush size to cycle.
+    if (gardenTools.selectedTool === id && id !== 'hand') gardenTools.cycleBrushSize()
+    else if (gardenTools.selectedTool !== id) gardenTools.selectTool(id)
+  }
+  toolsHud.setSelectedTool(id)
+  seedbox.setInteractEnabled(id === 'hand')
   syncFarmChrome()
-  if (!gardenTools) return
-  // Tapping the active tool's hotkey again cycles its brush size rather than
-  // re-selecting what is already selected.
-  if (gardenTools.selectedTool === id) gardenTools.cycleBrushSize()
-  else gardenTools.selectTool(id)
 }
 
 function handleMenuChoice(choice: MenuChoice): void {
@@ -521,6 +578,7 @@ function handleMenuChoice(choice: MenuChoice): void {
 
 function setMode(next: GameMode): void {
   if (next !== 'farm') {
+    salePanel.close()
     seedbox.close()
     gardenPlants?.cancelPlacement()
     seedbox.setPlacementActive(false)
@@ -584,8 +642,9 @@ function focusCamera(): void {
  */
 function syncFarmChrome(): void {
   const farmOnly = mode === 'farm' && !menu.isOpen
-  toolsHud.object.visible = farmOnly && !journal.isOpen && !seedbox.isOpen
+  toolsHud.setVisible(farmOnly && !journal.isOpen && !seedbox.isOpen && !salePanel.isOpen)
   seedbox.setVisible(farmOnly && !journal.isOpen && !gardenPlants?.selectedSpecies)
+  seedbox.setInteractEnabled(toolsHud.selectedTool === 'hand')
   journal.setLauncherVisible(farmOnly && !seedbox.isOpen)
   if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
   refreshCursor()
@@ -615,7 +674,7 @@ function pointerDesign(event: PointerEvent) {
  */
 function updateCursor(point: DesignPoint | null): void {
   if (!point) {
-    setCursor('default', gameCanvas)
+    setCursor('hand', gameCanvas)
     return
   }
   if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
@@ -632,15 +691,18 @@ function updateCursor(point: DesignPoint | null): void {
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
     const markerKind = gardenPlants?.markerKindAt(lastPointerClient.x, lastPointerClient.y)
     if (markerKind) {
-      setCursor(markerKind === 'water' ? 'water' : markerKind === 'prune' ? 'prune' : 'point', gameCanvas)
+      setCursor(toolsHud.selectedTool === 'hand'
+        ? markerKind === 'water' ? 'water' : markerKind === 'prune' ? 'prune' : 'point'
+        : 'hand', gameCanvas)
       return
     }
+
     if (gardenPlants?.selectedSpecies && gardenPlants.previewVisible) {
       setCursor('plant', gameCanvas)
       return
     }
   }
-  if (!gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
+  if (toolsHud.selectedTool !== 'hand' && !gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
     setCursor('hidden', gameCanvas)
     return
   }
@@ -694,7 +756,7 @@ function refreshCursor(): void {
 function isOverGameHUD(clientX: number, clientY: number): boolean {
   if (menu.isOpen || journal.isOpen || mode === 'viewer') return true
   const point = ui.viewport.toDesign(clientX, clientY, gameCanvas.getBoundingClientRect())
-  if (point && ((toolsHud.object.visible && toolsHud.hitTest?.(point)) || seedbox.contains(point))) return true
+  if (point && ((toolsHud.isVisible && toolsHud.hitTest?.(point)) || seedbox.contains(point) || salePanel.hitTest?.(point))) return true
   const expansionScale = THREE.MathUtils.clamp((window.innerWidth - 36) / 404, 0.5, 1)
   return clientX >= 18 && clientX <= 18 + 404 * expansionScale
     && clientY >= 18 && clientY <= 18 + 112 * expansionScale
@@ -785,7 +847,47 @@ function applyExpansionCameraShake(deltaSeconds: number, elapsedSeconds: number)
 function orbitPointerDown(event: PointerEvent): void {
   if (uiPointerDown(event)) return
   if (menu.isOpen || mode === 'viewer') return
-  if (!journal.isOpen && !seedbox.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
+  const selectedTool = gardenTools?.selectedTool ?? 'hand'
+  if (event.button === 0 && selectedTool === 'hand' && !isOverGameHUD(event.clientX, event.clientY)) {
+    const markerKind = gardenPlants?.markerKindAt(event.clientX, event.clientY)
+    if (markerKind) {
+      gardenPlants?.pointerDown(event)
+      syncFarmChrome()
+      return
+    }
+    const animal = pickAnimal(event.clientX, event.clientY)
+    if (animal) {
+      gardenPlants?.clearSelection()
+      const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
+      salePanel.open({
+        id: animal.id,
+        kind: 'animal',
+        name: animalNames.get(animal.id) ?? species?.name ?? animal.id,
+        detail: animal.canSell
+          ? `${stageTitle(animal.id, animal.stage)} · ${species?.subtitle ?? 'A farm friend'}`
+          : 'Needs to settle at the farm before selling',
+        price: animal.canSell ? animalSaleValue(animal.id, animal.stage) : 0,
+        sellable: animal.canSell,
+      })
+      syncFarmChrome()
+      return
+    }
+    const plant = gardenPlants?.selectAt(event.clientX, event.clientY)
+    if (plant) {
+      const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
+      salePanel.open({
+        id: String(plant.instanceId),
+        kind: 'plant',
+        name: `${species?.name ?? 'Plant'} ${gardenPlants?.selectedPlantNumber ?? 1}`,
+        detail: plant.mature ? 'Fully grown' : `${Math.round(plant.growth * 100)}% grown`,
+        price: plantSaleValue(plant.species, plant.growth),
+      })
+      syncFarmChrome()
+      return
+    }
+  }
+  if (salePanel.isOpen) salePanel.close()
+  if (event.button === 0 && selectedTool === 'hand' && !journal.isOpen && !seedbox.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
     event.preventDefault()
     if (!gardenPlants.selectedSpecies) {
       seedbox.setPlacementActive(false)
@@ -798,7 +900,7 @@ function orbitPointerDown(event: PointerEvent): void {
   if (event.button === 0 && event.detail >= 2) return
   // Middle click levels with the shovel; Space+left-drag explicitly orbits.
   if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
-  if (event.button === 2 && !isOverGameHUD(event.clientX, event.clientY) && gardenTools?.pointerDown(event)) {
+  if (event.button === 2 && selectedTool !== 'hand' && !isOverGameHUD(event.clientX, event.clientY) && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
@@ -811,19 +913,19 @@ function orbitPointerDown(event: PointerEvent): void {
     event.preventDefault()
     return
   }
-  if (!cameraGesture && event.button === 0 && gardenTools?.pointerDown(event)) {
+  if (!cameraGesture && event.button === 0 && selectedTool !== 'hand' && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
     return
   }
-  if (event.button === 1 && gardenTools?.pointerDown(event)) {
+  if (event.button === 1 && selectedTool !== 'hand' && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
     return
   }
-  if (gardenDebugMode) return
+  if (gardenDebugMode || selectedTool === 'hand') return
   dragPointer = event.pointerId
   dragMode = event.button === 2 ? 'pan' : 'orbit'
   previousPointer = { x: event.clientX, y: event.clientY }
@@ -832,7 +934,7 @@ function orbitPointerDown(event: PointerEvent): void {
 
 function orbitPointerMove(event: PointerEvent): void {
   if (uiPointerMove(event)) return
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) gardenPlants?.pointerMove(event)
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove(event)
   gardenTools?.pointerMove(event)
   updateCursor(pointerDesign(event))
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
@@ -923,6 +1025,11 @@ function handleKeyDown(event: KeyboardEvent): void {
     return
   }
   const key = event.key.toLowerCase()
+  if (key === '1') {
+    event.preventDefault()
+    selectGardenTool('hand')
+    return
+  }
   if (PAN_KEYS.includes(key)) {
     pressedKeys.add(key)
     event.preventDefault()
@@ -931,6 +1038,12 @@ function handleKeyDown(event: KeyboardEvent): void {
   if (key === 'e' && mode === 'farm' && !menu.isOpen && fairground.farmExpansion) {
     event.preventDefault()
     if (!event.repeat) fairground.farmExpansion.expand()
+    return
+  }
+  if (event.key === 'Escape' && salePanel.isOpen) {
+    salePanel.close()
+    syncFarmChrome()
+    event.preventDefault()
     return
   }
   if (event.key === 'Escape' && !menu.isOpen && mode === 'farm' && !journal.isOpen) {
@@ -966,9 +1079,6 @@ function handleWindowPointerMove(event: PointerEvent): void {
   lastPointerClient.x = event.clientX
   lastPointerClient.y = event.clientY
   pointerPosition = { x: event.clientX, y: event.clientY }
-  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
-    setCursor('plant', gameCanvas)
-  }
   pointerWasSeen = event.clientX >= 0 && event.clientY >= 0
     && event.clientX <= window.innerWidth && event.clientY <= window.innerHeight
     && !isOverGameHUD(event.clientX, event.clientY)
@@ -1027,12 +1137,12 @@ window.addEventListener('keyup', handleKeyUp)
 window.addEventListener('blur', handleWindowBlur)
 window.addEventListener('mouseleave', handleWindowBlur)
 gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
-farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
 seedbox.resize(window.innerWidth, window.innerHeight)
+salePanel.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
-  farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
+  salePanel.resize(window.innerWidth, window.innerHeight)
 })
 
 // ------------------------------------------------------------- garden debug --
@@ -1342,14 +1452,14 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       for (let rung = 0; rung < target; rung += 1) {
         progress.setStage(species, rung as 0 | 1 | 2 | 3 | 4)
         const animal = animalById.get(species as (typeof animals)[number]['id'])
-        if (animal) animal.stage = rung as 0 | 1 | 2 | 3 | 4
+        if (animal && !animal.isSold) animal.stage = rung as 0 | 1 | 2 | 3 | 4
       }
       progress.setStage(species, target)
       const animal = animalById.get(species as (typeof animals)[number]['id'])
-      if (animal) animal.stage = target
+      if (animal && !animal.isSold) animal.stage = target
       // One more tick so a settled animal is reflected in the resident set the
       // next species is judged against.
-      progress.tick(makeFarmSnapshot(measureFarm(), progress), 0)
+      progress.tick(currentFarmSnapshot(), 0)
       return reportConditions()
     },
     sowGrass: (x, z, radius) => {
@@ -1362,10 +1472,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     advance: (steps = 1, secondsPerStep = 1 / 30) => {
       for (let step = 0; step < steps; step += 1) {
-        const events = progress.tick(makeFarmSnapshot(measureFarm(), progress), secondsPerStep)
+        const events = progress.tick(currentFarmSnapshot(), secondsPerStep)
         for (const event of events) {
           const animal = animalById.get(event.species as (typeof animals)[number]['id'])
-          if (animal) animal.stage = event.stage
+          if (animal && !animal.isSold) animal.stage = event.stage
         }
       }
       return reportConditions()
@@ -1373,7 +1483,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     resetConditions: () => {
       gardenTools?.clearGrass()
       progress.reset()
-      for (const animal of animals) {
+      for (const animal of animals.filter((entry) => !entry.isSold)) {
         // Demote through the transitions so the heart eyes and the paint mask
         // are actually torn down, rather than left behind on the model.
         animal.stage = 0
@@ -1383,8 +1493,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       measureFarm()
       reportConditions()
     },
-    animalReport: () => animals.map((animal) => ({
+    animalReport: () => animals.filter((animal) => !animal.isSold).map((animal) => ({
       id: animal.id,
+      name: animalNames.get(animal.id),
       stage: animal.stage,
       appearance: animal.isCaptured ? 'standard' : 'wild',
       heartEyes: animal.heartEyeCount > 0,
@@ -1508,9 +1619,8 @@ function frame(now: number): void {
       expansionFeedbackSeconds = CAMERA_SHAKE_DURATION
       expansionFeedbackStrength = 1
     }
-    farmExpansionUI?.update(expansionState, delta)
   }
-  gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen)
+  gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
   if (!gardenPlants?.selectedSpecies && !seedbox.isOpen) gardenTools?.setPlantingMode(false)
   seedbox.refresh()
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
@@ -1518,7 +1628,7 @@ function frame(now: number): void {
   updateCameraPan(delta)
   applyExpansionCameraShake(delta, now / 1000)
   if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
-    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
+    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
     gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
   } else {
     gardenPlants?.pointerLeave()
@@ -1532,12 +1642,6 @@ function frame(now: number): void {
   stageStartedAt = timingEnabled ? performance.now() : 0
   ui.update(delta)
   ui.render(renderer)
-  if (farmExpansionUI) {
-    renderer.autoClear = false
-    renderer.clearDepth()
-    renderer.render(farmExpansionUI.scene, farmExpansionUI.camera)
-    renderer.autoClear = true
-  }
   let overlayRenderMs = 0
   if (__GARDEN_DEBUG__ && performanceOverlay) {
     performanceOverlay.update(now, summarizeFrameTimings)

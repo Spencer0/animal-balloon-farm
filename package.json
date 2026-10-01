@@ -7,7 +7,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "garden:drag": "node scripts/garden-drag.mjs",
-    "test": "node --test tests/farm-expansion.test.mjs tests/garden-water.test.mjs tests/garden-edge-water.test.mjs tests/animal-conditions.test.mjs tests/animal-travel.test.mjs tests/plants.test.mjs",
+    "test": "node --test tests/farm-expansion.test.mjs tests/garden-water.test.mjs tests/garden-edge-water.test.mjs tests/animal-conditions.test.mjs tests/animal-travel.test.mjs tests/plants.test.mjs tests/sales.test.mjs",
     "typecheck": "tsc --noEmit",
     "check": "npm test && npm run typecheck && npm run build"
   },

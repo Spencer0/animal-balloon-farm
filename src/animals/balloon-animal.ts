@@ -5,6 +5,7 @@ import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
+import { canSellAnimal } from '../game/sales'
 import { advanceAnimalTravel, canAnimalLeaveFarm, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
 
 export type AnimalClip = 'IDLE' | 'WALK'
@@ -54,6 +55,9 @@ export interface BalloonAnimalOptions {
 export interface BalloonAnimal {
   readonly id: BalloonAnimalId
   readonly root: THREE.Group
+  readonly isSold: boolean
+  readonly canSell: boolean
+  sell(): boolean
   readonly gltf: AnimalGLTF | null
   setAnimation(name: AnimalClip, fadeSeconds?: number): void
   setAppearance(appearance: AnimalAppearance): void
@@ -400,6 +404,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let nextDecision = 0
   let paused = 0
   let captured = false
+  let sold = false
   let capture: CapturePresentation | null = null
   let captureVerticalRange: CaptureVerticalRange | null = null
   let lastCaptureProgress = 0
@@ -514,7 +519,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
 
   const pauseDurations = { min: 0.45, max: 1.25 }
   const beginCapture = (): boolean => {
-    if (capture || appearance !== 'wild') return false
+    if (sold || capture || appearance !== 'wild') return false
     captured = true
     appearance = 'standard'
     lastCaptureProgress = 0
@@ -606,7 +611,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   }
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (options.captureOnClick === false || event.button !== 0 || event.detail >= 2
+    if (sold || options.captureOnClick === false || event.button !== 0 || event.detail >= 2
       || options.isPointerBlocked?.(event.clientX, event.clientY)
       || (captured && !options.replayCaptureOnClick)) return
     const bounds = options.canvas.getBoundingClientRect()
@@ -628,6 +633,16 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   return {
     id: options.id,
     root: wrapper,
+    get isSold(): boolean { return sold },
+    get canSell(): boolean {
+      return canSellAnimal({ sold, captured, capturing: capture !== null, stage, appearance })
+    },
+    sell(): boolean {
+      if (!canSellAnimal({ sold, captured, capturing: capture !== null, stage, appearance })) return false
+      sold = true
+      wrapper.visible = false
+      return true
+    },
     get gltf(): AnimalGLTF | null { return gltf },
     eyeColor: options.eyeColor ?? BODY_MATERIALS[options.id].color.getHexString(),
     get heartEyeCount(): number { return countHeartEyes(modelRoot ?? posePivot) },
@@ -641,6 +656,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get stage(): AnimalStage { return stage },
     set stage(next: AnimalStage) { setStage(next) },
     update(deltaSeconds): void {
+      if (sold) return
       const delta = Math.min(deltaSeconds, 0.05)
       elapsed += delta
       if (capture) {

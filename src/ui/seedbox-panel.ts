@@ -13,6 +13,7 @@ export interface SeedboxPanel extends UIPanel {
   contains(point: DesignPoint): boolean
   refresh(): void
   close(): void
+  setInteractEnabled(enabled: boolean): void
 }
 
 const CARD_WIDTH = 700
@@ -51,6 +52,7 @@ export function createSeedboxPanel(onChoose: (species: PlantId) => void, cssWidt
   let launcherRect: DesignRect = { x: 0, y: 0, width: LAUNCHER.width, height: LAUNCHER.height }
   const rows: DesignRect[] = PLANT_CATALOG.map((_, index) => ({ x: -314, y: 40 - index * 84, width: 628, height: 72 }))
   let lastSeedSignature = ''
+  let interactEnabled = true
 
   function layout(): void {
     launcherRect = { x: viewport.right - LAUNCHER.margin - LAUNCHER.width, y: viewport.top - LAUNCHER.margin - LAUNCHER.height, width: LAUNCHER.width, height: LAUNCHER.height }
@@ -168,8 +170,16 @@ export function createSeedboxPanel(onChoose: (species: PlantId) => void, cssWidt
     },
     contains(point): boolean { return visible && (isOpen || rectContains(launcherRect, point)) },
     close(): void { setOpen(false) },
+    setInteractEnabled(enabled): void { interactEnabled = enabled },
     pointerDown(point, event): boolean {
       if (!visible) return false
+      const overSeedbox = isOpen || rectContains(launcherRect, point)
+      if (!interactEnabled && isOpen) {
+        if (!overSeedbox) return false
+        event.preventDefault()
+        if (rowAt(point) < 0 && point.x > 292 && point.y > 135) setOpen(false)
+        return true
+      }
       if (!isOpen) {
         if (event.button !== 0 || !rectContains(launcherRect, point)) return false
         event.preventDefault()
@@ -196,7 +206,11 @@ export function createSeedboxPanel(onChoose: (species: PlantId) => void, cssWidt
     pointerUp(point): boolean { return visible && (isOpen || rectContains(launcherRect, point)) },
     cursor(point): UiCursorKind | undefined {
       if (!visible) return undefined
-      if (isOpen) return rowAt(point) >= 0 || (point.x > 292 && point.y > 135) ? 'point' : 'hand'
+      if (isOpen) {
+        const overRow = rowAt(point) >= 0
+        if (overRow && !interactEnabled) return 'hand'
+        return overRow || (point.x > 292 && point.y > 135) ? 'point' : 'hand'
+      }
       return rectContains(launcherRect, point) ? 'point' : undefined
     },
     hitTest(point): boolean { return visible && (isOpen || rectContains(launcherRect, point)) },

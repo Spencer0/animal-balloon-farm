@@ -38,7 +38,10 @@ const OUTLINE_THICKNESS = 1.22
 
 export interface ToolsHud extends UIPanel {
   readonly selectedTool: GardenToolId
+  readonly isVisible: boolean
+  setVisible(visible: boolean): void
   selectTool(id: GardenToolId): void
+  setSelectedTool(id: GardenToolId): void
 }
 
 function round(value: number): number {
@@ -223,6 +226,7 @@ export function createToolsHud(
   })
 
   let selected = initialTool
+  let visible = true
 
   function select(id: GardenToolId): void {
     selected = id
@@ -267,7 +271,7 @@ export function createToolsHud(
 
       // Float, then lean in on hover, then dip on press.
       const bob = Math.sin(elapsed * 1.9 + slot.bob) * 3
-      const scale = 1 + slot.hover * 0.07 - slot.press * 0.05 + slot.glow * 0.05
+      const scale = 1 + slot.hover * 0.07 - slot.press * 0.05 + slot.glow * 0.08
       slot.icon.position.y = SLOT_HEIGHT * 0.06 + bob + slot.hover * 6 - slot.press * 6
       slot.icon.rotation.set(0.06, TILT_Y + slot.hover * 0.14 - slot.glow * 0.05, TILT_Z - slot.hover * 0.05)
       slot.icon.scale.setScalar(scale)
@@ -297,10 +301,16 @@ export function createToolsHud(
     get selectedTool(): GardenToolId {
       return selected
     },
+    get isVisible(): boolean { return visible },
+    setVisible(next): void { visible = next; object.visible = next },
     selectTool(id: GardenToolId): void {
       select(id)
     },
+    setSelectedTool(id: GardenToolId): void {
+      if (GARDEN_TOOLS.some((tool) => tool.id === id)) selected = id
+    },
     pointerDown(point: DesignPoint, event: PointerEvent): boolean {
+      if (!visible) return false
       const slot = slotAt(point)
       if (!slot) return false
       event.preventDefault()
@@ -309,17 +319,19 @@ export function createToolsHud(
       return true
     },
     pointerMove(point: DesignPoint): boolean {
+      if (!visible) return false
       const slot = slotAt(point)
       for (const candidate of slots) candidate.hover = candidate === slot ? 1 : 0
       return slot !== null
     },
     cursor(point: DesignPoint): UiCursorKind | undefined {
-      return slotAt(point) ? 'point' : undefined
+      return visible && slotAt(point) ? 'point' : undefined
     },
     hitTest(point: DesignPoint): boolean {
-      return slotAt(point) !== null
+      return visible && slotAt(point) !== null
     },
     pointerUp(point: DesignPoint): boolean {
+      if (!visible) return false
       const slot = slotAt(point)
       for (const candidate of slots) {
         if (candidate.press > 0) candidate.press = 0
@@ -327,7 +339,7 @@ export function createToolsHud(
       return slot !== null
     },
     keyDown(event: KeyboardEvent): boolean {
-      if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return false
+      if (!visible || event.altKey || event.ctrlKey || event.metaKey || event.repeat) return false
       const tool = GARDEN_TOOLS.find((item) => item.hotkey === event.key.toLowerCase())
       if (!tool) return false
       event.preventDefault()

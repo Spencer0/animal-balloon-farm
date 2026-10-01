@@ -223,11 +223,12 @@ export function createGardenTools(
   const ndc = new THREE.Vector2()
   const cursor = new THREE.Group()
   const toolModels: Record<GardenToolId, THREE.Group> = {
+    hand: createGardenToolModel('hand'),
     grass: createGardenToolModel('grass'),
     shovel: createGardenToolModel('shovel'),
     water: createGardenToolModel('water'),
   }
-  let selectedTool: GardenToolId = 'grass'
+  let selectedTool: GardenToolId = 'hand'
   const brushLevels = new Map<GardenToolId, number>()
   let sizePop = 0
   const SIZE_POP_SECONDS = 0.28
@@ -424,7 +425,8 @@ export function createGardenTools(
     model.visible = false
     cursor.add(model)
   }
-  toolModels.grass.visible = true
+  toolModels.hand.visible = true
+  toolModels.grass.visible = false
 
   function pointerRay(event: GardenPointerMove): boolean {
     const bounds = canvas.getBoundingClientRect()
@@ -815,7 +817,7 @@ export function createGardenTools(
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
       selectedTool = id
-      hoverTint = id === 'water' ? '#77c9d5' : id === 'shovel' ? '#d9a06b' : '#b7d97a'
+      hoverTint = id === 'water' ? '#77c9d5' : id === 'shovel' ? '#d9a06b' : id === 'grass' ? '#b7d97a' : '#efc894'
       for (const [key, model] of Object.entries(toolModels)) model.visible = key === id
     },
     cycleBrushSize(): void {
@@ -839,7 +841,7 @@ export function createGardenTools(
       }
     },
     pointerMove(event): void {
-      if (plantingMode) {
+      if (plantingMode || selectedTool === 'hand') {
         cursor.visible = false
         cursorVisible = false
         actionGlow.visible = false
@@ -893,6 +895,7 @@ export function createGardenTools(
     pointerDown(event): boolean {
       if (plantingMode) return false
       if (event.button !== 0 && event.button !== 1 && event.button !== 2) return false
+      if (selectedTool === 'hand') return false
       const position = updateCursorPosition(event)
       if (!position) return false
       if (selectedTool === 'shovel') {

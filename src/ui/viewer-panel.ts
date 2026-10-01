@@ -40,6 +40,7 @@ export interface ViewerPanel extends UIPanel {
 
 export interface ViewerActions {
   readonly getAnimals: () => readonly BalloonAnimal[]
+  readonly getAnimalName?: (id: BalloonAnimalId) => string
   readonly playAll: () => void
   readonly resetAll: () => void
   readonly replay: (id: BalloonAnimalId) => void
@@ -253,7 +254,7 @@ export function createViewerPanel(
       context.textAlign = 'center'
       context.fillStyle = '#563e2e'
       context.font = 'bold 22px Georgia, "Times New Roman", serif'
-      context.fillText(item.label, centreX, rect.y + 96)
+      context.fillText(actions.getAnimalName?.(item.id) ?? item.label, centreX, rect.y + 96)
       context.fillStyle = '#8a684a'
       context.font = 'italic 14px Georgia, "Times New Roman", serif'
       context.fillText(item.gesture, centreX, rect.y + 118)

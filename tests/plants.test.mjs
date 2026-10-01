@@ -41,6 +41,19 @@ test('planting spends only that seed and exposes species counts for future habit
   assert.equal(simulation.seedsFor('clover'), STARTING_SEEDS_PER_PLANT)
 })
 
+test('selling a plant removes it, keeps its spent seed consumed, and cannot sell twice', () => {
+  const simulation = createPlantSimulation()
+  const poppy = simulation.plant('poppy', 0, 0, surface('soil'))
+  assert.ok(poppy)
+  assert.equal(simulation.seedsFor('poppy'), 4)
+  assert.equal(simulation.countPlants('poppy'), 1)
+  assert.equal(simulation.remove(poppy.instanceId).instanceId, poppy.instanceId)
+  assert.equal(simulation.countPlants('poppy'), 0)
+  assert.equal(simulation.seedsFor('poppy'), 4)
+  assert.equal(simulation.remove(poppy.instanceId), null)
+  assert.equal(simulation.seedsFor('poppy'), 4)
+})
+
 test('watering pauses clover growth until the player answers its care marker', () => {
   const simulation = createPlantSimulation()
   const clover = simulation.plant('clover', 0, 0, surface('grass'))

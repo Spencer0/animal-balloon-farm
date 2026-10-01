@@ -16,13 +16,18 @@ export interface GardenPlants {
   readonly simulation: PlantSimulation
   readonly selectedSpecies: PlantId | null
   readonly lastCareResolved: boolean
+  readonly selectedPlant: GardenPlant | null
+  readonly selectedPlantNumber: number | null
   readonly previewVisible: boolean
   selectSpecies(species: PlantId): void
+  clearSelection(): void
   cancelPlacement(): void
   placementCursor(clientX: number, clientY: number): boolean
   pointerMove(event: PlantPointerEvent): void
   pointerLeave(): void
   pointerDown(event: PlantPointerEvent): boolean
+  selectAt(clientX: number, clientY: number): GardenPlant | null
+  removePlant(instanceId: number): GardenPlant | null
   markerKindAt(clientX: number, clientY: number): PlantCare | 'mature' | null
   update(deltaSeconds: number, allowGrowth: boolean): void
   dispose(): void
@@ -40,6 +45,7 @@ interface PlantVisual {
   readonly maturitySeal: THREE.Sprite
   maturityCelebrationRemaining: number
   maturitySealDismissed: boolean
+  readonly plantNumber: number
   markerPosition: THREE.Vector3
 }
 
@@ -297,6 +303,8 @@ export function createGardenPlants(
   root.name = 'Garden plants'
   const simulation = createPlantSimulation()
   const visuals = new Map<number, PlantVisual>()
+  const nextPlantNumber = new Map<PlantId, number>()
+  const selectedPlantIds = new Set<number>()
   const raycaster = new THREE.Raycaster()
   const ndc = new THREE.Vector2()
   const preview = makePreview()
@@ -312,6 +320,7 @@ export function createGardenPlants(
   const fillMaterial = placementFill.material as THREE.MeshBasicMaterial
   const markerProjector = new THREE.Vector3()
   const surfaceProbe = new THREE.Vector3()
+  const selectedTint = new THREE.Color('#d4a84f')
   let elapsed = 0
   let lastCareResolved = false
 
@@ -336,6 +345,14 @@ export function createGardenPlants(
 
   function plantsById(): Map<number, GardenPlant> {
     return new Map(simulation.plants.map((plant) => [plant.instanceId, plant]))
+  }
+
+  function plantNumberFor(plant: GardenPlant): number {
+    const existing = visuals.get(plant.instanceId)
+    if (existing) return existing.plantNumber
+    const number = (nextPlantNumber.get(plant.species) ?? 0) + 1
+    nextPlantNumber.set(plant.species, number)
+    return number
   }
 
   function addVisual(plant: GardenPlant): void {
@@ -396,6 +413,7 @@ export function createGardenPlants(
       maturitySeal,
       maturityCelebrationRemaining: 0,
       maturitySealDismissed: false,
+      plantNumber: plantNumberFor(plant),
       markerPosition: new THREE.Vector3(),
     })
   }
@@ -425,10 +443,44 @@ export function createGardenPlants(
     return best
   }
 
+  function selectPlantAt(clientX: number, clientY: number): GardenPlant | null {
+    const marker = markerHit(clientX, clientY)
+    if (marker) {
+      selectedPlantIds.clear()
+      selectedPlantIds.add(marker.visual.instanceId)
+      return plantsById().get(marker.visual.instanceId) ?? null
+    }
+    const rect = canvas.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0 || !pointerRay({ clientX, clientY })) return null
+    const plantMeshes = [...visuals.values()].filter((visual) => visual.group.visible).flatMap((visual) => {
+      const meshes: THREE.Mesh[] = []
+      visual.group.traverse((object) => { if (object instanceof THREE.Mesh) meshes.push(object) })
+      return meshes
+    })
+    const hit = raycaster.intersectObjects(plantMeshes, false)[0]
+    if (!hit) return null
+    let selected: PlantVisual | null = null
+    for (const visual of visuals.values()) {
+      if (visual.group === hit.object || visual.group.children.some((child) => child === hit.object || child.getObjectById(hit.object.id))) {
+        selected = visual
+        break
+      }
+      if (hit.object.parent === visual.group || visual.group.children.some((child) => child === hit.object.parent)) {
+        selected = visual
+        break
+      }
+    }
+    if (!selected) return null
+    selectedPlantIds.clear()
+    selectedPlantIds.add(selected.instanceId)
+    return plantsById().get(selected.instanceId) ?? null
+  }
+
   function syncVisuals(): void {
     const current = plantsById()
     for (const [id, visual] of visuals) {
       if (current.has(id)) continue
+      selectedPlantIds.delete(id)
       root.remove(visual.group, visual.celebration, visual.completionBadge, visual.maturitySeal, visual.marker)
       visual.group.traverse((object) => {
         if (object instanceof THREE.Mesh) object.geometry.dispose()
@@ -436,6 +488,13 @@ export function createGardenPlants(
       for (const geometry of [visual.group.userData.leafGeometry, visual.group.userData.stemGeometry] as THREE.BufferGeometry[]) geometry.dispose()
       ;(visual.group.userData.disposeMaterials as THREE.Material[]).forEach((material) => material.dispose())
       ;(visual.marker.material as THREE.Material).dispose()
+      visual.completionBadge.material.dispose()
+      visual.maturitySeal.material.dispose()
+      visual.celebration.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return
+        object.geometry.dispose()
+        ;(object.material as THREE.Material).dispose()
+      })
       visuals.delete(id)
     }
     for (const plant of current.values()) {
@@ -455,6 +514,22 @@ export function createGardenPlants(
       visual.group.rotation.y = Math.sin(elapsed * 1.3 + plant.instanceId) * 0.08
       visual.group.position.y += Math.sin(elapsed * 2 + plant.instanceId) * 0.018 * scale
       visual.group.visible = true
+      visual.group.userData.saleSelected = selectedPlantIds.has(plant.instanceId)
+      visual.group.children.forEach((child) => {
+        if (!(child instanceof THREE.Mesh)) return
+        const material = child.material
+        const materials = Array.isArray(material) ? material : [material]
+        for (const entry of materials) {
+          if ('emissive' in entry && entry.emissive instanceof THREE.Color) {
+            if (selectedPlantIds.has(plant.instanceId)) {
+              entry.emissive.copy(selectedTint)
+              if ('emissiveIntensity' in entry) entry.emissiveIntensity = 0.18
+            } else if ('emissiveIntensity' in entry) {
+              entry.emissiveIntensity = 0
+            }
+          }
+        }
+      })
       visual.celebration.position.set(plant.x, visual.group.position.y, plant.z)
       visual.celebration.scale.setScalar(Math.max(scale, 0.7))
       const worldUnitsPerPixel = camera instanceof THREE.OrthographicCamera
@@ -579,6 +654,7 @@ export function createGardenPlants(
     get previewVisible() { return previewVisible },
     get lastCareResolved() { return lastCareResolved },
     selectSpecies,
+    clearSelection(): void { selectedPlantIds.clear(); syncVisuals() },
     cancelPlacement,
     placementCursor(clientX, clientY): boolean {
       if (!selectedSpecies || !previewVisible) return false
@@ -590,6 +666,21 @@ export function createGardenPlants(
     pointerMove(event): void { if (selectedSpecies) updatePreview(groundAt(event)) },
     pointerLeave(): void { preview.visible = false; previewVisible = false; previewPosition = null },
     pointerDown,
+    selectAt: selectPlantAt,
+    removePlant(instanceId): GardenPlant | null {
+      selectedPlantIds.delete(instanceId)
+      const plant = simulation.remove(instanceId)
+      if (plant) syncVisuals()
+      return plant
+    },
+    get selectedPlant() {
+      const id = selectedPlantIds.values().next().value as number | undefined
+      return id === undefined ? null : plantsById().get(id) ?? null
+    },
+    get selectedPlantNumber() {
+      const id = selectedPlantIds.values().next().value as number | undefined
+      return id === undefined ? null : visuals.get(id)?.plantNumber ?? null
+    },
     markerKindAt(clientX, clientY): PlantCare | 'mature' | null {
       const target = markerHit(clientX, clientY)
       if (!target) return null
