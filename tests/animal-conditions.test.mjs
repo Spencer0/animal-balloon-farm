@@ -32,7 +32,7 @@ const {
 const { measureTallGrass, measureWater, measureFlatGrassArea, measureFarmState, DEFAULT_MATURITY } = farmState
 const { createAnimalProgress, requirementMet, startingCarnivalSpecies, makeFarmSnapshot } = progressModule
 
-const SPECIES = ['pig', 'sheep', 'cow', 'chicken', 'duck', 'goose']
+const SPECIES = ['pig', 'sheep', 'cow', 'chicken', 'duck', 'goose', 'frog']
 
 /**
  * A lawn grid of `cols` x `rows` vertices with uniform coverage. Pass a number
@@ -340,11 +340,10 @@ test('a species nobody has seen is still findable', () => {
   const withGrass = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 9 }), 1/30)
     .filter((event) => event.kind === 'arriveCarnival')
   assert.deepEqual(withGrass.map((event) => event.species), ['pig'])
-  assert.equal(withGrass[0].discovered, true, 'a discovered arrival is flagged as earned')
-
-  const withWater = progress.tick(snapshot({ ...EMPTY_FARM, waterArea: 6 }), 1/30)
+  assert.equal(withGrass[0].discovered, true, 'a discovered arrival is flagged as earned')  // A little water draws the frog over alongside the goose (catalog order).
+  const withWater = progress.tick(snapshot({ ...EMPTY_FARM, waterArea: 6 }), 1 / 30)
     .filter((event) => event.kind === 'arriveCarnival')
-  assert.deepEqual(withWater.map((event) => event.species), ['goose'])
+  assert.deepEqual(withWater.map((event) => event.species), ['goose', 'frog'])
 })
 
 test('the journal reports a live progress bar against the target', () => {

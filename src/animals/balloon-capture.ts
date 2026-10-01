@@ -10,6 +10,7 @@ const PAINT_PALETTES: Record<BalloonAnimalId, readonly [string, string]> = {
   chicken: ['#f6c94d', '#e97836'],
   duck: ['#45a36c', '#d6a34d'],
   goose: ['#fff2df', '#ed8543'],
+  frog: ['#6ab84e', '#f3ecc9'],
 }
 
 export interface CapturePose {
@@ -67,7 +68,7 @@ interface CaptureSparkle {
 interface RigPoseNode {
   readonly object: THREE.Object3D
   readonly base: THREE.Euler
-  readonly kind: 'pig-head' | 'pig-leg' | 'wing' | 'goose-neck' | 'goose-head' | 'duck-head' | 'sheep-tail' | 'cow-head'
+  readonly kind: 'pig-head' | 'pig-leg' | 'wing' | 'goose-neck' | 'goose-head' | 'duck-head' | 'sheep-tail' | 'cow-head' | 'frog-bulge'
   readonly side: number
 }
 
@@ -204,6 +205,15 @@ function captureGesture(id: BalloonAnimalId, time: number, duration: number): Ca
         roll: Math.sin(time * 2.2) * 0.05 * active,
         yaw: Math.sin(time * 1.5) * 0.06 * active,
       }
+    case 'frog':
+      // A delighted little hop on the spot, the way it moves everywhere else.
+      return {
+        fill,
+        lift: active * (0.02 + Math.max(0, Math.sin(time * 7.2)) * 0.2),
+        pitch: Math.sin(time * 3.4) * 0.06 * active,
+        roll: Math.sin(time * 4.6) * 0.075 * active,
+        yaw: Math.sin(time * 2.4) * 0.09 * active,
+      }
   }
 }
 
@@ -221,6 +231,8 @@ function buildRigPose(actor: THREE.Object3D | null, id: BalloonAnimalId): RigPos
       else if (id === 'goose' && name.includes('rig') && name.includes('tall swanlike neck')) kind = 'goose-neck'
       else if (id === 'goose' && name.includes('rig') && name.includes('proud little head')) kind = 'goose-head'
       else if (id === 'duck' && name.includes('rig') && name.includes('bright emerald head')) kind = 'duck-head'
+    } else if (id === 'frog') {
+      if (name.includes('rig') && name.includes('eye bulge')) kind = 'frog-bulge'
     } else if (id === 'sheep' && name.includes('rig') && name.includes('bobbing wool tail')) {
       kind = 'sheep-tail'
     } else if (id === 'cow' && name.includes('rig') && name.includes('friendly head')) {
@@ -264,6 +276,11 @@ function animateSignaturePose(nodes: readonly RigPoseNode[], id: BalloonAnimalId
         break
       case 'cow-head':
         y = Math.sin(time * 4) * 0.08 * active
+        break
+      case 'frog-bulge':
+        // The googly-eyed pop: each eye mound rocks outward as the paint lands.
+        z = side * Math.sin(time * 5.6) * 0.12 * active
+        y = Math.sin(time * 4.4 + side) * 0.05 * active
         break
     }
     object.rotation.set(base.x + x, base.y + y, base.z + z)

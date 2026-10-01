@@ -1,4 +1,4 @@
-"""Create Animal Balloon Farm sheep, cow, chicken, duck and goose assets.
+"""Create Animal Balloon Farm sheep, cow, chicken, duck, goose and frog assets.
 
 Run from the repository root:
   blender --background --factory-startup --python art/blender/balloon_friends.py
@@ -162,6 +162,13 @@ def materials(animal):
         base["leg"] = mat("CHICKEN · warm orange legs", "#c96b43", .29, .01, .32)
         base["belly"] = mat("CHICKEN · vanilla balloon bib", "#fff0cf", .24, .01, .50)
         base["collar"] = mat("CHICKEN · little golden bell ribbon", "#e7a942", .22, .30, .42)
+    elif animal.lower() == "frog":
+        base["body"] = mat("FROG · leaf-green balloon skin", "#6ab84e", .21, .02, .60)
+        base["head"] = mat("FROG · spring-green head balloon", "#79c55b", .20, .02, .62)
+        base["belly"] = mat("FROG · buttercream belly balloon", "#f3ecc9", .24, .01, .52)
+        base["leg"] = mat("FROG · deep moss shank balloons", "#4c8f3e", .24, .01, .48)
+        base["foot"] = mat("FROG · padded webbed feet", "#5aa548", .23, .01, .50)
+        base["collar"] = mat("FROG · little brass bell ribbon", "#eabd61", .20, .30, .48)
     elif animal.lower() == "duck":
         base["body"] = mat("DUCK · honey-gold balloon plumage", "#d6a34d", .22, .02, .58)
         base["breast"] = mat("DUCK · warm chestnut breast balloon", "#86513d", .25, .01, .50)
@@ -701,6 +708,90 @@ def make_goose():
     export_asset(root, "goose")
 
 
+def add_frog_legs(body, m, animal):
+    """Front arms held just off the ground; long folded back legs with webbed feet."""
+    positions, legs, feet = [], [], []
+    for side, label in ((-1, "near"), (1, "far")):
+        sphere(f"{animal.upper()} · {label} shoulder balloon", (.46, side * .40, -.16), (.17, .15, .16), m["body"], body, 26, 18)
+        arm = pivot(f"{animal.upper()} RIG · {label} front arm", (.50, side * .42, -.28), body)
+        legs.append(arm)
+        sphere(f"{animal.upper()} · {label} little arm balloon", (0, 0, -.09), (.11, .10, .15), m["body"], arm, 24, 16)
+        hand = pivot(f"{animal.upper()} RIG · {label} small hand", (.02, 0, -.22), arm)
+        feet.append(hand)
+        for toe_index, spread in enumerate((-.055, 0, .055)):
+            sphere(f"{animal.upper()} · {label} hand toe {toe_index + 1}", (.085 + abs(spread), spread * 1.7, -.018), (.115, .048, .04), m["foot"], hand, 18, 12)
+        positions.append((.50, side * .42, label))
+    for side, label in ((-1, "near"), (1, "far")):
+        sphere(f"{animal.upper()} · {label} integrated hip balloon", (-.30, side * .40, -.30), (.24, .20, .22), m["body"], body, 30, 20)
+        leg = pivot(f"{animal.upper()} RIG · {label} back leg", (-.42, side * .48, -.28), body)
+        legs.append(leg)
+        sphere(f"{animal.upper()} · {label} folded thigh balloon", (-.06, 0, -.06), (.30, .24, .26), m["body"], leg, 34, 22)
+        curve(f"{animal.upper()} · {label} long moss shank", [(-.02, 0, -.14), (-.01, 0, -.22), (.02, 0, -.28)], .055, m["leg"], leg, 3)
+        sphere(f"{animal.upper()} · {label} soft ankle", (.025, 0, -.24), (.082, .076, .068), m["leg"], leg, 22, 14)
+        foot = pivot(f"{animal.upper()} RIG · {label} webbed foot", (.03, 0, -.29), leg)
+        feet.append(foot)
+        sphere(f"{animal.upper()} · {label} webbed foot pad", (0, 0, -.005), (.17, .15, .05), m["foot"], foot, 26, 16)
+        center_toe = sphere(f"{animal.upper()} · {label} center webbed toe", (.24, 0, -.025), (.24, .07, .045), m["foot"], foot, 22, 14)
+        center_toe.rotation_euler[2] = math.radians(-3)
+        for toe_index, side_sign in enumerate((-1, 1)):
+            toe = sphere(f"{animal.upper()} · {label} outer webbed toe {toe_index + 1}", (.19, side_sign * .11, -.022), (.20, .068, .042), m["foot"], foot, 22, 14)
+            toe.rotation_euler[2] = math.radians(side_sign * 24)
+            curve(f"{animal.upper()} · {label} toe seam {toe_index + 1}", [(.07, side_sign * .05, -.005), (.16, side_sign * .095, -.007), (.27, side_sign * .16, -.01)], .008, m["seam"], foot, 2)
+        positions.append((-.42, side * .48, label))
+    return positions, legs, feet
+
+
+def make_frog():
+    m = materials("FROG")
+    root = pivot("BALLOON FROG · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_frog"
+    root["forward_axis"] = "+X"
+    root["description"] = "Leaf-green balloon frog with a buttercream belly, blink-bulge eyes and long webbed feet"
+    body_z = .62
+    body = pivot("FROG RIG · squat lily-pad body", (0, 0, body_z), root)
+    sphere("FROG · wide leaf-green balloon body", (0, 0, 0), (1.05, .74, .48), m["body"], body, 48, 32)
+    sphere("FROG · buttercream belly balloon", (.30, 0, -.16), (.72, .56, .40), m["belly"], body, 42, 28)
+    sphere("FROG · satin body gleam", (-.12, -.716, .14), (.42, .022, .22), m["highlight"], body, 28, 18).rotation_euler[1] = math.radians(-13)
+
+    neck = pivot("FROG RIG · short neck", (.44, 0, .06), body)
+    sphere("FROG · neck-to-body balloon join", (-.03, 0, .02), (.30, .30, .34), m["body"], neck, 32, 22)
+    head = pivot("FROG RIG · wide grin head", (0, 0, .34), neck)
+    sphere("FROG · spring-green head balloon", (.02, 0, .02), (.52, .40, .42), m["head"], head, 44, 30)
+
+    # Two blink-bulge mounds carry the eyes the way a frog's skull does, so the
+    # eyes read as part of the head rather than balloons stuck to its sides.
+    # They are the `ears` argument of animate(): a tiny idle wobble, and the
+    # capture flourish's signature googly-eyed pop (see buildRigPose).
+    bulges = []
+    for side, label in ((-1, "near"), (1, "far")):
+        bulge = pivot(f"FROG RIG · {label} eye bulge", (-.02, side * .30, .40), head)
+        bulges.append(bulge)
+        sphere(f"FROG · {label} eye bulge balloon", (0, 0, .02), (.165, .165, .15), m["head"], bulge, 30, 20)
+        sphere(f"FROG · {label} bulge gleam", (.06, side * .10, .13), (.030, .018, .020), m["highlight"], bulge, 14, 10)
+
+    # Eyes sit just under each bulge, poking out of the wide head sides. Keep
+    # the `dark pupil` / `starry catchlight` names: heart eyes match them.
+    for side, label in ((-1, "near"), (1, "far")):
+        sphere(f"FROG · {label} bright eye", (.16, side * .39, .17), (.135, .075, .15), m["white"], head, 28, 18)
+        sphere(f"FROG · {label} dark pupil", (.22, side * .45, .175), (.062, .034, .084), m["eye"], head, 22, 14)
+        sphere(f"FROG · {label} starry catchlight", (.245, side * .475, .21), (.024, .014, .026), m["white"], head, 14, 10)
+        cheek = sphere(f"FROG · {label} rosy cheek", (.30, side * .42, -.10), (.075, .022, .045), m["inner"], head, 22, 14)
+        cheek.rotation_euler[1] = math.radians(-12)
+
+    curve("FROG · wide happy grin", [(.52, -.30, -.14), (.64, 0, -.20), (.52, .30, -.14)], .016, m["seam"], head, 2)
+    for side, label in ((-1, "near"), (1, "far")):
+        sphere(f"FROG · {label} nostril", (.50, side * .10, .18), (.020, .016, .014), m["seam"], head, 14, 10)
+
+    bell = add_collar(body, neck, m, "FROG")
+    tail = pivot("FROG RIG · balloon knot wobble", (-.98, 0, .04), body)
+    sphere("FROG · tied tail-end balloon knot", (0, 0, 0), (.11, .13, .11), m["leg"], tail, 22, 16)
+    positions, legs, feet = add_frog_legs(body, m, "frog")
+    animate("frog", body, head, neck, bulges, tail, legs, feet, bell, positions,
+            forward_gait=True, body_z=body_z, leg_anchor=-.28)
+    portrait("frog", m)
+    export_asset(root, "frog")
+
+
 def reset_scene():
     scene = bpy.context.scene
     scene.world = None
@@ -712,7 +803,7 @@ def reset_scene():
                 collection.remove(block)
 
 
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose}
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog}
 arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
 invalid = [value for value in requested if value not in MAKERS]

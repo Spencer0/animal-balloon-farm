@@ -61,6 +61,12 @@ export const ANIMAL_CATALOG = [
     note: 'Give this tall visitor a wave when it wanders by.', color: '#fff2df', gesture: 'Takes flight',
     assetUrl: 'assets/animals/balloon-goose.glb', spawn: [0.4, -5], carnivalSpawn: [26, 4], showcaseSpawn: [7, 3.2], seed: 4801, size: 2.35, speed: 0.8, bounds: { x: 10.5, z: 6.1 },
   },
+  {
+    id: 'frog', name: 'Frog', label: 'frog', spriteUrl: 'assets/animals/balloon-frog-review.png',
+    subtitle: 'The lily-pad hopper', description: 'A wide-grinned pond friend who springs, bounces and lands wherever the water sings.',
+    note: 'Follow the splash sounds — that bobbing green dot is the frog, mid-hop.', color: '#6ab84e', gesture: 'Springs skyward',
+    assetUrl: 'assets/animals/balloon-frog.glb', spawn: [-5.6, -5.2], carnivalSpawn: [21, 14], showcaseSpawn: [-11, 0], seed: 6107, size: 1.9, speed: 0.85, bounds: { x: 10.5, z: 6.1 },
+  },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']

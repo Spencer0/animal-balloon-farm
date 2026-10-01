@@ -184,6 +184,14 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       LOVE_THE_FARM('waterArea', 20, 'Wants a proper stretch of water to patrol.', 0.75),
     ]),
   },
+  frog: {
+    stages: withStageNumbers([
+      CARNIVAL,
+      ENTER_FARM('Springs over the fence and sits in the mud to listen.'),
+      CALL_HOME('waterArea', 12, 'Wants a proper frog pond to dip its toes in.', 0.75),
+      LOVE_THE_FARM('waterArea', 24, 'Wants a wide wetland, and plenty of grass along the banks.', 0.75),
+    ]),
+  },
 }
 
 /** Species that begin the game already turned up at the carnival. */
@@ -199,6 +207,7 @@ export const CARNIVAL_STARTERS: readonly string[] = ['cow', 'sheep', 'chicken', 
 export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonly description: string }>> = {
   pig: { kind: 'grassArea', amount: 8, description: 'A patch of grass catches the eye of something rooting around.' },
   goose: { kind: 'waterArea', amount: 5, description: 'Water somewhere on the farm draws the waddlers over.' },
+  frog: { kind: 'waterArea', amount: 4, description: 'A little water is sure to bring something green and bouncy.' },
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {
