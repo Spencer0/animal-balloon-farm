@@ -17,6 +17,8 @@ import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, type PlantId, type PlantSubstrate
 import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
 import { animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
+import { createCameraTour, type CameraTour, type CameraTourSubject } from './game/camera-tour'
+import { cameraPanStep } from './game/camera-rig'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { createJournalPanel } from './ui/journal-panel'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
@@ -466,7 +468,6 @@ let dragPointer: number | null = null
 let toolPointer: number | null = null
 let previousPointer = { x: 0, y: 0 }
 let dragMode: 'orbit' | 'pan' | null = null
-let spaceHeld = false
 const pressedKeys = new Set<string>()
 let pointerPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
 let pointerWasSeen = false
@@ -688,6 +689,15 @@ const lastPointerClient = { x: -1, y: -1 }
 for (const panel of panels) ui.add(panel)
 
 function selectGardenTool(id: GardenToolId): void {
+  // Space toggles the camera: pressing it again hands the farm back to the
+  // Hand tool rather than leaving the framing mode armed. The tool bar has
+  // already updated its own selection by the time it calls back here, so the
+  // genuinely-before tool is the one the garden tools still hold.
+  if (id === 'camera' && gardenTools?.selectedTool === 'camera') {
+    selectGardenTool('hand')
+    return
+  }
+  if (id !== 'camera') endCameraTour(true)
   gardenPlants?.cancelPlacement()
   gardenProps?.cancelPlacement()
   seedbox.setPlacementActive(false)
@@ -696,7 +706,7 @@ function selectGardenTool(id: GardenToolId): void {
   if (gardenTools) {
     // Tapping the active tool's hotkey again cycles its brush size rather than
     // re-selecting what is already selected. Hand has no brush size to cycle.
-    if (gardenTools.selectedTool === id && id !== 'hand') gardenTools.cycleBrushSize()
+    if (gardenTools.selectedTool === id && id !== 'hand' && id !== 'camera') gardenTools.cycleBrushSize()
     else if (gardenTools.selectedTool !== id) gardenTools.selectTool(id)
   }
   toolsHud.setSelectedTool(id)
@@ -715,6 +725,9 @@ function handleMenuChoice(choice: MenuChoice): void {
 }
 
 function setMode(next: GameMode): void {
+  // Neither destination wants a tour running: the viewer stages its own camera
+  // and the farm restores its opening framing below.
+  endCameraTour(false)
   if (next !== 'farm') {
     salePanel.close()
     seedbox.close()
@@ -815,6 +828,137 @@ if (lastPointerClient.x < 0) {
   setCursor('hand', gameCanvas)
 }
 
+// ------------------------------------------------------------- camera tool --
+// The farm's own moves (edge pan, WASD, wheel zoom) are always available. The
+// camera tool adds an explicit framing mode on top:
+//   left-drag    orbits the view around whatever it is looking at,
+//   right-click  runs a cinematic tour over the farm,
+//   middle-click returns to the opening shot.
+// The tour saves the view it replaced, so leaving it puts the player back
+// exactly where they were rather than somewhere along the tour route.
+
+interface SavedCameraView {
+  readonly target: THREE.Vector3
+  readonly position: THREE.Vector3
+  readonly direction: THREE.Vector3
+  readonly halfHeight: number
+  readonly distance: number
+}
+
+let cameraTour: CameraTour | null = null
+let cameraTourSeed = 0
+let savedCameraView: SavedCameraView | null = null
+/** The tour's live orbit, eased onto the sequencer's angle so a tour glides. */
+let tourAngle = 0
+let tourPhi = 1
+const tourLookAt = new THREE.Vector3()
+const tourDesiredLookAt = new THREE.Vector3()
+const tourOffset = new THREE.Vector3()
+
+/** Is the camera tool the one in hand, i.e. are its gestures armed? */
+function cameraToolSelected(): boolean {
+  return toolsHud.selectedTool === 'camera'
+}
+
+/** The tools that edit the farm. Hand selects, camera frames; neither digs. */
+function isWorldToolActive(): boolean {
+  const tool = toolsHud.selectedTool
+  return tool === 'grass' || tool === 'shovel' || tool === 'water'
+}
+
+function beginCameraTour(seed = Math.floor(Math.random() * 0xffffffff)): boolean {
+  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || seedbox.isOpen || shopPanel.isOpen) return false
+  savedCameraView = {
+    target: cameraTarget.clone(),
+    position: camera.position.clone(),
+    direction: viewDirection.clone(),
+    halfHeight: viewHalfHeight,
+    distance: cameraDistance,
+  }
+  cameraTourSeed = seed >>> 0
+  cameraTour = createCameraTour(cameraTourSeed)
+  tourLookAt.copy(cameraTarget)
+  // Start the orbit where the player is already looking, so the tour swings
+  // into place instead of cutting to a fresh angle.
+  const openingOffset = new THREE.Vector3().subVectors(camera.position, cameraTarget)
+  const openingRadius = Math.max(1e-6, openingOffset.length())
+  tourAngle = Math.atan2(openingOffset.x, openingOffset.z)
+  tourPhi = THREE.MathUtils.clamp(Math.acos(THREE.MathUtils.clamp(openingOffset.y / openingRadius, -1, 1)), 0.36, 1.17)
+  // A tour owns the camera outright, so a half-finished drag must not fight it.
+  dragPointer = null
+  dragMode = null
+  return true
+}
+
+/** Leave the tour. `restore` puts back the framing the tour interrupted. */
+function endCameraTour(restore: boolean): void {
+  if (!cameraTour) return
+  cameraTour = null
+  if (restore && savedCameraView) {
+    cameraTarget.copy(savedCameraView.target)
+    camera.position.copy(savedCameraView.position)
+    viewDirection.copy(savedCameraView.direction)
+    viewHalfHeight = savedCameraView.halfHeight
+    cameraDistance = savedCameraView.distance
+    camera.lookAt(cameraTarget)
+    camera.updateMatrixWorld()
+    updateCameraProjection()
+  }
+  savedCameraView = null
+}
+
+/** Snap back to the opening shot: the framing the farm starts the game with. */
+function resetCameraToStart(): void {
+  endCameraTour(false)
+  focusCamera()
+}
+
+/** Who the tour could pin to: every animal still living at the farm. */
+function tourSubjects(): CameraTourSubject[] {
+  return animals
+    .filter((animal) => !animal.isSold && animal.root.visible)
+    .map((animal) => ({
+      id: animal.id,
+      x: +animal.root.position.x.toFixed(3),
+      y: +animal.root.position.y.toFixed(3),
+      z: +animal.root.position.z.toFixed(3),
+    }))
+}
+
+function updateCameraTour(deltaSeconds: number): void {
+  if (!cameraTour) return
+  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || seedbox.isOpen || shopPanel.isOpen) {
+    endCameraTour(true)
+    return
+  }
+  const shot = cameraTour.tick(deltaSeconds, tourSubjects())
+  if (shot.subject) tourDesiredLookAt.set(shot.subject.x, shot.lookAtHeight, shot.subject.z)
+  else tourDesiredLookAt.set(0, shot.lookAtHeight, 0)
+  // Exponential easing: fast enough to keep up with a walking animal, slow
+  // enough that a shot change reads as a glide instead of a cut.
+  const blend = 1 - Math.exp(-deltaSeconds * 2.1)
+  tourLookAt.lerp(tourDesiredLookAt, blend)
+  viewHalfHeight += (shot.viewHeight / 2 - viewHalfHeight) * blend
+  // Ease along the short way round the circle, so a tour opening from the
+  // player's angle and a shot swap both read as a swing, not a cut.
+  const angleDelta = Math.atan2(Math.sin(shot.orbitAngle - tourAngle), Math.cos(shot.orbitAngle - tourAngle))
+  tourAngle += angleDelta * blend
+  // A breath of vertical drift, so the orbit reads as hand-held rather than
+  // turntable-exact.
+  const targetPhi = THREE.MathUtils.clamp(0.92 + Math.sin(performance.now() * 0.00021) * 0.045, 0.36, 1.17)
+  tourPhi += (targetPhi - tourPhi) * blend
+  tourOffset.setFromSphericalCoords(cameraDistance, tourPhi, tourAngle)
+  // Keep the shared look-at in sync: the expansion shake and the debug
+  // harness both read `cameraTarget`, so a tour that only aimed the camera
+  // would have been yanked back to the old target by either of them.
+  cameraTarget.copy(tourLookAt)
+  camera.position.copy(cameraTarget).add(tourOffset)
+  viewDirection.copy(tourOffset).normalize()
+  camera.lookAt(cameraTarget)
+  camera.updateMatrixWorld()
+  updateCameraProjection()
+}
+
 // -------------------------------------------------------------------- input --
 
 function pointerDesign(event: PointerEvent) {
@@ -845,6 +989,12 @@ function updateCursor(point: DesignPoint | null): void {
       return
     }
   }
+  // The camera tool turns the pointer into a camera wherever it is over the
+  // farm itself; the panels above still get to keep their own pointer.
+  if (cameraToolSelected() && mode === 'farm' && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
+    setCursor('camera', gameCanvas)
+    return
+  }
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
     const markerKind = gardenPlants?.markerKindAt(lastPointerClient.x, lastPointerClient.y)
     if (markerKind) {
@@ -859,7 +1009,7 @@ function updateCursor(point: DesignPoint | null): void {
       return
     }
   }
-  if (toolsHud.selectedTool !== 'hand' && !gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
+  if (toolsHud.selectedTool !== 'hand' && !cameraToolSelected() && !gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
     setCursor('hidden', gameCanvas)
     return
   }
@@ -922,12 +1072,19 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
 }
 
 function updateCameraPan(deltaSeconds: number): void {
-  if (mode !== 'farm' || menu.isOpen || deltaSeconds <= 0 || spaceHeld) return
+  if (mode !== 'farm' || menu.isOpen || deltaSeconds <= 0) return
   let horizontal = Number(pressedKeys.has('d') || pressedKeys.has('arrowright'))
     - Number(pressedKeys.has('a') || pressedKeys.has('arrowleft'))
   let vertical = Number(pressedKeys.has('w') || pressedKeys.has('arrowup'))
     - Number(pressedKeys.has('s') || pressedKeys.has('arrowdown'))
   let edgeStrength = 0
+
+  if (cameraTour) {
+    // A key takes the camera back from the tour; a mouse resting near the edge
+    // does not, or the tour would end the moment the pointer drifted.
+    if (Math.abs(horizontal) + Math.abs(vertical) < 0.001) return
+    endCameraTour(true)
+  }
 
   if (pointerWasSeen && dragPointer === null && toolPointer === null
     && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
@@ -1007,6 +1164,30 @@ function orbitPointerDown(event: PointerEvent): void {
   if (uiPointerDown(event)) return
   if (menu.isOpen || mode === 'viewer') return
   const selectedTool = gardenTools?.selectedTool ?? 'hand'
+  // The camera tool owns every button it can reach; no farm tool sees these.
+  if (cameraToolSelected() && !isOverGameHUD(event.clientX, event.clientY)) {
+    if (event.button === 0) {
+      event.preventDefault()
+      // A drag takes the camera over from a tour at the pose the tour reached.
+      endCameraTour(false)
+      dragPointer = event.pointerId
+      dragMode = 'orbit'
+      previousPointer = { x: event.clientX, y: event.clientY }
+      if (event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
+      return
+    }
+    if (event.button === 1) {
+      event.preventDefault()
+      resetCameraToStart()
+      return
+    }
+    if (event.button === 2) {
+      event.preventDefault()
+      if (cameraTour) endCameraTour(true)
+      else beginCameraTour()
+      return
+    }
+  }
   if (event.button === 0 && selectedTool === 'hand' && !isOverGameHUD(event.clientX, event.clientY)) {
     // Placement owns the click outright while a prop is on the ghost.
     if (gardenProps?.placingId) {
@@ -1084,9 +1265,10 @@ function orbitPointerDown(event: PointerEvent): void {
     return
   }
   if (event.button === 0 && event.detail >= 2) return
-  // Middle click levels with the shovel; Space+left-drag explicitly orbits.
+  // Middle click levels with the shovel. With the Hand tool, left-drag orbits
+  // the farm and right-drag pans it; the farm tools keep their own buttons.
   if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
-  if (event.button === 2 && selectedTool !== 'hand' && !isOverGameHUD(event.clientX, event.clientY) && gardenTools?.pointerDown(event)) {
+  if (event.button === 2 && isWorldToolActive() && !isOverGameHUD(event.clientX, event.clientY) && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
@@ -1094,24 +1276,26 @@ function orbitPointerDown(event: PointerEvent): void {
   }
   // Tool selections are handled by the shared HUD above. Right-click belongs
   // to the active garden tool inside the plot; outside the plot it remains a pan.
-  const cameraGesture = event.button === 0 && spaceHeld
-  if (!spaceHeld && isOverGameHUD(event.clientX, event.clientY)) {
+
+  if (isOverGameHUD(event.clientX, event.clientY)) {
     event.preventDefault()
     return
   }
-  if (!cameraGesture && event.button === 0 && selectedTool !== 'hand' && gardenTools?.pointerDown(event)) {
-    event.preventDefault()
-    toolPointer = event.pointerId
-    if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
-    return
-  }
-  if (event.button === 1 && selectedTool !== 'hand' && gardenTools?.pointerDown(event)) {
+  if (event.button === 0 && isWorldToolActive() && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
     return
   }
-  if (gardenDebugMode || selectedTool === 'hand') return
+  if (event.button === 1 && isWorldToolActive() && gardenTools?.pointerDown(event)) {
+    event.preventDefault()
+    toolPointer = event.pointerId
+    if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
+    return
+  }
+  // In the debug harness, synthetic drags (the garden-drag script) must not
+  // move the camera; a real player's drag in a debug build still should.
+  if (gardenDebugMode && !event.isTrusted) return
   dragPointer = event.pointerId
   dragMode = event.button === 2 ? 'pan' : 'orbit'
   previousPointer = { x: event.clientX, y: event.clientY }
@@ -1122,7 +1306,7 @@ function orbitPointerMove(event: PointerEvent): void {
   if (uiPointerMove(event)) return
   if (gardenProps?.placingId) gardenProps.pointerMove(event)
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove(event)
-  gardenTools?.pointerMove(event)
+  if (isWorldToolActive()) gardenTools?.pointerMove(event)
   updateCursor(pointerDesign(event))
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
   const dx = event.clientX - previousPointer.x
@@ -1132,8 +1316,11 @@ function orbitPointerMove(event: PointerEvent): void {
     const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
     const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1)
     const panScale = viewHalfHeight / Math.max(1, window.innerHeight)
-    targetOffset.addScaledVector(cameraRight, -dx * panScale)
-    targetOffset.addScaledVector(cameraUp, dy * panScale)
+    // Per-move delta only: `cameraPanStep` is deliberately stateless. The old
+    // version accumulated into a shared offset, so every pan move re-applied
+    // all the previous ones and the camera accelerated away.
+    const step = cameraPanStep(cameraRight, cameraUp, dx, dy, panScale)
+    targetOffset.set(step.x, step.y, step.z)
     cameraTarget.add(targetOffset)
     camera.position.copy(cameraTarget).addScaledVector(viewDirection, cameraDistance)
     camera.lookAt(cameraTarget)
@@ -1186,6 +1373,8 @@ function handleZoom(event: WheelEvent): void {
     }
   }
   event.preventDefault()
+  // Zooming takes the camera back from a running tour at its current pose.
+  if (cameraTour) endCameraTour(false)
   viewHalfHeight = THREE.MathUtils.clamp(viewHalfHeight * Math.exp(event.deltaY * 0.001), CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM)
   updateCameraProjection()
 }
@@ -1195,11 +1384,19 @@ function isTextInputTarget(target: EventTarget | null): boolean {
     && (target.isContentEditable || Boolean(target.closest('input, textarea, select, [contenteditable="true"]')))
 }
 
+/**
+ * The key a tool definition would name, with one wrinkle: the camera tool's
+ * hotkey is the space bar, whose `event.key` is the character " ".
+ */
+function toolHotkey(event: KeyboardEvent): string {
+  return event.code === 'Space' ? 'space' : event.key.toLowerCase()
+}
+
 const PAN_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright']
 
 function handleKeyDown(event: KeyboardEvent): void {
   if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
-    const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === event.key.toLowerCase())
+    const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event))
     if (tool) {
       event.preventDefault()
       selectGardenTool(tool.id)
@@ -1228,7 +1425,8 @@ function handleKeyDown(event: KeyboardEvent): void {
   }
   if (event.altKey || event.ctrlKey || event.metaKey || isTextInputTarget(event.target)) return
   if (event.code === 'Space') {
-    spaceHeld = true
+    // The tool bar claims Space while it is on screen; this only keeps the page
+    // itself from scrolling when a screen owns the keys instead.
     event.preventDefault()
     return
   }
@@ -1236,6 +1434,13 @@ function handleKeyDown(event: KeyboardEvent): void {
   if (key === '1') {
     event.preventDefault()
     selectGardenTool('hand')
+    return
+  }
+  if (event.key === 'Escape' && cameraTour) {
+    // Escape leaves the tour before it means anything else, so a tour ends
+    // where it started instead of dropping the player into the menu.
+    event.preventDefault()
+    endCameraTour(true)
     return
   }
   if (PAN_KEYS.includes(key)) {
@@ -1271,7 +1476,6 @@ function handleKeyDown(event: KeyboardEvent): void {
 
 function handleKeyUp(event: KeyboardEvent): void {
   pressedKeys.delete(event.key.toLowerCase())
-  if (event.code === 'Space') spaceHeld = false
   if (menu.isOpen || journal.isOpen) return
   if (!isTextInputTarget(event.target) && ['arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(event.key.toLowerCase())) {
     event.preventDefault()
@@ -1294,7 +1498,6 @@ function handleWindowPointerMove(event: PointerEvent): void {
 
 function handleWindowBlur(): void {
   pressedKeys.clear()
-  spaceHeld = false
   pointerWasSeen = false
 }
 
@@ -1431,6 +1634,16 @@ interface GardenDebugHarness {
    * — a pond and the lily pads planted in it, say.
    */
   focusPoint(x: number, z: number, height?: number): void
+  /** Camera pose and tour state, for verifying framing without screenshots. */
+  camera(): CameraDebugReport
+  /** Advance the cinematic tour by `seconds` of simulated time, no waiting. */
+  advanceTour(seconds: number): CameraDebugReport
+  /** Start the cinematic tour on a fixed seed so a review pass is repeatable. */
+  startTour(seed?: number): boolean
+  /** Leave the tour; `restore` puts back the framing it interrupted. */
+  endTour(restore?: boolean): void
+  /** Snap the farm camera back to its opening shot. */
+  resetCamera(): void
   /** Put coins in the wallet without farming for them, so the shop can be driven. */
   grantCoins(amount: number): number
   /** Open the storefront screen without walking up to the building. */
@@ -1443,6 +1656,20 @@ interface GardenDebugHarness {
   propReport(): unknown
   /** Hand-tool pick-up at a client point; returns the prop returned to the box. */
   pickUpProp(clientX: number, clientY: number): string | null
+}
+
+/** Where the farm camera is pointing, and what the tour is doing with it. */
+interface CameraDebugReport {
+  readonly mode: GameMode
+  readonly target: { readonly x: number; readonly y: number; readonly z: number }
+  readonly position: { readonly x: number; readonly y: number; readonly z: number }
+  readonly viewHeight: number
+  readonly tour: {
+    readonly active: boolean
+    readonly seed: number
+    readonly view: 'vista' | 'subject' | null
+    readonly subject: string | null
+  }
 }
 
 /** What a harness planting attempt did, and what the farm now counts. */
@@ -1662,6 +1889,18 @@ function summarizeFrameTimings(): GardenPerformanceSummary | null {
 }
 
 if (__GARDEN_DEBUG__ && gardenDebugMode) {
+  const cameraReport = (): CameraDebugReport => ({
+    mode,
+    target: { x: +cameraTarget.x.toFixed(3), y: +cameraTarget.y.toFixed(3), z: +cameraTarget.z.toFixed(3) },
+    position: { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) },
+    viewHeight: +(viewHalfHeight * 2).toFixed(3),
+    tour: {
+      active: cameraTour !== null,
+      seed: cameraTourSeed,
+      view: cameraTour?.view ?? null,
+      subject: cameraTour?.subjectId ?? null,
+    },
+  })
   const debugHarness: GardenDebugHarness = {
     enabled: true,
     state: () => ({
@@ -1798,6 +2037,18 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     focusPoint: (x, z, height = 14) => {
       frameAt(new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z), height)
     },
+    camera: () => cameraReport(),
+    advanceTour: (seconds) => {
+      // Fixed steps so a review pass replays identically; the cap keeps a typo
+      // from locking the tab up.
+      const step = 1 / 60
+      const steps = Math.max(0, Math.min(60 * 120, Math.round(seconds / step)))
+      for (let index = 0; index < steps; index += 1) updateCameraTour(step)
+      return cameraReport()
+    },
+    startTour: (seed) => beginCameraTour(seed),
+    endTour: (restore = true) => { endCameraTour(restore) },
+    resetCamera: () => { resetCameraToStart() },
     grantCoins: (amount) => {
       const balance = wallet.credit(amount)
       salePanel.setWallet(balance)
@@ -1900,6 +2151,7 @@ function frame(now: number): void {
   stageStartedAt = timingEnabled ? performance.now() : 0
   viewerStage?.update(delta)
   updateMenuDrift(delta, now / 1000)
+  updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
   // The condition ladder runs after the animals have moved, so a settle
   // triggered this frame is applied against the farm as it is right now.
@@ -1941,7 +2193,7 @@ function frame(now: number): void {
   if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
     if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
     gardenProps?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
-    gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
+    if (isWorldToolActive()) gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
   } else {
     gardenPlants?.pointerLeave()
     gardenProps?.pointerLeave()

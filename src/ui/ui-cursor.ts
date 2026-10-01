@@ -3,7 +3,7 @@
  * task-specific cursors are used for planting, watering, and pruning.
  */
 
-export type UiCursorKind = 'hand' | 'point' | 'grab' | 'hidden' | 'default' | 'plant' | 'prune' | 'water' | 'select'
+export type UiCursorKind = 'hand' | 'point' | 'grab' | 'hidden' | 'default' | 'plant' | 'prune' | 'water' | 'select' | 'camera'
 
 const FRAMES: Record<'hand' | 'point', string> = {
   hand: 'assets/cursors/bee-idle.png',
@@ -35,6 +35,13 @@ export function setCursor(kind: UiCursorKind, canvas: HTMLCanvasElement): void {
   if (kind === 'hand' || kind === 'default') {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="44" viewBox="0 0 40 44"><path d="M8 20a3 3 0 0 1 6 0v-9a3 3 0 0 1 6 0v7-11a3 3 0 0 1 6 0v11-7a3 3 0 0 1 6 0v11-4a3 3 0 0 1 6 0v10c0 8-5 13-12 13h-3c-5 0-8-2-11-7l-5-8a3 3 0 0 1 5-3l2 3Z" fill="#fff4d5" stroke="#654b34" stroke-width="2.5" stroke-linejoin="round"/><path d="M11 20v6m6-15v13m6-16v15m6-11v11m6-4v5" fill="none" stroke="#d6ae71" stroke-width="1.5" stroke-linecap="round"/></svg>'
     canvas.style.cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 11 10, pointer`
+    return
+  }
+  if (kind === 'camera') {
+    // The camera tool turns the pointer into the camera itself; the hotspot is
+    // the lens, so aiming the cursor aims the shot.
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="40" viewBox="0 0 44 40"><path d="M5 13a4 4 0 0 1 4-4h3l2.4-4h15.2L32 9h3a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V13Z" fill="#fff4d5" stroke="#654b34" stroke-width="2.5" stroke-linejoin="round"/><circle cx="22" cy="21" r="8.5" fill="#8fd3de" stroke="#654b34" stroke-width="2.5"/><circle cx="22" cy="21" r="3.2" fill="#fff4d5" stroke="#654b34" stroke-width="1.6"/><circle cx="33" cy="14" r="2.2" fill="#e8b45c" stroke="#654b34" stroke-width="1.4"/></svg>'
+    canvas.style.cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 22 21, crosshair`
     return
   }
   if (kind === 'plant') {

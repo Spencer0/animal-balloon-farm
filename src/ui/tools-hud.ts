@@ -63,18 +63,28 @@ function createGlowTexture(): THREE.CanvasTexture {
   return texture
 }
 
-/** The little numbered chip that tells the player which key picks the tool. */
+/**
+ * The little key chip that tells the player which key picks the tool.
+ *
+ * Digits fit the original square, but the camera tool's key is the word
+ * "space": widen the chip to hold it rather than shrinking the type into an
+ * unreadable smudge.
+ */
 function createBadgeTexture(hotkey: string): THREE.CanvasTexture {
-  const size = 64
-  const surface = createSurface(size, size)
+  const fontFamily = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+  const height = 64
+  const measure = createSurface(height * 4, height).context
+  measure.font = `bold 34px ${fontFamily}`
+  const width = Math.max(height, Math.ceil(measure.measureText(hotkey).width) + 22)
+  const surface = createSurface(width, height)
   const context = surface.context
-  fillRoundRect(context, 4, 4, size - 8, size - 8, 16, 'rgba(48, 30, 16, .82)')
-  strokeRoundRect(context, 4, 4, size - 8, size - 8, 16, 'rgba(255, 233, 190, .55)', 2.5)
+  fillRoundRect(context, 3, 3, width - 6, height - 6, 16, 'rgba(48, 30, 16, .82)')
+  strokeRoundRect(context, 3, 3, width - 6, height - 6, 16, 'rgba(255, 233, 190, .55)', 2.5)
   context.fillStyle = '#fff3d6'
-  context.font = 'bold 34px ui-monospace, SFMono-Regular, Menlo, monospace'
+  context.font = `bold 34px ${fontFamily}`
   context.textAlign = 'center'
   context.textBaseline = 'middle'
-  context.fillText(hotkey, size / 2, size / 2 + 2)
+  context.fillText(hotkey, width / 2, height / 2 + 2)
   const texture = new THREE.CanvasTexture(surface.canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   return texture
@@ -198,9 +208,13 @@ export function createToolsHud(
       depthTest: false,
     })
     const badgeSize = 32
-    const badge = new THREE.Mesh(new THREE.PlaneGeometry(badgeSize, badgeSize), badgeMaterial)
+    // The chip's canvas is wider for multi-character keys; keep the plane in
+    // the same aspect instead of stretching the letters.
+    const badgeImage = badgeMaterial.map?.image as { width?: number; height?: number } | undefined
+    const badgeWidth = badgeSize * (badgeImage?.width && badgeImage.height ? badgeImage.width / badgeImage.height : 1)
+    const badge = new THREE.Mesh(new THREE.PlaneGeometry(badgeWidth, badgeSize), badgeMaterial)
     badge.name = `Tool key badge · ${tool.hotkey}`
-    badge.position.set(SLOT_WIDTH / 2 - badgeSize * 0.35, -SLOT_HEIGHT / 2 + badgeSize * 0.85, 3)
+    badge.position.set(SLOT_WIDTH / 2 - badgeWidth * 0.35, -SLOT_HEIGHT / 2 + badgeSize * 0.85, 3)
     badge.renderOrder = 4
     holder.add(badge)
 
@@ -340,7 +354,8 @@ export function createToolsHud(
     },
     keyDown(event: KeyboardEvent): boolean {
       if (!visible || event.altKey || event.ctrlKey || event.metaKey || event.repeat) return false
-      const tool = GARDEN_TOOLS.find((item) => item.hotkey === event.key.toLowerCase())
+      const key = event.code === 'Space' ? 'space' : event.key.toLowerCase()
+      const tool = GARDEN_TOOLS.find((item) => item.hotkey === key)
       if (!tool) return false
       event.preventDefault()
       const slot = slots.find((item) => item.id === tool.id)
