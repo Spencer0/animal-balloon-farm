@@ -71,6 +71,15 @@ export const ANIMAL_CATALOG = [
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']
 
+/**
+ * Which species the asset viewer stages. The viewer doubles as the review
+ * booth for new models: while a species is being tuned it stands here alone,
+ * framed close and paired with a single tray card, instead of sharing the
+ * stage with the whole catalog. Swap the id to review a different model, or
+ * list several to compare them side by side.
+ */
+export const VIEWER_CAST: readonly BalloonAnimalId[] = ['frog']
+
 export function getAnimalSceneOptions(
   showcaseMode: boolean,
   canvas: HTMLCanvasElement,

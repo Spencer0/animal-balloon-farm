@@ -1,7 +1,7 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
-import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
+import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST } from './animals/animal-catalog'
 import { createFarmExpansionUI } from './game/farm-expansion-ui'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
 import { createAnimalProgress, makeFarmSnapshot, startingCarnivalSpecies } from './game/animal-progress'
@@ -62,6 +62,11 @@ const normalViewHeight = 39.5
  * own wide framing because the whole fairground has to fit on screen.
  */
 const viewerViewHeight = 26
+/**
+ * Close-up framing for the solo review booth (a single-species VIEWER_CAST):
+ * the whole point is judging one model, so it fills the frame.
+ */
+const singleModelViewHeight = 6.5
 /**
  * How far below the stage the viewer's look-at point sits, in world units.
  * Lowering it lifts the stage up the screen so the animal tray along the
@@ -272,6 +277,14 @@ const viewerStands = new Map(animals.map((animal) => {
   const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
   return [animal.id, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z)]
 }))
+/**
+ * The viewer is the review booth for new models: VIEWER_CAST decides which
+ * species it stages, so a model being tuned stands there alone instead of
+ * sharing the stage with the whole catalog. The rest of the farm carries on
+ * without them and is untouched when the booth closes.
+ */
+const viewerCastAnimals = animals.filter((animal) => VIEWER_CAST.includes(animal.id))
+const viewerFocusStand = VIEWER_CAST.length === 1 ? viewerStands.get(VIEWER_CAST[0]) ?? null : null
 
 // ------------------------------------------------------- farm measurement --
 
@@ -411,12 +424,12 @@ const menu = createMenuPanel(handleMenuChoice, window.innerWidth, window.innerHe
 const viewer = createViewerPanel({
   getAnimals: () => animals,
   playAll: () => {
-    for (const animal of animals) {
+    for (const animal of viewerCastAnimals) {
       if (animal.isCaptured) animal.setAppearance('wild')
       animal.beginCapture()
     }
   },
-  resetAll: () => animals.forEach((animal) => animal.setAppearance('wild')),
+  resetAll: () => viewerCastAnimals.forEach((animal) => animal.setAppearance('wild')),
   exit: () => setMode('farm'),
   replay: (id) => {
     const animal = animalById.get(id)
@@ -424,7 +437,7 @@ const viewer = createViewerPanel({
     if (animal.isCaptured) animal.setAppearance('wild')
     animal.beginCapture()
   },
-}, window.innerWidth, window.innerHeight)
+}, window.innerWidth, window.innerHeight, VIEWER_CAST)
 
 const seedbox = createSeedboxPanel(
   (species: PlantId) => {
@@ -537,12 +550,12 @@ function setMode(next: GameMode): void {
     journal.close()
     // Swap in the showcase staging so the animals stand together on a stage.
     if (!viewerStage) {
-      viewerStage = createCaptureShowcaseStage()
+      viewerStage = createCaptureShowcaseStage(VIEWER_CAST)
       scene.add(viewerStage.root)
     }
-    // The fairground holds the animals, so they have to travel with the mode or
-    // the viewer opens onto an empty stage.
-    for (const animal of animals) {
+    // Only the cast travels to the stage; the rest of the farm stays in the
+    // fairground, which is simply removed from the scene while the booth is up.
+    for (const animal of viewerCastAnimals) {
       viewerStage.root.add(animal.root)
       animal.root.position.copy(viewerStands.get(animal.id)!)
     }
@@ -551,7 +564,9 @@ function setMode(next: GameMode): void {
   } else {
     viewer.close()
     scene.remove(viewerStage?.root ?? fairground.root)
-    for (const animal of animals) {
+    // Return only the cast; everyone else never left the fairground and keeps
+    // whatever wander they were in the middle of.
+    for (const animal of viewerCastAnimals) {
       const home = farmHomes.get(animal.id)!
       home.parent.add(animal.root)
       animal.root.position.copy(home.position)
@@ -565,10 +580,19 @@ function setMode(next: GameMode): void {
 
 function focusCamera(): void {
   targetOffset.set(0, 0, 0)
-  // The viewer's UI is a tray along the bottom, so the stage is framed a little
-  // high: look at a point under it and the animals ride above the tray.
-  cameraTarget.set(0, mode === 'viewer' ? viewerTargetY : 1.25, 0)
-  viewHalfHeight = (mode === 'viewer' ? viewerViewHeight : normalViewHeight) / 2
+  if (mode === 'viewer' && viewerFocusStand) {
+    // Solo review booth: frame just the staged plinth so the model under
+    // review fills the frame. The look-at point sits below the plinth for the
+    // same reason as the wide shot — the tray along the bottom must clear the
+    // model's feet.
+    cameraTarget.set(viewerFocusStand.x, viewerFocusStand.y - 0.8, viewerFocusStand.z)
+    viewHalfHeight = singleModelViewHeight / 2
+  } else {
+    // The viewer's UI is a tray along the bottom, so the stage is framed a little
+    // high: look at a point under it and the animals ride above the tray.
+    cameraTarget.set(0, mode === 'viewer' ? viewerTargetY : 1.25, 0)
+    viewHalfHeight = (mode === 'viewer' ? viewerViewHeight : normalViewHeight) / 2
+  }
   camera.position.copy(cameraTarget).add(initialOffset)
   viewDirection.copy(initialOffset).normalize()
   cameraDistance = initialOffset.length()
@@ -1487,7 +1511,7 @@ function frame(now: number): void {
   // The animals keep walking and following garden terrain on their own, so in
   // the viewer we pin them back onto their plinths after the update.
   if (mode === 'viewer') {
-    for (const animal of animals) animal.root.position.copy(viewerStands.get(animal.id)!)
+    for (const animal of viewerCastAnimals) animal.root.position.copy(viewerStands.get(animal.id)!)
   }
   const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0

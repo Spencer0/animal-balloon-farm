@@ -12,7 +12,12 @@ function standard(color: THREE.ColorRepresentation, roughness = 0.62): THREE.Mes
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.025 })
 }
 
-export function createCaptureShowcaseStage(): Fairground {
+/**
+ * Builds the capture-viewer stage. `cast` limits which species get plinths —
+ * the review booth stages one model at a time, so an empty stage never
+ * advertises species that are not part of the current cast.
+ */
+export function createCaptureShowcaseStage(cast?: readonly BalloonAnimalId[]): Fairground {
   const root = new THREE.Group()
   root.name = 'Balloon animal capture showcase stage'
 
@@ -57,7 +62,8 @@ export function createCaptureShowcaseStage(): Fairground {
     root.add(trim)
   }
 
-  for (const [id, { spawn, color, accent }] of Object.entries(SHOWCASE_ANIMALS) as [BalloonAnimalId, typeof SHOWCASE_ANIMALS[BalloonAnimalId]][]) {
+  const staged = Object.entries(SHOWCASE_ANIMALS) as [BalloonAnimalId, typeof SHOWCASE_ANIMALS[BalloonAnimalId]][]
+  for (const [id, { spawn, color, accent }] of cast ? staged.filter(([id]) => cast.includes(id)) : staged) {
     const [x, z] = spawn
     const pedestal = new THREE.Group()
     pedestal.name = `${id} · palette display plinth`

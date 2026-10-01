@@ -4,7 +4,7 @@ How an animal gets from a Python script to a wandering, catchable creature in th
 add the next one. The end goal is that an agent can go from "add a llama" to a reviewed, playable
 species without hand-holding.
 
-Current catalog: **6 species** (pig, sheep, cow, chicken, duck, goose).
+Current catalog: **7 species** (pig, sheep, cow, chicken, duck, goose, frog).
 
 ## The 5 stages
 
@@ -147,10 +147,10 @@ single source of truth, and almost everything else is derived from it:
 |--------------------------|-------|
 | `BalloonAnimalId` (`typeof ANIMAL_CATALOG[number]['id']`) | `animal-catalog.ts` |
 | `SHOWCASE_ANIMALS` (plinth spawn + ring/accent color) | `balloon-catalog.ts` |
-| scene options for garden **and** showcase | `getAnimalSceneOptions()` |
-| the showcase card list | `capture-showcase-ui.ts:5` — `const ANIMALS = ANIMAL_CATALOG` |
-| the journal's animal chapter | `journal-ui.ts:42` — `ANIMAL_CATALOG.map(...)` |
-| the "N personalities" copy string | `capture-showcase-ui.ts:32` — `${ANIMAL_CATALOG.length}` |
+| scene options for garden **and** viewer | `getAnimalSceneOptions()` |
+| the viewer's card list | `viewer-panel.ts` — filtered by `VIEWER_CAST` (the review-booth cast) |
+| the journal's animal chapter | `journal-panel.ts` — `ANIMAL_CATALOG.map(...)` |
+| the "N personalities" copy string | `viewer-panel.ts` — derived from the cast count |
 
 Append one object to the array and the animal gets a type id, a showcase plinth, a capture card, a
 journal page, and a correct species count — for free.
@@ -227,13 +227,13 @@ registration point you have not filled in yet.
 
 ### Registration points that are NOT compiler-enforced
 
-Only two remain, and both fail silently:
+Only one remains, and it fails silently:
 
-- **`src/animals/balloon-capture.ts:210`** — `buildRigPose` name matching (see the naming contract).
+- **`src/animals/balloon-capture.ts`** — `buildRigPose` name matching (see the naming contract).
   Missing it costs you flourish, not function.
-- **`src/style.css:134`** — `grid-template-columns: repeat(6, minmax(110px, 1fr))`. The showcase card
-  row is still hardcoded to 6 columns; the 7th animal overflows instead of wrapping. The copy strings
-  are already derived from `ANIMAL_CATALOG.length`, so this is the last hardcoded six.
+- **`VIEWER_CAST` in `src/animals/animal-catalog.ts`** — the viewer stages only the species listed
+  there (it is the review booth for new models). A new catalog entry does not appear in the viewer
+  until its id joins the cast; that is deliberate, so a model being tuned can stand alone.
 
 ---
 
@@ -243,9 +243,8 @@ Only two remain, and both fail silently:
 npm run dev     # http://127.0.0.1:8000/
 ```
 
-- `http://127.0.0.1:8000/` — normal garden. The animal wanders; click it to trigger capture.
-- `http://127.0.0.1:8000/?showcase=1` — capture viewer. Its card replays one animal; **Play all**
-  runs every species at once. This is the fastest way to eyeball the whole catalog.
+- `http://127.0.0.1:8000/` — normal garden (main menu → **ENTER**). The animal wanders; the condition ladder decides when it settles.
+- **VIEWER** from the main menu (or `window.__gardenDebug.openViewer()` under `?gardenDebug=1`) — the capture viewer. It stages only `VIEWER_CAST` (`src/animals/animal-catalog.ts`): the review booth for new models. While tuning a species, list just its id there and it stands alone on the stage, framed close, with a single tray card; click the card (or **Play all**) to replay its reveal.
 - Click the journal book in the world → **Animals** chapter. Your species should appear with its
   portrait, subtitle, and note, derived straight from the catalog entry.
 
@@ -369,7 +368,7 @@ Stage 3, code:
 - [ ] `PAINT_PALETTES` entry (two paint colors)
 - [ ] `captureGesture` `case` added
 - [ ] `npm run check` green
-- [ ] `src/style.css:134` `repeat(6, …)` widened **if** this is the 7th animal
+- [ ] Added the species to `VIEWER_CAST` (or reviewed it there solo) if it should stand in the booth
 - [ ] `buildRigPose` branch added **only if** you want head/wing secondary motion
 
 Stages 4–5, verify:
@@ -384,9 +383,9 @@ Stages 4–5, verify:
 These are the things that will bite at 20+ species, recorded now so they are not rediscovered.
 Items 1 and 3 are **partly fixed** by the catalog refactor; the rest still stand.
 
-1. **The showcase card grid is still hardcoded to 6.** The copy strings and card list are now
-   derived, but `src/style.css:134` is literally `repeat(6, …)`. Needs a responsive grid or a
-   `--catalog-count` custom property.
+1. ~~**The showcase card grid is still hardcoded to 6.**~~ **Fixed.** The viewer tray is
+   canvas-drawn and lays out whatever the cast contains; the stage and tray both follow
+   `VIEWER_CAST`, so the review booth shows one model without the rest crowding in.
 2. **Rig matching is by string.** `buildRigPose` couples Blender object names to TypeScript literals.
    Every new species either reuses an existing phrase (`wing`, `leg`) or gets a new branch. There is
    no registry and no validation that a signature pose actually found its joints — a typo is silent.

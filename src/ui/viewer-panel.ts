@@ -67,19 +67,26 @@ const CONTROLS_TOP = 10
 /** Canvas repaints are throttled to this many per second while a capture runs. */
 const REPAINT_INTERVAL = 1 / 12
 
-const CARD_COUNT = ANIMAL_CATALOG.length
 const CONTROLS_LEFT = TRAY_WIDTH - TRAY_PADDING - (CONTROLS_WIDTH * 3 + CONTROLS_GAP * 2)
 const CARD_TOP = CONTROLS_TOP + CONTROLS_HEIGHT + 14
 const CARD_HEIGHT = TRAY_HEIGHT - TRAY_PADDING - CARD_TOP
 const CARDS_LEFT = TRAY_PADDING
 const CARDS_RIGHT = TRAY_WIDTH - TRAY_PADDING
-const CARD_WIDTH = Math.floor((CARDS_RIGHT - CARDS_LEFT - CARD_GAP * (CARD_COUNT - 1)) / CARD_COUNT)
+/** A short cast must not stretch a single card across the whole tray. */
+const MAX_CARD_WIDTH = 380
 
 export function createViewerPanel(
   actions: ViewerActions,
   cssWidth: number,
   cssHeight: number,
+  /** Which species the booth stages; defaults to the whole catalog. */
+  cast: readonly BalloonAnimalId[] = ANIMAL_CATALOG.map((item) => item.id),
 ): ViewerPanel {
+  const castAnimals = ANIMAL_CATALOG.filter((item) => cast.includes(item.id))
+  const cardCount = castAnimals.length
+  const cardWidth = Math.min(MAX_CARD_WIDTH, Math.floor((CARDS_RIGHT - CARDS_LEFT - CARD_GAP * (cardCount - 1)) / cardCount))
+  const rowWidth = cardCount * cardWidth + CARD_GAP * (cardCount - 1)
+  const rowLeft = CARDS_LEFT + ((CARDS_RIGHT - CARDS_LEFT) - rowWidth) / 2
   const viewport = createUIViewport()
   viewport.resize(cssWidth, cssHeight)
 
@@ -141,9 +148,9 @@ export function createViewerPanel(
    */
   function cardLayoutRect(index: number): DesignRect {
     return {
-      x: CARDS_LEFT - TRAY_WIDTH / 2 + index * (CARD_WIDTH + CARD_GAP),
+      x: rowLeft - TRAY_WIDTH / 2 + index * (cardWidth + CARD_GAP),
       y: TRAY_HEIGHT / 2 - CARD_TOP - CARD_HEIGHT,
-      width: CARD_WIDTH,
+      width: cardWidth,
       height: CARD_HEIGHT,
     }
   }
@@ -209,7 +216,7 @@ export function createViewerPanel(
     context.fillStyle = 'rgba(240, 213, 162, .72)'
     context.font = 'italic 15px Georgia, "Times New Roman", serif'
     context.fillText(
-      `${CARD_COUNT} personalities · ${CAPTURE_DURATION_SECONDS.toFixed(1)}s each`,
+      `${cardCount} ${cardCount === 1 ? 'personality' : 'personalities'} · ${CAPTURE_DURATION_SECONDS.toFixed(1)}s each`,
       titleX,
       118,
     )
@@ -222,7 +229,7 @@ export function createViewerPanel(
     strokeRoundRect(context, CONTROLS_LEFT - 8, CONTROLS_TOP - 6, CONTROLS_WIDTH * 3 + CONTROLS_GAP * 2 + 16, CONTROLS_HEIGHT + 12, 18, 'rgba(240, 213, 162, .28)', 1.2)
 
     const animals = actions.getAnimals()
-    for (const [index, item] of ANIMAL_CATALOG.entries()) {
+    for (const [index, item] of castAnimals.entries()) {
       const rect = cardPaintRect(index)
       const animal = animals.find((candidate) => candidate.id === item.id)
       const progress = animal ? animal.captureProgress : 0
@@ -297,7 +304,7 @@ export function createViewerPanel(
   let hoverIndex = -1
 
   function cardAt(point: DesignPoint): number {
-    for (let index = 0; index < CARD_COUNT; index += 1) {
+    for (let index = 0; index < cardCount; index += 1) {
       if (rectContains(cardRect(index), point)) return index
     }
     return -1
@@ -337,7 +344,7 @@ export function createViewerPanel(
       const index = cardAt(point)
       if (index < 0 || !boardAt(point)) return true
       event.preventDefault()
-      actions.replay(ANIMAL_CATALOG[index].id)
+      actions.replay(castAnimals[index].id)
       drawBoard(index)
       return true
     },
@@ -413,7 +420,7 @@ export function createViewerPanel(
           width: TRAY_WIDTH,
           height: TRAY_HEIGHT,
         },
-        cards: ANIMAL_CATALOG.map((item, index) => ({
+        cards: castAnimals.map((item, index) => ({
           id: item.id,
           ...cardRect(index),
         })),
