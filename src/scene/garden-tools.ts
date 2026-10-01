@@ -52,6 +52,7 @@ export interface GardenTools {
   readonly cursorVisible: boolean
   selectTool(id: GardenToolId): void
   cycleBrushSize(): void
+  setPlantingMode(active: boolean): void
   pointerMove(event: GardenPointerMove): void
   pointerDown(event: GardenPointerDown): boolean
   pointerUp(): void
@@ -250,6 +251,7 @@ export function createGardenTools(
   }
 
   let cursorVisible = false
+  let plantingMode = false
   let isPointerDown = false
   let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | null = null
   let lastPaintPoint: THREE.Vector3 | null = null
@@ -820,7 +822,29 @@ export function createGardenTools(
       brushLevels.set(selectedTool, (brushLevelIndex() + 1) % BRUSH_SIZE_LEVELS.length)
       sizePop = SIZE_POP_SECONDS
     },
+    setPlantingMode(active): void {
+      if (plantingMode === active) return
+      plantingMode = active
+      // Stop a garden stroke only when changing into or out of plant placement.
+      isPointerDown = false
+      activeAction = null
+      lastPaintPoint = null
+      lastSeedPoint = null
+      paintTimer = 0
+      actionAccumulator = 0
+      if (active) {
+        cursor.visible = false
+        cursorVisible = false
+        actionGlow.visible = false
+      }
+    },
     pointerMove(event): void {
+      if (plantingMode) {
+        cursor.visible = false
+        cursorVisible = false
+        actionGlow.visible = false
+        return
+      }
       const position = updateCursorPosition(event)
       if (!position) {
         lastPaintPoint = null
@@ -867,6 +891,7 @@ export function createGardenTools(
       hoverTint = nearbyCoverage > 0.14 ? '#c2e39a' : '#b7d97a'
     },
     pointerDown(event): boolean {
+      if (plantingMode) return false
       if (event.button !== 0 && event.button !== 1 && event.button !== 2) return false
       const position = updateCursorPosition(event)
       if (!position) return false

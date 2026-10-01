@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
 import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
 import { createFarmExpansionUI } from './game/farm-expansion-ui'
-import { createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
+import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
 import { createAnimalProgress, makeFarmSnapshot, startingCarnivalSpecies } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
 import { stageDefinition, stageTitle } from './game/animal-conditions'
@@ -12,11 +12,14 @@ import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
-import { type GardenToolId } from './scene/garden-tool-art'
+import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
+import { PLANT_WATER_MIN_DEPTH, type PlantId, type PlantSubstrate } from './game/plants'
+import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { createJournalPanel } from './ui/journal-panel'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
 import { createToolsHud } from './ui/tools-hud'
+import { createSeedboxPanel } from './ui/seedbox-panel'
 import { setCursor } from './ui/ui-cursor'
 import type { DesignPoint } from './ui/ui-viewport'
 import { createViewerPanel } from './ui/viewer-panel'
@@ -150,6 +153,62 @@ const gardenTools: GardenTools | null = fairground.gardenSurface && fairground.g
     )
   : null
 if (gardenTools) scene.add(gardenTools.root)
+
+let gardenPlants: GardenPlants | null = null
+if (fairground.gardenSurface && gardenTerrain && gardenWater) {
+  const positions = fairground.gardenSurface.geometry.getAttribute('position') as THREE.BufferAttribute
+  const colors = fairground.gardenSurface.geometry.getAttribute('color') as THREE.BufferAttribute
+  const coverageCellSize = 0.58
+  const coverageCells = new Map<string, number[]>()
+  for (let index = 0; index < positions.count; index += 1) {
+    const cellX = Math.floor(positions.getX(index) / coverageCellSize)
+    const cellZ = Math.floor(-positions.getY(index) / coverageCellSize)
+    const key = `${cellX},${cellZ}`
+    const cell = coverageCells.get(key) ?? []
+    cell.push(index)
+    coverageCells.set(key, cell)
+  }
+  const coverageAt = (x: number, z: number): number => {
+    const cellX = Math.floor(x / coverageCellSize)
+    const cellZ = Math.floor(z / coverageCellSize)
+    let nearest = -1
+    let best = Infinity
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+        for (const index of coverageCells.get(`${cellX + offsetX},${cellZ + offsetZ}`) ?? []) {
+          const dx = positions.getX(index) - x
+          const dz = -positions.getY(index) - z
+          const distance = dx * dx + dz * dz
+          if (distance < best) {
+            nearest = index
+            best = distance
+          }
+        }
+      }
+    }
+    return nearest >= 0 ? colors.getW(nearest) : 0
+  }
+  gardenPlants = createGardenPlants(
+    gameCanvas,
+    camera,
+    fairground.gardenSurface,
+    gardenTerrain,
+    gardenWater,
+    activeGardenBounds,
+    (x, z) => {
+      const waterDepth = gardenWater.depthAt(x, z)
+      let substrate: PlantSubstrate = 'soil'
+      if (waterDepth >= PLANT_WATER_MIN_DEPTH) substrate = 'water'
+      else if (coverageAt(x, z) > 0.18) substrate = 'grass'
+      return {
+        substrate,
+        waterDepth,
+        inBounds: containsGardenPoint(x, z, currentGardenBounds),
+      }
+    },
+  )
+  scene.add(gardenPlants.root)
+}
 
 // The expansion progress card still renders from its own scene, in its own
 // 1280x720 space. Folding it into the shared layer is worth doing, but not in
@@ -367,7 +426,31 @@ const viewer = createViewerPanel({
   },
 }, window.innerWidth, window.innerHeight)
 
-const panels: UIPanel[] = [toolsHud, menu, viewer, journal]
+const seedbox = createSeedboxPanel(
+  (species: PlantId) => {
+    if (!gardenPlants) return
+    gardenTools?.setPlantingMode(true)
+    gardenPlants.selectSpecies(species)
+    seedbox.setPlacementActive(true)
+    syncFarmChrome()
+    seedbox.refresh()
+    refreshCursor()
+  },
+  window.innerWidth,
+  window.innerHeight,
+  (isOpen) => {
+    toolsHud.object.visible = mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOpen
+    journal.setLauncherVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOpen)
+    if (isOpen) {
+      gardenPlants?.cancelPlacement()
+      gardenTools?.setPlantingMode(false)
+    }
+    refreshCursor()
+  },
+)
+seedbox.setSeedsSource((species) => gardenPlants?.simulation.seedsFor(species) ?? 0)
+
+const panels: UIPanel[] = [toolsHud, seedbox, menu, viewer, journal]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -415,6 +498,10 @@ const lastPointerClient = { x: -1, y: -1 }
 for (const panel of panels) ui.add(panel)
 
 function selectGardenTool(id: GardenToolId): void {
+  gardenPlants?.cancelPlacement()
+  seedbox.setPlacementActive(false)
+  gardenTools?.setPlantingMode(false)
+  syncFarmChrome()
   if (!gardenTools) return
   // Tapping the active tool's hotkey again cycles its brush size rather than
   // re-selecting what is already selected.
@@ -433,6 +520,12 @@ function handleMenuChoice(choice: MenuChoice): void {
 }
 
 function setMode(next: GameMode): void {
+  if (next !== 'farm') {
+    seedbox.close()
+    gardenPlants?.cancelPlacement()
+    seedbox.setPlacementActive(false)
+    gardenTools?.setPlantingMode(false)
+  }
   if (next === mode) {
     menu.close()
     return
@@ -491,8 +584,10 @@ function focusCamera(): void {
  */
 function syncFarmChrome(): void {
   const farmOnly = mode === 'farm' && !menu.isOpen
-  toolsHud.object.visible = farmOnly && !journal.isOpen
-  journal.setLauncherVisible(farmOnly)
+  toolsHud.object.visible = farmOnly && !journal.isOpen && !seedbox.isOpen
+  seedbox.setVisible(farmOnly && !journal.isOpen && !gardenPlants?.selectedSpecies)
+  journal.setLauncherVisible(farmOnly && !seedbox.isOpen)
+  if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
   refreshCursor()
 }
 
@@ -519,20 +614,35 @@ function pointerDesign(event: PointerEvent) {
  * Blender-authored props, which have no cursor to give -- gets the hand.
  */
 function updateCursor(point: DesignPoint | null): void {
-  if (gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
-    setCursor('hidden', gameCanvas)
-    return
-  }
   if (!point) {
     setCursor('default', gameCanvas)
     return
   }
+  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
+    setCursor('plant', gameCanvas)
+    return
+  }
   for (const panel of [...panels].sort((a, b) => b.order - a.order)) {
-    const kind = panel.cursor?.(point)
+    const kind = panel.cursor?.(point as DesignPoint)
     if (kind) {
       setCursor(kind, gameCanvas)
       return
     }
+  }
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
+    const markerKind = gardenPlants?.markerKindAt(lastPointerClient.x, lastPointerClient.y)
+    if (markerKind) {
+      setCursor(markerKind === 'water' ? 'water' : markerKind === 'prune' ? 'prune' : 'point', gameCanvas)
+      return
+    }
+    if (gardenPlants?.selectedSpecies && gardenPlants.previewVisible) {
+      setCursor('plant', gameCanvas)
+      return
+    }
+  }
+  if (!gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
+    setCursor('hidden', gameCanvas)
+    return
   }
   setCursor('hand', gameCanvas)
 }
@@ -584,7 +694,7 @@ function refreshCursor(): void {
 function isOverGameHUD(clientX: number, clientY: number): boolean {
   if (menu.isOpen || journal.isOpen || mode === 'viewer') return true
   const point = ui.viewport.toDesign(clientX, clientY, gameCanvas.getBoundingClientRect())
-  if (point && toolsHud.hitTest?.(point)) return true
+  if (point && ((toolsHud.object.visible && toolsHud.hitTest?.(point)) || seedbox.contains(point))) return true
   const expansionScale = THREE.MathUtils.clamp((window.innerWidth - 36) / 404, 0.5, 1)
   return clientX >= 18 && clientX <= 18 + 404 * expansionScale
     && clientY >= 18 && clientY <= 18 + 112 * expansionScale
@@ -675,6 +785,16 @@ function applyExpansionCameraShake(deltaSeconds: number, elapsedSeconds: number)
 function orbitPointerDown(event: PointerEvent): void {
   if (uiPointerDown(event)) return
   if (menu.isOpen || mode === 'viewer') return
+  if (!journal.isOpen && !seedbox.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
+    event.preventDefault()
+    if (!gardenPlants.selectedSpecies) {
+      seedbox.setPlacementActive(false)
+      gardenTools?.setPlantingMode(false)
+    }
+    syncFarmChrome()
+    seedbox.refresh()
+    return
+  }
   if (event.button === 0 && event.detail >= 2) return
   // Middle click levels with the shovel; Space+left-drag explicitly orbits.
   if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
@@ -712,7 +832,9 @@ function orbitPointerDown(event: PointerEvent): void {
 
 function orbitPointerMove(event: PointerEvent): void {
   if (uiPointerMove(event)) return
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) gardenPlants?.pointerMove(event)
   gardenTools?.pointerMove(event)
+  updateCursor(pointerDesign(event))
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
   const dx = event.clientX - previousPointer.x
   const dy = event.clientY - previousPointer.y
@@ -743,8 +865,8 @@ function orbitPointerMove(event: PointerEvent): void {
 
 function orbitPointerUp(event: PointerEvent): void {
   uiPointerUp(event)
-  gardenTools?.pointerUp()
   if (toolPointer === event.pointerId) {
+    gardenTools?.pointerUp()
     toolPointer = null
     if (gameCanvas.hasPointerCapture(event.pointerId)) gameCanvas.releasePointerCapture(event.pointerId)
     return
@@ -782,6 +904,14 @@ function isTextInputTarget(target: EventTarget | null): boolean {
 const PAN_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright']
 
 function handleKeyDown(event: KeyboardEvent): void {
+  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
+    const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === event.key.toLowerCase())
+    if (tool) {
+      event.preventDefault()
+      selectGardenTool(tool.id)
+      return
+    }
+  }
   // Topmost panel first, so a key never reaches the farm while a screen owns it.
   for (let index = panels.length - 1; index >= 0; index -= 1) {
     if (panels[index].keyDown?.(event)) return
@@ -804,6 +934,15 @@ function handleKeyDown(event: KeyboardEvent): void {
     return
   }
   if (event.key === 'Escape' && !menu.isOpen && mode === 'farm' && !journal.isOpen) {
+    if (gardenPlants?.selectedSpecies) {
+      gardenPlants.cancelPlacement()
+      seedbox.setPlacementActive(false)
+      gardenTools?.setPlantingMode(false)
+      if (lastPointerClient.x >= 0) gardenTools?.pointerMove({ clientX: lastPointerClient.x, clientY: lastPointerClient.y })
+      syncFarmChrome()
+      event.preventDefault()
+      return
+    }
     menu.open()
     event.preventDefault()
   }
@@ -824,7 +963,12 @@ function handleKeyUp(event: KeyboardEvent): void {
  * instead of stopping dead at the border.
  */
 function handleWindowPointerMove(event: PointerEvent): void {
+  lastPointerClient.x = event.clientX
+  lastPointerClient.y = event.clientY
   pointerPosition = { x: event.clientX, y: event.clientY }
+  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
+    setCursor('plant', gameCanvas)
+  }
   pointerWasSeen = event.clientX >= 0 && event.clientY >= 0
     && event.clientX <= window.innerWidth && event.clientY <= window.innerHeight
     && !isOverGameHUD(event.clientX, event.clientY)
@@ -836,13 +980,19 @@ function handleWindowBlur(): void {
   pointerWasSeen = false
 }
 
-function handleWindowPointerUp(): void {
+function handleWindowPointerUp(event: PointerEvent): void {
+  // Canvas pointer capture normally delivers the release to orbitPointerUp.
+  // Keep a window fallback for releases outside the canvas, but only let the
+  // pointer that started a tool stroke terminate it.
+  if (toolPointer !== event.pointerId) return
   gardenTools?.pointerUp()
+  toolPointer = null
 }
 
 function handleCanvasLeave(): void {
   // Keep painting when the pointer merely slips off the canvas edge mid-hold.
   if (!toolPointer) gardenTools?.pointerLeave()
+  gardenPlants?.pointerLeave()
 }
 
 function updateCameraProjection(): void {
@@ -866,10 +1016,10 @@ gameCanvas.addEventListener('pointerleave', () => {
   // (it can return without a new press); only the true garden bounds hide the
   // cursor, which garden-tools handles itself.
   if (!toolPointer) gardenTools?.pointerLeave()
+  gardenPlants?.pointerLeave()
 })
 gameCanvas.addEventListener('contextmenu', preventCanvasMenu)
 gameCanvas.addEventListener('wheel', handleZoom, { passive: false })
-window.addEventListener('pointerup', () => gardenTools?.pointerUp())
 window.addEventListener('keydown', handleKeyDown)
 window.addEventListener('pointermove', handleWindowPointerMove)
 window.addEventListener('pointerup', handleWindowPointerUp)
@@ -878,6 +1028,7 @@ window.addEventListener('blur', handleWindowBlur)
 window.addEventListener('mouseleave', handleWindowBlur)
 gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
 farmExpansionUI?.resize(window.innerWidth, window.innerHeight)
+seedbox.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
@@ -1359,13 +1510,19 @@ function frame(now: number): void {
     }
     farmExpansionUI?.update(expansionState, delta)
   }
+  gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen)
+  if (!gardenPlants?.selectedSpecies && !seedbox.isOpen) gardenTools?.setPlantingMode(false)
+  seedbox.refresh()
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   updateCameraPan(delta)
   applyExpansionCameraShake(delta, now / 1000)
-  if (pointerWasSeen) {
-    if (isOverGameHUD(pointerPosition.x, pointerPosition.y)) gardenTools?.pointerLeave()
-    else gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
+  if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
+    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
+    gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
+  } else {
+    gardenPlants?.pointerLeave()
+    gardenTools?.pointerLeave()
   }
   const otherUpdateMs = timingEnabled ? performance.now() - stageStartedAt : 0
   renderer.info.reset()
