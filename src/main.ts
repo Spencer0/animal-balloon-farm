@@ -6,7 +6,7 @@ import { createFarmExpansionUI } from './game/farm-expansion-ui'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
 import { createAnimalProgress, makeFarmSnapshot, startingCarnivalSpecies } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
-import { stageDefinition, stageTitle } from './game/animal-conditions'
+import { conditionMetricUnit, stageDefinition, stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
@@ -160,6 +160,31 @@ const gardenTools: GardenTools | null = fairground.gardenSurface && fairground.g
 if (gardenTools) scene.add(gardenTools.root)
 
 let gardenPlants: GardenPlants | null = null
+
+/**
+ * Grass coverage lookup, published by the garden-surface setup below so code
+ * that lives outside that block can ask what the ground is like.
+ */
+let coverageLookup: ((x: number, z: number) => number) | null = null
+
+/**
+ * What the ground is like at a world position, for the plant rules.
+ *
+ * Shared with the debug harness on purpose: a test then plants a seed through
+ * exactly the rules the seedbox uses, instead of a second implementation that
+ * can quietly disagree about what counts as a pond.
+ */
+function plantSurfaceAt(x: number, z: number) {
+  const waterDepth = gardenWater?.depthAt(x, z) ?? 0
+  let substrate: PlantSubstrate = 'soil'
+  if (waterDepth >= PLANT_WATER_MIN_DEPTH) substrate = 'water'
+  else if ((coverageLookup?.(x, z) ?? 0) > 0.18) substrate = 'grass'
+  return {
+    substrate,
+    waterDepth,
+    inBounds: containsGardenPoint(x, z, currentGardenBounds),
+  }
+}
 if (fairground.gardenSurface && gardenTerrain && gardenWater) {
   const positions = fairground.gardenSurface.geometry.getAttribute('position') as THREE.BufferAttribute
   const colors = fairground.gardenSurface.geometry.getAttribute('color') as THREE.BufferAttribute
@@ -193,6 +218,8 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
     }
     return nearest >= 0 ? colors.getW(nearest) : 0
   }
+  // One lookup, published for the plant rules and the debug harness above.
+  coverageLookup = coverageAt
   gardenPlants = createGardenPlants(
     gameCanvas,
     camera,
@@ -200,17 +227,7 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
     gardenTerrain,
     gardenWater,
     activeGardenBounds,
-    (x, z) => {
-      const waterDepth = gardenWater.depthAt(x, z)
-      let substrate: PlantSubstrate = 'soil'
-      if (waterDepth >= PLANT_WATER_MIN_DEPTH) substrate = 'water'
-      else if (coverageAt(x, z) > 0.18) substrate = 'grass'
-      return {
-        substrate,
-        waterDepth,
-        inBounds: containsGardenPoint(x, z, currentGardenBounds),
-      }
-    },
+    plantSurfaceAt,
   )
   scene.add(gardenPlants.root)
 }
@@ -333,7 +350,7 @@ function currentTerrainSample(): TerrainSample | null {
 }
 
 /** The last measured farm, kept so the journal and harness can read it. */
-let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0 }
+let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {} }
 
 function currentWaterSample(): WaterSample | null {
   if (!gardenWater) return null
@@ -341,11 +358,27 @@ function currentWaterSample(): WaterSample | null {
   return { visibleWetCells: summary.visibleWetCells, cellSize: gardenWater.cellSize }
 }
 
+/**
+ * Grown-up plants per species, which is what a `plantCount` condition reads.
+ *
+ * Only mature ones count, so an animal cannot be satisfied by seeds that have
+ * been dropped in the water and forgotten. The plant simulation owns the truth
+ * about growth; this only tallies it.
+ */
+function maturePlantCounts(): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const plant of gardenPlants?.simulation.plants ?? []) {
+    if (!plant.mature) continue
+    counts[plant.species] = (counts[plant.species] ?? 0) + 1
+  }
+  return counts
+}
+
 function measureFarm(): FarmState {
   const lawn = currentLawnSample()
   const terrain = currentTerrainSample()
   if (!lawn || !terrain) return lastFarmState
-  lastFarmState = measureFarmState(lawn, terrain, currentWaterSample())
+  lastFarmState = measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts())
   return lastFarmState
 }
 
@@ -492,6 +525,7 @@ journal.setConditionsSource({
           result: row.result,
           hint: definition?.hint ?? '',
           ...(row.metricLabel ? { metricLabel: row.metricLabel } : {}),
+          ...(row.metricLabel ? { metricUnit: conditionMetricUnit(definition?.requirement ?? null) } : {}),
           ...(wantsSpecies ? {
             waitingOn: {
               species: wantsSpecies,
@@ -1031,6 +1065,22 @@ function updateCameraProjection(): void {
   renderer.setSize(width, height)
 }
 
+/**
+ * Point the camera at a spot and hold it there. Shared by the harness verbs:
+ * framing a species and framing a pond are the same camera move, and one copy
+ * keeps the two from drifting apart.
+ */
+function frameAt(target: THREE.Vector3, height: number): void {
+  cameraTarget.copy(target)
+  viewHalfHeight = height / 2
+  camera.position.copy(cameraTarget).add(initialOffset)
+  viewDirection.copy(initialOffset).normalize()
+  cameraDistance = initialOffset.length()
+  camera.lookAt(cameraTarget)
+  camera.updateMatrixWorld()
+  updateCameraProjection()
+}
+
 gameCanvas.addEventListener('pointerdown', orbitPointerDown)
 gameCanvas.addEventListener('pointermove', orbitPointerMove)
 gameCanvas.addEventListener('pointerup', orbitPointerUp)
@@ -1097,6 +1147,17 @@ interface GardenDebugHarness {
   sowGrass(x: number, z: number, radius: number): FarmState
   /** Dig a pond of the given radius, which is what the water conditions want. */
   digPond(x: number, z: number, radius: number): FarmState
+  /**
+   * Plant one seed, through the same rules the seedbox uses, and report the
+   * placement failure rather than doing nothing silently. A lily pad needs
+   * visible pond water, so this is normally `digPond` then `pourAt` first.
+   */
+  plant(species: string, x: number, z: number): PlantHarnessResult
+  /**
+   * Grow what has been planted, answering each care marker on the way. A lily
+   * pauses for a drink and a pinch, so time alone will not mature it.
+   */
+  growPlants(steps?: number, secondsPerStep?: number): PlantHarnessResult
   /** Run the progression tick `steps` times, optionally with a time jump. */
   advance(steps?: number, secondsPerStep?: number): AnimalConditionReport
   /** Forget everything: no grass, no pond, every animal back to the carnival. */
@@ -1105,6 +1166,19 @@ interface GardenDebugHarness {
   animalReport(): Record<string, unknown>[]
   /** Frame a species closely, for inspecting eyes and other small details. */
   focusSpecies(species: string, height?: number): void
+  /**
+   * Frame a spot on the ground, for inspecting a habitat rather than an animal
+   * — a pond and the lily pads planted in it, say.
+   */
+  focusPoint(x: number, z: number, height?: number): void
+}
+
+/** What a harness planting attempt did, and what the farm now counts. */
+interface PlantHarnessResult {
+  readonly ok: boolean
+  readonly failure: string | null
+  /** Mature plants per species, i.e. what a `plantCount` condition reads. */
+  readonly mature: Readonly<Record<string, number>>
 }
 
 interface AnimalConditionReport {
@@ -1384,6 +1458,29 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       gardenTools?.digBasin(x, z, radius, -1.1)
       return measureFarm()
     },
+    plant: (species, x, z) => {
+      const simulation = gardenPlants?.simulation
+      if (!simulation) return { ok: false, failure: 'no-plant-system', mature: {} }
+      const id = species as PlantId
+      const surface = plantSurfaceAt(x, z)
+      const result = simulation.placementResult(id, x, z, surface)
+      // Report the reason rather than planting nothing: a rejected seed is the
+      // single hardest thing to debug through a screenshot.
+      if (!result.valid) return { ok: false, failure: result.failure, mature: maturePlantCounts() }
+      const planted = simulation.plant(id, x, z, surface)
+      return { ok: planted !== null, failure: planted ? null : 'rejected', mature: maturePlantCounts() }
+    },
+    growPlants: (steps = 90, secondsPerStep = 1) => {
+      const simulation = gardenPlants?.simulation
+      if (!simulation) return { ok: false, failure: 'no-plant-system', mature: {} }
+      for (let step = 0; step < steps; step += 1) {
+        simulation.tick(secondsPerStep)
+        for (const plant of simulation.plants) {
+          if (plant.careNeeded) simulation.resolveCare(plant.instanceId, plant.careNeeded)
+        }
+      }
+      return { ok: true, failure: null, mature: maturePlantCounts() }
+    },
     advance: (steps = 1, secondsPerStep = 1 / 30) => {
       for (let step = 0; step < steps; step += 1) {
         const events = progress.tick(makeFarmSnapshot(measureFarm(), progress), secondsPerStep)
@@ -1420,14 +1517,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     focusSpecies: (species, height = 4.5) => {
       const animal = animalById.get(species as (typeof animals)[number]['id'])
       if (!animal) return
-      cameraTarget.copy(animal.root.position).setY(GARDEN_LAWN_Y + 1.1)
-      viewHalfHeight = height / 2
-      camera.position.copy(cameraTarget).add(initialOffset)
-      viewDirection.copy(initialOffset).normalize()
-      cameraDistance = initialOffset.length()
-      camera.lookAt(cameraTarget)
-      camera.updateMatrixWorld()
-      updateCameraProjection()
+      frameAt(animal.root.position.clone().setY(GARDEN_LAWN_Y + 1.1), height)
+    },
+    focusPoint: (x, z, height = 14) => {
+      frameAt(new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z), height)
     },
     scene,
     uiScene: ui.scene,

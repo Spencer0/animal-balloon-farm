@@ -227,13 +227,16 @@ registration point you have not filled in yet.
 
 ### Registration points that are NOT compiler-enforced
 
-Only one remains, and it fails silently:
+These fail silently:
 
 - **`src/animals/balloon-capture.ts`** — `buildRigPose` name matching (see the naming contract).
   Missing it costs you flourish, not function.
 - **`VIEWER_CAST` in `src/animals/animal-catalog.ts`** — the viewer stages only the species listed
   there (it is the review booth for new models). A new catalog entry does not appear in the viewer
   until its id joins the cast; that is deliberate, so a model being tuned can stand alone.
+- **The `species` field of a `plantCount` requirement** — it is a `string`, not a `PlantId`, so a
+  typo reads as zero plants and the animal simply never settles. Assert the id in a test, the way
+  `tests/animal-conditions.test.mjs` does for the frog.
 
 ---
 
@@ -323,6 +326,38 @@ A social condition uses `REQUIRE_RESIDENT('cow', 'Cow')` instead, which is how t
 wait on a resident cow. To let a species that is *not* a `CARNIVAL_STARTER` ever appear, give it a
 `DISCOVERY` entry — otherwise it sits at stage 0 forever and its conditions are unsatisfiable.
 
+### Conditions answered by plants
+
+The fifth condition kind, `plantCount`, counts **plants of a named species** rather than square
+meters. It is what the frog uses, and it is the general answer for any animal whose habitat is
+something the player *builds* one plant at a time:
+
+```ts
+frog: {
+  stages: withStageNumbers([
+    CARNIVAL,
+    ENTER_FARM('Springs over the fence and sits in the mud to listen.'),
+    PLANT_HOME('water-lily', 2, 'Wants lily pads to sit on — a couple of grown ones in the pond.'),
+    PLANT_LOVE('water-lily', 4, 'Wants a proper lily pond: twice the pads, and grass along the banks.'),
+  ]),
+},
+```
+
+Three rules that are easy to get wrong:
+
+- **Only *mature* plants count.** A seed dropped in the water is not a lily pad yet, exactly as a
+  newly sown patch is not tall grass. The maturity gate is what makes watering and pruning matter to
+  an animal condition instead of being decoration. `main.ts` builds the tally in `maturePlantCounts()`
+  and the sim owns the truth about growth.
+- **A plant condition implies its substrate.** A water lily can only be planted in visible pond
+  water, so asking for lily pads quietly asks for a pond first. Do not also add a `waterArea`
+  requirement to say the same thing twice.
+- **Keep the count inside the seed supply.** A species starts with `STARTING_SEEDS_PER_PLANT` (5)
+  seeds, so a stage-4 requirement above 5 is unreachable and the animal silently stops at stage 3.
+
+`conditionMetricLabel` words these for the journal, falling back to the plant catalog's own name, so
+a new plant gets a readable label without anyone remembering to update the map beside it.
+
 ### Verifying conditions in the browser
 
 With `?gardenDebug=1`, `window.__gardenDebug` grows a few verbs aimed at this system:
@@ -332,6 +367,9 @@ const d = window.__gardenDebug
 d.closeMenu()
 d.sowGrass(0, 0, 3.4)      // a disc of tall grass, straight to full height
 d.digPond(-6, 4, 3)        // a basin, for the water conditions
+d.pourAt(-6, 4, 3, 40)     // fill it, so there is actual pond water
+d.plant('water-lily', -6, 4)   // one seed, through the seedbox's own rules
+d.growPlants(90, 1)        // grow them, answering every care marker on the way
 d.advance(400, 1 / 30)     // run the clock; returns the new stages
 d.conditions()            // every rung, revealed or not, with live numbers
 d.setStage('duck', 4)      // force a species up the ladder, transition and all
@@ -340,9 +378,12 @@ d.focusSpecies('sheep', 6) // frame one closely, to check the heart eyes
 ```
 
 `sowGrass` and `digPond` go through the real tool code, so the harness grows genuine geometry
-instead of writing a coverage array behind the renderer's back. Do not verify a condition by
-hand-dragging the seeder: it is not a repeatable loop, and every area bug found while building this
-was found by the harness rather than by looking.
+instead of writing a coverage array behind the renderer's back. `plant` goes through the same
+`plantSurfaceAt` rule the seedbox uses and reports the placement failure rather than doing nothing,
+because a rejected seed is the hardest possible thing to debug through a screenshot. `growPlants`
+answers care markers for you, because a lily pauses for a drink and a pinch and time alone will
+never mature it. Do not verify a condition by hand-dragging the seeder: it is not a repeatable loop,
+and every area bug found while building this was found by the harness rather than by looking.
 
 ---
 

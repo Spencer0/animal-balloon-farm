@@ -99,7 +99,8 @@ export interface AnimalProgress {
  * Whether a requirement is satisfied by the current farm.
  *
  * A `residentSpecies` requirement is a social condition, not a land one, so
- * it reads the resident set rather than the area metrics.
+ * it reads the resident set rather than the area metrics. A `plantCount` is a
+ * land condition, so it reads a metric — but it needs to say *which* plant.
  */
 export function requirementMet(requirement: ConditionRequirement | null, farm: FarmSnapshot): boolean {
   if (!requirement) return true
@@ -107,7 +108,7 @@ export function requirementMet(requirement: ConditionRequirement | null, farm: F
     return farm.residentSpecies.has(requirement.species ?? '')
   }
   const target = requirement.amount ?? 0
-  return farmMetric(farm.state, requirement.kind) >= target
+  return farmMetric(farm.state, requirement.kind, requirement.species) >= target
 }
 
 function statusFor(definition: StageDefinition, currentStage: AnimalStage, farm: FarmSnapshot | null): RequirementStatus {
@@ -122,7 +123,7 @@ function statusFor(definition: StageDefinition, currentStage: AnimalStage, farm:
   // progressive disclosure. The journal draws "???" off a null target.
   if (revealed && requirement && requirement.kind !== 'residentSpecies') {
     target = requirement.amount ?? null
-    current = farm ? farmMetric(farm.state, requirement.kind) : null
+    current = farm ? farmMetric(farm.state, requirement.kind, requirement.species) : null
   }
   return {
     stage: definition.stage,
