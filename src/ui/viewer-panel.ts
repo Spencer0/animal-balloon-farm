@@ -366,8 +366,14 @@ export function createViewerPanel(
     },
     pointerUp(point: DesignPoint): boolean {
       if (!isOpen) return false
+      // A plaque only counts as a button if the press that started on it also
+      // ends on it, so the action fires here, on the up half of the click — the
+      // same contract the menu panel uses. Without this the three controls are
+      // mere decoration: they light up and nothing happens.
+      const pressed = controls.findIndex((control) => control.state === 'pressed')
+      if (pressed >= 0 && controls[pressed].hitTest(point)) controlSpecs[pressed].run()
       controls.forEach((control) => {
-        if (control.state === 'pressed') control.setState(rectContains(control.rect, point) ? 'hover' : 'idle')
+        if (control.state === 'pressed') control.setState(control.hitTest(point) ? 'hover' : 'idle')
       })
       return true
     },
