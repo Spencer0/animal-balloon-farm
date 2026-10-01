@@ -17,6 +17,10 @@
  * it has already visited.
  */
 
+// The plant catalog is pure data with no renderer and no DOM, so reading a
+// plant's name from here keeps the journal's wording in step with the seedbox.
+import { PLANT_CATALOG } from './plants'
+
 export type AnimalStage = 0 | 1 | 2 | 3 | 4
 
 export const FIRST_STAGE = 1
@@ -28,15 +32,33 @@ export type ConditionKind =
   | 'waterArea'
   | 'flatArea'
   | 'residentSpecies'
+  | 'plantCount'
 
 export interface ConditionRequirement {
   readonly kind: ConditionKind
-  /** Square meters, for the area kinds. */
+  /** Square meters for the area kinds; a whole number of plants for `plantCount`. */
   readonly amount?: number
-  /** Species id, for `residentSpecies`. */
+  /** Animal species id for `residentSpecies`, plant species id for `plantCount`. */
   readonly species?: string
   /** Minimum grass maturity (0..1) for a patch to count toward `grassArea`. */
   readonly maturity?: number
+}
+
+/**
+ * How a plant is described in the journal when a condition counts it.
+ *
+ * Keyed by plant id and falling back to the catalog's own name, so a new plant
+ * gets a readable label without anyone remembering to come back here.
+ */
+const PLANT_METRIC_LABELS: Readonly<Record<string, string>> = {
+  'water-lily': 'Lily pads in the pond',
+}
+
+function plantMetricLabel(plantId: string): string {
+  const known = PLANT_METRIC_LABELS[plantId]
+  if (known) return known
+  const species = PLANT_CATALOG.find((entry) => entry.id === plantId)
+  return species ? `${species.name} beds` : 'Plants in the ground'
 }
 
 /** Plain-language name for the habitat a numeric condition measures. */
@@ -46,8 +68,28 @@ export function conditionMetricLabel(requirement: ConditionRequirement | null): 
     case 'grassArea': return 'Mature tall grass'
     case 'waterArea': return 'Visible pond water'
     case 'flatArea': return 'Level grassy pasture'
+    case 'plantCount': return requirement.species ? plantMetricLabel(requirement.species) : null
     case 'residentSpecies': return null
   }
+}
+
+/**
+ * The unit a metric is written in.
+ *
+ * The land kinds are areas and take square meters; a `plantCount` is a number
+ * of plants and takes no unit at all. "5.0 / 2 m²" of lily pads is nonsense,
+ * and the journal is exactly where a player would read it.
+ */
+export function conditionMetricUnit(requirement: ConditionRequirement | null): string {
+  return requirement?.kind === 'plantCount' ? '' : ' m²'
+}
+
+/**
+ * A metric's current value at a precision that suits it: whole plants, one
+ * decimal of square meter.
+ */
+export function formatConditionMetric(requirement: ConditionRequirement | null, value: number): string {
+  return requirement?.kind === 'plantCount' ? value.toFixed(0) : value.toFixed(1)
 }
 
 export interface StageDefinition {
@@ -105,6 +147,29 @@ const LOVE_THE_FARM = (kind: 'grassArea' | 'waterArea' | 'flatArea', amount: num
   title: 'Love the farm',
   hint,
   requirement: { kind, amount, maturity },
+  result: 'Eyes go to hearts. Ready to court and breed.',
+})
+
+/**
+ * Conditions answered by plants rather than by land.
+ *
+ * A `plantCount` is a habitat the player *builds* one plant at a time, and only
+ * grown-up plants count — the same maturity bargain `grassArea` strikes. The
+ * usual chain is therefore implied rather than stated: a water lily can only be
+ * planted in visible pond water, so asking for lily pads quietly asks for a
+ * pond first.
+ */
+const PLANT_HOME = (plant: string, amount: number, hint: string): Omit<StageDefinition, 'stage'> => ({
+  title: 'Call the farm home',
+  hint,
+  requirement: { kind: 'plantCount', species: plant, amount },
+  result: 'Paints into its own colors. A resident of the farm.',
+})
+
+const PLANT_LOVE = (plant: string, amount: number, hint: string): Omit<StageDefinition, 'stage'> => ({
+  title: 'Love the farm',
+  hint,
+  requirement: { kind: 'plantCount', species: plant, amount },
   result: 'Eyes go to hearts. Ready to court and breed.',
 })
 
@@ -184,6 +249,14 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       LOVE_THE_FARM('waterArea', 20, 'Wants a proper stretch of water to patrol.', 0.75),
     ]),
   },
+  frog: {
+    stages: withStageNumbers([
+      CARNIVAL,
+      ENTER_FARM('Springs over the fence and sits in the mud to listen.'),
+      PLANT_HOME('water-lily', 2, 'Wants lily pads to sit on — a couple of grown ones in the pond.'),
+      PLANT_LOVE('water-lily', 4, 'Wants a proper lily pond: twice the pads, and grass along the banks.'),
+    ]),
+  },
 }
 
 /** Species that begin the game already turned up at the carnival. */
@@ -199,6 +272,7 @@ export const CARNIVAL_STARTERS: readonly string[] = ['cow', 'sheep', 'chicken', 
 export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonly description: string }>> = {
   pig: { kind: 'grassArea', amount: 8, description: 'A patch of grass catches the eye of something rooting around.' },
   goose: { kind: 'waterArea', amount: 5, description: 'Water somewhere on the farm draws the waddlers over.' },
+  frog: { kind: 'waterArea', amount: 4, description: 'A little water is sure to bring something green and bouncy.' },
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {

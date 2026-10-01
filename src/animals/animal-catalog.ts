@@ -61,9 +61,24 @@ export const ANIMAL_CATALOG = [
     note: 'Give this tall visitor a wave when it wanders by.', color: '#fff2df', gesture: 'Takes flight',
     assetUrl: 'assets/animals/balloon-goose.glb', spawn: [0.4, -5], carnivalSpawn: [26, 4], showcaseSpawn: [7, 3.2], seed: 4801, size: 2.35, speed: 0.8, bounds: { x: 10.5, z: 6.1 },
   },
+  {
+    id: 'frog', name: 'Frog', label: 'frog', spriteUrl: 'assets/animals/balloon-frog-review.png',
+    subtitle: 'The lily-pad hopper', description: 'A bright pond friend who springs, bounces and lands wherever the water sings.',
+    note: 'Follow the splash sounds — that bobbing green dot is the frog, mid-hop.', color: '#6ab84e', gesture: 'Springs skyward',
+    assetUrl: 'assets/animals/balloon-frog.glb', spawn: [-5.6, -5.2], carnivalSpawn: [21, 14], showcaseSpawn: [-11, 0], seed: 6107, size: 1.9, speed: 0.85, bounds: { x: 10.5, z: 6.1 },
+  },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']
+
+/**
+ * Which species the asset viewer stages. The viewer doubles as the review
+ * booth for new models: while a species is being tuned it stands here alone,
+ * framed close and paired with a single tray card, instead of sharing the
+ * stage with the whole catalog. Swap the id to review a different model, or
+ * list several to compare them side by side.
+ */
+export const VIEWER_CAST: readonly BalloonAnimalId[] = ['frog']
 
 export function getAnimalSceneOptions(
   showcaseMode: boolean,

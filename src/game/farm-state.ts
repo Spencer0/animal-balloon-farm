@@ -31,6 +31,16 @@ export interface FarmState {
   readonly tallGrassArea: number
   readonly waterArea: number
   readonly flatGrassArea: number
+  /**
+   * Grown-up plants per species id, e.g. `{ 'water-lily': 3 }`.
+   *
+   * Counts are of *mature* plants only, which is the same bargain the grass
+   * areas strike: a seed in the ground is not tall grass yet, and a lily pad
+   * still in its first week is not a place a frog will live. It is also what
+   * makes watering and pruning matter to an animal condition instead of being
+   * scenery.
+   */
+  readonly plantCounts: Readonly<Record<string, number>>
 }
 
 export interface LawnSample {
@@ -163,20 +173,33 @@ export function measureFlatGrassArea(
   return round2(area)
 }
 
-export function measureFarmState(lawn: LawnSample, terrain: TerrainSample, water?: WaterSample | null): FarmState {
+export function measureFarmState(
+  lawn: LawnSample,
+  terrain: TerrainSample,
+  water?: WaterSample | null,
+  plantCounts: Readonly<Record<string, number>> = {},
+): FarmState {
   return {
     tallGrassArea: measureTallGrass(lawn),
     waterArea: measureWater(water),
     flatGrassArea: measureFlatGrassArea(lawn, terrain),
+    plantCounts,
   }
 }
 
-/** The metric a requirement is measured in, given what the farm can report. */
-export function farmMetric(state: FarmState, kind: string): number {
+/**
+ * The metric a requirement is measured in, given what the farm can report.
+ *
+ * `species` names which plant a `plantCount` requirement is counting. It is
+ * optional because only that kind needs it, and an unknown species reads as
+ * zero — the same quiet "not yet" as an empty pond.
+ */
+export function farmMetric(state: FarmState, kind: string, species?: string): number {
   switch (kind) {
     case 'grassArea': return state.tallGrassArea
     case 'waterArea': return state.waterArea
     case 'flatArea': return state.flatGrassArea
+    case 'plantCount': return species ? state.plantCounts[species] ?? 0 : 0
     default: return 0
   }
 }

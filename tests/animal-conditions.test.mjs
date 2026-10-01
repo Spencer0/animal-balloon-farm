@@ -28,11 +28,13 @@ const {
   getSpeciesConditions,
   stageAppearance,
   stageHasHeartEyes,
+  conditionMetricUnit,
+  formatConditionMetric,
 } = conditions
 const { measureTallGrass, measureWater, measureFlatGrassArea, measureFarmState, DEFAULT_MATURITY } = farmState
 const { createAnimalProgress, requirementMet, startingCarnivalSpecies, makeFarmSnapshot } = progressModule
 
-const SPECIES = ['pig', 'sheep', 'cow', 'chicken', 'duck', 'goose']
+const SPECIES = ['pig', 'sheep', 'cow', 'chicken', 'duck', 'goose', 'frog']
 
 /**
  * A lawn grid of `cols` x `rows` vertices with uniform coverage. Pass a number
@@ -70,7 +72,7 @@ function flatTerrain(cols = 10, rows = 10, cellSize = 0.55) {
   }
 }
 
-const EMPTY_FARM = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0 }
+const EMPTY_FARM = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {} }
 
 function snapshot(state, residents = []) {
   return { state, residentSpecies: new Set(residents) }
@@ -125,6 +127,50 @@ test('the pig needs a resident cow, which is how the dependency is expressed', (
   assert.deepEqual(SPECIES_CONDITIONS.pig.requiresResident, ['cow'])
 })
 
+test('the frog wants water plants, which is a condition kind of its own', () => {
+  const frog = getSpeciesConditions('frog')
+  // Asking for lily pads implies asking for a pond: a lily can only be planted
+  // in visible water, so the chain is expressed by the plant rather than by
+  // listing two requirements.
+  assert.equal(frog[2].requirement.kind, 'plantCount')
+  assert.equal(frog[2].requirement.species, 'water-lily')
+  assert.equal(frog[2].requirement.amount, 2)
+  assert.equal(frog[3].requirement.kind, 'plantCount')
+  assert.equal(frog[3].requirement.species, 'water-lily')
+  assert.equal(frog[3].requirement.amount, 4)
+})
+
+test('grown lily pads settle the frog; seeds in the water do not', () => {
+  const [settle, love] = getSpeciesConditions('frog').slice(2)
+  // A big bare pond is still not home: the metric is plants, not water.
+  assert.equal(requirementMet(settle.requirement, snapshot({ ...EMPTY_FARM, waterArea: 60 })), false)
+  assert.equal(
+    requirementMet(settle.requirement, snapshot({ ...EMPTY_FARM, waterArea: 60, plantCounts: { 'water-lily': 1 } })),
+    false,
+  )
+  const two = snapshot({ ...EMPTY_FARM, waterArea: 60, plantCounts: { 'water-lily': 2 } })
+  assert.equal(requirementMet(settle.requirement, two), true)
+  assert.equal(requirementMet(love.requirement, two), false, 'two pads settle it; four are what it loves')
+  assert.equal(
+    requirementMet(love.requirement, snapshot({ ...EMPTY_FARM, waterArea: 60, plantCounts: { 'water-lily': 4 } })),
+    true,
+  )
+})
+
+test('a plant condition counts the plant it asked for and no other', () => {
+  const frog = getSpeciesConditions('frog')[2].requirement
+  assert.equal(
+    requirementMet(frog, snapshot({ ...EMPTY_FARM, plantCounts: { clover: 9, poppy: 9 } })),
+    false,
+    'a field of clover is not a substitute for a lily pad',
+  )
+  assert.equal(
+    requirementMet(frog, snapshot({ ...EMPTY_FARM, plantCounts: { 'not-a-plant': 5 } })),
+    false,
+    'an unknown plant id reads as zero, the same as an empty pond',
+  )
+})
+
 test('four species start the game at the carnival', () => {
   assert.deepEqual([...startingCarnivalSpecies(SPECIES)], ['sheep', 'cow', 'chicken', 'duck'])
   assert.equal(CARNIVAL_STARTERS.length, 4)
@@ -172,22 +218,56 @@ test('water measures visibly filled pond cells, never empty holes', () => {
 })
 
 test('journal metric labels describe the revealed habitat without exposing hidden needs', () => {
-  const progress = createAnimalProgress(['cow', 'duck', 'sheep'])
-  for (const species of ['cow', 'duck', 'sheep']) progress.discover(species)
+  const watched = ['cow', 'duck', 'sheep', 'frog']
+  const progress = createAnimalProgress(watched)
+  for (const species of watched) progress.discover(species)
   progress.tick(snapshot(EMPTY_FARM), 1 / 30)
-  for (const species of ['cow', 'duck', 'sheep']) {
+  for (const species of watched) {
     const rows = progress.statusOf(species)
     assert.equal(rows[2].revealed, false)
     assert.equal(rows[2].metricLabel, null, `${species} habitat stays hidden`)
   }
 
-  progress.setStage('cow', 2)
-  progress.setStage('duck', 2)
-  progress.setStage('sheep', 2)
+  for (const species of watched) progress.setStage(species, 2)
   progress.tick(snapshot(EMPTY_FARM), 1 / 30)
   assert.equal(progress.statusOf('cow')[2].metricLabel, 'Mature tall grass')
   assert.equal(progress.statusOf('duck')[2].metricLabel, 'Visible pond water')
   assert.equal(progress.statusOf('sheep')[2].metricLabel, 'Level grassy pasture')
+  assert.equal(progress.statusOf('frog')[2].metricLabel, 'Lily pads in the pond')
+})
+
+test('a plant count is not measured in square meters', () => {
+  // The journal writes the unit beside the bar, and "5.0 / 2 m²" of lily pads
+  // is the kind of thing that ships because nobody looked at the page.
+  const frog = getSpeciesConditions('frog')
+  for (const stage of frog.slice(2)) {
+    assert.equal(conditionMetricUnit(stage.requirement), '', 'a count of plants takes no unit')
+    assert.equal(formatConditionMetric(stage.requirement, 5), '5', 'and it is written as a whole number')
+  }
+  const duck = getSpeciesConditions('duck')
+  for (const stage of duck.slice(2)) {
+    assert.equal(conditionMetricUnit(stage.requirement), ' m²', 'an area keeps its square meters')
+    assert.equal(formatConditionMetric(stage.requirement, 12.34), '12.3')
+  }
+  assert.equal(conditionMetricUnit(null), ' m²', 'a stage with no requirement is not a plant count')
+})
+
+test('the journal shows a live lily count against what the frog wants', () => {
+  // Zero delays isolate the lily condition from the pause an animal takes
+  // before committing, which is covered by its own tests.
+  const progress = createAnimalProgress(['frog'], { visitDelaySeconds: 0, enterFarmSeconds: 0 })
+  progress.setStage('frog', 2)
+  progress.tick(snapshot({ ...EMPTY_FARM, plantCounts: { 'water-lily': 1 } }), 1 / 30)
+  const row = progress.statusOf('frog')[2]
+  assert.equal(row.metricLabel, 'Lily pads in the pond')
+  assert.equal(row.current, 1, 'one pad so far')
+  assert.equal(row.target, 2)
+  assert.equal(row.met, false)
+  assert.equal(progress.progressOf('frog').stage, 2, 'one pad is not enough to move it')
+
+  progress.tick(snapshot({ ...EMPTY_FARM, plantCounts: { 'water-lily': 2 } }), 1 / 30)
+  assert.equal(progress.progressOf('frog').stage, 3, 'two grown pads call the frog home')
+  assert.equal(progress.statusOf('frog')[2].met, true)
 })
 
 test('flat ground means grassy flat ground, not bare dirt', () => {
@@ -340,11 +420,10 @@ test('a species nobody has seen is still findable', () => {
   const withGrass = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 9 }), 1/30)
     .filter((event) => event.kind === 'arriveCarnival')
   assert.deepEqual(withGrass.map((event) => event.species), ['pig'])
-  assert.equal(withGrass[0].discovered, true, 'a discovered arrival is flagged as earned')
-
-  const withWater = progress.tick(snapshot({ ...EMPTY_FARM, waterArea: 6 }), 1/30)
+  assert.equal(withGrass[0].discovered, true, 'a discovered arrival is flagged as earned')  // A little water draws the frog over alongside the goose (catalog order).
+  const withWater = progress.tick(snapshot({ ...EMPTY_FARM, waterArea: 6 }), 1 / 30)
     .filter((event) => event.kind === 'arriveCarnival')
-  assert.deepEqual(withWater.map((event) => event.species), ['goose'])
+  assert.deepEqual(withWater.map((event) => event.species), ['goose', 'frog'])
 })
 
 test('the journal reports a live progress bar against the target', () => {
@@ -428,8 +507,13 @@ test('a naive, direct progression run reaches the full four-step arc', () => {
 
   let farm = snapshot(EMPTY_FARM)
   for (let step = 0; step < 400; step += 1) {
-    // Sow grass, then dig a pond, as a player would.
-    const state = { tallGrassArea: Math.min(40, step * 0.5), waterArea: Math.min(25, step * 0.5), flatGrassArea: Math.min(40, step * 0.5) }
+    // Sow grass, dig a pond, then plant and grow lily pads, as a player would.
+    const state = {
+      tallGrassArea: Math.min(40, step * 0.5),
+      waterArea: Math.min(25, step * 0.5),
+      flatGrassArea: Math.min(40, step * 0.5),
+      plantCounts: { 'water-lily': Math.min(4, Math.floor(step / 40)) },
+    }
     farm = makeFarmSnapshot(state, progress)
     seen.push(...progress.tick(farm, step).map((event) => `${event.species}:${event.kind}`))
   }
@@ -443,6 +527,12 @@ test('a naive, direct progression run reaches the full four-step arc', () => {
   assert.equal(progress.progressOf('pig').stage, 4)
   // The goose was drawn over by the pond and climbed the same arc.
   assert.equal(progress.progressOf('goose').stage, 4)
+  // The frog climbed its own arc, on lily pads rather than on open water.
+  assert.equal(progress.progressOf('frog').stage, 4)
+  assert.deepEqual(
+    seen.filter((entry) => entry.startsWith('frog:')),
+    ['frog:arriveCarnival', 'frog:enterFarm', 'frog:settle', 'frog:fallInLove'],
+  )
   // And the arc happened in the right order for every animal.
   const cowEvents = seen.filter((entry) => entry.startsWith('cow:'))
   assert.deepEqual(cowEvents, ['cow:arriveCarnival', 'cow:enterFarm', 'cow:settle', 'cow:fallInLove'])

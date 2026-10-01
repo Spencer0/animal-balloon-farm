@@ -95,6 +95,7 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   chicken: new THREE.MeshStandardMaterial({ color: '#f7c94f', roughness: 0.32, metalness: 0.01 }),
   duck: new THREE.MeshStandardMaterial({ color: '#a95c3a', roughness: 0.3, metalness: 0.01 }),
   goose: new THREE.MeshStandardMaterial({ color: '#fff0d0', roughness: 0.38 }),
+  frog: new THREE.MeshStandardMaterial({ color: '#6ab84e', roughness: 0.3, metalness: 0.01 }),
 }
 const HOOF_MATERIAL = new THREE.MeshStandardMaterial({ color: '#76505d', roughness: 0.31 })
 const WILD_BALLOON_COLOR = new THREE.Color('#e53649')
