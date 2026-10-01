@@ -63,7 +63,7 @@ export const ANIMAL_CATALOG = [
   },
   {
     id: 'frog', name: 'Frog', label: 'frog', spriteUrl: 'assets/animals/balloon-frog-review.png',
-    subtitle: 'The lily-pad hopper', description: 'A wide-grinned pond friend who springs, bounces and lands wherever the water sings.',
+    subtitle: 'The lily-pad hopper', description: 'A bright pond friend who springs, bounces and lands wherever the water sings.',
     note: 'Follow the splash sounds — that bobbing green dot is the frog, mid-hop.', color: '#6ab84e', gesture: 'Springs skyward',
     assetUrl: 'assets/animals/balloon-frog.glb', spawn: [-5.6, -5.2], carnivalSpawn: [21, 14], showcaseSpawn: [-11, 0], seed: 6107, size: 1.9, speed: 0.85, bounds: { x: 10.5, z: 6.1 },
   },

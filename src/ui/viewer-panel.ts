@@ -72,8 +72,13 @@ const CARD_TOP = CONTROLS_TOP + CONTROLS_HEIGHT + 14
 const CARD_HEIGHT = TRAY_HEIGHT - TRAY_PADDING - CARD_TOP
 const CARDS_LEFT = TRAY_PADDING
 const CARDS_RIGHT = TRAY_WIDTH - TRAY_PADDING
-/** A short cast must not stretch a single card across the whole tray. */
-const MAX_CARD_WIDTH = 380
+/**
+ * A short cast must not stretch a single card across the whole tray, but one
+ * card should still read as the booth's hero rather than a small lonely chip.
+ * Wide enough to anchor the empty left half, capped so a solo frog does not
+ * become a banner.
+ */
+const MAX_CARD_WIDTH = 560
 
 export function createViewerPanel(
   actions: ViewerActions,

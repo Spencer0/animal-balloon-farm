@@ -163,8 +163,12 @@ def materials(animal):
         base["belly"] = mat("CHICKEN · vanilla balloon bib", "#fff0cf", .24, .01, .50)
         base["collar"] = mat("CHICKEN · little golden bell ribbon", "#e7a942", .22, .30, .42)
     elif animal.lower() == "frog":
-        base["body"] = mat("FROG · leaf-green balloon skin", "#6ab84e", .21, .02, .60)
-        base["head"] = mat("FROG · spring-green head balloon", "#79c55b", .20, .02, .62)
+        # The frog's body is one big smooth ellipsoid, so a tight clearcoat
+        # highlight blew out into a hard white patch across its flank that read
+        # as a stray white marking rather than as shine. A softer coat and a
+        # little more roughness spread that same shine out instead.
+        base["body"] = mat("FROG · leaf-green balloon skin", "#6ab84e", .30, .02, .32)
+        base["head"] = mat("FROG · spring-green head balloon", "#79c55b", .28, .02, .34)
         base["belly"] = mat("FROG · buttercream belly balloon", "#f3ecc9", .24, .01, .52)
         base["leg"] = mat("FROG · deep moss shank balloons", "#4c8f3e", .24, .01, .48)
         base["foot"] = mat("FROG · padded webbed feet", "#5aa548", .23, .01, .50)
@@ -750,12 +754,17 @@ def make_frog():
     body_z = .62
     body = pivot("FROG RIG · squat lily-pad body", (0, 0, body_z), root)
     sphere("FROG · wide leaf-green balloon body", (0, 0, 0), (1.05, .74, .48), m["body"], body, 48, 32)
-    sphere("FROG · buttercream belly balloon", (.30, 0, -.16), (.72, .56, .40), m["belly"], body, 42, 28)
-    sphere("FROG · satin body gleam", (-.12, -.716, .14), (.42, .022, .22), m["highlight"], body, 28, 18).rotation_euler[1] = math.radians(-13)
+    # The belly has to sit *inside* the body ellipsoid, not merely overlap it:
+    # any wider and its flank grazes the body's surface around the front quarter
+    # and starts to break the silhouette. Tucked to this size it still reads as
+    # a cream underside but cannot burst out of the frog's side.
+    sphere("FROG · buttercream belly balloon", (.24, 0, -.28), (.60, .50, .36), m["belly"], body, 42, 28)
+    # No satin gleam on the flank: at the booth's close framing that lens read
+    # as a hard white patch stuck to the frog's side, not as a highlight.
 
     neck = pivot("FROG RIG · short neck", (.44, 0, .06), body)
     sphere("FROG · neck-to-body balloon join", (-.03, 0, .02), (.30, .30, .34), m["body"], neck, 32, 22)
-    head = pivot("FROG RIG · wide grin head", (0, 0, .34), neck)
+    head = pivot("FROG RIG · broad head", (0, 0, .34), neck)
     sphere("FROG · spring-green head balloon", (.02, 0, .02), (.52, .40, .42), m["head"], head, 44, 30)
 
     # Two blink-bulge mounds carry the eyes the way a frog's skull does, so the
@@ -778,7 +787,8 @@ def make_frog():
         cheek = sphere(f"FROG · {label} rosy cheek", (.30, side * .42, -.10), (.075, .022, .045), m["inner"], head, 22, 14)
         cheek.rotation_euler[1] = math.radians(-12)
 
-    curve("FROG · wide happy grin", [(.52, -.30, -.14), (.64, 0, -.20), (.52, .30, -.14)], .016, m["seam"], head, 2)
+    # No mouth: a seam across the face was fussy detail the frog reads better
+    # without, especially this close. The nostrils stay as the only face marks.
     for side, label in ((-1, "near"), (1, "far")):
         sphere(f"FROG · {label} nostril", (.50, side * .10, .18), (.020, .016, .014), m["seam"], head, 14, 10)
 
