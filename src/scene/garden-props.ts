@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
-import { containsGardenPoint, GARDEN_LAWN_Y } from './fairground'
+import { containsGardenPoint, GARDEN_LAWN_Y, GARDEN_BOUNDS } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
@@ -302,6 +302,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   let shopBuilding: THREE.Object3D | null = null
   const shopMeshes: THREE.Mesh[] = []
   let shopReady = false
+  /** Animated so the shop recedes with the parcels instead of snapping. */
+  let shopZ = options.shop.z
 
   loader.load(
     options.shop.url,
@@ -338,6 +340,27 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       console.warn(`[props] could not load the shop building from ${options.shop.url}`)
     },
   )
+
+  /**
+   * The shop scoots outward as the farm grows, by exactly as much as the plot
+   * advanced along +Z. The authored placement stays the level-one position and
+   * the gap between the buildable edge and the barn is therefore constant, so
+   * no number of future parcels can swallow the building. Only the near edge
+   * matters: the plot widens symmetrically about x, and the shop sits near the
+   * middle, so halfDepth is the only bound that can ever reach it. Eased like
+   * the fairground's sliding props, and re-grounded because the ground under it
+   * can be dug.
+   */
+  function updateShopPlacement(deltaSeconds: number): void {
+    const building = shopBuilding
+    if (!building) return
+    const grown = Math.max(0, getBounds().halfDepth - GARDEN_BOUNDS.halfDepth)
+    const targetZ = options.shop.z + grown
+    if (Math.abs(targetZ - shopZ) < 0.0005) return
+    shopZ = THREE.MathUtils.lerp(shopZ, targetZ, 1 - Math.exp(-3 * Math.max(0, deltaSeconds)))
+    building.position.z = shopZ
+    building.position.y = Math.max(GARDEN_LAWN_Y, terrain.heightAt(options.shop.x, shopZ))
+  }
 
   function pointerRay(event: Pick<PropPointerEvent, 'clientX' | 'clientY'>): boolean {
     const rect = canvas.getBoundingClientRect()
@@ -814,9 +837,10 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     placeProp,
     placeFence,
     pickUpAt,
-    update(): void {
+    update(deltaSeconds: number): void {
       if (fencesDirty) rebuildFences()
       syncVisuals()
+      updateShopPlacement(deltaSeconds)
     },
     report,
     dispose(): void {
