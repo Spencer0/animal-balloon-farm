@@ -25,6 +25,8 @@ export interface Fairground {
   readonly gardenSurface?: THREE.Mesh
   readonly gardenSoil?: THREE.Mesh
   readonly farmExpansion?: FarmExpansion
+  /** Apply the visible expanding plot transform to newly-sized surface geometry. */
+  updateSurfaceGeometry?(geometry: THREE.BufferGeometry): void
   update(deltaSeconds: number): void
 }
 
@@ -145,7 +147,10 @@ export function makeGardenLawnGeometry(bounds: GardenBounds = GARDEN_MAX_BOUNDS)
   const width = bounds.halfWidth * 2 + 0.16
   const depth = bounds.halfDepth * 2 + 0.16
   const radius = 0.9
-  const geometry = new THREE.PlaneGeometry(width, depth, 96, 66)
+  const geometry = new THREE.PlaneGeometry(width, depth,
+    Math.min(480, Math.max(96, Math.ceil(width / 0.42))),
+    Math.min(360, Math.max(66, Math.ceil(depth / 0.42))),
+  )
   const positions = geometry.getAttribute('position')
   // RGBA vertex colors: rgb is the painted grass tint, alpha is how much of the
   // paint layer shows (0 = bare soil below, 1 = full grass). The grass seeder
@@ -610,19 +615,25 @@ export function createFairground(): Fairground {
   const boundaryStakes=new THREE.Group()
   boundaryStakes.name='Boundary stakes · follow the new acres'
   root.add(boundaryStakes)
-  const parcelDecorations=FARM_EXPANSION_CONFIG.steps.map((step,index)=>{
-    const group=new THREE.Group()
-    group.name=`Parcel reveal · ${step.name}`
-    group.visible=false
-    const beds=Array.from({length:2},(_,bedIndex)=>{
-      const bed=createExpansionFlowerBed(20261001+index*19+bedIndex,COLORS.petals[(index+bedIndex)%COLORS.petals.length])
-      bed.scale.setScalar(0.001)
-      group.add(bed)
-      return bed
-    })
-    root.add(group)
-    return {group,beds}
-  })
+  const parcelDecorations: { group: THREE.Group; beds: THREE.Group[] }[] = []
+  function parcelDecoration(index: number): { group: THREE.Group; beds: THREE.Group[] } {
+    while (parcelDecorations.length <= index) {
+      const decorationIndex = parcelDecorations.length
+      const step = FARM_EXPANSION_CONFIG.steps[decorationIndex % FARM_EXPANSION_CONFIG.steps.length]
+      const group = new THREE.Group()
+      group.name = `Parcel reveal · ${step.name} ${decorationIndex + 1}`
+      group.visible = false
+      const beds = Array.from({ length: 2 }, (_, bedIndex) => {
+        const bed = createExpansionFlowerBed(20261001 + decorationIndex * 19 + bedIndex, COLORS.petals[(decorationIndex + bedIndex) % COLORS.petals.length])
+        bed.scale.setScalar(0.001)
+        group.add(bed)
+        return bed
+      })
+      root.add(group)
+      parcelDecorations.push({ group, beds })
+    }
+    return parcelDecorations[index]
+  }
   const borderMaterial=new THREE.MeshStandardMaterial({color:'#fff5d5',roughness:.48,emissive:'#d7ca9a',emissiveIntensity:.14})
   const frontierGlow=new THREE.MeshStandardMaterial({color:'#dcb965',roughness:.42,metalness:.1,emissive:'#efc95d',emissiveIntensity:.13})
   let decoratedLevel=0
@@ -699,7 +710,7 @@ export function createFairground(): Fairground {
 
   // Bare tilled soil is the untouched garden ground; the growable lawn above it
   // is a transparent paint layer that only turns green where the seeder works.
-  const soil=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false,roughness:1}))
+  const soil=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false,roughness:1}))
   soil.material.map!.repeat.set(6,4)
   soil.rotation.x=-Math.PI/2
   soil.position.y=.012
@@ -707,7 +718,7 @@ export function createFairground(): Fairground {
   soil.receiveShadow=true
   root.add(soil)
 
-  const lawn=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0'),roughness:.96}))
+  const lawn=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0'),roughness:.96}))
   lawn.material.map!.repeat.set(7,5)
   lawn.rotation.x=-Math.PI/2
   lawn.position.y=GARDEN_LAWN_Y
@@ -789,20 +800,20 @@ export function createFairground(): Fairground {
   }
   root.add(skyPuffs)
 
-  const soilColors = soil.geometry.getAttribute('color') as THREE.BufferAttribute
-  const soilPositions = soil.geometry.getAttribute('position') as THREE.BufferAttribute
   let lastRevealWidth = -1
   let lastRevealDepth = -1
   function updateLandReveal(bounds: GardenBounds): void {
     if (bounds.halfWidth === lastRevealWidth && bounds.halfDepth === lastRevealDepth) return
     lastRevealWidth = bounds.halfWidth
     lastRevealDepth = bounds.halfDepth
-    for (let index = 0; index < soilPositions.count; index += 1) {
-      const distance = roundedRectangleDistance(soilPositions.getX(index), -soilPositions.getY(index), bounds)
+    const positions = soil.geometry.getAttribute('position') as THREE.BufferAttribute
+    const colors = soil.geometry.getAttribute('color') as THREE.BufferAttribute
+    for (let index = 0; index < positions.count; index += 1) {
+      const distance = roundedRectangleDistance(positions.getX(index), -positions.getY(index), bounds)
       const alpha = 1 - THREE.MathUtils.smoothstep(distance, 0, 0.38)
-      soilColors.setXYZW(index, 1, 1, 1, alpha)
+      colors.setXYZW(index, 1, 1, 1, alpha)
     }
-    soilColors.needsUpdate = true
+    colors.needsUpdate = true
   }
   updateLandReveal(farmExpansion.state.bounds)
 
@@ -811,6 +822,18 @@ export function createFairground(): Fairground {
     gardenSurface:lawn,
     gardenSoil:soil,
     farmExpansion,
+    updateSurfaceGeometry(geometry): void {
+      const previousSoilGeometry = soil.geometry
+      const previousLawnGeometry = lawn.geometry
+      soil.geometry = geometry.clone()
+      lawn.geometry = geometry
+      previousSoilGeometry.dispose()
+      previousLawnGeometry.dispose()
+      soil.scale.set(1, 1, 1)
+      lawn.scale.set(1, 1, 1)
+      lastRevealWidth = -1
+      updateLandReveal(farmExpansion.state.bounds)
+    },
     update(delta):void{
       wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2)
       wheel.rotor.rotation.z=wheel.angle
@@ -826,6 +849,8 @@ export function createFairground(): Fairground {
       // All footprint dressing shares the plot's scale so the apron cutout,
       // soil reveal, boundary tubes, and wooden plinth remain aligned as one piece.
       apron.scale.set(scaleX,1,scaleZ)
+      soil.scale.set(1, 1, 1)
+      lawn.scale.set(1, 1, 1)
       activeBoundary.scale.set(scaleX,1,scaleZ)
       boundaryStakes.scale.set(scaleX,1,scaleZ)
       base.scale.set(scaleX,1,scaleZ)
@@ -834,31 +859,26 @@ export function createFairground(): Fairground {
       updateLandReveal(state.bounds)
       borderMaterial.emissiveIntensity=.14+(state.isAnimating?Math.sin(state.progress*Math.PI)*.58:0)
       frontierGlow.emissiveIntensity=.13+(state.isAnimating?Math.sin(state.progress*Math.PI)*.78:0)
-      while(decoratedLevel<state.level){
-        const parcel=parcelDecorations[decoratedLevel]
-        parcel.group.visible=true
-        decoratedLevel+=1
+      while (decoratedLevel < state.level) {
+        parcelDecoration(decoratedLevel).group.visible = true
+        decoratedLevel += 1
       }
-      parcelDecorations.forEach((parcel,index)=>{
-        const stepNumber=index+1
-        const from=farmBoundsAtLevel(index)
-        const active=state.isAnimating&&state.level===stepNumber
-        const reveal=stepNumber<state.level?1:active?state.progress:state.level>=stepNumber?1:0
-        if(reveal<=0)return
-        const pop=THREE.MathUtils.clamp(reveal/.74,0,1)
-        const bounce=pop*(1+.16*Math.sin(pop*Math.PI)*(1-pop))
-        const step=FARM_EXPANSION_CONFIG.steps[index]
-        parcel.beds.forEach((bed,bedIndex)=>{
-          const side=index%2===0?1:-1
-          if(bedIndex===0){
-            bed.position.set(side*(from.halfWidth+step.width*.5),GARDEN_LAWN_Y,-side*from.halfDepth*.28)
-          }else{
-            bed.position.set(-side*from.halfWidth*.32,GARDEN_LAWN_Y,-side*(from.halfDepth+step.depth*.5))
-          }
+      if (state.level > 0) {
+        const index = state.level - 1
+        const parcel = parcelDecoration(index)
+        const from = farmBoundsAtLevel(index)
+        const reveal = state.isAnimating ? state.progress : 1
+        const pop = THREE.MathUtils.clamp(reveal / 0.74, 0, 1)
+        const bounce = pop * (1 + 0.16 * Math.sin(pop * Math.PI) * (1 - pop))
+        const step = FARM_EXPANSION_CONFIG.steps[index % FARM_EXPANSION_CONFIG.steps.length]
+        parcel.beds.forEach((bed, bedIndex) => {
+          const side = index % 2 === 0 ? 1 : -1
+          if (bedIndex === 0) bed.position.set(side * (from.halfWidth + step.width * 0.5), GARDEN_LAWN_Y, -side * from.halfDepth * 0.28)
+          else bed.position.set(-side * from.halfWidth * 0.32, GARDEN_LAWN_Y, -side * (from.halfDepth + step.depth * 0.5))
           bed.scale.setScalar(bounce)
-          bed.rotation.y=(side+bedIndex)*.12*reveal
+          bed.rotation.y = (side + bedIndex) * 0.12 * reveal
         })
-      })
+      }
     },
   }
 }

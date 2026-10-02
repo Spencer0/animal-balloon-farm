@@ -14,13 +14,16 @@ export interface FarmExpansionStep {
 export interface FarmExpansionConfig {
   readonly startBounds: GardenBounds
   readonly durationSeconds: number
+  readonly maximumLevel?: number
   readonly steps: readonly FarmExpansionStep[]
 }
 
 /** Progression tuning lives in one place; adding/removing parcels needs no scene edits. */
-export const FARM_EXPANSION_CONFIG: FarmExpansionConfig = {
+export const FARM_EXPANSION_CONFIG = {
   startBounds: { halfWidth: 14, halfDepth: 9.5 },
   durationSeconds: 3.2,
+  maximumLevel: 15,
+  // Parcel styles repeat until the farm reaches its progression cap.
   steps: [
     { name: 'Clover Patch', width: 1.6, depth: 1.1 },
     { name: 'Lantern Walk', width: 1.6, depth: 1.1 },
@@ -30,28 +33,44 @@ export const FARM_EXPANSION_CONFIG: FarmExpansionConfig = {
   ],
 }
 
+function parcelAt(level: number, steps: readonly FarmExpansionStep[]): FarmExpansionStep | null {
+  if (steps.length === 0) return null
+  const base = steps[level % steps.length]
+  const cycle = Math.floor(level / steps.length)
+  return cycle === 0 ? base : { ...base, name: `${base.name} ${cycle + 1}` }
+}
+
+function roundedBounds(bounds: GardenBounds): GardenBounds {
+  return { halfWidth: +bounds.halfWidth.toFixed(3), halfDepth: +bounds.halfDepth.toFixed(3) }
+}
+
 export function farmBoundsAtLevel(
   level: number,
   config: FarmExpansionConfig = FARM_EXPANSION_CONFIG,
 ): GardenBounds {
-  const safeLevel = Number.isFinite(level)
-    ? Math.min(config.steps.length, Math.max(0, Math.floor(level)))
-    : 0
-  let halfWidth = config.startBounds.halfWidth
-  let halfDepth = config.startBounds.halfDepth
-  for (let index = 0; index < safeLevel; index += 1) {
+  const safeLevel = Number.isFinite(level) ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(level))) : 0
+  const cycles = config.steps.length > 0 ? Math.floor(safeLevel / config.steps.length) : 0
+  const remainder = config.steps.length > 0 ? safeLevel % config.steps.length : 0
+  const cycleWidth = config.steps.reduce((sum, step) => sum + step.width, 0)
+  const cycleDepth = config.steps.reduce((sum, step) => sum + step.depth, 0)
+  let halfWidth = config.startBounds.halfWidth + cycles * cycleWidth
+  let halfDepth = config.startBounds.halfDepth + cycles * cycleDepth
+  for (let index = 0; index < remainder; index += 1) {
     halfWidth += config.steps[index].width
     halfDepth += config.steps[index].depth
   }
-  return { halfWidth, halfDepth }
+  return roundedBounds({ halfWidth, halfDepth })
 }
 
-export const GARDEN_MAX_BOUNDS = farmBoundsAtLevel(FARM_EXPANSION_CONFIG.steps.length)
+/** Allocate surfaces through the final progression parcel. */
+export const GARDEN_MAX_BOUNDS = farmBoundsAtLevel(FARM_EXPANSION_CONFIG.maximumLevel)
 
 export interface FarmExpansionState {
   /** Number of parcels already opened; zero is the starter plot. */
   readonly level: number
+  /** Maximum number of parcels that can be revealed. */
   readonly totalLevels: number
+
   /** Current eased bounds used by tools and scene boundaries. */
   readonly bounds: GardenBounds
   readonly targetBounds: GardenBounds
@@ -88,6 +107,10 @@ export function createFarmExpansion(config: FarmExpansionConfig = FARM_EXPANSION
   if (!Number.isFinite(config.durationSeconds) || config.durationSeconds <= 0) {
     throw new RangeError('Farm expansion duration must be finite and positive')
   }
+  const maximumLevel = config.maximumLevel ?? config.steps.length
+  if (!Number.isSafeInteger(maximumLevel) || maximumLevel < 0) {
+    throw new RangeError('Farm maximum level must be a non-negative safe integer')
+  }
   if (config.steps.some((step) => typeof step.name !== 'string' || !step.name.trim()
     || !Number.isFinite(step.width) || !Number.isFinite(step.depth)
     || step.width <= 0 || step.depth <= 0)) {
@@ -96,19 +119,17 @@ export function createFarmExpansion(config: FarmExpansionConfig = FARM_EXPANSION
 
   // Snapshot caller-provided tuning so progression cannot change partway through
   // a parcel animation if an editor changes the source configuration object.
-  const stableConfig: FarmExpansionConfig = {
+  const stableConfig = {
     startBounds: { ...config.startBounds },
     durationSeconds: config.durationSeconds,
+    maximumLevel,
     steps: config.steps.map((step) => ({ ...step })),
   }
-  let maxWidth = stableConfig.startBounds.halfWidth
-  let maxDepth = stableConfig.startBounds.halfDepth
-  for (const step of stableConfig.steps) {
-    maxWidth += step.width
-    maxDepth += step.depth
-    if (!Number.isFinite(maxWidth) || !Number.isFinite(maxDepth)) {
-      throw new RangeError('Farm maximum bounds must be finite')
-    }
+  const cycleWidth = stableConfig.steps.reduce((sum, step) => sum + step.width, 0)
+  const cycleDepth = stableConfig.steps.reduce((sum, step) => sum + step.depth, 0)
+  if (!Number.isFinite(stableConfig.startBounds.halfWidth + cycleWidth)
+    || !Number.isFinite(stableConfig.startBounds.halfDepth + cycleDepth)) {
+    throw new RangeError('Farm parcel cycle increments must remain finite')
   }
   let level = 0
   let elapsed = stableConfig.durationSeconds
@@ -133,18 +154,18 @@ export function createFarmExpansion(config: FarmExpansionConfig = FARM_EXPANSION
     get state(): FarmExpansionState {
       return {
         level,
-        totalLevels: stableConfig.steps.length,
+        totalLevels: stableConfig.steps.length > 0 ? stableConfig.maximumLevel : 0,
         bounds: { ...bounds },
         targetBounds: { ...targetBounds },
-        lastStep: level > 0 ? { ...stableConfig.steps[level - 1] } : null,
+        lastStep: level > 0 ? { ...parcelAt(level - 1, stableConfig.steps)! } : null,
         isAnimating: elapsed < stableConfig.durationSeconds,
         progress,
-        nextStep: stableConfig.steps[level] ? { ...stableConfig.steps[level] } : null,
+        nextStep: level < stableConfig.maximumLevel ? parcelAt(level, stableConfig.steps) : null,
       }
     },
     expand(): FarmExpansionStart | null {
-      if (elapsed < stableConfig.durationSeconds || level >= stableConfig.steps.length) return null
-      const step = stableConfig.steps[level]
+      if (elapsed < stableConfig.durationSeconds || stableConfig.steps.length === 0 || level >= stableConfig.maximumLevel) return null
+      const step = parcelAt(level, stableConfig.steps)!
       const previousBounds = bounds
       level += 1
       fromBounds = previousBounds

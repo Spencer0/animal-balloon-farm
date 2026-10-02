@@ -17,6 +17,9 @@ type AnimalMaterial = THREE.Material & { color?: THREE.Color; roughness?: number
 
 export interface BalloonAnimalOptions {
   readonly id: BalloonAnimalId
+  readonly instanceId?: string
+  readonly growthScale?: number
+  readonly onDetailedModelReady?: () => void
   readonly assetUrl: string
   readonly appearance?: AnimalAppearance
   readonly name: string
@@ -54,8 +57,19 @@ export interface BalloonAnimalOptions {
 
 export interface BalloonAnimal {
   readonly id: BalloonAnimalId
+  readonly instanceId: string
   readonly root: THREE.Group
   readonly isSold: boolean
+  readonly hasDetailedModel: boolean
+  readonly currentPosition: THREE.Vector3
+  readonly currentHeading: number
+  readonly currentScale: number
+  readonly renderPriority: number
+  readonly isRomancing: boolean
+  readonly isLoose: boolean
+  readonly animationPhase: number
+  /** Keep a chosen detailed instance during LOD swaps without losing state. */
+  setDetailedVisible(visible: boolean): void
   readonly canSell: boolean
   sell(): boolean
   readonly gltf: AnimalGLTF | null
@@ -76,6 +90,8 @@ export interface BalloonAnimal {
   readonly eyeColor: string
   /** How many heart eyes are currently worn, for the debug report. */
   readonly heartEyeCount: number
+  setGrowth(scale: number): void
+  setRomancing(active: boolean, partnerPosition?: THREE.Vector3): void
   update(deltaSeconds: number): void
   dispose(): void
 }
@@ -128,30 +144,14 @@ function disposeMaterial(material: THREE.Material | THREE.Material[] | undefined
 }
 
 function disposeTemporaryMaterials(mesh: THREE.Mesh): void {
-  disposeMaterial(WILD_MATERIALS.get(mesh))
+  // The wild mask is a process-wide immutable material shared by all meshes;
+  // only per-animal transition materials are owned and disposed here.
   const transition = TRANSITION_MATERIALS.get(mesh)
   if (Array.isArray(transition)) transition.forEach((material) => CAPTURE_MATERIAL_STATES.delete(material))
   else if (transition) CAPTURE_MATERIAL_STATES.delete(transition)
   disposeMaterial(transition)
   WILD_MATERIALS.delete(mesh)
   TRANSITION_MATERIALS.delete(mesh)
-}
-
-function maskMaterial(material: THREE.Material): THREE.Material {
-  const masked = material.clone() as AnimalMaterial
-  masked.name = WILD_BALLOON_MATERIAL.name
-  if (masked.color) masked.color.copy(WILD_BALLOON_COLOR)
-  if ('map' in masked) masked.map = null
-  if ('alphaMap' in masked) masked.alphaMap = null
-  masked.transparent = false
-  masked.opacity = 1
-  masked.depthWrite = true
-  if (masked.roughness !== undefined) masked.roughness = WILD_BALLOON_MATERIAL.roughness
-  if (masked.metalness !== undefined) masked.metalness = WILD_BALLOON_MATERIAL.metalness
-  if (masked.clearcoat !== undefined) masked.clearcoat = WILD_BALLOON_MATERIAL.clearcoat
-  if (masked.clearcoatRoughness !== undefined) masked.clearcoatRoughness = WILD_BALLOON_MATERIAL.clearcoatRoughness
-  masked.needsUpdate = true
-  return masked
 }
 
 function setAnimalAppearance(root: THREE.Object3D, appearance: AnimalAppearance): void {
@@ -163,7 +163,7 @@ function setAnimalAppearance(root: THREE.Object3D, appearance: AnimalAppearance)
       const originals = STANDARD_MATERIALS.get(object) ?? object.material
       STANDARD_MATERIALS.set(object, originals)
       disposeTemporaryMaterials(object)
-      const wild = Array.isArray(originals) ? originals.map(maskMaterial) : maskMaterial(originals)
+      const wild = Array.isArray(originals) ? originals.map(() => WILD_BALLOON_MATERIAL) : WILD_BALLOON_MATERIAL
       WILD_MATERIALS.set(object, wild)
       object.material = wild
     } else {
@@ -309,10 +309,19 @@ function seededRandom(seed: number): () => number {
   }
 }
 
+const animalAssetCache = new Map<string, Promise<AnimalGLTF>>()
+
 function loadModel(url: string): Promise<AnimalGLTF> {
-  return new Promise((resolve, reject) => {
+  const existing = animalAssetCache.get(url)
+  if (existing) return existing
+  const loading = new Promise<AnimalGLTF>((resolve, reject) => {
     new GLTFLoader().load(url, (gltf) => resolve(gltf as AnimalGLTF), undefined, reject)
   })
+  animalAssetCache.set(url, loading)
+  void loading.catch(() => {
+    if (animalAssetCache.get(url) === loading) animalAssetCache.delete(url)
+  })
+  return loading
 }
 
 function makePlaceholder(parent: THREE.Group, id: BalloonAnimalId): void {
@@ -340,6 +349,8 @@ function makePlaceholder(parent: THREE.Group, id: BalloonAnimalId): void {
 export async function createBalloonAnimal(parent: THREE.Group, options: BalloonAnimalOptions): Promise<BalloonAnimal> {
   const wrapper = new THREE.Group()
   wrapper.name = `Balloon ${options.name} · wandering character`
+  wrapper.scale.setScalar(options.growthScale ?? 1)
+  const instanceId = options.instanceId ?? options.id
   wrapper.position.set(options.spawn[0], options.groundY, options.spawn[1])
   parent.add(wrapper)
 
@@ -353,59 +364,21 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let loaded: LoadedAnimal | null = null
   let modelRoot: THREE.Group | null = null
   let gltf: AnimalGLTF | null = null
+  let modelLoading: Promise<void> | null = null
+  let placeholderLoaded = false
   let appearance = options.appearance ?? 'wild'
-  try {
-    const asset = await loadModel(options.assetUrl)
-    gltf = asset
-    modelRoot = asset.scene
-    modelRoot.name = `Original balloon ${options.name} · Blender GLB`
-    const dimensions = new THREE.Box3().setFromObject(modelRoot).getSize(new THREE.Vector3())
-    const longestSide = Math.max(dimensions.x, dimensions.y, dimensions.z)
-    if (!Number.isFinite(longestSide) || longestSide < 0.1) throw new Error('GLB has no measurable geometry')
-    modelRoot.scale.setScalar(options.size / longestSide)
-    modelRoot.position.set(0, 0, 0)
-    modelRoot.rotation.set(0, 0, 0)
-    modelRoot.updateMatrixWorld(true)
-    const initialBounds = new THREE.Box3().setFromObject(modelRoot)
-    const modelCenter = initialBounds.getCenter(new THREE.Vector3())
-    modelRoot.position.set(-modelCenter.x, -initialBounds.min.y, -modelCenter.z)
-    modelRoot.updateMatrixWorld(true)
-    posePivot.add(modelRoot)
-    if (appearance === 'wild') setAnimalAppearance(modelRoot, 'wild')
-
-    modelRoot.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        object.castShadow = true
-        object.receiveShadow = true
-      }
-    })
-
-    const mixer = new THREE.AnimationMixer(modelRoot)
-    const actions = new Map<AnimalClip, THREE.AnimationAction>()
-    for (const clip of asset.animations) {
-      const normalizedName = clip.name.toUpperCase()
-      const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : null
-      if (kind) actions.set(kind, mixer.clipAction(clip))
-    }
-    loaded = { gltf: asset, root: modelRoot, mixer, actions, activeAnimation: null }
-    console.info(`[Animal Balloon Farm] ${options.name} asset`, JSON.stringify({
-      dimensions: dimensions.toArray().map((value) => Number(value.toFixed(2))),
-      clips: asset.animations.map(({ name, duration }) => ({ name, duration: Number(duration.toFixed(2)) })),
-    }))
-  } catch (error) {
-    console.error(`[Animal Balloon Farm] Could not load ${options.assetUrl}`, error)
-    if (modelRoot) posePivot.remove(modelRoot)
-    modelRoot = null
-    makePlaceholder(posePivot, options.id)
-    setAnimalAppearance(posePivot, appearance)
-  }
-
-  let active: AnimalClip = 'IDLE'
+  let active: AnimalClip = options.wandering === false ? 'IDLE' : 'WALK'
+  let romanceSeconds = 0
   let elapsed = 0
   let nextDecision = 0
   let paused = 0
   let captured = false
   let sold = false
+  let romancing = false
+  let focused = false
+  let detailActive = false
+  let pendingCapture = false
+  const stableAnimationPhase = seededRandom(options.seed ^ 0x51f15e)() * Math.PI * 2
   let capture: CapturePresentation | null = null
   let captureVerticalRange: CaptureVerticalRange | null = null
   let lastCaptureProgress = 0
@@ -413,10 +386,96 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const pivotBaseRotation = new THREE.Euler()
   const target = new THREE.Vector3()
   const direction = new THREE.Vector3()
+  const romanceTarget = new THREE.Vector3()
+  const romanceDirection = new THREE.Vector3()
   const modelForward = new THREE.Vector3(1, 0, 0)
   const random = seededRandom(options.seed)
   const upAxis = new THREE.Vector3(0, 1, 0)
   let stage: AnimalStage = options.stage ?? 1
+  wrapper.userData.animalInstanceId = instanceId
+
+  const ensureDetailedModel = (): Promise<void> => {
+    if (loaded || placeholderLoaded) return Promise.resolve()
+    if (modelLoading) return modelLoading
+    modelLoading = (async () => {
+      try {
+        const asset = await loadModel(options.assetUrl)
+        gltf = asset
+        // Parsed geometry/textures are shared per species; only the hierarchy
+        // and mixer are cloned when this particular animal enters close LOD.
+        modelRoot = asset.scene.clone(true) as THREE.Group
+        modelRoot.name = `Original balloon ${options.name} · Blender GLB clone`
+        const dimensions = new THREE.Box3().setFromObject(modelRoot).getSize(new THREE.Vector3())
+        const longestSide = Math.max(dimensions.x, dimensions.y, dimensions.z)
+        if (!Number.isFinite(longestSide) || longestSide < 0.1) throw new Error('GLB has no measurable geometry')
+        modelRoot.scale.setScalar(options.size / longestSide)
+        modelRoot.position.set(0, 0, 0)
+        modelRoot.rotation.set(0, 0, 0)
+        modelRoot.updateMatrixWorld(true)
+        const initialBounds = new THREE.Box3().setFromObject(modelRoot)
+        const modelCenter = initialBounds.getCenter(new THREE.Vector3())
+        modelRoot.position.set(-modelCenter.x, -initialBounds.min.y, -modelCenter.z)
+        modelRoot.updateMatrixWorld(true)
+        const mixer = new THREE.AnimationMixer(modelRoot)
+        const actions = new Map<AnimalClip, THREE.AnimationAction>()
+        for (const clip of asset.animations) {
+          const normalizedName = clip.name.toUpperCase()
+          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : null
+          if (kind) actions.set(kind, mixer.clipAction(clip))
+        }
+        loaded = { gltf: asset, root: modelRoot, mixer, actions, activeAnimation: null }
+        posePivot.add(modelRoot)
+        wrapper.updateMatrixWorld(true)
+        const animalBounds = getLocalBounds(wrapper, modelRoot)
+        const center = animalBounds.getCenter(new THREE.Vector3())
+        posePivot.position.copy(center)
+        modelRoot.position.sub(center)
+        wrapper.updateMatrixWorld(true)
+        const groundedBounds = getLocalBounds(wrapper, modelRoot)
+        posePivot.position.y -= groundedBounds.min.y
+        pivotBasePosition.copy(posePivot.position)
+        pivotBaseRotation.copy(posePivot.rotation)
+        modelRoot.traverse((object) => {
+          if (object instanceof THREE.Mesh) {
+            object.castShadow = false
+            object.receiveShadow = false
+          }
+        })
+        if (appearance === 'wild') setAnimalAppearance(modelRoot, 'wild')
+        if (stage >= 4) setHeartEyes(modelRoot, { color: options.eyeColor ?? '#ff5d7a' })
+        if (active !== 'IDLE' || options.wandering === false) {
+          const action = actions.get(active)
+          if (action) action.play()
+        }
+        mixer.setTime(elapsed)
+        if (!detailActive) posePivot.remove(modelRoot)
+        console.info(`[Animal Balloon Farm] ${options.name} asset`, JSON.stringify({
+          dimensions: dimensions.toArray().map((value) => Number(value.toFixed(2))),
+          clips: asset.animations.map(({ name, duration }) => ({ name, duration: Number(duration.toFixed(2)) })),
+        }))
+      } catch (error) {
+        console.error(`[Animal Balloon Farm] Could not load ${options.assetUrl}`, error)
+        modelRoot = posePivot
+        makePlaceholder(posePivot, options.id)
+        const placeholderBounds = getLocalBounds(wrapper, posePivot)
+        posePivot.position.copy(placeholderBounds.getCenter(new THREE.Vector3()))
+        posePivot.children.forEach((child) => child.position.sub(posePivot.position))
+        const groundedBounds = getLocalBounds(wrapper, posePivot)
+        posePivot.position.y -= groundedBounds.min.y
+        pivotBasePosition.copy(posePivot.position)
+        placeholderLoaded = true
+        setAnimalAppearance(posePivot, appearance)
+      }
+      if (detailActive) wrapper.visible = stage > 0 && !sold
+      options.onDetailedModelReady?.()
+      if (pendingCapture) {
+        pendingCapture = false
+        appearance = 'wild'
+        beginCapture()
+      }
+    })().finally(() => { modelLoading = null })
+    return modelLoading
+  }
   let travelRoute: AnimalTravelRoute | null = null
   let travelDirection: 'enter' | 'leave' | null = null
   let travelCooldown = 0
@@ -475,52 +534,28 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   }
 
   const setAnimation = (name: AnimalClip, fadeSeconds = 0.22): void => {
-    if (!loaded) {
-      active = name
-      return
-    }
-    if (active === name && loaded.activeAnimation === name) return
+    if (active === name && (!loaded || loaded.activeAnimation === name)) return
+    active = name
+    if (!loaded || !detailActive) return
     const next = loaded.actions.get(name)
     if (!next) return
     const previous = loaded.activeAnimation ? loaded.actions.get(loaded.activeAnimation) : undefined
     next.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(fadeSeconds).play()
     previous?.fadeOut(fadeSeconds)
     loaded.activeAnimation = name
-    active = name
   }
 
   chooseTarget()
-  setAnimation(options.wandering === false ? 'IDLE' : 'WALK', 0)
-  if (loaded) {
-    loaded.mixer.update(0)
-    wrapper.updateMatrixWorld(true)
-    const animalBounds = getLocalBounds(wrapper, loaded.root)
-    const center = animalBounds.getCenter(new THREE.Vector3())
-    posePivot.position.copy(center)
-    loaded.root.position.sub(center)
-    wrapper.updateMatrixWorld(true)
-
-    // Keep the model's original placement while centering the new parent pivot, then align
-    // that pivot once to the lawn. Moving both parent and child would double the offset.
-    const groundedBounds = getLocalBounds(wrapper, loaded.root)
-    posePivot.position.y -= groundedBounds.min.y
-    pivotBasePosition.copy(posePivot.position)
-    wrapper.updateMatrixWorld(true)
-    const finalBounds = getLocalBounds(wrapper, loaded.root)
-    console.info(`[Animal Balloon Farm] ${options.name} ground clearance`, finalBounds.min.y.toFixed(4))
-  } else {
-    const placeholderBounds = getLocalBounds(wrapper, posePivot)
-    posePivot.position.copy(placeholderBounds.getCenter(new THREE.Vector3()))
-    posePivot.children.forEach((child) => child.position.sub(posePivot.position))
-    const groundedBounds = getLocalBounds(wrapper, posePivot)
-    posePivot.position.y -= groundedBounds.min.y
-    pivotBasePosition.copy(posePivot.position)
-  }
-  pivotBaseRotation.copy(posePivot.rotation)
 
   const pauseDurations = { min: 0.45, max: 1.25 }
   const beginCapture = (): boolean => {
-    if (sold || capture || appearance !== 'wild') return false
+    if (sold || capture || pendingCapture || appearance !== 'wild') return false
+    if (!loaded && !placeholderLoaded) {
+      pendingCapture = true
+      focused = true
+      void ensureDetailedModel()
+      return true
+    }
     captured = true
     appearance = 'standard'
     lastCaptureProgress = 0
@@ -530,6 +565,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     // Initialize at progress zero so the animal stays glossy red until paint reaches it.
     setAnimalAppearanceProgress(modelRoot ?? posePivot, 0, captureVerticalRange)
     capture = createCapturePresentation(posePivot, wrapper, modelRoot, options.id, bounds, options.seed)
+    focused = true
     setAnimation('IDLE', 0.22)
     paused = 0
     nextDecision = 0
@@ -537,7 +573,10 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     return true
   }
   const setAppearance = (nextAppearance: AnimalAppearance): void => {
+    if (pendingCapture && nextAppearance === 'standard') return
     if (appearance === nextAppearance) return
+    appearance = nextAppearance
+    if (!modelRoot) return
     if (capture) {
       capture.dispose()
       capture = null
@@ -633,25 +672,77 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
 
   return {
     id: options.id,
+    instanceId,
     root: wrapper,
     get isSold(): boolean { return sold },
+    get hasDetailedModel(): boolean { return Boolean(loaded || placeholderLoaded) },
+    get currentPosition(): THREE.Vector3 { return wrapper.position },
+    get currentHeading(): number { return wrapper.rotation.y },
+    get currentScale(): number { return wrapper.scale.x },
+    get renderPriority(): number {
+      return (focused ? 100 : 0) + (capture ? 90 : 0) + (romancing ? 80 : 0) + (stage >= 3 ? 10 : 0)
+    },
+    get isRomancing(): boolean { return romancing },
+    get isLoose(): boolean { return Boolean(options.isLoose?.()) },
+    get animationPhase(): number { return stableAnimationPhase },
+    setDetailedVisible(visible: boolean): void {
+      detailActive = visible && !sold && stage > 0
+      if (detailActive) {
+        if (loaded && modelRoot && modelRoot.parent !== posePivot) posePivot.add(modelRoot)
+        void ensureDetailedModel()
+        if (loaded) {
+          const action = loaded.actions.get(active)
+          if (action && loaded.activeAnimation !== active) {
+            action.reset().play()
+            loaded.activeAnimation = active
+            loaded.mixer.setTime(elapsed)
+          }
+        }
+      } else if (loaded && modelRoot?.parent === posePivot && !capture) {
+        posePivot.remove(modelRoot)
+      }
+      wrapper.visible = detailActive && Boolean(loaded || placeholderLoaded)
+    },
     get canSell(): boolean {
-      return canSellAnimal({ sold, captured, capturing: capture !== null, stage, appearance })
+      return canSellAnimal({ sold, captured, capturing: capture !== null || pendingCapture, stage, appearance })
     },
     sell(): boolean {
       if (!canSellAnimal({ sold, captured, capturing: capture !== null, stage, appearance })) return false
       sold = true
+      focused = false
       wrapper.visible = false
       return true
     },
     get gltf(): AnimalGLTF | null { return gltf },
     eyeColor: options.eyeColor ?? BODY_MATERIALS[options.id].color.getHexString(),
     get heartEyeCount(): number { return countHeartEyes(modelRoot ?? posePivot) },
+    setGrowth(scale: number): void { wrapper.scale.setScalar(Math.max(0.1, Math.min(1, scale))) },
+    setRomancing(active: boolean, partnerPosition?: THREE.Vector3): void {
+      if (active) {
+        if (partnerPosition) romanceTarget.copy(partnerPosition)
+        if (romancing) return
+        romancing = true
+        focused = true
+        romanceSeconds = 0
+        setAnimation('IDLE', 0.16)
+        paused = Number.POSITIVE_INFINITY
+        nextDecision = Number.POSITIVE_INFINITY
+        return
+      }
+      if (!romancing) return
+      romancing = false
+      focused = capture !== null
+      paused = 0
+      posePivot.position.copy(pivotBasePosition)
+      posePivot.rotation.copy(pivotBaseRotation)
+      nextDecision = 0
+      chooseTarget()
+    },
     setAnimation,
     setAppearance,
     beginCapture,
     get isCaptured(): boolean { return captured },
-    get isCapturing(): boolean { return Boolean(capture && !capture.finished) },
+    get isCapturing(): boolean { return pendingCapture || Boolean(capture && !capture.finished) },
     get captureProgress(): number { return lastCaptureProgress },
     get isAtFarm(): boolean { return travelSide === 'farm' && travelRoute === null },
     get stage(): AnimalStage { return stage },
@@ -661,7 +752,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       const delta = Math.min(deltaSeconds, 0.05)
       elapsed += delta
       if (capture) {
-        loaded?.mixer.update(delta)
+        if (!loaded && !placeholderLoaded && !modelLoading) void ensureDetailedModel()
+        if (detailActive) loaded?.mixer.update(delta)
         const pose = capture.update(delta)
         posePivot.rotation.set(
           pivotBaseRotation.x + pose.roll,
@@ -676,18 +768,41 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           capture = null
           captureVerticalRange = null
           lastCaptureProgress = 1
+          focused = romancing
           posePivot.position.copy(pivotBasePosition)
           posePivot.rotation.copy(pivotBaseRotation)
         }
         return
       }
 
+      if (romancing) {
+        romanceSeconds += delta
+        romanceDirection.set(romanceTarget.x - wrapper.position.x, 0, romanceTarget.z - wrapper.position.z)
+        const distance = romanceDirection.length()
+        if (distance > 1.35) {
+          romanceDirection.normalize()
+          wrapper.position.addScaledVector(romanceDirection, Math.min(options.speed * 0.45 * delta, distance - 1.35))
+        }
+        if (romanceDirection.lengthSq() > 1e-8) {
+          const facing = new THREE.Quaternion().setFromUnitVectors(modelForward, romanceDirection.normalize())
+          wrapper.quaternion.slerp(facing, 1 - Math.exp(-4 * delta))
+        }
+        if (options.groundSampler) {
+          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
+          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
+          wrapper.position.y = groundYCurrent
+        }
+        posePivot.rotation.y = pivotBaseRotation.y + Math.sin(romanceSeconds * 7.5) * 0.3
+        posePivot.position.y = pivotBasePosition.y + Math.sin(romanceSeconds * 15) * 0.11
+        if (detailActive) loaded?.mixer.update(delta)
+        return
+      }
       if (options.wandering === false) {
-        loaded?.mixer.update(delta)
+        if (detailActive) loaded?.mixer.update(delta)
         return
       }
 
-      if (paused > 0) {
+      if (paused > 0 && Number.isFinite(paused)) {
         paused = Math.max(0, paused - delta)
         if (paused === 0) nextDecision = 0
       } else {
@@ -751,7 +866,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         }
       }
 
-      loaded?.mixer.update(delta)
+      if (detailActive) loaded?.mixer.update(delta)
       // Ride the deformed garden: ease toward the sampled terrain height so
       // both walking and idling animals follow digs and deposits.
       if (options.groundSampler) {
@@ -762,6 +877,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         wrapper.position.y = options.groundY + Math.abs(Math.sin(elapsed * 5.8)) * 0.035
         wrapper.quaternion.setFromAxisAngle(upAxis, Math.sin(elapsed * 2.7) * 0.04)
       }
+      wrapper.updateMatrixWorld(true)
     },
     dispose(): void {
       capture?.dispose()
