@@ -38,7 +38,7 @@ export interface BalloonAnimalOptions {
   readonly wandering?: boolean
   readonly captureOnClick?: boolean
   readonly replayCaptureOnClick?: boolean
-  /** Heart-eye tint, taken from the catalog so each species reads distinctly. */
+  /** Accent tint for this species' non-heart cosmetics; hearts are always pink. */
   readonly eyeColor?: string
   /** Starting rung on the condition ladder. */
   readonly stage?: AnimalStage
@@ -79,14 +79,16 @@ export interface BalloonAnimal {
   readonly isCaptured: boolean
   readonly isCapturing: boolean
   readonly captureProgress: number
-  /** True after the walking route has carried this animal onto the farm. */
+  /** True once the router has carried this animal onto the farm side of the gate. */
   readonly isAtFarm: boolean
+  /** Residency decided, but still waiting for the walk-in and browse time. */
+  readonly isResidencyPending: boolean
   /**
    * Where this animal sits on the four-condition ladder. Drives appearance and
    * heart eyes, and is the single thing the progression engine pokes.
    */
   stage: AnimalStage
-  /** Accent color used for the heart eyes. */
+  /** Species accent colour, for debug readouts; heart eyes use the shared pink. */
   readonly eyeColor: string
   /** How many heart eyes are currently worn, for the debug report. */
   readonly heartEyeCount: number
@@ -442,7 +444,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           }
         })
         if (appearance === 'wild') setAnimalAppearance(modelRoot, 'wild')
-        if (stage >= 4) setHeartEyes(modelRoot, { color: options.eyeColor ?? '#ff5d7a' })
+        if (stage >= 4) setHeartEyes(modelRoot)
         if (active !== 'IDLE' || options.wandering === false) {
           const action = actions.get(active)
           if (action) action.play()
@@ -480,6 +482,24 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let travelDirection: 'enter' | 'leave' | null = null
   let travelCooldown = 0
   let travelSide: 'carnival' | 'farm' = stage >= 2 ? 'farm' : 'carnival'
+  /**
+   * A settle that arrives while the visitor is still out at the tents is a
+   * promise, not yet a fact. The rung stays at 2 -- so the animal keeps its
+   * visitor leash and walks in -- and the promotion is applied once it has
+   * actually been browsing the plot for a while.
+   */
+  const RESIDENT_DWELL_SECONDS = 4
+  const RESIDENT_INSIDE_MARGIN = 0.6
+  let pendingResidentStage: AnimalStage | null = null
+  let farmDwellSeconds = 0
+
+  /** Inside the plot proper: not mid-route, and comfortably past the boundary. */
+  function insideFarmPlot(): boolean {
+    if (travelRoute !== null) return false
+    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
+    return Math.abs(wrapper.position.x) <= bounds.halfWidth - RESIDENT_INSIDE_MARGIN
+      && Math.abs(wrapper.position.z) <= bounds.halfDepth - RESIDENT_INSIDE_MARGIN
+  }
 
   function beginTravel(direction: 'enter' | 'leave'): void {
     const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
@@ -603,7 +623,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const applyHeartEyes = (wanted: boolean): void => {
     const root = modelRoot ?? posePivot
     if (wanted) {
-      const converted = setHeartEyes(root, { color: options.eyeColor ?? '#ff5d7a' })
+      const converted = setHeartEyes(root)
       if (converted === 0) console.warn(`[Animal Balloon Farm] ${options.name} has no pupil nodes to convert to hearts`)
     } else {
       clearHeartEyes(root)
@@ -621,6 +641,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    * material mask.
    */
   const setStage = (next: AnimalStage): void => {
+    // A demotion cancels residency that was still waiting for the walk inside.
+    if (next < 3) {
+      pendingResidentStage = null
+      farmDwellSeconds = 0
+    }
     if (next === stage) return
     const previous = stage
     const becomingResident = next >= 3 && stage < 3
@@ -633,6 +658,14 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       travelRoute = null
       travelDirection = null
       travelSide = 'farm'
+    }
+    if (next >= 3 && stage < 3 && !insideFarmPlot()) {
+      // The condition ladder has decided; only the arrival waits. Leaving the
+      // rung at 2 is what keeps the animal walking in as a visitor instead of
+      // donning residence while it is still out on the meadow.
+      if (pendingResidentStage === null) farmDwellSeconds = 0
+      pendingResidentStage = next
+      return
     }
     if (becomingResident) {
       // Play the reveal. beginCapture refuses while another is running, which
@@ -745,12 +778,28 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isCapturing(): boolean { return pendingCapture || Boolean(capture && !capture.finished) },
     get captureProgress(): number { return lastCaptureProgress },
     get isAtFarm(): boolean { return travelSide === 'farm' && travelRoute === null },
+    get isResidencyPending(): boolean { return pendingResidentStage !== null },
     get stage(): AnimalStage { return stage },
     set stage(next: AnimalStage) { setStage(next) },
     update(deltaSeconds): void {
       if (sold) return
       const delta = Math.min(deltaSeconds, 0.05)
       elapsed += delta
+      if (pendingResidentStage !== null) {
+        if (insideFarmPlot()) {
+          farmDwellSeconds += delta
+          if (farmDwellSeconds >= RESIDENT_DWELL_SECONDS) {
+            const next = pendingResidentStage
+            pendingResidentStage = null
+            farmDwellSeconds = 0
+            setStage(next)
+          }
+        } else {
+          // Still out on the meadow: the clock restarts, so the animal has to
+          // spend the dwell time actually inside before residence sticks.
+          farmDwellSeconds = 0
+        }
+      }
       if (capture) {
         if (!loaded && !placeholderLoaded && !modelLoading) void ensureDetailedModel()
         if (detailActive) loaded?.mixer.update(delta)

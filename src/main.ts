@@ -1974,6 +1974,16 @@ interface GardenDebugHarness {
 
   /** Snapshot the current terrain, water and active parcel dimensions. */
   gardenReport(): { readonly bounds: { readonly halfWidth: number; readonly halfDepth: number }; readonly terrain: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number }; readonly water: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number } }
+  /** Reveal parcels on demand so expansion-only visuals can be reviewed. */
+  expandFarm(level: number): number
+  /** What the topmost visible surfaces at a garden point are, for finding stray planes. */
+  probeGround(x: number, z: number): readonly { readonly name: string; readonly y: number; readonly color: string | null }[]
+  /**
+   * Every surface a screen pixel looks through, nearest first. Where
+   * `probeGround` answers "what is under this point", this answers "what am I
+   * actually looking at" for a declared-fine visual bug.
+   */
+  probeView(screenX: number, screenY: number): readonly { readonly distance: number; readonly name: string; readonly y: number; readonly color: string | null }[]
   /**
    * Frame a spot on the ground, for inspecting a habitat rather than an animal
    * — a pond and the lily pads planted in it, say.
@@ -2393,6 +2403,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       x: +animal.root.position.x.toFixed(2),
       z: +animal.root.position.z.toFixed(2),
       loose: isLoose(animal.instanceId),
+      atFarm: animal.isAtFarm,
+      residencyPending: animal.isResidencyPending,
     })),
     focusSpecies: (species, height = 4.5) => {
       const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
@@ -2481,6 +2493,64 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       terrain: { cols: gardenTerrain?.gridCols ?? 0, rows: gardenTerrain?.gridRows ?? 0, originX: gardenTerrain?.originX ?? 0, originZ: gardenTerrain?.originZ ?? 0 },
       water: { cols: gardenWater?.gridCols ?? 0, rows: gardenWater?.gridRows ?? 0, originX: gardenWater?.originX ?? 0, originZ: gardenWater?.originZ ?? 0 },
     }),
+    expandFarm: (level) => {
+      const expansion = fairground.farmExpansion
+      if (!expansion) return 0
+      const target = Math.max(0, Math.min(FARM_EXPANSION_CONFIG.maximumLevel, Math.floor(level)))
+      let guard = 0
+      while (expansion.state.level < target && guard < FARM_EXPANSION_CONFIG.maximumLevel * 3 + 10) {
+        expansion.expand()
+        for (let step = 0; step < 40; step += 1) expansion.update(1)
+        guard += 1
+      }
+      currentGardenBounds = expansion.state.bounds
+      gardenTerrain?.syncBounds()
+      gardenTerrain?.applyToMeshes()
+      gardenWater?.resize(gardenTerrain?.gridCols ?? 0, gardenTerrain?.gridRows ?? 0)
+      gardenWater?.markTerrainChanged()
+      gardenWaterMesh?.markDirty()
+      gardenTools?.syncSurfaceGeometry()
+      return expansion.state.level
+    },
+    probeGround: (x, z) => {
+      const raycaster = new THREE.Raycaster(new THREE.Vector3(x, 40, z), new THREE.Vector3(0, -1, 0))
+      // Sprites need a camera to raycast against; the probe only wants meshes
+      // anyway, but the raycaster walks the whole scene to find them.
+      raycaster.camera = camera
+      const surfaces: { name: string; y: number; color: string | null }[] = []
+      for (const hit of raycaster.intersectObjects(scene.children, true)) {
+        if (surfaces.length >= 6) break
+        const object = hit.object
+        if (!object.visible || !(object instanceof THREE.Mesh)) continue
+        const material = (Array.isArray(object.material) ? object.material[0] : object.material) as THREE.MeshStandardMaterial
+        surfaces.push({ name: object.name || '(unnamed)', y: +hit.point.y.toFixed(3), color: material?.color ? `#${material.color.getHexString()}` : null })
+      }
+      return surfaces
+    },
+    probeView: (screenX, screenY) => {
+      const rect = gameCanvas.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return []
+      const raycaster = new THREE.Raycaster()
+      raycaster.setFromCamera(new THREE.Vector2(
+        ((screenX - rect.left) / rect.width) * 2 - 1,
+        -((screenY - rect.top) / rect.height) * 2 + 1,
+      ), camera)
+      raycaster.camera = camera
+      const surfaces: { distance: number; name: string; y: number; color: string | null }[] = []
+      for (const hit of raycaster.intersectObjects(scene.children, true)) {
+        if (surfaces.length >= 6) break
+        const object = hit.object
+        if (!object.visible || !(object instanceof THREE.Mesh)) continue
+        const material = (Array.isArray(object.material) ? object.material[0] : object.material) as THREE.MeshStandardMaterial
+        surfaces.push({
+          distance: +hit.distance.toFixed(2),
+          name: object.name || `unnamed ${material?.color ? `#${material.color.getHexString()}` : ''}`,
+          y: +hit.point.y.toFixed(3),
+          color: material?.color ? `#${material.color.getHexString()}` : null,
+        })
+      }
+      return surfaces
+    },
     hatch: (eggId) => {
       const egg = progress.eggs().find((entry) => entry.id === eggId)
       if (!egg) return null

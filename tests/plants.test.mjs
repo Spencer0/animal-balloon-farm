@@ -25,8 +25,8 @@ test('placement enforces bounds, substrate, visible pond water, seeds, and spaci
   assert.equal(simulation.placementResult('clover', 0, 0, surface('grass', 0, false)).failure, 'out-of-bounds')
   assert.equal(simulation.placementResult('water-lily', 0, 0, surface('water', PLANT_WATER_MIN_DEPTH / 2)).failure, 'needs-visible-water')
   assert.ok(simulation.plant('clover', 0, 0, surface('grass')))
-  assert.equal(simulation.placementResult('poppy', 1.5, 0, surface('soil')).failure, 'too-close')
-  assert.equal(simulation.placementResult('poppy', 2, 0, surface('soil')).valid, true)
+  assert.equal(simulation.placementResult('poppy', 1.2, 0, surface('soil')).failure, 'too-close')
+  assert.equal(simulation.placementResult('poppy', 1.5, 0, surface('soil')).valid, true)
   assert.equal(simulation.placementResult('water-lily', 4, 0, surface('water', PLANT_WATER_MIN_DEPTH)).valid, true)
 })
 

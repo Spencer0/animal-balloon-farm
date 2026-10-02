@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { containsGardenPoint, GARDEN_LAWN_Y } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
-import { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, type GardenPlant, type PlantCare, type PlantId, type PlantSimulation, type PlantSurface } from '../game/plants'
+import { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, plantSpacingExtent, type GardenPlant, type PlantCare, type PlantId, type PlantSimulation, type PlantSurface } from '../game/plants'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
 
@@ -593,7 +593,10 @@ export function createGardenPlants(
     const floating = substrate.waterDepth >= PLANT_WATER_MIN_DEPTH
     const y = floating ? water.surfaceAt(point.x, point.z) : groundY
     preview.position.set(point.x, GARDEN_LAWN_Y + y + 0.08, point.z)
-    preview.scale.setScalar(species.spacingRadius)
+    // Drawn at the plant's own claim, not the full keep-apart distance: the ring
+    // is one plant's half of the gap, so neighbouring rings just touch when the
+    // spacing rule starts to complain.
+    preview.scale.setScalar(plantSpacingExtent(species.id))
     preview.visible = true
     previewVisible = true
   }

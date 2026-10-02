@@ -18,9 +18,16 @@ const PUPIL_MATCH = /pupil/i
 /** The catchlight sits on top of the pupil; it is kept, just nudged. */
 const CATCHLIGHT_MATCH = /catchlight|glint/i
 
+/**
+ * The one heart-eye tint. Breeding reads as a single shared signal, so every
+ * species wears the same candy pink rather than its own body colour; a cow's
+ * near-black palette made its hearts read as a smudge instead of a heart.
+ */
+export const HEART_EYE_COLOR = '#ff5d7a'
+
 export interface HeartEyeOptions {
-  /** Palette accent, taken from the catalog so each species reads distinctly. */
-  readonly color: string
+  /** Heart tint; defaults to the shared breeding pink. */
+  readonly color?: string
   /** Uniform scale relative to the pupil it replaces. */
   readonly scale?: number
 }
@@ -72,18 +79,19 @@ function isMesh(object: THREE.Object3D): object is THREE.Mesh {
  * Swap the black pupils for hearts. Returns the number of eyes converted so
  * the caller can warn about a species whose naming ever drifts.
  */
-export function setHeartEyes(root: THREE.Object3D, options: HeartEyeOptions): number {
+export function setHeartEyes(root: THREE.Object3D, options: HeartEyeOptions = {}): number {
+  const color = options.color ?? HEART_EYE_COLOR
   const existing = installed.get(root)
   if (existing) {
-    (existing.material as THREE.MeshStandardMaterial).color.set(options.color)
+    (existing.material as THREE.MeshStandardMaterial).color.set(color)
     return existing.hearts.length
   }
 
   const material = new THREE.MeshStandardMaterial({
-    color: options.color,
+    color,
     roughness: 0.24,
     metalness: 0.02,
-    emissive: new THREE.Color(options.color).multiplyScalar(0.18),
+    emissive: new THREE.Color(color).multiplyScalar(0.18),
   })
   const hearts: THREE.Mesh[] = []
   let converted = 0
