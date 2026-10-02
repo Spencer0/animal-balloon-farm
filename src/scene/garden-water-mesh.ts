@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GARDEN_LAWN_Y, makeGardenLawnGeometry } from './fairground'
 import type { GardenWaterField } from '../game/garden-water'
+import type { GardenBounds } from '../game/farm-expansion'
 import type { GardenTerrain } from './garden-terrain'
 
 /**
@@ -30,6 +31,8 @@ export interface GardenWaterMesh {
   update(elapsedSeconds: number): void
   /** True when the mesh has never been built, or the field moved under it. */
   readonly dirty: boolean
+  /** Resize the water surface for a newly revealed parcel. */
+  syncBounds(bounds: GardenBounds): void
   /** Force a rebuild on the next update (e.g. after a garden re-reveal). */
   markDirty(): void
   dispose(): void
@@ -39,11 +42,9 @@ export function createGardenWaterMesh(
   terrain: GardenTerrain,
   water: GardenWaterField,
 ): GardenWaterMesh {
-  const geometry = makeGardenLawnGeometry()
-  // The lawn/soil planes use RGBA vertex colours, where alpha is coverage.
-  // Reuse that slot so the water can fade out per-vertex the same way.
-  const colors = geometry.getAttribute('color') as THREE.BufferAttribute
-  const positions = geometry.getAttribute('position') as THREE.BufferAttribute
+  let geometry = makeGardenLawnGeometry()
+  let colors = geometry.getAttribute('color') as THREE.BufferAttribute
+  let positions = geometry.getAttribute('position') as THREE.BufferAttribute
   const material = new THREE.MeshStandardMaterial({
     color: '#2f8fa8',
     vertexColors: true,
@@ -58,19 +59,31 @@ export function createGardenWaterMesh(
   mesh.rotation.x = -Math.PI / 2
   mesh.position.y = GARDEN_LAWN_Y
   mesh.receiveShadow = false
-  // The plane is kept in the ground draw group; per-vertex alpha defines its shore.
   mesh.renderOrder = 0
   mesh.frustumCulled = false
 
   let dirty = true
+
+  function replaceGeometry(bounds: GardenBounds): void {
+    const nextGeometry = makeGardenLawnGeometry(bounds)
+    const nextColors = nextGeometry.getAttribute('color') as THREE.BufferAttribute
+    const nextPositions = nextGeometry.getAttribute('position') as THREE.BufferAttribute
+    const oldGeometry = geometry
+    geometry = nextGeometry
+    colors = nextColors
+    positions = nextPositions
+    mesh.geometry = nextGeometry
+    oldGeometry.dispose()
+    dirty = true
+  }
 
   function update(elapsedSeconds: number): void {
     // Keep the surface level on every vertex, including transparent vertices:
     // zero alpha does not stop vertex-position interpolation. Resetting dry
     // vertices to grade tears the triangles at a pool's fading edge.
     const { level, wetness } = water.shoreField()
-    const originX = -(water.gridCols * water.cellSize) / 2
-    const originZ = -(water.gridRows * water.cellSize) / 2
+    const originX = water.originX
+    const originZ = water.originZ
     const sampleWater = (values: Float32Array, worldX: number, worldZ: number): number => {
       // Water values live at cell centres, unlike terrain heights which live
       // at grid vertices. Interpolate between those centres to remove the
@@ -125,6 +138,7 @@ export function createGardenWaterMesh(
     get dirty() {
       return dirty
     },
+    syncBounds(bounds): void { replaceGeometry(bounds) },
     markDirty(): void {
       dirty = true
     },

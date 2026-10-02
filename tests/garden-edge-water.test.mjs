@@ -43,7 +43,10 @@ function makeGarden(bounds = START) {
     water,
     setBounds(next) {
       active = next
-      if (terrain.syncBounds()) water.markTerrainChanged()
+      if (terrain.syncBounds()) {
+        water.resize(terrain.gridCols, terrain.gridRows)
+        water.markTerrainChanged()
+      }
       water.settle()
     },
     dig(x, z, radius, amount) {
@@ -145,6 +148,23 @@ test('revealing a new parcel moves the flat editable edge outward with the garde
   assert.ok(Math.abs(newEdge) < 0.001, `the new edge should be flat, got ${newEdge}`)
   assert.ok(garden.terrain.splat(newEdgeX, 0, 1.2, -0.4) > 0,
     'the newly revealed edge should be editable')
+})
+
+test('terrain and water keep expanding and editable beyond the initial mesh allocation', () => {
+  const garden = makeGarden()
+  const farBounds = { halfWidth: 180, halfDepth: 125 }
+  garden.setBounds(farBounds)
+  assert.ok(garden.terrain.gridCols > 169)
+  assert.ok(garden.terrain.gridRows > 100)
+  assert.equal(garden.water.gridCols, garden.terrain.gridCols)
+  assert.equal(garden.water.gridRows, garden.terrain.gridRows)
+  const edgeX = farBounds.halfWidth - 1
+  assert.ok(garden.terrain.splat(edgeX, 0, 1.5, -0.4) > 0, 'the expanded soil remains sculptable')
+  garden.settle()
+  assert.ok(garden.terrain.heightAt(edgeX, 0) < -0.1)
+  garden.water.pour(edgeX, 0, 0.8, 0.35)
+  garden.settle()
+  assert.ok(garden.water.originX < -170)
 })
 
 test('expanding the parcel preserves a previously dug edge pond', () => {
