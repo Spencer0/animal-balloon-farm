@@ -7,6 +7,7 @@ import { chooseDetailedAnimals, type AnimalRenderCandidate } from './game/animal
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, makeGardenLawnGeometry } from './scene/fairground'
 import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent } from './game/animal-life'
 import { FARM_EXPANSION_CONFIG, farmBoundsAtLevel } from './game/farm-expansion'
+import { clearOfFarmBounds } from './game/animal-travel'
 import { createProgressLedger, type ProgressAction } from './game/farm-progression'
 import { startNextEarnedExpansion } from './game/progression-rewards'
 import { type FarmSnapshot } from './game/animal-progress'
@@ -247,7 +248,9 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
       z: animal.currentPosition.z,
       heading: animal.currentHeading,
       scale: animal.currentScale,
-      wild: record.appearance === 'wild',
+      // Read the look off the model, not the ladder record: residency is gated
+      // on the animal having walked in, so a pending settle is still wild here.
+      wild: animal.appearance === 'wild',
       phase: animal.animationPhase,
     })
   }
@@ -450,6 +453,22 @@ const progression = createProgressLedger()
 /** Stages 0 and 1 live at the carnival; 2 and up are inside the fence. */
 const isLoose = (animalId: string): boolean => progress.animal(animalId)?.stage === 1
 
+/**
+ * Where a species first turns up.
+ *
+ * Carnival spawns were authored around the starter tents. Those tents slide
+ * outward as the farm grows, so the spawn has to come with them: otherwise a
+ * species would turn up inside the walls of a garden that has already swallowed
+ * the spot it was authored at.
+ */
+function carnivalSpawnFor(species: string): readonly [number, number] {
+  const bounds = activeGardenBounds()
+  const authored = ANIMAL_CATALOG.find((entry) => entry.id === species)?.carnivalSpawn
+  const base = authored ?? [bounds.halfWidth + 8, 0]
+  const cleared = clearOfFarmBounds({ x: base[0], z: base[1] }, bounds)
+  return [cleared.x, cleared.z]
+}
+
 const generatedAnimalNames = generateAnimalNames(48)
 const animalNames = new Map<string, string>()
 const animalById = new Map<string, BalloonAnimal>()
@@ -492,7 +511,7 @@ async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; 
     growthScale: record.growth,
     stage: 0,
     captureOnClick: false,
-    spawn: position ? [position.x, position.z] : (ANIMAL_CATALOG.find((entry) => entry.id === record.species)?.carnivalSpawn ?? options.spawn) as readonly [number, number],
+    spawn: position ? [position.x, position.z] : carnivalSpawnFor(record.species),
     isLoose: () => isLoose(record.id),
     getGardenBounds: activeGardenBounds,
   })
@@ -656,8 +675,13 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
       animal.stage = event.stage
       animal.setDetailedVisible(animal.instanceId === focusedAnimalId || animal.isCapturing || animal.isRomancing)
       if (event.kind === 'arriveCarnival') {
-        const spawn = ANIMAL_CATALOG.find((entry) => entry.id === event.species)?.carnivalSpawn
-        if (spawn) animal.root.position.set(spawn[0], GARDEN_LAWN_Y, spawn[1])
+        const spawn = carnivalSpawnFor(event.species)
+        animal.root.position.set(spawn[0], GARDEN_LAWN_Y, spawn[1])
+      }
+      if (event.kind === 'settle' || event.kind === 'fallInLove') {
+        // Logged here rather than beside the tick so the debug setStage reports
+        // the same thing a live promotion does.
+        console.info(`[Animal Balloon Farm] ${event.species} -> stage ${event.stage}`)
       }
     }
     if (event.kind === 'arriveCarnival' && event.animalId && !animal) {
@@ -721,13 +745,9 @@ function updateAnimalProgress(deltaSeconds: number): void {
   for (const egg of eggs) updateEggVisual(egg)
   const liveEggIds = new Set(eggs.map((egg) => egg.id))
   for (const eggId of [...eggVisuals.keys()]) if (!liveEggIds.has(eggId)) removeEggVisual(eggId)
-  for (const event of events) {
-    if (event.kind === 'settle' || event.kind === 'fallInLove') {
-      const animal = event.animalId ? animalById.get(event.animalId) : undefined
-      if (animal) animal.setAppearance('standard')
-      console.info(`[Animal Balloon Farm] ${event.species} -> stage ${event.stage}`)
-    }
-  }
+  // No appearance is applied from the event list here: `animal.stage = event.stage`
+  // already routes the promotion through the model's residency gate, which keeps
+  // a settle that arrives out at the tents waiting until the walk-in is done.
   refreshAnimalCrowd(performance.now() / 1000)
   const targetLevel = progression.level
   if (fairground.farmExpansion && startNextEarnedExpansion({
@@ -2397,7 +2417,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       species: animal.id,
       name: animalNames.get(animal.instanceId),
       stage: animal.stage,
-      appearance: animal.isCaptured ? 'standard' : 'wild',
+      appearance: animal.appearance,
       heartEyes: animal.heartEyeCount > 0,
       heartCount: animal.heartEyeCount,
       x: +animal.root.position.x.toFixed(2),
