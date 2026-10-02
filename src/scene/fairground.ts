@@ -25,6 +25,8 @@ export interface Fairground {
   readonly gardenSurface?: THREE.Mesh
   readonly gardenSoil?: THREE.Mesh
   readonly farmExpansion?: FarmExpansion
+  /** Apply the visible expanding plot transform to newly-sized surface geometry. */
+  updateSurfaceGeometry?(geometry: THREE.BufferGeometry): void
   update(deltaSeconds: number): void
 }
 
@@ -76,7 +78,10 @@ export function makeGardenLawnGeometry(bounds: GardenBounds = GARDEN_MAX_BOUNDS)
   const width = bounds.halfWidth * 2 + 0.16
   const depth = bounds.halfDepth * 2 + 0.16
   const radius = 0.9
-  const geometry = new THREE.PlaneGeometry(width, depth, 96, 66)
+  const geometry = new THREE.PlaneGeometry(width, depth,
+    Math.min(480, Math.max(96, Math.ceil(width / 0.42))),
+    Math.min(360, Math.max(66, Math.ceil(depth / 0.42))),
+  )
   const positions = geometry.getAttribute('position')
   // RGBA vertex colors: rgb is the painted grass tint, alpha is how much of the
   // paint layer shows (0 = bare soil below, 1 = full grass). The grass seeder
@@ -565,7 +570,7 @@ export function createFairground(): Fairground {
 
   // Bare tilled soil is the untouched garden ground; the growable lawn above it
   // is a transparent paint layer that only turns green where the seeder works.
-  const soil=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false,roughness:1}))
+  const soil=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false,roughness:1}))
   soil.material.map!.repeat.set(6,4)
   soil.rotation.x=-Math.PI/2
   soil.position.y=.012
@@ -573,7 +578,7 @@ export function createFairground(): Fairground {
   soil.receiveShadow=true
   root.add(soil)
 
-  const lawn=new THREE.Mesh(makeGardenLawnGeometry(),new THREE.MeshStandardMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0'),roughness:.96}))
+  const lawn=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0'),roughness:.96}))
   lawn.material.map!.repeat.set(7,5)
   lawn.rotation.x=-Math.PI/2
   lawn.position.y=GARDEN_LAWN_Y
@@ -633,20 +638,20 @@ export function createFairground(): Fairground {
   }
   root.add(skyPuffs)
 
-  const soilColors = soil.geometry.getAttribute('color') as THREE.BufferAttribute
-  const soilPositions = soil.geometry.getAttribute('position') as THREE.BufferAttribute
   let lastRevealWidth = -1
   let lastRevealDepth = -1
   function updateLandReveal(bounds: GardenBounds): void {
     if (bounds.halfWidth === lastRevealWidth && bounds.halfDepth === lastRevealDepth) return
     lastRevealWidth = bounds.halfWidth
     lastRevealDepth = bounds.halfDepth
-    for (let index = 0; index < soilPositions.count; index += 1) {
-      const distance = roundedRectangleDistance(soilPositions.getX(index), -soilPositions.getY(index), bounds)
+    const positions = soil.geometry.getAttribute('position') as THREE.BufferAttribute
+    const colors = soil.geometry.getAttribute('color') as THREE.BufferAttribute
+    for (let index = 0; index < positions.count; index += 1) {
+      const distance = roundedRectangleDistance(positions.getX(index), -positions.getY(index), bounds)
       const alpha = 1 - THREE.MathUtils.smoothstep(distance, 0, 0.38)
-      soilColors.setXYZW(index, 1, 1, 1, alpha)
+      colors.setXYZW(index, 1, 1, 1, alpha)
     }
-    soilColors.needsUpdate = true
+    colors.needsUpdate = true
   }
   updateLandReveal(farmExpansion.state.bounds)
 
@@ -655,6 +660,18 @@ export function createFairground(): Fairground {
     gardenSurface:lawn,
     gardenSoil:soil,
     farmExpansion,
+    updateSurfaceGeometry(geometry): void {
+      const previousSoilGeometry = soil.geometry
+      const previousLawnGeometry = lawn.geometry
+      soil.geometry = geometry.clone()
+      lawn.geometry = geometry
+      previousSoilGeometry.dispose()
+      previousLawnGeometry.dispose()
+      soil.scale.set(1, 1, 1)
+      lawn.scale.set(1, 1, 1)
+      lastRevealWidth = -1
+      updateLandReveal(farmExpansion.state.bounds)
+    },
     update(delta):void{
       wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2)
       wheel.rotor.rotation.z=wheel.angle
@@ -670,6 +687,8 @@ export function createFairground(): Fairground {
       // The apron, boundary tubes and their stakes share the plot's scale so the
       // gravel path stays glued to the edge of the revealed soil.
       apron.scale.set(scaleX,1,scaleZ)
+      soil.scale.set(1, 1, 1)
+      lawn.scale.set(1, 1, 1)
       activeBoundary.scale.set(scaleX,1,scaleZ)
       boundaryStakes.scale.set(scaleX,1,scaleZ)
       slidingProps.forEach((prop)=>updateSlidingProp(prop,state.bounds,delta))

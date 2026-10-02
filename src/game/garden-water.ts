@@ -148,6 +148,8 @@ export interface GardenWaterField {
   readonly cellSize: number
   readonly gridCols: number
   readonly gridRows: number
+  readonly originX: number
+  readonly originZ: number
   readonly dirty: boolean
   /** Water depth (metres) at the grid cell containing a world point. */
   depthAt(x: number, z: number): number
@@ -182,6 +184,8 @@ export interface GardenWaterField {
   shoreField(): { readonly level: Float32Array; readonly wetness: Float32Array }
   summary(): WaterFieldSummary
   clear(): void
+  /** Grow the simulation grid while preserving every existing water cell. */
+  resize(gridCols: number, gridRows: number): void
 }
 
 export interface GardenWaterOptions {
@@ -196,21 +200,21 @@ export function createGardenWaterField(
   options: GardenWaterOptions,
 ): GardenWaterField {
   const cellSize = options.cellSize
-  const gridCols = Math.max(1, Math.floor(options.gridCols))
-  const gridRows = Math.max(1, Math.floor(options.gridRows))
-  const cellCount = gridCols * gridRows
+  let gridCols = Math.max(1, Math.floor(options.gridCols))
+  let gridRows = Math.max(1, Math.floor(options.gridRows))
+  let cellCount = gridCols * gridRows
   const cellArea = cellSize * cellSize
   const cellHeight = options.cellHeight
-  const depth = new Float32Array(cellCount)
-  const ground = new Float32Array(cellCount)
-  const surface = new Float32Array(cellCount)
+  let depth = new Float32Array(cellCount)
+  let ground = new Float32Array(cellCount)
+  let surface = new Float32Array(cellCount)
   /** Minimax escape height per cell — see the module header. */
-  const filled = new Float32Array(cellCount)
+  let filled = new Float32Array(cellCount)
   /** Generation stamp, so membership tests never clear the whole grid. */
-  const memberStamp = new Int32Array(cellCount)
+  let memberStamp = new Int32Array(cellCount)
   let generation = 0
 
-  const heap = new MinHeap(cellCount + 1)
+  let heap = new MinHeap(cellCount + 1)
   // Scratch reused across every pool in a settle. `component` is the wet run
   // being levelled; `basin` is the set of cells its level can actually occupy.
   // They differ, so a pool that turns out to hold no water has to be cleared
@@ -223,8 +227,8 @@ export function createGardenWaterField(
   let totalRunoff = 0
 
   // Cell (gx, gz) is centred on the garden origin, matching the terrain grid.
-  const cellOriginX = -(gridCols * cellSize) / 2
-  const cellOriginZ = -(gridRows * cellSize) / 2
+  let cellOriginX = -(gridCols * cellSize) / 2
+  let cellOriginZ = -(gridRows * cellSize) / 2
 
   function readGround(): void {
     for (let gz = 0; gz < gridRows; gz += 1) {
@@ -640,10 +644,10 @@ export function createGardenWaterField(
   // Scratch for the shore field: a two-pass 8-neighbour chamfer transform
   // finds a rounded distance to water instead of diamond-shaped Manhattan
   // rings made by a 4-neighbour flood fill.
-  const shoreDistance = new Float32Array(cellCount)
-  const shoreSource = new Int32Array(cellCount)
-  const shoreLevel = new Float32Array(cellCount)
-  const shoreWetness = new Float32Array(cellCount)
+  let shoreDistance = new Float32Array(cellCount)
+  let shoreSource = new Int32Array(cellCount)
+  let shoreLevel = new Float32Array(cellCount)
+  let shoreWetness = new Float32Array(cellCount)
 
   function shoreField(): { level: Float32Array; wetness: Float32Array } {
     shoreDistance.fill(Infinity)
@@ -750,13 +754,57 @@ export function createGardenWaterField(
     dirty = true
   }
 
+  function resize(nextCols: number, nextRows: number): void {
+    const cols = Math.max(gridCols, Math.floor(nextCols))
+    const rows = Math.max(gridRows, Math.floor(nextRows))
+    if (cols === gridCols && rows === gridRows) return
+    const oldCols = gridCols
+    const oldRows = gridRows
+    const oldOriginX = cellOriginX
+    const oldOriginZ = cellOriginZ
+    const oldDepth = depth
+    gridCols = cols
+    gridRows = rows
+    cellCount = gridCols * gridRows
+    cellOriginX = -(gridCols * cellSize) / 2
+    cellOriginZ = -(gridRows * cellSize) / 2
+    depth = new Float32Array(cellCount)
+    ground = new Float32Array(cellCount)
+    surface = new Float32Array(cellCount)
+    filled = new Float32Array(cellCount)
+    memberStamp = new Int32Array(cellCount)
+    heap = new MinHeap(cellCount + 1)
+    shoreDistance = new Float32Array(cellCount)
+    shoreSource = new Int32Array(cellCount)
+    shoreLevel = new Float32Array(cellCount)
+    shoreWetness = new Float32Array(cellCount)
+    generation = 0
+    for (let gz = 0; gz < oldRows; gz += 1) {
+      const worldZ = oldOriginZ + (gz + 0.5) * cellSize
+      const newZ = Math.round((worldZ - cellOriginZ) / cellSize - 0.5)
+      if (newZ < 0 || newZ >= gridRows) continue
+      for (let gx = 0; gx < oldCols; gx += 1) {
+        const value = oldDepth[gz * oldCols + gx]
+        if (value <= 0) continue
+        const worldX = oldOriginX + (gx + 0.5) * cellSize
+        const newX = Math.round((worldX - cellOriginX) / cellSize - 0.5)
+        if (newX >= 0 && newX < gridCols) depth[newZ * gridCols + newX] += value
+      }
+    }
+    readGround()
+    refreshSurfaces()
+    dirty = true
+  }
+
   readGround()
   computeFilledHeights()
 
   return {
     cellSize,
-    gridCols,
-    gridRows,
+    get gridCols() { return gridCols },
+    get gridRows() { return gridRows },
+    get originX() { return cellOriginX },
+    get originZ() { return cellOriginZ },
     get dirty() {
       return dirty
     },
@@ -777,5 +825,6 @@ export function createGardenWaterField(
     shoreField,
     summary,
     clear,
+    resize,
   }
 }

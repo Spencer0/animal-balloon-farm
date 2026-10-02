@@ -41,15 +41,13 @@ const SOIL_WET_RATIO = new THREE.Vector3(
 )
 
 
-const GRID_ORIGIN_X = -(GARDEN_MAX_BOUNDS.halfWidth + 0.08)
-const GRID_ORIGIN_Z = -(GARDEN_MAX_BOUNDS.halfDepth + 0.08)
-const GRID_COLS = Math.round((GARDEN_MAX_BOUNDS.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1
-const GRID_ROWS = Math.round((GARDEN_MAX_BOUNDS.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1
 
 export interface GardenTerrain {
   readonly cellSize: number
   readonly gridCols: number
   readonly gridRows: number
+  readonly originX: number
+  readonly originZ: number
   heightAt(x: number, z: number): number
   /** Ground height at a grid cell. Water samples the same edited surface shown to the player. */
   cellHeightAt(gx: number, gz: number): number
@@ -108,37 +106,41 @@ export function createGardenTerrain(
   bindings: readonly TerrainMeshBinding[],
   getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
 ): GardenTerrain {
-  const heights = new Float32Array(GRID_COLS * GRID_ROWS)
-  const outsideParcel = new Uint8Array(GRID_COLS * GRID_ROWS)
+  let gridOriginX = -(GARDEN_MAX_BOUNDS.halfWidth + 0.08)
+  let gridOriginZ = -(GARDEN_MAX_BOUNDS.halfDepth + 0.08)
+  let gridCols = Math.round((GARDEN_MAX_BOUNDS.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1
+  let gridRows = Math.round((GARDEN_MAX_BOUNDS.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1
+  let heights = new Float32Array(gridCols * gridRows)
+  let outsideParcel = new Uint8Array(gridCols * gridRows)
   const initialBounds = getActiveBounds()
   let dirty = false
   let parcelBoundsHalfWidth = 0
   let parcelBoundsHalfDepth = 0
 
   function gridX(x: number): number {
-    return (x - GRID_ORIGIN_X) / TERRAIN_CELL
+    return (x - gridOriginX) / TERRAIN_CELL
   }
 
   function gridZ(z: number): number {
-    return (z - GRID_ORIGIN_Z) / TERRAIN_CELL
+    return (z - gridOriginZ) / TERRAIN_CELL
   }
 
   function clampX(index: number): number {
-    return Math.min(GRID_COLS - 1, Math.max(0, index))
+    return Math.min(gridCols - 1, Math.max(0, index))
   }
 
   function clampZ(index: number): number {
-    return Math.min(GRID_ROWS - 1, Math.max(0, index))
+    return Math.min(gridRows - 1, Math.max(0, index))
   }
 
   /** Mark grid cells outside the active plot; those cells remain flat at grade. */
   function rebuildParcelMask(): void {
     const bounds = getActiveBounds()
-    for (let gz = 0; gz < GRID_ROWS; gz += 1) {
-      for (let gx = 0; gx < GRID_COLS; gx += 1) {
-        const index = gz * GRID_COLS + gx
-        const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
-        const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
+    for (let gz = 0; gz < gridRows; gz += 1) {
+      for (let gx = 0; gx < gridCols; gx += 1) {
+        const index = gz * gridCols + gx
+        const worldX = gridOriginX + gx * TERRAIN_CELL
+        const worldZ = gridOriginZ + gz * TERRAIN_CELL
         const outside = Math.abs(worldX) > bounds.halfWidth || Math.abs(worldZ) > bounds.halfDepth
         outsideParcel[index] = outside ? 1 : 0
         if (outside) heights[index] = 0
@@ -148,7 +150,7 @@ export function createGardenTerrain(
 
   /** True when the cell lies beyond the active garden bounds. */
   function isOutsideParcel(gx: number, gz: number): boolean {
-    return outsideParcel[gz * GRID_COLS + gx] === 1
+    return outsideParcel[gz * gridCols + gx] === 1
   }
 
   function heightAt(x: number, z: number): number {
@@ -160,17 +162,17 @@ export function createGardenTerrain(
     const jz = clampZ(iz + 1)
     const tx = Math.min(1, Math.max(0, fx - ix))
     const tz = Math.min(1, Math.max(0, fz - iz))
-    const h00 = heights[iz * GRID_COLS + ix]
-    const h10 = heights[iz * GRID_COLS + jx]
-    const h01 = heights[jz * GRID_COLS + ix]
-    const h11 = heights[jz * GRID_COLS + jx]
+    const h00 = heights[iz * gridCols + ix]
+    const h10 = heights[iz * gridCols + jx]
+    const h01 = heights[jz * gridCols + ix]
+    const h11 = heights[jz * gridCols + jx]
     return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
   }
 
   function cellHeightAt(gx: number, gz: number): number {
     const ix = clampX(gx)
     const iz = clampZ(gz)
-    return heights[iz * GRID_COLS + ix]
+    return heights[iz * gridCols + ix]
   }
 
   /** Bring one neighbor pair within the slope limit; outside cells stay at grade. */
@@ -221,16 +223,16 @@ export function createGardenTerrain(
     const toGx = clampX(maxGx)
     const fromGz = clampZ(minGz)
     const toGz = clampZ(maxGz)
-    const rightEnd = Math.min(toGx, GRID_COLS - 2)
-    const downEnd = Math.min(toGz, GRID_ROWS - 2)
+    const rightEnd = Math.min(toGx, gridCols - 2)
+    const downEnd = Math.min(toGz, gridRows - 2)
     let previousExcess = Infinity
     for (let sweep = 0; sweep < CLAMP_MAX_SWEEPS; sweep += 1) {
       let totalExcess = 0
       for (let gz = fromGz; gz <= toGz; gz += 1) {
-        const row = gz * GRID_COLS
+        const row = gz * gridCols
         for (let gx = fromGx; gx <= rightEnd; gx += 1) totalExcess += clampPair(row + gx, row + gx + 1, limit)
         if (gz <= downEnd) {
-          for (let gx = fromGx; gx <= toGx; gx += 1) totalExcess += clampPair(row + gx, row + gx + GRID_COLS, limit)
+          for (let gx = fromGx; gx <= toGx; gx += 1) totalExcess += clampPair(row + gx, row + gx + gridCols, limit)
         }
       }
       if (totalExcess <= 0 || totalExcess >= previousExcess) break
@@ -246,15 +248,15 @@ export function createGardenTerrain(
     let changed = 0
     for (let gz = minGz; gz <= maxGz; gz += 1) {
       for (let gx = minGx; gx <= maxGx; gx += 1) {
-        const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
-        const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
+        const worldX = gridOriginX + gx * TERRAIN_CELL
+        const worldZ = gridOriginZ + gz * TERRAIN_CELL
         const distance = Math.hypot(worldX - x, worldZ - z)
         if (distance > radius) continue
         // Full effect through the middle, easing out over the rim.
         const weight = 1 - smoothstep(0.6, 1, distance / radius)
         const effect = weight
         if (effect <= 0) continue
-        const index = gz * GRID_COLS + gx
+        const index = gz * gridCols + gx
         if (outsideParcel[index] === 1) continue
         const before = heights[index]
         const after = Math.min(TERRAIN_MAX_H, Math.max(TERRAIN_MIN_H, before + amount * effect))
@@ -285,14 +287,14 @@ export function createGardenTerrain(
     let weightSum = 0
     for (let gz = minGz; gz <= maxGz; gz += 1) {
       for (let gx = minGx; gx <= maxGx; gx += 1) {
-        const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
-        const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
+        const worldX = gridOriginX + gx * TERRAIN_CELL
+        const worldZ = gridOriginZ + gz * TERRAIN_CELL
         const distance = Math.hypot(worldX - x, worldZ - z)
         if (distance > radius) continue
         const weight = 1 - smoothstep(0.6, 1, distance / radius)
         if (weight <= 0) continue
         if (isOutsideParcel(gx, gz)) continue
-        indices.push(gz * GRID_COLS + gx)
+        indices.push(gz * gridCols + gx)
         weights.push(weight)
         weightSum += weight
       }
@@ -327,9 +329,9 @@ export function createGardenTerrain(
     let changed = 0
     for (let gz = minGz; gz <= maxGz; gz += 1) {
       for (let gx = minGx; gx <= maxGx; gx += 1) {
-        const index = gz * GRID_COLS + gx
-        const worldX = GRID_ORIGIN_X + gx * TERRAIN_CELL
-        const worldZ = GRID_ORIGIN_Z + gz * TERRAIN_CELL
+        const index = gz * gridCols + gx
+        const worldX = gridOriginX + gx * TERRAIN_CELL
+        const worldZ = gridOriginZ + gz * TERRAIN_CELL
         const distance = Math.hypot(worldX - x, worldZ - z)
         if (distance > radius) continue
         const weight = 1 - smoothstep(0.6, 1, distance / radius)
@@ -340,7 +342,7 @@ export function createGardenTerrain(
           for (let dx = -1; dx <= 1; dx += 1) {
             const nx = clampX(gx + dx)
             const nz = clampZ(gz + dz)
-            sum += snapshot[nz * GRID_COLS + nx]
+            sum += snapshot[nz * gridCols + nx]
             count += 1
           }
         }
@@ -448,10 +450,10 @@ export function createGardenTerrain(
       if (value > max) max = value
       if (Math.abs(value) > 0.0005) changedCells += 1
       if (value < -0.02) bands.add(Math.floor(-value / DEPTH_RING_SPACING))
-      const gx = index % GRID_COLS
-      const gz = (index - gx) / GRID_COLS
-      if (gx + 1 < GRID_COLS) maxNeighborDelta = Math.max(maxNeighborDelta, Math.abs(heights[index + 1] - value))
-      if (gz + 1 < GRID_ROWS) maxNeighborDelta = Math.max(maxNeighborDelta, Math.abs(heights[index + GRID_COLS] - value))
+      const gx = index % gridCols
+      const gz = (index - gx) / gridCols
+      if (gx + 1 < gridCols) maxNeighborDelta = Math.max(maxNeighborDelta, Math.abs(heights[index + 1] - value))
+      if (gz + 1 < gridRows) maxNeighborDelta = Math.max(maxNeighborDelta, Math.abs(heights[index + gridCols] - value))
     }
     return { min, max, changedCells, depthBands: bands.size, maxNeighborDelta: +maxNeighborDelta.toFixed(3) }
   }
@@ -466,8 +468,35 @@ export function createGardenTerrain(
     if (bounds.halfWidth === parcelBoundsHalfWidth && bounds.halfDepth === parcelBoundsHalfDepth) return false
     parcelBoundsHalfWidth = bounds.halfWidth
     parcelBoundsHalfDepth = bounds.halfDepth
+    if (bounds.halfWidth > (gridCols - 1) * TERRAIN_CELL / 2 - 0.08
+      || bounds.halfDepth > (gridRows - 1) * TERRAIN_CELL / 2 - 0.08) {
+      const previous = { cols: gridCols, rows: gridRows, originX: gridOriginX, originZ: gridOriginZ, heights }
+      gridCols = Math.max(gridCols, Math.ceil((bounds.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1)
+      gridRows = Math.max(gridRows, Math.ceil((bounds.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1)
+      gridOriginX = -(gridCols - 1) * TERRAIN_CELL / 2
+      gridOriginZ = -(gridRows - 1) * TERRAIN_CELL / 2
+      heights = new Float32Array(gridCols * gridRows)
+      outsideParcel = new Uint8Array(gridCols * gridRows)
+      for (let gz = 0; gz < gridRows; gz += 1) {
+        const z = gridOriginZ + gz * TERRAIN_CELL
+        const oldZ = (z - previous.originZ) / TERRAIN_CELL
+        const z0 = Math.max(0, Math.min(previous.rows - 1, Math.floor(oldZ)))
+        const z1 = Math.min(previous.rows - 1, z0 + 1)
+        const tz = Math.max(0, Math.min(1, oldZ - z0))
+        for (let gx = 0; gx < gridCols; gx += 1) {
+          const x = gridOriginX + gx * TERRAIN_CELL
+          const oldX = (x - previous.originX) / TERRAIN_CELL
+          const x0 = Math.max(0, Math.min(previous.cols - 1, Math.floor(oldX)))
+          const x1 = Math.min(previous.cols - 1, x0 + 1)
+          const tx = Math.max(0, Math.min(1, oldX - x0))
+          const a = previous.heights[z0 * previous.cols + x0] * (1 - tx) + previous.heights[z0 * previous.cols + x1] * tx
+          const b = previous.heights[z1 * previous.cols + x0] * (1 - tx) + previous.heights[z1 * previous.cols + x1] * tx
+          heights[gz * gridCols + gx] = a * (1 - tz) + b * tz
+        }
+      }
+    }
     rebuildParcelMask()
-    clampSlope(0, GRID_COLS - 1, 0, GRID_ROWS - 1)
+    clampSlope(0, gridCols - 1, 0, gridRows - 1)
     dirty = true
     return true
   }
@@ -478,21 +507,23 @@ export function createGardenTerrain(
   // Ground outside the startup parcel is immutable at grade. Keep the first
   // editable row level too, so a flat edge pour drains cleanly and dug corner
   // basins remain held only by their intentionally shaped terrain.
-  for (let gz = 0; gz < GRID_ROWS; gz += 1) {
-    for (let gx = 0; gx < GRID_COLS; gx += 1) {
-      const index = gz * GRID_COLS + gx
+  for (let gz = 0; gz < gridRows; gz += 1) {
+    for (let gx = 0; gx < gridCols; gx += 1) {
+      const index = gz * gridCols + gx
       if (outsideParcel[index] === 1) continue
-      const nextOutside = gx + 1 < GRID_COLS && outsideParcel[index + 1] === 1
-      const belowOutside = gz + 1 < GRID_ROWS && outsideParcel[index + GRID_COLS] === 1
+      const nextOutside = gx + 1 < gridCols && outsideParcel[index + 1] === 1
+      const belowOutside = gz + 1 < gridRows && outsideParcel[index + gridCols] === 1
       if (nextOutside || belowOutside) heights[index] = 0
     }
   }
-  clampSlope(0, GRID_COLS - 1, 0, GRID_ROWS - 1)
+  clampSlope(0, gridCols - 1, 0, gridRows - 1)
 
   return {
     cellSize: TERRAIN_CELL,
-    gridCols: GRID_COLS,
-    gridRows: GRID_ROWS,
+    get gridCols() { return gridCols },
+    get gridRows() { return gridRows },
+    get originX() { return gridOriginX },
+    get originZ() { return gridOriginZ },
     heightAt,
     cellHeightAt,
     splat,

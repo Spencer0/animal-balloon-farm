@@ -1,9 +1,15 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
+import { createAnimalCrowdRenderer, type AnimalCrowdEntry, type AnimalCrowdStats } from './animals/animal-crowd-renderer'
 import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST } from './animals/animal-catalog'
-import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './scene/fairground'
-import { createAnimalProgress, startingCarnivalSpecies, type FarmSnapshot } from './game/animal-progress'
+import { chooseDetailedAnimals, type AnimalRenderCandidate } from './game/animal-render-policy'
+import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, makeGardenLawnGeometry } from './scene/fairground'
+import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent } from './game/animal-life'
+import { FARM_EXPANSION_CONFIG, farmBoundsAtLevel } from './game/farm-expansion'
+import { createProgressLedger, type ProgressAction } from './game/farm-progression'
+import { startNextEarnedExpansion } from './game/progression-rewards'
+import { type FarmSnapshot } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
 import { conditionMetricUnit, stageDefinition, stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
@@ -23,6 +29,7 @@ import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { createJournalPanel } from './ui/journal-panel'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
 import { createToolsHud } from './ui/tools-hud'
+import { createProgressionHud } from './ui/progression-hud'
 import { createSeedboxPanel } from './ui/seedbox-panel'
 import { createSalePanel } from './ui/sale-panel'
 import { createShopPanel } from './ui/shop-panel'
@@ -172,24 +179,173 @@ function pickAnimal(clientX: number, clientY: number): BalloonAnimal | null {
   if (rect.width <= 0 || rect.height <= 0) return null
   worldPointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
   worldRaycaster.setFromCamera(worldPointer, camera)
-  const candidates = animals.filter((animal) => !animal.isSold && animal.root.visible).flatMap((animal) => {
+  const detailedMeshes = animals.filter((animal) => !animal.isSold && animal.root.visible).flatMap((animal) => {
     const meshes: THREE.Mesh[] = []
     animal.root.traverse((object) => { if (object instanceof THREE.Mesh && object.visible) meshes.push(object) })
     return meshes
   })
-  const hit = worldRaycaster.intersectObjects(candidates, false)[0]
-  if (!hit) return null
-  return animals.find((animal) => animal.root === hit.object || animal.root.getObjectById(hit.object.id) !== undefined) ?? null
+  const detailedHit = worldRaycaster.intersectObjects(detailedMeshes, false)[0]
+  if (detailedHit) return animals.find((animal) => animal.root === detailedHit.object || animal.root.getObjectById(detailedHit.object.id) !== undefined) ?? null
+  const crowdId = animalCrowd.pick(worldRaycaster)
+  return crowdId ? animalById.get(crowdId) ?? null : null
+}
+
+function refreshAnimalCrowd(nowSeconds: number, force = false): void {
+  if (!force && nowSeconds - lastCrowdRefreshAt < 1 / 15) return
+  lastCrowdRefreshAt = nowSeconds
+  const viewportHeight = Math.max(1, gameCanvas.clientHeight)
+  const worldToPixels = viewportHeight / Math.max(0.001, viewHalfHeight * 2)
+  camera.updateMatrixWorld()
+  const candidates: AnimalRenderCandidate[] = []
+  const visibleAnimals: BalloonAnimal[] = []
+  const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
+  const activeInViewer = new Set(getViewerCastAnimals().map((animal) => animal.instanceId))
+  for (const animal of animals) {
+    const record = progress.animal(animal.instanceId)
+    if (!record || record.stage <= 0 || animal.isSold) continue
+    if (mode === 'viewer' && !activeInViewer.has(animal.instanceId)) {
+      animal.setDetailedVisible(false)
+      continue
+    }
+    const size = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)?.size ?? 2
+    const projectedHeight = size * animal.currentScale * worldToPixels
+    const renderPosition = animal.currentPosition.clone()
+    renderPosition.y += 0.4 * size * animal.currentScale
+    const sphere = new THREE.Sphere(renderPosition, Math.max(1.2, size * animal.currentScale * 0.9))
+    if (!frustum.intersectsSphere(sphere)) {
+      animal.setDetailedVisible(false)
+      continue
+    }
+    visibleAnimals.push(animal)
+    candidates.push({
+      id: animal.instanceId,
+      projectedHeight,
+      distance: camera.position.distanceTo(animal.currentPosition),
+      priority: animal.renderPriority + (animal.instanceId === focusedAnimalId ? 200 : 0),
+      interactive: animal.isCapturing || animal.isRomancing || animal.instanceId === focusedAnimalId,
+    })
+  }
+  const detailedIds = new Set(mode === 'farm'
+    ? chooseDetailedAnimals(candidates)
+    : animals.filter((animal) => activeInViewer.has(animal.instanceId)).map((animal) => animal.instanceId))
+  const visibleAnimalIds = new Set(visibleAnimals.map((animal) => animal.instanceId))
+  const entries: AnimalCrowdEntry[] = []
+  const actuallyDetailedIds = new Set<string>()
+  for (const animal of animals) {
+    const record = progress.animal(animal.instanceId)
+    const desiredDetailed = detailedIds.has(animal.instanceId)
+      && (mode === 'viewer' ? activeInViewer.has(animal.instanceId) : visibleAnimalIds.has(animal.instanceId))
+    const detailed = desiredDetailed && animal.hasDetailedModel
+    animal.setDetailedVisible(desiredDetailed)
+    if (!record || record.stage <= 0 || animal.isSold || !visibleAnimalIds.has(animal.instanceId)) continue
+    if (detailed) actuallyDetailedIds.add(animal.instanceId)
+    entries.push({
+      id: animal.instanceId,
+      species: animal.id,
+      x: animal.currentPosition.x,
+      y: animal.currentPosition.y,
+      z: animal.currentPosition.z,
+      heading: animal.currentHeading,
+      scale: animal.currentScale,
+      wild: record.appearance === 'wild',
+      phase: animal.animationPhase,
+    })
+  }
+  animalCrowd.setVisible(mode === 'farm')
+  animalCrowd.update(entries, actuallyDetailedIds, nowSeconds)
+  crowdStats = animalCrowd.stats()
 }
 
 
 let gardenPlants: GardenPlants | null = null
-
-/**
- * Grass coverage lookup, published by the garden-surface setup below so code
- * that lives outside that block can ask what the ground is like.
- */
 let coverageLookup: ((x: number, z: number) => number) | null = null
+let rebuildGardenSurfaceLookups: (() => void) | null = null
+
+function refreshGardenSurfaceLookups(): void {
+  rebuildGardenSurfaceLookups?.()
+}
+
+/** Egg meshes can be clicked independently from animals to hatch when ready. */
+function createEggVisual(egg: { readonly id: number; readonly x: number; readonly z: number; readonly ready: boolean; readonly incubationProgress: number }): void {
+  removeEggVisual(egg.id)
+  const group = new THREE.Group()
+  group.name = `Incubating egg ${egg.id}`
+  group.position.set(egg.x, GARDEN_LAWN_Y + (gardenTerrain?.heightAt(egg.x, egg.z) ?? 0) + 0.14, egg.z)
+  group.renderOrder = 5
+  group.userData.eggId = egg.id
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.19, 18, 14),
+    new THREE.MeshStandardMaterial({ color: egg.ready ? '#fff2cf' : '#e7d9bc', roughness: 0.42 }),
+  )
+  shell.scale.set(0.78, 1.12, 0.78)
+  shell.castShadow = true
+  shell.userData.eggId = egg.id
+  group.add(shell)
+  const progressRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.29, 0.025, 7, 32),
+    new THREE.MeshBasicMaterial({ color: egg.ready ? '#f3c85b' : '#91c8a0', transparent: true, opacity: 0.9, depthWrite: false }),
+  )
+  progressRing.rotation.x = Math.PI / 2
+  progressRing.position.y = -0.11
+  progressRing.scale.setScalar(0.45 + 0.55 * egg.incubationProgress)
+  group.add(progressRing)
+  const sparkle = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 8, 6),
+    new THREE.MeshBasicMaterial({ color: '#fff7d4', transparent: true, opacity: egg.ready ? 0.95 : 0.25, depthWrite: false }),
+  )
+  sparkle.position.set(0.11, 0.26, 0.02)
+  sparkle.userData.eggId = egg.id
+  progressRing.userData.eggId = egg.id
+  group.add(sparkle)
+  fairground.root.add(group)
+  eggVisuals.set(egg.id, group)
+}
+
+function updateEggVisual(egg: { readonly id: number; readonly x: number; readonly z: number; readonly ready: boolean; readonly incubationProgress: number }): void {
+  const group = eggVisuals.get(egg.id)
+  if (!group) {
+    createEggVisual(egg)
+    return
+  }
+  group.position.set(egg.x, GARDEN_LAWN_Y + (gardenTerrain?.heightAt(egg.x, egg.z) ?? 0) + 0.14 + (egg.ready ? 0.035 : 0), egg.z)
+  const shell = group.children[0] as THREE.Mesh
+  const ring = group.children[1] as THREE.Mesh
+  const sparkle = group.children[2] as THREE.Mesh
+  ;(shell.material as THREE.MeshStandardMaterial).color.set(egg.ready ? '#fff2cf' : '#e7d9bc')
+  ;(ring.material as THREE.MeshBasicMaterial).color.set(egg.ready ? '#f3c85b' : '#91c8a0')
+  ring.scale.setScalar(0.45 + 0.55 * egg.incubationProgress)
+  ;(sparkle.material as THREE.MeshBasicMaterial).opacity = egg.ready ? 0.95 : 0.25
+}
+
+function removeEggVisual(eggId: number): void {
+  const group = eggVisuals.get(eggId)
+  if (!group) return
+  group.parent?.remove(group)
+  group.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return
+    object.geometry.dispose()
+    const materials = Array.isArray(object.material) ? object.material : [object.material]
+    materials.forEach((material) => material.dispose())
+  })
+  eggVisuals.delete(eggId)
+}
+
+function pickEgg(clientX: number, clientY: number): { id: number; x: number; z: number; ready: boolean } | null {
+  const rect = gameCanvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0 || !containsGardenPoint(0, 0, currentGardenBounds)) return null
+  worldPointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
+  worldRaycaster.setFromCamera(worldPointer, camera)
+  const hits = worldRaycaster.intersectObjects([...eggVisuals.values()], true)
+  let object: THREE.Object3D | null = hits[0]?.object ?? null
+  let id: number | undefined
+  while (object && id === undefined) {
+    id = object.userData.eggId as number | undefined
+    object = object.parent
+  }
+  if (id === undefined) return null
+  const egg = progress.eggs().find((entry) => entry.id === id)
+  return egg ? { id: egg.id, x: egg.x, z: egg.z, ready: egg.ready } : null
+}
 
 /**
  * What the ground is like at a world position, for the plant rules.
@@ -210,40 +366,42 @@ function plantSurfaceAt(x: number, z: number) {
   }
 }
 if (fairground.gardenSurface && gardenTerrain && gardenWater) {
-  const positions = fairground.gardenSurface.geometry.getAttribute('position') as THREE.BufferAttribute
-  const colors = fairground.gardenSurface.geometry.getAttribute('color') as THREE.BufferAttribute
   const coverageCellSize = 0.58
   const coverageCells = new Map<string, number[]>()
-  for (let index = 0; index < positions.count; index += 1) {
-    const cellX = Math.floor(positions.getX(index) / coverageCellSize)
-    const cellZ = Math.floor(-positions.getY(index) / coverageCellSize)
-    const key = `${cellX},${cellZ}`
-    const cell = coverageCells.get(key) ?? []
-    cell.push(index)
-    coverageCells.set(key, cell)
-  }
-  const coverageAt = (x: number, z: number): number => {
-    const cellX = Math.floor(x / coverageCellSize)
-    const cellZ = Math.floor(z / coverageCellSize)
-    let nearest = -1
-    let best = Infinity
-    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-      for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
-        for (const index of coverageCells.get(`${cellX + offsetX},${cellZ + offsetZ}`) ?? []) {
-          const dx = positions.getX(index) - x
-          const dz = -positions.getY(index) - z
-          const distance = dx * dx + dz * dz
-          if (distance < best) {
-            nearest = index
-            best = distance
+  let positions = fairground.gardenSurface.geometry.getAttribute('position') as THREE.BufferAttribute
+  let colors = fairground.gardenSurface.geometry.getAttribute('color') as THREE.BufferAttribute
+  const rebuildCoverageLookup = (): void => {
+    positions = fairground.gardenSurface!.geometry.getAttribute('position') as THREE.BufferAttribute
+    colors = fairground.gardenSurface!.geometry.getAttribute('color') as THREE.BufferAttribute
+    coverageCells.clear()
+    for (let index = 0; index < positions.count; index += 1) {
+      const cellX = Math.floor(positions.getX(index) / coverageCellSize)
+      const cellZ = Math.floor(-positions.getY(index) / coverageCellSize)
+      const key = `${cellX},${cellZ}`
+      const cell = coverageCells.get(key) ?? []
+      cell.push(index)
+      coverageCells.set(key, cell)
+    }
+    coverageLookup = (x, z) => {
+      const cellX = Math.floor(x / coverageCellSize)
+      const cellZ = Math.floor(z / coverageCellSize)
+      let nearest = -1
+      let best = Infinity
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+          for (const index of coverageCells.get(`${cellX + offsetX},${cellZ + offsetZ}`) ?? []) {
+            const dx = positions.getX(index) - x
+            const dz = -positions.getY(index) - z
+            const distance = dx * dx + dz * dz
+            if (distance < best) { nearest = index; best = distance }
           }
         }
       }
+      return nearest >= 0 ? colors.getW(nearest) : 0
     }
-    return nearest >= 0 ? colors.getW(nearest) : 0
   }
-  // One lookup, published for the plant rules and the debug harness above.
-  coverageLookup = coverageAt
+  rebuildGardenSurfaceLookups = rebuildCoverageLookup
+  rebuildCoverageLookup()
   gardenPlants = createGardenPlants(
     gameCanvas,
     camera,
@@ -277,6 +435,7 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
 }
 
 let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
+let surfaceGeometryLevel = FARM_EXPANSION_CONFIG.maximumLevel
 
 // Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
 // each animal's palette through a shared 6.8-second paint-bucket reveal. Scene options come from
@@ -286,63 +445,97 @@ let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
 // pure state machine; this file is only responsible for reading the farm,
 // feeding it in, and acting on the events it returns.
 const speciesIds = getAnimalSceneOptions(false, gameCanvas, camera).map((options) => options.id)
-const progress = createAnimalProgress(speciesIds)
+const progress = createAnimalLife(speciesIds)
+const progression = createProgressLedger()
 /** Stages 0 and 1 live at the carnival; 2 and up are inside the fence. */
-const isLoose = (species: string): boolean => progress.progressOf(species).stage < 2
+const isLoose = (animalId: string): boolean => progress.animal(animalId)?.stage === 1
 
-const generatedAnimalNames = generateAnimalNames(ANIMAL_CATALOG.length)
-const animalNames = new Map(ANIMAL_CATALOG.map((animal, index) => [animal.id, generatedAnimalNames[index]]))
-const animals: BalloonAnimal[] = await Promise.all(getAnimalSceneOptions(
-  false,
-  gameCanvas,
-  camera,
-  gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined,
-).map((options) =>
-  createBalloonAnimal(fairground.root, {
-    ...options,
-    name: animalNames.get(options.id) ?? options.name,
-    // Start every species at the carnival, loose, and let progression decide
-    // who comes in. `carnivalSpawn` points out by the tents.
-    stage: 0,
-    spawn: (ANIMAL_CATALOG.find((animal) => animal.id === options.id)?.carnivalSpawn
-      ?? options.spawn) as readonly [number, number],
-    isLoose: () => isLoose(options.id),
-    getGardenBounds: activeGardenBounds,
-  }),
-))
-const animalById = new Map(animals.map((animal) => [animal.id, animal]))
-const wallet = createWallet()
-
-// Four species are already at the carnival when the game opens; the rest have
-// to be drawn over by the farm itself.
-for (const species of startingCarnivalSpecies(speciesIds)) progress.discover(species)
-// Sync the scene to the model's opening state. Without this an animal sits at
-// visual stage 0 while the model already has it at the carnival, and nothing
-// ever corrects it -- progression only pushes stages on *change*.
-for (const animal of animals) {
-  const entry = progress.progressOf(animal.id)
-  if (entry.stage > 0) animal.stage = entry.stage
+const generatedAnimalNames = generateAnimalNames(48)
+const animalNames = new Map<string, string>()
+const animalById = new Map<string, BalloonAnimal>()
+const animals: BalloonAnimal[] = []
+const animalPopulationLimit = ANIMAL_LIFE_CONFIG.maximumPopulation
+const animalCrowd = createAnimalCrowdRenderer(fairground.root)
+let focusedAnimalId: string | null = null
+let crowdStats = animalCrowd.stats()
+let lastCrowdRefreshAt = 0
+const eggVisuals = new Map<number, THREE.Group>()
+const farmHomes = new Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>()
+const viewerStands = new Map<string, THREE.Vector3>()
+const animalCreations = new Map<string, Promise<BalloonAnimal>>()
+function createAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }): Promise<BalloonAnimal> {
+  const existing = animalById.get(record.id)
+  if (existing) return Promise.resolve(existing)
+  const pending = animalCreations.get(record.id)
+  if (pending) return pending
+  const creation = loadAnimalInstance(record, position)
+  animalCreations.set(record.id, creation)
+  void creation.then(
+    () => { if (animalCreations.get(record.id) === creation) animalCreations.delete(record.id) },
+    () => { if (animalCreations.get(record.id) === creation) animalCreations.delete(record.id) },
+  )
+  return creation
 }
 
-// The animals are created once and live in the fairground. The viewer borrows
-// them onto its own plinths, so remember the farm transform to put it back.
-const farmHomes = new Map(animals.map((animal) => [animal.id, {
-  parent: animal.root.parent ?? fairground.root,
-  position: animal.root.position.clone(),
-}]))
-/** Where each animal stands in the viewer: the plinth top under its showcase spawn. */
-const viewerStands = new Map(animals.map((animal) => {
-  const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
-  return [animal.id, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z)]
-}))
+async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }): Promise<BalloonAnimal> {
+  if (animals.length + animalCreations.size >= animalPopulationLimit && !animalById.has(record.id)) return Promise.reject(new Error(`The farm is at its ${animalPopulationLimit}-animal limit`))
+  const options = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
+    .find((entry) => entry.id === record.species)
+  if (!options) throw new Error(`Missing scene options for animal ${record.species}`)
+  const name = animalNames.get(record.id) ?? generatedAnimalNames[animalNames.size] ?? `${options.name} ${animalNames.size + 1}`
+  animalNames.set(record.id, name)
+  const animal = await createBalloonAnimal(fairground.root, {
+    ...options,
+    name,
+    onDetailedModelReady: () => refreshAnimalCrowd(performance.now() / 1000, true),
+    instanceId: record.id,
+    growthScale: record.growth,
+    stage: 0,
+    captureOnClick: false,
+    spawn: position ? [position.x, position.z] : (ANIMAL_CATALOG.find((entry) => entry.id === record.species)?.carnivalSpawn ?? options.spawn) as readonly [number, number],
+    isLoose: () => isLoose(record.id),
+    getGardenBounds: activeGardenBounds,
+  })
+  animal.stage = record.stage
+  animal.setGrowth(record.growth * record.adultScale)
+  if (record.romancing && !record.baby) animal.setRomancing(true)
+  else animal.setDetailedVisible(false)
+  animalById.set(record.id, animal)
+  animals.push(animal)
+  farmHomes.set(record.id, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
+  if (VIEWER_CAST.includes(animal.id)) {
+    const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
+    viewerStands.set(record.id, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
+  }
+  const latest = progress.animal(record.id)
+  if (!latest) {
+    animal.dispose()
+    return animal
+  }
+  if (latest) {
+    animal.stage = latest.stage
+    animal.setGrowth(latest.growth * latest.adultScale)
+    if (latest.romancing && !latest.baby) animal.setRomancing(true)
+    else animal.setDetailedVisible(false)
+  }
+  return animal
+}
+await Promise.all(progress.all().map((record) => createAnimalInstance(record)))
+  const wallet = createWallet()
+
+// Individual residents and visitors are spawned from the pure animal-life records below.
+
+// Farm homes and viewer plinths are assigned as each independently tracked animal is created.
 /**
  * The viewer is the review booth for new models: VIEWER_CAST decides which
  * species it stages, so a model being tuned stands there alone instead of
  * sharing the stage with the whole catalog. The rest of the farm carries on
  * without them and is untouched when the booth closes.
  */
-const viewerCastAnimals = animals.filter((animal) => VIEWER_CAST.includes(animal.id))
-const viewerFocusStand = VIEWER_CAST.length === 1 ? viewerStands.get(VIEWER_CAST[0]) ?? null : null
+const getViewerCastAnimals = (): BalloonAnimal[] => animals.filter((animal) => VIEWER_CAST.includes(animal.id))
+const viewerFocusStand = VIEWER_CAST.length === 1
+  ? new THREE.Vector3(SHOWCASE_ANIMALS[VIEWER_CAST[0]].spawn[0], GARDEN_LAWN_Y + 0.1, SHOWCASE_ANIMALS[VIEWER_CAST[0]].spawn[1])
+  : null
 
 // ------------------------------------------------------- farm measurement --
 
@@ -376,8 +569,8 @@ function currentTerrainSample(): TerrainSample | null {
   const cols = gardenTerrain.gridCols
   const rows = gardenTerrain.gridRows
   const cellSize = gardenTerrain.cellSize
-  const originX = -(GARDEN_MAX_BOUNDS.halfWidth + 0.08)
-  const originZ = -(GARDEN_MAX_BOUNDS.halfDepth + 0.08)
+  const originX = gardenTerrain.originX
+  const originZ = gardenTerrain.originZ
   const heights = new Float32Array(cols * rows)
   for (let gz = 0; gz < rows; gz += 1) {
     for (let gx = 0; gx < cols; gx += 1) {
@@ -429,25 +622,120 @@ function measureFarm(): FarmState {
  * This is the only place the scene learns that a condition was met, and it
  * does so by setting `animal.stage` -- the animal then runs its own reveal.
  * Keeping the event handling here means `balloon-animal.ts` never has to know
- * that a condition system exists.
- */
+ * that a condition system exists. */
+function progressionHudState() {
+  const eggs = progress.eggs()
+
+  return {
+    points: progression.points,
+    level: progression.level,
+    pointsToNextLevel: progression.pointsToNextLevel,
+    population: progress.all().filter((animal) => animal.stage > 0).length + eggs.length,
+    capacity: progress.capacity(fairground.farmExpansion?.state.level ?? 0),
+    eggs: eggs.length,
+    readyEggs: eggs.filter((egg) => egg.ready).length,
+  }
+}
+
 function currentFarmSnapshot(): FarmSnapshot {
   const residentSpecies = new Set(progress.all()
-    .filter((entry) => entry.stage >= 3 && !animalById.get(entry.species as BalloonAnimal['id'])?.isSold)
+    .filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold)
     .map((entry) => entry.species))
   return { state: measureFarm(), residentSpecies }
 }
 
+function awardProgress(action: ProgressAction, key: string, count = 1): void {
+  progression.awardOnce(key, action, count)
+}
+
+function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
+  for (const event of events) {
+    const animal = event.animalId ? animalById.get(event.animalId) : undefined
+    if (event.action) awardProgress(event.action, `${event.action}:${event.eggId ?? event.animalId ?? ''}`)
+    if (event.stage !== undefined && animal) {
+      animal.stage = event.stage
+      animal.setDetailedVisible(animal.instanceId === focusedAnimalId || animal.isCapturing || animal.isRomancing)
+      if (event.kind === 'arriveCarnival') {
+        const spawn = ANIMAL_CATALOG.find((entry) => entry.id === event.species)?.carnivalSpawn
+        if (spawn) animal.root.position.set(spawn[0], GARDEN_LAWN_Y, spawn[1])
+      }
+    }
+    if (event.kind === 'arriveCarnival' && event.animalId && !animal) {
+      const record = progress.animal(event.animalId)
+      if (record) void createAnimalInstance(record).then((created) => {
+        farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairground.root, position: created.root.position.clone() })
+        if (VIEWER_CAST.includes(created.id)) {
+          const [x, z] = SHOWCASE_ANIMALS[created.id].spawn
+          viewerStands.set(created.instanceId, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
+        }
+      })
+    }
+    if (event.kind === 'courtship') {
+      const partner = event.partnerId ? animalById.get(event.partnerId) : undefined
+      if (animal && partner) {
+        const separation = new THREE.Vector3(animal.root.position.x - partner.root.position.x, 0, animal.root.position.z - partner.root.position.z)
+        if (separation.lengthSq() < 1e-6) separation.set(1, 0, 0)
+        separation.setLength(0.9)
+        animal.setRomancing(true, partner.root.position.clone().add(separation))
+        partner.setRomancing(true, animal.root.position.clone().sub(separation))
+      }
+    }
+    if (event.kind === 'courtshipEnd' || event.kind === 'layEgg') {
+      animal?.setRomancing(false)
+      const partner = event.partnerId ? animalById.get(event.partnerId) : undefined
+      partner?.setRomancing(false)
+    }
+    if (event.kind === 'layEgg') {
+      const egg = progress.eggs().find((entry) => entry.id === event.eggId)
+      if (egg) createEggVisual(egg)
+      console.info(`[Animal Balloon Farm] ${event.species} laid an egg`)
+    }
+    if (event.kind === 'hatch' && event.eggId !== undefined) removeEggVisual(event.eggId)
+    if (event.kind === 'growUp' && animal) animal.setGrowth(1)
+  }
+}
+
 function updateAnimalProgress(deltaSeconds: number): void {
   if (mode === 'viewer' || menu.isOpen || salePanel.isOpen) return
-  const events = progress.tick(currentFarmSnapshot(), deltaSeconds)
-  for (const event of events) {
-    const animal = animalById.get(event.species as (typeof animals)[number]['id'])
+  const positions = Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }]))
+  const events = progress.tick({ farm: currentFarmSnapshot(), expansionLevel: fairground.farmExpansion?.state.level ?? 0, positions }, deltaSeconds)
+  handleAnimalLifeEvents(events)
+  const records = progress.all()
+  const recordsById = new Map(records.map((record) => [record.id, record]))
+  for (const record of records) {
+    const animal = animalById.get(record.id)
     if (!animal || animal.isSold) continue
-    animal.stage = event.stage
-    if (event.kind === 'settle' || event.kind === 'fallInLove') {
-      console.info(`[Animal Balloon Farm] ${event.species} -> ${stageTitle(event.species, event.stage)}`)
+    animal.setGrowth(record.growth * record.adultScale)
+    const partner = record.partnerId ? animalById.get(record.partnerId) : undefined
+    const partnerRecord = record.partnerId ? recordsById.get(record.partnerId) : undefined
+    if (record.romancing && partner && partnerRecord) {
+      const separation = new THREE.Vector3(animal.root.position.x - partner.root.position.x, 0, animal.root.position.z - partner.root.position.z)
+      if (separation.lengthSq() < 1e-6) separation.set(record.id.localeCompare(partnerRecord.id) < 0 ? -1 : 1, 0, 0)
+      separation.setLength(0.9)
+      animal.setRomancing(true, partner.root.position.clone().add(separation))
+    } else if (!record.paired) {
+      animal.setRomancing(false)
     }
+  }
+  const eggs = progress.eggs()
+  for (const egg of eggs) updateEggVisual(egg)
+  const liveEggIds = new Set(eggs.map((egg) => egg.id))
+  for (const eggId of [...eggVisuals.keys()]) if (!liveEggIds.has(eggId)) removeEggVisual(eggId)
+  for (const event of events) {
+    if (event.kind === 'settle' || event.kind === 'fallInLove') {
+      const animal = event.animalId ? animalById.get(event.animalId) : undefined
+      if (animal) animal.setAppearance('standard')
+      console.info(`[Animal Balloon Farm] ${event.species} -> stage ${event.stage}`)
+    }
+  }
+  refreshAnimalCrowd(performance.now() / 1000)
+  const targetLevel = progression.level
+  if (fairground.farmExpansion && startNextEarnedExpansion({
+    get level() { return fairground.farmExpansion!.state.level },
+    get isAnimating() { return fairground.farmExpansion!.state.isAnimating },
+    expand: () => fairground.farmExpansion!.expand(),
+  }, targetLevel)) {
+    console.info(`[Animal Balloon Farm] earned expansion parcel ${fairground.farmExpansion.state.level}`)
   }
 }
 
@@ -492,6 +780,7 @@ ui.resize(window.innerWidth, window.innerHeight)
 const journal = createJournalPanel(window.innerWidth, window.innerHeight, () => {
   syncFarmChrome()
 })
+const progressionHud = createProgressionHud(window.innerWidth, window.innerHeight)
 const toolsHud = createToolsHud(
   gardenTools?.selectedTool ?? 'hand',
   (id: GardenToolId) => selectGardenTool(id),
@@ -502,18 +791,18 @@ const menu = createMenuPanel(handleMenuChoice, window.innerWidth, window.innerHe
   syncFarmChrome()
 })
 const viewer = createViewerPanel({
-  getAnimals: () => animals.filter((animal) => !animal.isSold),
-  getAnimalName: (id) => animalNames.get(id) ?? id,
+  getAnimals: () => animals.filter((animal) => !animal.isSold && VIEWER_CAST.includes(animal.id)),
+  getAnimalName: (id) => animalNames.get(animals.find((animal) => animal.id === id)?.instanceId ?? id) ?? id,
   playAll: () => {
-for (const animal of viewerCastAnimals) {
+    for (const animal of getViewerCastAnimals()) {
       if (animal.isCaptured) animal.setAppearance('wild')
       animal.beginCapture()
     }
   },
-resetAll: () => viewerCastAnimals.forEach((animal) => animal.setAppearance('wild')),
+  resetAll: () => getViewerCastAnimals().forEach((animal) => animal.setAppearance('wild')),
   exit: () => setMode('farm'),
   replay: (id) => {
-    const animal = animalById.get(id)
+    const animal = animals.find((entry) => entry.id === id)
     if (!animal || animal.isSold) return
     if (animal.isCaptured) animal.setAppearance('wild')
     animal.beginCapture()
@@ -522,9 +811,19 @@ resetAll: () => viewerCastAnimals.forEach((animal) => animal.setAppearance('wild
 
 const salePanel = createSalePanel((target) => {
   if (target.kind === 'animal') {
-    const animal = animalById.get(target.id as BalloonAnimal['id'])
+    const animal = animalById.get(target.id)
     if (!animal || !animal.canSell || !animal.sell()) return null
+    const removed = progress.remove(animal.instanceId)
+    animalById.delete(animal.instanceId)
+    const animalIndex = animals.indexOf(animal)
+    if (animalIndex >= 0) animals.splice(animalIndex, 1)
+    if (focusedAnimalId === animal.instanceId) focusedAnimalId = null
+    animal.dispose()
+    refreshAnimalCrowd(performance.now() / 1000, true)
+    farmHomes.delete(animal.instanceId)
+    viewerStands.delete(animal.instanceId)
     const balance = wallet.credit(target.price)
+    if (removed) awardProgress('sellAnimal', `sell:${animal.instanceId}`)
     salePanel.setWallet(balance)
     return balance
   }
@@ -533,6 +832,7 @@ const salePanel = createSalePanel((target) => {
   if (!plant || !gardenPlants?.removePlant(plantId)) return null
   seedbox.refresh()
   const balance = wallet.credit(plantSaleValue(plant.species, plant.growth))
+  awardProgress('sellPlant', `sell-plant:${plant.instanceId}`)
   salePanel.setWallet(balance)
   return balance
 }, window.innerWidth, window.innerHeight, (isOpen) => {
@@ -639,7 +939,7 @@ const shopPanel = createShopPanel(
 shopPanel.setCountsSource((id) => gardenProps?.inventory.count(id) ?? 0)
 shopPanel.setWallet(wallet.balance)
 
-const panels: UIPanel[] = [toolsHud, seedbox, propboxPanel, menu, viewer, journal, salePanel, shopPanel]
+const panels: UIPanel[] = [progressionHud, toolsHud, seedbox, propboxPanel, menu, viewer, journal, salePanel, shopPanel]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -650,13 +950,27 @@ const panels: UIPanel[] = [toolsHud, seedbox, propboxPanel, menu, viewer, journa
  */
 journal.setConditionsSource({
   get: (species) => {
-    if (animalById.get(species as BalloonAnimal['id'])?.isSold) return null
-    const conditions = progress.statusOf(species)
-    if (!conditions.length) return null
+    const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
+    if (!animal) return null
+    const conditions = progress.statusOf(animal.instanceId)
+    const rows = conditions.map((definition, index) => ({
+      ...definition,
+      revealed: index <= (progress.animal(animal.instanceId)?.stage ?? 0),
+      current: definition.requirement && definition.requirement.kind !== 'residentSpecies'
+        ? definition.requirement.kind === 'grassArea' ? measureFarm().tallGrassArea
+          : definition.requirement.kind === 'waterArea' ? measureFarm().waterArea
+            : definition.requirement.kind === 'flatArea' ? measureFarm().flatGrassArea
+              : measureFarm().plantCounts[definition.requirement.species ?? ''] ?? 0
+        : null,
+      target: definition.requirement?.amount ?? null,
+      met: index < (progress.animal(animal.instanceId)?.stage ?? 0),
+      metricLabel: definition.requirement?.kind === 'plantCount' ? 'Plants in the ground' : null,
+    }))
+    if (!rows.length) return null
     return {
-      stage: progress.progressOf(species).stage,
-      rows: conditions.map((row) => {
-        const definition = stageDefinition(species, row.stage as 0 | 1 | 2 | 3 | 4)
+      stage: progress.animal(animal.instanceId)?.stage ?? 0,
+      rows: rows.map((row) => {
+        const definition = stageDefinition(animal.id, row.stage as 0 | 1 | 2 | 3 | 4)
         // A social condition has no area to meter, so name the friend instead.
         const wantsSpecies = row.requirement?.kind === 'residentSpecies' ? row.requirement.species : undefined
         return {
@@ -674,7 +988,7 @@ journal.setConditionsSource({
             waitingOn: {
               species: wantsSpecies,
               name: ANIMAL_CATALOG.find((animal) => animal.id === wantsSpecies)?.name ?? wantsSpecies,
-              resident: progress.all().some((entry) => entry.species === wantsSpecies && entry.stage >= 3 && !animalById.get(wantsSpecies as BalloonAnimal['id'])?.isSold),
+              resident: progress.all().some((entry) => entry.species === wantsSpecies && entry.stage >= 3),
             },
           } : {}),
         }
@@ -754,10 +1068,12 @@ function setMode(next: GameMode): void {
     }
     // Only the cast travels to the stage; the rest of the farm stays in the
     // fairground, which is simply removed from the scene while the booth is up.
-    for (const animal of viewerCastAnimals) {
+    for (const animal of getViewerCastAnimals()) {
       viewerStage.root.add(animal.root)
-      animal.root.position.copy(viewerStands.get(animal.id)!)
+      animal.root.position.copy(viewerStands.get(animal.instanceId)!)
+      animal.setDetailedVisible(animal.stage > 0)
     }
+    refreshAnimalCrowd(performance.now() / 1000, true)
     scene.remove(fairground.root)
     focusCamera()
   } else {
@@ -765,12 +1081,14 @@ function setMode(next: GameMode): void {
     scene.remove(viewerStage?.root ?? fairground.root)
     // Return only the cast; everyone else never left the fairground and keeps
     // whatever wander they were in the middle of.
-    for (const animal of viewerCastAnimals) {
-      const home = farmHomes.get(animal.id)!
+    for (const animal of getViewerCastAnimals()) {
+      const home = farmHomes.get(animal.instanceId)
+      if (!home) continue
       home.parent.add(animal.root)
       animal.root.position.copy(home.position)
     }
     scene.add(fairground.root)
+    refreshAnimalCrowd(performance.now() / 1000, true)
     focusCamera()
   }
   syncFarmChrome()
@@ -798,6 +1116,7 @@ function focusCamera(): void {
   camera.lookAt(cameraTarget)
   camera.updateMatrixWorld()
   updateCameraProjection()
+  refreshAnimalCrowd(performance.now() / 1000, true)
 }
 
 /**
@@ -1200,6 +1519,22 @@ function orbitPointerDown(event: PointerEvent): void {
       return
     }
     if (!journal.isOpen && !seedbox.isOpen && !propboxPanel.isOpen) {
+      const egg = pickEgg(event.clientX, event.clientY)
+      if (egg) {
+        const hatched = egg.ready ? progress.hatch(egg.id) : null
+        if (hatched?.animalId) {
+          removeEggVisual(egg.id)
+          const record = progress.animal(hatched.animalId)
+          if (record) void createAnimalInstance(record, { x: egg.x, z: egg.z }).then((created) => {
+          created.root.visible = true
+          created.stage = record.stage
+          farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairground.root, position: created.root.position.clone() })
+        })
+        } else {
+          console.info(egg.ready ? 'The garden is at capacity; earn another expansion before hatching.' : 'This egg is still incubating.')
+        }
+        return
+      }
       // Hand-tool pick-up first, then the shop door. Both are the same grab the
       // sale panel already trained the player to make.
       if (gardenProps?.pickUpAt(event.clientX, event.clientY)) {
@@ -1224,12 +1559,14 @@ function orbitPointerDown(event: PointerEvent): void {
     }
     const animal = pickAnimal(event.clientX, event.clientY)
     if (animal) {
+      focusedAnimalId = animal.instanceId
+      refreshAnimalCrowd(performance.now() / 1000, true)
       gardenPlants?.clearSelection()
       const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
       salePanel.open({
-        id: animal.id,
+        id: animal.instanceId,
         kind: 'animal',
-        name: animalNames.get(animal.id) ?? species?.name ?? animal.id,
+        name: animalNames.get(animal.instanceId) ?? species?.name ?? animal.id,
         detail: animal.canSell
           ? `${stageTitle(animal.id, animal.stage)} · ${species?.subtitle ?? 'A farm friend'}`
           : 'Needs to settle at the farm before selling',
@@ -1448,11 +1785,6 @@ function handleKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  if (key === 'e' && mode === 'farm' && !menu.isOpen && fairground.farmExpansion) {
-    event.preventDefault()
-    if (!event.repeat) fairground.farmExpansion.expand()
-    return
-  }
   if (event.key === 'Escape' && salePanel.isOpen) {
     salePanel.close()
     syncFarmChrome()
@@ -1570,6 +1902,7 @@ window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
+  progressionHud.resize(window.innerWidth, window.innerHeight)
 })
 
 // ------------------------------------------------------------- garden debug --
@@ -1629,7 +1962,19 @@ interface GardenDebugHarness {
   animalReport(): Record<string, unknown>[]
   /** Frame a species closely, for inspecting eyes and other small details. */
   focusSpecies(species: string, height?: number): void
-/**
+  /** Current earned progression and next expansion milestone. */
+  progression(): { readonly points: number; readonly level: number; readonly pointsToNextLevel: number }
+  rendering(): { readonly animalCount: number; readonly populationLimit: number; readonly crowd: { readonly animalCount: number; readonly instancedAnimals: number; readonly detailedAnimals: number; readonly batches: number; readonly lowPolyTriangles: number } }
+  /** Hatch a ready egg and return the new baby event. */
+  hatch(eggId: number): AnimalLifeEvent | null
+  /** Advance the herd and garden progression without simulating browser time. */
+  simulate(seconds: number, steps?: number): AnimalConditionReport
+  /** Build deterministic render-load fixtures without changing shipped farm progression. */
+  crowdStressTest(count?: number): { readonly count: number; readonly renderCalls: number; readonly triangles: number; readonly crowd: AnimalCrowdStats }
+
+  /** Snapshot the current terrain, water and active parcel dimensions. */
+  gardenReport(): { readonly bounds: { readonly halfWidth: number; readonly halfDepth: number }; readonly terrain: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number }; readonly water: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number } }
+  /**
    * Frame a spot on the ground, for inspecting a habitat rather than an animal
    * — a pond and the lily pads planted in it, say.
    */
@@ -1700,14 +2045,16 @@ function reportConditions(): AnimalConditionReport {
   const farm = measureFarm()
   const species: AnimalConditionReport['species'] = {}
   for (const animal of animals) {
-    species[animal.id] = {
-      stage: progress.progressOf(animal.id).stage,
-      appearance: progress.progressOf(animal.id).appearance,
+    const record = progress.animal(animal.instanceId)
+    if (!record) continue
+    species[animal.instanceId] = {
+      stage: record.stage,
+      appearance: record.appearance,
       heartEyes: animal.heartEyeCount > 0,
       isCaptured: animal.isCaptured,
-      invited: progress.progressOf(animal.id).invited,
+      invited: record.invited,
       position: { x: +animal.root.position.x.toFixed(2), z: +animal.root.position.z.toFixed(2) },
-      conditions: progress.statusOf(animal.id),
+      conditions: progress.statusOf(animal.instanceId),
     }
   }
   return { farm, species }
@@ -1949,19 +2296,24 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     conditions: () => reportConditions(),
     setStage: (species, stage) => {
       const target = Math.max(0, Math.min(4, Math.floor(stage))) as 0 | 1 | 2 | 3 | 4
-      // Demote first so a re-run replays the reveal from the top, then walk up
-      // one rung at a time so the transition animation actually plays.
-      for (let rung = 0; rung < target; rung += 1) {
-        progress.setStage(species, rung as 0 | 1 | 2 | 3 | 4)
-        const animal = animalById.get(species as (typeof animals)[number]['id'])
-        if (animal && !animal.isSold) animal.stage = rung as 0 | 1 | 2 | 3 | 4
+      const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
+      if (!animal) return reportConditions()
+      focusedAnimalId = animal.instanceId
+  // Resetting the stage still replays the model's capture transition.
+      const id = animal.instanceId
+      const lifeRecord = progress.animal(id)
+      if (lifeRecord?.paired && lifeRecord.partnerId) {
+        progress.setStage(lifeRecord.partnerId, 0)
+        const partnerModel = animalById.get(lifeRecord.partnerId)
+        if (partnerModel) partnerModel.stage = 0
       }
-      progress.setStage(species, target)
-      const animal = animalById.get(species as (typeof animals)[number]['id'])
-      if (animal && !animal.isSold) animal.stage = target
+      if (target < 4) animal.setRomancing(false)
+      handleAnimalLifeEvents(progress.setStage(id, target))
+      animal.stage = target
+      animal.setDetailedVisible(target > 0)
       // One more tick so a settled animal is reflected in the resident set the
       // next species is judged against.
-      progress.tick(currentFarmSnapshot(), 0)
+      refreshAnimalCrowd(performance.now() / 1000, true)
       return reportConditions()
     },
     sowGrass: (x, z, radius) => {
@@ -1997,45 +2349,150 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     advance: (steps = 1, secondsPerStep = 1 / 30) => {
       for (let step = 0; step < steps; step += 1) {
-        const events = progress.tick(currentFarmSnapshot(), secondsPerStep)
-        for (const event of events) {
-          const animal = animalById.get(event.species as (typeof animals)[number]['id'])
-          if (animal && !animal.isSold) animal.stage = event.stage
-        }
+        const events = progress.tick({ farm: currentFarmSnapshot(), expansionLevel: fairground.farmExpansion?.state.level ?? 0 }, secondsPerStep)
+        handleAnimalLifeEvents(events)
       }
       return reportConditions()
     },
     resetConditions: () => {
       gardenTools?.clearGrass()
       progress.reset()
-      for (const animal of animals.filter((entry) => !entry.isSold)) {
-        // Demote through the transitions so the heart eyes and the paint mask
-        // are actually torn down, rather than left behind on the model.
-        animal.stage = 0
-        animal.setAppearance('wild')
-      }
-      for (const species of startingCarnivalSpecies(speciesIds)) progress.discover(species)
+      progression.reset()
+      for (const animal of animals) animal.dispose()
+      animals.length = 0
+      for (const eggId of [...eggVisuals.keys()]) removeEggVisual(eggId)
+      progressionHud.setState(progressionHudState())
+      animalById.clear()
+      focusedAnimalId = null
+      animalCrowd.update([], new Set(), performance.now() / 1000)
+      crowdStats = animalCrowd.stats()
+      lastCrowdRefreshAt = 0
+      animalNames.clear()
+      farmHomes.clear()
+      viewerStands.clear()
+      void Promise.all(progress.all().map((record) => createAnimalInstance(record))).then((created) => {
+        for (const animal of created) {
+          farmHomes.set(animal.instanceId, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
+          if (VIEWER_CAST.includes(animal.id)) {
+            const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
+            viewerStands.set(animal.instanceId, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
+          }
+        }
+      })
       measureFarm()
       reportConditions()
     },
     animalReport: () => animals.filter((animal) => !animal.isSold).map((animal) => ({
-      id: animal.id,
-      name: animalNames.get(animal.id),
+      id: animal.instanceId,
+      species: animal.id,
+      name: animalNames.get(animal.instanceId),
       stage: animal.stage,
       appearance: animal.isCaptured ? 'standard' : 'wild',
       heartEyes: animal.heartEyeCount > 0,
       heartCount: animal.heartEyeCount,
       x: +animal.root.position.x.toFixed(2),
       z: +animal.root.position.z.toFixed(2),
-      loose: isLoose(animal.id),
+      loose: isLoose(animal.instanceId),
     })),
     focusSpecies: (species, height = 4.5) => {
-      const animal = animalById.get(species as (typeof animals)[number]['id'])
+      const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
       if (!animal) return
       frameAt(animal.root.position.clone().setY(GARDEN_LAWN_Y + 1.1), height)
     },
     focusPoint: (x, z, height = 14) => {
       frameAt(new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z), height)
+    },
+    progression: () => ({ points: progression.points, level: progression.level, pointsToNextLevel: progression.pointsToNextLevel }),
+    rendering: () => ({ animalCount: animals.filter((animal) => !animal.isSold).length, populationLimit: animalPopulationLimit, crowd: { ...crowdStats } }),
+    crowdStressTest: (requestedCount = animalPopulationLimit) => {
+      const count = Math.max(0, Math.min(animalPopulationLimit, Math.floor(requestedCount)))
+      const nowSeconds = performance.now() / 1000
+      const fixtures: AnimalCrowdEntry[] = Array.from({ length: count }, (_, index) => {
+        const catalog = ANIMAL_CATALOG[index % ANIMAL_CATALOG.length]
+        const column = index % 40
+        const row = Math.floor(index / 40)
+        return {
+          id: `crowd-stress-${index}`,
+          species: catalog.id,
+          x: (column - 19.5) * 1.15,
+          y: GARDEN_LAWN_Y,
+          z: (row - 12.5) * 1.15,
+          heading: (index % 16) * Math.PI / 8,
+          scale: 0.85 + (index % 5) * 0.04,
+          wild: index % 3 === 0,
+          phase: (index * 0.61803398875) % (Math.PI * 2),
+        }
+      })
+      if (mode !== 'farm') throw new Error('Crowd stress tests can run only while the farm scene is active')
+      const savedHalfHeight = viewHalfHeight
+      const savedTarget = cameraTarget.clone()
+      const savedPosition = camera.position.clone()
+      const savedQuaternion = camera.quaternion.clone()
+      const savedProjection = camera.projectionMatrix.clone()
+      const savedProjectionInverse = camera.projectionMatrixInverse.clone()
+      const previousAutoReset = renderer.info.autoReset
+      try {
+        renderer.info.autoReset = true
+        renderer.info.reset()
+        viewHalfHeight = Math.max(viewHalfHeight, 35)
+        updateCameraProjection()
+        cameraTarget.set(0, GARDEN_LAWN_Y + 0.6, 0)
+        camera.position.set(35, 34, 47)
+        camera.lookAt(cameraTarget)
+        camera.updateMatrixWorld(true)
+        animalCrowd.setVisible(true)
+        animalCrowd.update(fixtures, new Set(), nowSeconds)
+        renderer.render(scene, camera)
+        return {
+          count,
+          renderCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          crowd: animalCrowd.stats(),
+        }
+      } finally {
+        viewHalfHeight = savedHalfHeight
+        cameraTarget.copy(savedTarget)
+        camera.position.copy(savedPosition)
+        camera.quaternion.copy(savedQuaternion)
+        camera.projectionMatrix.copy(savedProjection)
+        camera.projectionMatrixInverse.copy(savedProjectionInverse)
+        camera.updateMatrixWorld(true)
+        renderer.info.autoReset = previousAutoReset
+        animalCrowd.setVisible(mode === 'farm')
+        refreshAnimalCrowd(nowSeconds, true)
+        renderer.info.reset()
+      }
+    },
+    simulate: (seconds, steps = Math.max(1, Math.ceil(seconds * 4))) => {
+      if (!Number.isFinite(seconds) || seconds < 0 || !Number.isFinite(steps) || steps < 1) return reportConditions()
+      const dt = seconds / Math.floor(steps)
+      for (let step = 0; step < Math.floor(steps); step += 1) {
+        const events = progress.tick({
+          farm: currentFarmSnapshot(),
+          expansionLevel: fairground.farmExpansion?.state.level ?? 0,
+          positions: Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }])),
+        }, dt)
+        handleAnimalLifeEvents(events)
+      }
+      return reportConditions()
+    },
+    gardenReport: () => ({
+      bounds: { ...currentGardenBounds },
+      terrain: { cols: gardenTerrain?.gridCols ?? 0, rows: gardenTerrain?.gridRows ?? 0, originX: gardenTerrain?.originX ?? 0, originZ: gardenTerrain?.originZ ?? 0 },
+      water: { cols: gardenWater?.gridCols ?? 0, rows: gardenWater?.gridRows ?? 0, originX: gardenWater?.originX ?? 0, originZ: gardenWater?.originZ ?? 0 },
+    }),
+    hatch: (eggId) => {
+      const egg = progress.eggs().find((entry) => entry.id === eggId)
+      if (!egg) return null
+      const event = progress.hatch(eggId)
+      if (event) removeEggVisual(eggId)
+      const record = event?.animalId ? progress.animal(event.animalId) : undefined
+      if (record) void createAnimalInstance(record, { x: egg.x, z: egg.z }).then((created) => {
+        created.stage = record.stage
+        created.setDetailedVisible(true)
+        farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairground.root, position: created.root.position.clone() })
+      })
+      return event
     },
     camera: () => cameraReport(),
     advanceTour: (seconds) => {
@@ -2147,6 +2604,19 @@ function frame(now: number): void {
   // The plot grows when the farm expands, so the bounds every frame has to be
   // re-read: the terrain, the animals and the brush all clamp against it.
   currentGardenBounds = fairground.farmExpansion?.state.bounds ?? GARDEN_BOUNDS
+  const expansionLevel = fairground.farmExpansion?.state.level ?? 0
+  if (expansionLevel > surfaceGeometryLevel && fairground.updateSurfaceGeometry) {
+    const surfaceBounds = farmBoundsAtLevel(expansionLevel)
+    fairground.updateSurfaceGeometry(makeGardenLawnGeometry(surfaceBounds))
+    surfaceGeometryLevel = expansionLevel
+    gardenTools?.syncSurfaceGeometry()
+    gardenTerrain?.applyToMeshes()
+    gardenWater?.resize(gardenTerrain?.gridCols ?? 0, gardenTerrain?.gridRows ?? 0)
+    gardenWater?.markTerrainChanged()
+    gardenWaterMesh?.syncBounds(surfaceBounds)
+    gardenWaterMesh?.markDirty()
+    refreshGardenSurfaceLookups()
+  }
   const fairgroundMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   viewerStage?.update(delta)
@@ -2159,13 +2629,19 @@ function frame(now: number): void {
   // The animals keep walking and following garden terrain on their own, so in
   // the viewer we pin them back onto their plinths after the update.
   if (mode === 'viewer') {
-    for (const animal of viewerCastAnimals) animal.root.position.copy(viewerStands.get(animal.id)!)
+    for (const animal of getViewerCastAnimals()) {
+      const stand = viewerStands.get(animal.instanceId)
+      if (stand) animal.root.position.copy(stand)
+    }
   }
+  refreshAnimalCrowd(now / 1000)
   const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   // A farm expansion moves the editable parcel edge; re-solve ponds only when
   // bounds actually change, never on every frame.
   if (gardenTerrain?.syncBounds()) {
+    gardenTerrain.applyToMeshes()
+    gardenWater?.resize(gardenTerrain.gridCols, gardenTerrain.gridRows)
     gardenWater?.markTerrainChanged()
     gardenWaterMesh?.markDirty()
   }
@@ -2183,6 +2659,12 @@ function frame(now: number): void {
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
   gardenProps?.update(delta)
+  for (const plant of gardenPlants?.simulation.plants ?? []) {
+    if (!plant.mature) continue
+    awardProgress('growPlant', `grow-plant:${plant.instanceId}`)
+  }
+  progressionHud.setState(progressionHudState())
+  progressionHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shopPanel.isOpen)
   if (!gardenPlants?.selectedSpecies && !seedbox.isOpen) gardenTools?.setPlantingMode(false)
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shopPanel.isOpen) refreshShopUi()
   seedbox.refresh()

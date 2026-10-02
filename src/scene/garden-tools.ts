@@ -57,6 +57,8 @@ export interface GardenTools {
   pointerDown(event: GardenPointerDown): boolean
   pointerUp(): void
   pointerLeave(): void
+  /** Rebuild coverage indices after the fairground replaces its lawn geometry. */
+  syncSurfaceGeometry(): void
   handleContextMenu(event: MouseEvent): boolean
   debugState(): GardenToolDebugState
   pickReport(clientX: number, clientY: number): unknown
@@ -194,27 +196,35 @@ export function createGardenTools(
   const grassGroup = new THREE.Group()
   grassGroup.name = 'Hand-painted grass · spatially batched instancing'
   root.add(grassGroup)
-  const lawnGeometry = lawn.geometry
-  const lawnPositions = lawnGeometry.getAttribute('position') as THREE.BufferAttribute
-  const lawnColors = lawnGeometry.getAttribute('color') as THREE.BufferAttribute
-  const groundCoverage = new Float32Array(lawnColors.count)
-  const lawnVertices = Array.from({ length: lawnPositions.count }, (_, index) => ({
-    index,
-    x: lawnPositions.getX(index),
-    z: -lawnPositions.getY(index),
-  }))
+  let lawnGeometry = lawn.geometry
+  let lawnPositions = lawnGeometry.getAttribute('position') as THREE.BufferAttribute
+  let lawnColors = lawnGeometry.getAttribute('color') as THREE.BufferAttribute
+  let groundCoverage = new Float32Array(lawnColors.count)
+  let lawnVertices: { index: number; x: number; z: number }[] = []
   const lawnCoverageLookup = new Map<string, number[]>()
-  for (const vertex of lawnVertices) {
-    const cellX = Math.floor(vertex.x / LAWN_VERTEX_SPACING)
-    const cellZ = Math.floor(vertex.z / LAWN_VERTEX_SPACING)
-    const key = `${cellX},${cellZ}`
-    let cell = lawnCoverageLookup.get(key)
-    if (!cell) {
-      cell = []
-      lawnCoverageLookup.set(key, cell)
+  const groundPaintAt = new Map<string, number>()
+  const paintPositionKey = (x: number, z: number): string => `${Math.round(x * 4)},${Math.round(z * 4)}`
+  function rebuildLawnCoverageLookup(): void {
+    lawnGeometry = lawn.geometry
+    lawnPositions = lawnGeometry.getAttribute('position') as THREE.BufferAttribute
+    lawnColors = lawnGeometry.getAttribute('color') as THREE.BufferAttribute
+    groundCoverage = new Float32Array(lawnColors.count)
+    lawnVertices = Array.from({ length: lawnPositions.count }, (_, index) => ({
+      index,
+      x: lawnPositions.getX(index),
+      z: -lawnPositions.getY(index),
+    }))
+    lawnCoverageLookup.clear()
+    for (const vertex of lawnVertices) {
+      const cellX = Math.floor(vertex.x / LAWN_VERTEX_SPACING)
+      const cellZ = Math.floor(vertex.z / LAWN_VERTEX_SPACING)
+      const key = `${cellX},${cellZ}`
+      let cell = lawnCoverageLookup.get(key)
+      if (!cell) { cell = []; lawnCoverageLookup.set(key, cell) }
+      cell.push(vertex.index)
     }
-    cell.push(vertex.index)
   }
+  rebuildLawnCoverageLookup()
   const batches = new Map<string, GrassBatch>()
   const occupancy = new Map<string, GrassBlade[]>()
   let random = seededRandom(GRASS_RANDOM_SEED)
@@ -282,8 +292,8 @@ export function createGardenTools(
   const GRASS_DROWN_FULL = 0.35
   // The water field centres its grid on the garden origin, the same convention
   // the terrain grid uses, so cell -> world is a straight multiply.
-  const waterCellX = (gx: number): number => -(terrain.gridCols * terrain.cellSize) / 2 + (gx + 0.5) * terrain.cellSize
-  const waterCellZ = (gz: number): number => -(terrain.gridRows * terrain.cellSize) / 2 + (gz + 0.5) * terrain.cellSize
+  const waterCellX = (gx: number): number => water ? water.originX + (gx + 0.5) * terrain.cellSize : terrain.originX + gx * terrain.cellSize
+  const waterCellZ = (gz: number): number => water ? water.originZ + (gz + 0.5) * terrain.cellSize : terrain.originZ + gz * terrain.cellSize
   function submergeGrass(x: number, z: number, radius: number): void {
     if (!water) return
     const radiusSquared = radius * radius
@@ -470,6 +480,7 @@ export function createGardenTools(
           if (before <= 0.05 && after > 0.05) greenGroundVertices += 1
           else if (before > 0.05 && after <= 0.05) greenGroundVertices -= 1
           groundCoverage[vertexIndex] = after
+          groundPaintAt.set(paintPositionKey(vertex.x, vertex.z), after)
           // RGBA paint layer: rgb is ALWAYS the full grass tint — alpha alone
           // fades the edge. Lerping rgb from white here would leave a pale
           // semi-transparent halo where coverage is partial (paint and trim).
@@ -489,7 +500,7 @@ export function createGardenTools(
     mesh.count = 0
     mesh.castShadow = false
     mesh.receiveShadow = true
-    mesh.frustumCulled = true
+    mesh.frustumCulled = false
     mesh.boundingSphere = new THREE.Sphere(
       new THREE.Vector3(
         -GARDEN_MAX_BOUNDS.halfWidth + (tileX + 0.5) * GRASS_TILE_SIZE,
@@ -768,6 +779,17 @@ export function createGardenTools(
     return position
   }
 
+  function syncSurfaceGeometry(): void {
+    rebuildLawnCoverageLookup()
+    for (const vertex of lawnVertices) {
+      const coverage = groundPaintAt.get(paintPositionKey(vertex.x, vertex.z)) ?? 0
+      groundCoverage[vertex.index] = coverage
+      lawnColors.setXYZW(vertex.index, GROUND_GREEN.r, GROUND_GREEN.g, GROUND_GREEN.b, coverage)
+    }
+    greenGroundVertices = groundCoverage.filter((coverage) => coverage > 0.05).length
+    lawnColors.needsUpdate = true
+  }
+
   function clearGrass(): void {
     for (const batch of batches.values()) {
       grassGroup.remove(batch.mesh)
@@ -786,6 +808,7 @@ export function createGardenTools(
     isPointerDown = false
     activeAction = null
     groundCoverage.fill(0)
+    groundPaintAt.clear()
     for (let index = 0; index < lawnColors.count; index += 1) {
       lawnColors.setXYZW(index, 1, 1, 1, 0)
     }
@@ -958,6 +981,7 @@ export function createGardenTools(
       lastSeedPoint = null
       lastPaintPoint = null
     },
+    syncSurfaceGeometry,
     handleContextMenu(event): boolean {
       event.preventDefault()
       return true
