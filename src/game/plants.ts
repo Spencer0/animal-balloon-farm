@@ -20,26 +20,36 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
   {
     id: 'clover', name: 'Clover', subtitle: 'Meadow groundcover',
     description: 'A soft green patch that likes grassy ground and a drink now and then.',
-    color: '#79ad58', substrate: 'grass', spacingRadius: 0.6,
+    color: '#79ad58', substrate: 'grass', spacingRadius: 0.48,
     growthSeconds: 48, waterIntervalSeconds: 15, pruneAt: null,
   },
   {
     id: 'poppy', name: 'Poppy', subtitle: 'A bright little flower',
     description: 'Plant in bare soil. Keep it watered and pinch back one stray shoot.',
-    color: '#e77b62', substrate: 'soil', spacingRadius: 0.8,
+    color: '#e77b62', substrate: 'soil', spacingRadius: 0.64,
     growthSeconds: 54, waterIntervalSeconds: 38, pruneAt: 0.52,
   },
   {
     id: 'water-lily', name: 'Water lily', subtitle: 'Pondside floater',
     description: 'Needs a visible pond, a drink, and a little pruning as it grows.',
-    color: '#d994c9', substrate: 'water', spacingRadius: 1,
+    color: '#d994c9', substrate: 'water', spacingRadius: 0.8,
     growthSeconds: 60, waterIntervalSeconds: 42, pruneAt: 0.48,
   },
 ] as const
 
 export const STARTING_SEEDS_PER_PLANT = 5
 export const PLANT_WATER_MIN_DEPTH = 0.04
-const PLANT_SPACING_GAP = 0.22
+const PLANT_SPACING_GAP = 0.12
+
+/**
+ * How much room one plant claims around its own centre: its own radius plus
+ * half the gap it keeps from a neighbour. The placement preview ring is drawn
+ * at exactly this radius so the circle the player sees is the space the rules
+ * enforce.
+ */
+export function plantSpacingExtent(species: PlantId): number {
+  return plantSpecies(species).spacingRadius + PLANT_SPACING_GAP / 2
+}
 
 export interface PlantSurface {
   readonly substrate: PlantSubstrate

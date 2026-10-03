@@ -42,6 +42,27 @@ test('entering the farm walks through the nearest gate without position snapping
   assert.equal(position.x, 10.3, 'the animal reaches its routed entry point at the plot edge')
 })
 
+test('carnival points are nudged clear of a plot that grew over them', () => {
+  const starter = { halfWidth: 14, halfDepth: 9.5 }
+  // Authored carnival spawns already sit outside the starter plot, so they
+  // must be left exactly where the catalog put them.
+  for (const point of [{ x: -19.5, z: 12.5 }, { x: 18, z: -13 }, { x: 26, z: 4 }]) {
+    assert.deepEqual(travel.clearOfFarmBounds(point, starter), { ...point })
+  }
+  // A point clear on one axis is already outside the rectangle.
+  assert.deepEqual(travel.clearOfFarmBounds({ x: 40, z: 2 }, starter), { x: 40, z: 2 })
+
+  // A grown plot swallows those same points; each comes back outside the walls
+  // along whichever axis costs the least movement.
+  const grown = { halfWidth: 30, halfDepth: 20.5 }
+  assert.deepEqual(travel.clearOfFarmBounds({ x: 18, z: -13 }, grown), { x: 18, z: -22.3 })
+  assert.deepEqual(travel.clearOfFarmBounds({ x: 21, z: 14 }, grown), { x: 21, z: 22.3 })
+  const cleared = travel.clearOfFarmBounds({ x: 5, z: 2 }, grown)
+  const outside = Math.abs(cleared.x) >= grown.halfWidth + 1.8 || Math.abs(cleared.z) >= grown.halfDepth + 1.8
+  assert.ok(outside, `${JSON.stringify(cleared)} is outside the walls`)
+  assert.deepEqual(travel.clearOfFarmBounds(cleared, grown), cleared, 'clearing is idempotent')
+})
+
 test('leaving the farm uses the same gate in reverse', () => {
   const start = { x: 4, z: -2 }
   const route = travel.createAnimalTravelRoute('leave', { halfWidth: 14, halfDepth: 9.5 }, start)

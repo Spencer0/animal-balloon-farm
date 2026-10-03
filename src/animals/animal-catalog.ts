@@ -105,6 +105,5 @@ export function getAnimalSceneOptions(
     wandering: !showcaseMode,
     captureOnClick: false,
     replayCaptureOnClick: showcaseMode,
-    eyeColor: animal.color,
   }))
 }

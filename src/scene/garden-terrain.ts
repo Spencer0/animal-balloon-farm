@@ -140,11 +140,20 @@ function soilColorsAt(geometry: THREE.BufferGeometry): THREE.BufferAttribute {
   const cached = soilColorAttributeCache.get(geometry)
   if (cached) return cached
   const existing = geometry.getAttribute('color') as THREE.BufferAttribute | undefined
-  const attribute = existing && existing.itemSize === 4
+  // Alpha is not the terrain's to set. On the soil plane it is the land
+  // reveal's mask, and this runs once at build time -- *after* the fairground
+  // applied it. Forcing every vertex to alpha 1 here repainted the whole
+  // max-bounds soil quad opaque, so the farm sat in a slab of bare dirt until
+  // an expansion changed the bounds and the reveal re-ran. Keep whatever alpha
+  // an existing RGBA attribute already carries; only a fresh one defaults to 1.
+  const keepsAlpha = existing?.itemSize === 4
+  const attribute = keepsAlpha && existing
     ? existing
     : new THREE.BufferAttribute(new Float32Array(geometry.getAttribute('position').count * 4), 4)
-  if (!existing || existing.itemSize !== 4) geometry.setAttribute('color', attribute)
-  for (let index = 0; index < attribute.count; index += 1) attribute.setXYZW(index, 1, 1, 1, 1)
+  if (!keepsAlpha) geometry.setAttribute('color', attribute)
+  for (let index = 0; index < attribute.count; index += 1) {
+    attribute.setXYZW(index, 1, 1, 1, keepsAlpha ? attribute.getW(index) : 1)
+  }
   attribute.needsUpdate = true
   soilColorAttributeCache.set(geometry, attribute)
   return attribute

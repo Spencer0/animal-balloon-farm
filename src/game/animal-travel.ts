@@ -27,9 +27,33 @@ export interface AnimalTravelStep {
 const GATE_CLEARANCE = 3.7
 const APPROACH_CLEARANCE = 2.4
 
+/** Meadow kept between a carnival animal and the garden wall. */
+export const FARM_WALL_CLEARANCE = 1.8
+
 /** Stage 2 is a visitor; settled/breedable residents stay on the farm. */
 export function canAnimalLeaveFarm(stage: number): boolean {
   return stage === 2
+}
+
+/**
+ * Nudge a carnival point clear of the garden footprint.
+ *
+ * Fairground props slide outward by the same rule as the plot grows, so a spawn
+ * or a walk target authored beside a tent stays beside that tent instead of
+ * ending up inside the fence. The cheaper axis wins, which keeps the point near
+ * where it was authored rather than flinging it diagonally across the meadow.
+ */
+export function clearOfFarmBounds(
+  position: AnimalPosition,
+  bounds: AnimalTravelBounds,
+  clearance = FARM_WALL_CLEARANCE,
+): AnimalPosition {
+  const requiredX = Math.max(0, bounds.halfWidth + clearance - Math.abs(position.x))
+  const requiredZ = Math.max(0, bounds.halfDepth + clearance - Math.abs(position.z))
+  if (requiredX <= 0 || requiredZ <= 0) return { ...position }
+  return requiredX <= requiredZ
+    ? { x: position.x + Math.sign(position.x || 1) * requiredX, z: position.z }
+    : { x: position.x, z: position.z + Math.sign(position.z || 1) * requiredZ }
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -6,7 +6,14 @@ import { createCapturePresentation, type CapturePresentation } from './balloon-c
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
-import { advanceAnimalTravel, canAnimalLeaveFarm, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
+import { advanceAnimalTravel, canAnimalLeaveFarm, clearOfFarmBounds, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
+
+/**
+ * Near-extents of the carnival ring around the plot. The authored carnival pen
+ * reaches 30 x 30 around the 14 x 9.5 starter plot, so the midway keeps exactly
+ * that much meadow beyond the wall at every expansion level.
+ */
+const CARNIVAL_RING_OFFSET = { x: 16, z: 20.5 } as const
 
 export type AnimalClip = 'IDLE' | 'WALK'
 export type AnimalAppearance = 'standard' | 'wild'
@@ -38,7 +45,7 @@ export interface BalloonAnimalOptions {
   readonly wandering?: boolean
   readonly captureOnClick?: boolean
   readonly replayCaptureOnClick?: boolean
-  /** Heart-eye tint, taken from the catalog so each species reads distinctly. */
+  /** Accent tint for this species' non-heart cosmetics; hearts are always pink. */
   readonly eyeColor?: string
   /** Starting rung on the condition ladder. */
   readonly stage?: AnimalStage
@@ -67,6 +74,8 @@ export interface BalloonAnimal {
   readonly renderPriority: number
   readonly isRomancing: boolean
   readonly isLoose: boolean
+  /** The look currently worn; residency is gated on actually walking inside. */
+  readonly appearance: AnimalAppearance
   readonly animationPhase: number
   /** Keep a chosen detailed instance during LOD swaps without losing state. */
   setDetailedVisible(visible: boolean): void
@@ -79,14 +88,16 @@ export interface BalloonAnimal {
   readonly isCaptured: boolean
   readonly isCapturing: boolean
   readonly captureProgress: number
-  /** True after the walking route has carried this animal onto the farm. */
+  /** True once the router has carried this animal onto the farm side of the gate. */
   readonly isAtFarm: boolean
+  /** Residency decided, but still waiting for the walk-in and browse time. */
+  readonly isResidencyPending: boolean
   /**
    * Where this animal sits on the four-condition ladder. Drives appearance and
    * heart eyes, and is the single thing the progression engine pokes.
    */
   stage: AnimalStage
-  /** Accent color used for the heart eyes. */
+  /** Species accent colour, for debug readouts; heart eyes use the shared pink. */
   readonly eyeColor: string
   /** How many heart eyes are currently worn, for the debug report. */
   readonly heartEyeCount: number
@@ -442,7 +453,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           }
         })
         if (appearance === 'wild') setAnimalAppearance(modelRoot, 'wild')
-        if (stage >= 4) setHeartEyes(modelRoot, { color: options.eyeColor ?? '#ff5d7a' })
+        if (stage >= 4) setHeartEyes(modelRoot)
         if (active !== 'IDLE' || options.wandering === false) {
           const action = actions.get(active)
           if (action) action.play()
@@ -480,6 +491,24 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let travelDirection: 'enter' | 'leave' | null = null
   let travelCooldown = 0
   let travelSide: 'carnival' | 'farm' = stage >= 2 ? 'farm' : 'carnival'
+  /**
+   * A settle that arrives while the visitor is still out at the tents is a
+   * promise, not yet a fact. The rung stays at 2 -- so the animal keeps its
+   * visitor leash and walks in -- and the promotion is applied once it has
+   * actually been browsing the plot for a while.
+   */
+  const RESIDENT_DWELL_SECONDS = 4
+  const RESIDENT_INSIDE_MARGIN = 0.6
+  let pendingResidentStage: AnimalStage | null = null
+  let farmDwellSeconds = 0
+
+  /** Inside the plot proper: not mid-route, and comfortably past the boundary. */
+  function insideFarmPlot(): boolean {
+    if (travelRoute !== null) return false
+    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
+    return Math.abs(wrapper.position.x) <= bounds.halfWidth - RESIDENT_INSIDE_MARGIN
+      && Math.abs(wrapper.position.z) <= bounds.halfDepth - RESIDENT_INSIDE_MARGIN
+  }
 
   function beginTravel(direction: 'enter' | 'leave'): void {
     const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
@@ -502,6 +531,10 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     setAnimation('WALK', 0.22)
   }
 
+  /** True while this animal lives out at the tents instead of inside the fence. */
+  const isCarnivalSide = (): boolean => Boolean(options.isLoose?.())
+    || travelSide === 'carnival' || travelDirection !== null
+
   /**
    * Where this animal is allowed to be right now.
    *
@@ -510,10 +543,17 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    * becomes something you can see happen rather than a flag flipping.
    */
   function leash(): { readonly x: number; readonly z: number } {
-    if (options.isLoose?.() || travelSide === 'carnival' || travelDirection !== null) {
-      return options.carnivalBounds ?? { x: 30, z: 30 }
-    }
     const gardenBounds = options.getGardenBounds?.()
+    if (isCarnivalSide()) {
+      const carnival = options.carnivalBounds ?? { x: 30, z: 30 }
+      // The carnival is a ring around the plot, not a fixed patch of meadow: as
+      // the farm grows its props slide outward, and the pen they sit in has to
+      // come with them or a grown plot would swallow the whole midway.
+      return {
+        x: Math.max(carnival.x, (gardenBounds?.halfWidth ?? FARM_EXPANSION_CONFIG.startBounds.halfWidth) + CARNIVAL_RING_OFFSET.x),
+        z: Math.max(carnival.z, (gardenBounds?.halfDepth ?? FARM_EXPANSION_CONFIG.startBounds.halfDepth) + CARNIVAL_RING_OFFSET.z),
+      }
+    }
     const expansionX = Math.max(0, (gardenBounds?.halfWidth ?? FARM_EXPANSION_CONFIG.startBounds.halfWidth) - FARM_EXPANSION_CONFIG.startBounds.halfWidth)
     const expansionZ = Math.max(0, (gardenBounds?.halfDepth ?? FARM_EXPANSION_CONFIG.startBounds.halfDepth) - FARM_EXPANSION_CONFIG.startBounds.halfDepth)
     const halfWidth = Math.min(options.bounds.x + expansionX, Math.max(0, (gardenBounds?.halfWidth ?? options.bounds.x) - 1.2))
@@ -525,11 +565,19 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     const angle = random() * Math.PI * 2
     const radius = 2.4 + random() * 5.8
     const limits = leash()
-    target.set(
-      THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -limits.x, limits.x),
-      0,
-      THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -limits.z, limits.z),
-    )
+    let nextX = THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -limits.x, limits.x)
+    let nextZ = THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -limits.z, limits.z)
+    if (isCarnivalSide()) {
+      // Walk targets stay outside the fence too, so a carnival animal never
+      // presses against the wall trying to reach a spot it cannot enter.
+      const cleared = clearOfFarmBounds(
+        { x: nextX, z: nextZ },
+        options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds,
+      )
+      nextX = cleared.x
+      nextZ = cleared.z
+    }
+    target.set(nextX, 0, nextZ)
     nextDecision = 2 + random() * 2.4
   }
 
@@ -603,7 +651,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const applyHeartEyes = (wanted: boolean): void => {
     const root = modelRoot ?? posePivot
     if (wanted) {
-      const converted = setHeartEyes(root, { color: options.eyeColor ?? '#ff5d7a' })
+      const converted = setHeartEyes(root)
       if (converted === 0) console.warn(`[Animal Balloon Farm] ${options.name} has no pupil nodes to convert to hearts`)
     } else {
       clearHeartEyes(root)
@@ -621,6 +669,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    * material mask.
    */
   const setStage = (next: AnimalStage): void => {
+    // A demotion cancels residency that was still waiting for the walk inside.
+    if (next < 3) {
+      pendingResidentStage = null
+      farmDwellSeconds = 0
+    }
     if (next === stage) return
     const previous = stage
     const becomingResident = next >= 3 && stage < 3
@@ -633,6 +686,14 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       travelRoute = null
       travelDirection = null
       travelSide = 'farm'
+    }
+    if (next >= 3 && stage < 3 && !insideFarmPlot()) {
+      // The condition ladder has decided; only the arrival waits. Leaving the
+      // rung at 2 is what keeps the animal walking in as a visitor instead of
+      // donning residence while it is still out on the meadow.
+      if (pendingResidentStage === null) farmDwellSeconds = 0
+      pendingResidentStage = next
+      return
     }
     if (becomingResident) {
       // Play the reveal. beginCapture refuses while another is running, which
@@ -744,13 +805,30 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isCaptured(): boolean { return captured },
     get isCapturing(): boolean { return pendingCapture || Boolean(capture && !capture.finished) },
     get captureProgress(): number { return lastCaptureProgress },
+    get appearance(): AnimalAppearance { return appearance },
     get isAtFarm(): boolean { return travelSide === 'farm' && travelRoute === null },
+    get isResidencyPending(): boolean { return pendingResidentStage !== null },
     get stage(): AnimalStage { return stage },
     set stage(next: AnimalStage) { setStage(next) },
     update(deltaSeconds): void {
       if (sold) return
       const delta = Math.min(deltaSeconds, 0.05)
       elapsed += delta
+      if (pendingResidentStage !== null) {
+        if (insideFarmPlot()) {
+          farmDwellSeconds += delta
+          if (farmDwellSeconds >= RESIDENT_DWELL_SECONDS) {
+            const next = pendingResidentStage
+            pendingResidentStage = null
+            farmDwellSeconds = 0
+            setStage(next)
+          }
+        } else {
+          // Still out on the meadow: the clock restarts, so the animal has to
+          // spend the dwell time actually inside before residence sticks.
+          farmDwellSeconds = 0
+        }
+      }
       if (capture) {
         if (!loaded && !placeholderLoaded && !modelLoading) void ensureDetailedModel()
         if (detailActive) loaded?.mixer.update(delta)
@@ -844,6 +922,17 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const limits = leash()
         wrapper.position.x = THREE.MathUtils.clamp(wrapper.position.x, -limits.x, limits.x)
         wrapper.position.z = THREE.MathUtils.clamp(wrapper.position.z, -limits.z, limits.z)
+        if (isCarnivalSide()) {
+          // The farm can grow over a carnival animal's footing, and the fence is
+          // not a door: step back onto the meadow rather than stand inside the
+          // walls waiting for a visit that has not been earned.
+          const cleared = clearOfFarmBounds(
+            { x: wrapper.position.x, z: wrapper.position.z },
+            options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds,
+          )
+          wrapper.position.x = cleared.x
+          wrapper.position.z = cleared.z
+        }
         direction.subVectors(target, wrapper.position)
         direction.y = 0
         const distance = direction.length()
