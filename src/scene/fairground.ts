@@ -25,7 +25,7 @@ export interface Fairground {
   readonly gardenSurface?: THREE.Mesh
   readonly gardenSoil?: THREE.Mesh
   readonly farmExpansion?: FarmExpansion
-  /** Apply the visible expanding plot transform to newly-sized surface geometry. */
+  /** Legacy full replacement for consumers without a reusable surface template. */
   updateSurfaceGeometry?(geometry: THREE.BufferGeometry): void
   update(deltaSeconds: number): void
 }
@@ -301,6 +301,105 @@ function roundedRectangleDistance(x: number, z: number, bounds: GardenBounds): n
   const qx = Math.abs(x) - cornerX
   const qz = Math.abs(z) - cornerZ
   return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - radius
+}
+
+const LAND_REVEAL_FEATHER = 0.38
+
+/**
+ * Refresh the soil's alpha reveal as the parcel grows. Expansion changes only
+ * the strip around its moving perimeter; patch those rows/columns instead of
+ * rescanning and uploading the entire maximum-size soil mesh every frame.
+ */
+export function updateLandRevealMask(
+  geometry: THREE.BufferGeometry,
+  previousBounds: GardenBounds | null,
+  bounds: GardenBounds,
+  fullUpdate = false,
+): void {
+  if (!fullUpdate && previousBounds
+    && previousBounds.halfWidth === bounds.halfWidth
+    && previousBounds.halfDepth === bounds.halfDepth) return
+
+  const positions = geometry.getAttribute('position') as THREE.BufferAttribute
+  const colors = geometry.getAttribute('color') as THREE.BufferAttribute
+  if (!positions || !colors || colors.itemSize !== 4) {
+    throw new Error('The farm soil reveal requires position and RGBA color attributes')
+  }
+  const parameters = (geometry as THREE.BufferGeometry & {
+    parameters?: { width?: number; height?: number; widthSegments?: number; heightSegments?: number }
+  }).parameters
+  const widthSegments = parameters?.widthSegments ?? 0
+  const heightSegments = parameters?.heightSegments ?? 0
+  const columns = widthSegments + 1
+  const hasPlaneGrid = !!parameters?.width && !!parameters.height && widthSegments > 0 && heightSegments > 0
+    && columns * (heightSegments + 1) === positions.count
+
+  colors.clearUpdateRanges()
+  const writeVertex = (index: number): void => {
+    const distance = roundedRectangleDistance(positions.getX(index), -positions.getY(index), bounds)
+    const alpha = 1 - THREE.MathUtils.smoothstep(distance, 0, LAND_REVEAL_FEATHER)
+    colors.setXYZW(index, 1, 1, 1, alpha)
+  }
+
+  if (!previousBounds || !hasPlaneGrid) {
+    for (let index = 0; index < positions.count; index += 1) writeVertex(index)
+    colors.addUpdateRange(0, colors.count * colors.itemSize)
+  } else {
+    const widthStep = parameters!.width! / widthSegments
+    const heightStep = parameters!.height! / heightSegments
+    // Rounded corners can move vertices inward from the rectangle's nominal
+    // edge. Include that corner radius, the fade band, and the swept interval.
+    const cornerRadius = Math.min(PLOT_CORNER_RADIUS,
+      previousBounds.halfWidth, previousBounds.halfDepth, bounds.halfWidth, bounds.halfDepth)
+    const halfWidthMin = Math.min(previousBounds.halfWidth, bounds.halfWidth)
+    const halfWidthMax = Math.max(previousBounds.halfWidth, bounds.halfWidth)
+    const halfDepthMin = Math.min(previousBounds.halfDepth, bounds.halfDepth)
+    const halfDepthMax = Math.max(previousBounds.halfDepth, bounds.halfDepth)
+    const xInner = Math.max(0, halfWidthMin - cornerRadius - LAND_REVEAL_FEATHER)
+    const xOuter = halfWidthMax + cornerRadius + LAND_REVEAL_FEATHER
+    const zInner = Math.max(0, halfDepthMin - cornerRadius - LAND_REVEAL_FEATHER)
+    const zOuter = halfDepthMax + cornerRadius + LAND_REVEAL_FEATHER
+    const halfPlaneWidth = parameters!.width! * 0.5
+    const halfPlaneHeight = parameters!.height! * 0.5
+    const leftStart = Math.max(0, Math.floor((halfPlaneWidth - xOuter) / widthStep))
+    const leftEnd = Math.min(widthSegments, Math.ceil((halfPlaneWidth - xInner) / widthStep))
+    const rightStart = Math.max(0, Math.floor((halfPlaneWidth + xInner) / widthStep))
+    const rightEnd = Math.min(widthSegments, Math.ceil((halfPlaneWidth + xOuter) / widthStep))
+    const topStart = Math.max(0, Math.floor((halfPlaneHeight - zOuter) / heightStep))
+    const topEnd = Math.min(heightSegments, Math.ceil((halfPlaneHeight - zInner) / heightStep))
+    const bottomStart = Math.max(0, Math.floor((halfPlaneHeight + zInner) / heightStep))
+    const bottomEnd = Math.min(heightSegments, Math.ceil((halfPlaneHeight + zOuter) / heightStep))
+
+    const writeRange = (row: number, firstColumn: number, lastColumn: number): void => {
+      const start = Math.max(0, firstColumn)
+      const end = Math.min(widthSegments, lastColumn)
+      if (start > end) return
+      const firstVertex = row * columns + start
+      for (let column = start; column <= end; column += 1) writeVertex(row * columns + column)
+      colors.addUpdateRange(firstVertex * colors.itemSize, (end - start + 1) * colors.itemSize)
+    }
+    const writeFullRows = (fromRow: number, toRow: number): void => {
+      const start = Math.max(0, fromRow)
+      const end = Math.min(heightSegments, toRow)
+      for (let row = start; row <= end; row += 1) writeRange(row, 0, widthSegments)
+    }
+
+    // First refresh the horizontal strips at the rounded ends. Between them,
+    // the changing alpha bands are only the left/right columns along the edge.
+    writeFullRows(topStart, topEnd)
+    writeFullRows(bottomStart, bottomEnd)
+    const middleStart = Math.max(0, topEnd + 1)
+    const middleEnd = Math.min(heightSegments, bottomStart - 1)
+    if (middleStart <= middleEnd && leftEnd >= rightStart) {
+      writeFullRows(middleStart, middleEnd)
+    } else {
+      for (let row = middleStart; row <= middleEnd; row += 1) {
+        writeRange(row, leftStart, leftEnd)
+        writeRange(row, rightStart, rightEnd)
+      }
+    }
+  }
+  colors.needsUpdate = true
 }
 
 function addTufts(parent: THREE.Group, random: () => number, count: number, insideGarden: boolean, material: THREE.MeshStandardMaterial): void {
@@ -800,20 +899,10 @@ export function createFairground(): Fairground {
   }
   root.add(skyPuffs)
 
-  let lastRevealWidth = -1
-  let lastRevealDepth = -1
+  let lastRevealBounds: GardenBounds | null = null
   function updateLandReveal(bounds: GardenBounds): void {
-    if (bounds.halfWidth === lastRevealWidth && bounds.halfDepth === lastRevealDepth) return
-    lastRevealWidth = bounds.halfWidth
-    lastRevealDepth = bounds.halfDepth
-    const positions = soil.geometry.getAttribute('position') as THREE.BufferAttribute
-    const colors = soil.geometry.getAttribute('color') as THREE.BufferAttribute
-    for (let index = 0; index < positions.count; index += 1) {
-      const distance = roundedRectangleDistance(positions.getX(index), -positions.getY(index), bounds)
-      const alpha = 1 - THREE.MathUtils.smoothstep(distance, 0, 0.38)
-      colors.setXYZW(index, 1, 1, 1, alpha)
-    }
-    colors.needsUpdate = true
+    updateLandRevealMask(soil.geometry, lastRevealBounds, bounds)
+    lastRevealBounds = { ...bounds }
   }
   updateLandReveal(farmExpansion.state.bounds)
 
@@ -831,8 +920,9 @@ export function createFairground(): Fairground {
       previousLawnGeometry.dispose()
       soil.scale.set(1, 1, 1)
       lawn.scale.set(1, 1, 1)
-      lastRevealWidth = -1
-      updateLandReveal(farmExpansion.state.bounds)
+      lastRevealBounds = null
+      updateLandRevealMask(soil.geometry, null, farmExpansion.state.bounds, true)
+      lastRevealBounds = { ...farmExpansion.state.bounds }
     },
     update(delta):void{
       wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2)

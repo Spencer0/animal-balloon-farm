@@ -151,6 +151,10 @@ export interface GardenWaterField {
   readonly originX: number
   readonly originZ: number
   readonly dirty: boolean
+  /** Whether any water remains and must react to terrain edits. */
+  readonly hasWater: boolean
+  /** Whether enough water remains to render a visible mesh. */
+  readonly hasRenderableWater: boolean
   /** Water depth (metres) at the grid cell containing a world point. */
   depthAt(x: number, z: number): number
   /** Water surface height (ground + depth) at the grid cell containing a world point. */
@@ -224,6 +228,8 @@ export function createGardenWaterField(
   const stack: number[] = []
 
   let dirty = false
+  let hasWater = false
+  let hasRenderableWater = false
   let totalRunoff = 0
 
   // Cell (gx, gz) is centred on the garden origin, matching the terrain grid.
@@ -239,8 +245,12 @@ export function createGardenWaterField(
   }
 
   function refreshSurfaces(): void {
+    hasWater = false
+    hasRenderableWater = false
     for (let index = 0; index < cellCount; index += 1) {
       surface[index] = ground[index] + depth[index]
+      if (depth[index] > WATER_MIN_VISIBLE_DEPTH) hasWater = true
+      if (depth[index] >= WATER_MIN_RENDER_DEPTH) hasRenderableWater = true
     }
   }
 
@@ -567,7 +577,10 @@ export function createGardenWaterField(
         added += add
       }
     }
-    if (added > 0) dirty = true
+    if (added > 0) {
+      hasWater = true
+      dirty = true
+    }
     return added * cellArea
   }
 
@@ -591,12 +604,21 @@ export function createGardenWaterField(
         removed += take
       }
     }
-    if (removed > 0) dirty = true
+    if (removed > 0) {
+      hasWater = true
+      dirty = true
+    }
     return removed * cellArea
   }
 
   function settle(): void {
     if (!dirty) return
+    // A dry shovel edit has no hydrology to solve. Keep the terrain snapshot
+    // lazy; the next pour will read the current ground before routing water.
+    if (!hasWater) {
+      dirty = false
+      return
+    }
     // Terrain may have moved under the water since the last settle, so both
     // the ground snapshot and the escape heights are rebuilt first.
     readGround()
@@ -750,6 +772,8 @@ export function createGardenWaterField(
   function clear(): void {
     depth.fill(0)
     surface.fill(0)
+    hasWater = false
+    hasRenderableWater = false
     totalRunoff = 0
     dirty = true
   }
@@ -758,6 +782,7 @@ export function createGardenWaterField(
     const cols = Math.max(gridCols, Math.floor(nextCols))
     const rows = Math.max(gridRows, Math.floor(nextRows))
     if (cols === gridCols && rows === gridRows) return
+    const oldHasWater = hasWater
     const oldCols = gridCols
     const oldRows = gridRows
     const oldOriginX = cellOriginX
@@ -793,7 +818,7 @@ export function createGardenWaterField(
     }
     readGround()
     refreshSurfaces()
-    dirty = true
+    dirty = oldHasWater || hasWater
   }
 
   readGround()
@@ -808,6 +833,12 @@ export function createGardenWaterField(
     get dirty() {
       return dirty
     },
+    get hasWater() {
+      return hasWater
+    },
+    get hasRenderableWater() {
+      return hasRenderableWater
+    },
     depthAt(x, z) {
       return depth[cellAt(x, z)]
     },
@@ -818,7 +849,9 @@ export function createGardenWaterField(
     drain,
     settle,
     markTerrainChanged() {
-      dirty = true
+      // No water means there is nothing to resettle; a later pour takes a fresh
+      // ground snapshot in settle() before solving the new pool.
+      if (hasWater) dirty = true
     },
     isDamp,
     wetCells,

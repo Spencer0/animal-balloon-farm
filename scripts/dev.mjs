@@ -2,8 +2,9 @@ import { context } from 'esbuild'
 import { watch } from 'node:fs'
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { resolveOutdir } from './outdir.mjs'
 
-const outdir = 'dist'
+const outdir = process.env.OUTDIR ?? resolveOutdir()
 const publicdir = 'public'
 const port = Number(process.env.PORT || 8000)
 

@@ -23,12 +23,12 @@ const TERRAIN_MAX_SLOPE = 0.75
 // The complete parcel is sculptable up to its edge. Ground beyond that edge
 // is fixed at grade, so only a real terrain basin—not an artificial rim or
 // faded shovel radius—can hold water in the corners.
-// Slope-clamp sweep bounds: the box around an edit is padded far beyond how
-// far one correction wave can travel, sweeps stop as soon as a sweep makes no
-// progress, and 60 sweeps is a hard backstop. Digging holds run ~12 splats per
-// second — the clamp must cost microseconds, not frames.
-const CLAMP_PAD_CELLS = 16
-const CLAMP_MAX_SWEEPS = 60
+// Start slope constraints around the touched cells; a work queue propagates
+// only through neighboring pairs that actually become too steep.
+const CLAMP_SEED_PAD_CELLS = 1
+// Mesh XY sampling is ~0.42 m and rounded parcel corners displace vertices by
+// up to 0.9 m from the uncut plane; include that footprint around dirty cells.
+const TERRAIN_MESH_DIRTY_PAD = 1.2
 
 // Contour rings are ratios over the soil texture so at-grade ground is unchanged.
 export const DEPTH_RING_SPACING = 0.35
@@ -39,7 +39,6 @@ const SOIL_WET_RATIO = new THREE.Vector3(
   SOIL_WET_COLOR.g / SOIL_BASE_COLOR.g,
   SOIL_WET_COLOR.b / SOIL_BASE_COLOR.b,
 )
-
 
 
 export interface GardenTerrain {
@@ -54,7 +53,7 @@ export interface GardenTerrain {
   splat(x: number, z: number, radius: number, amount: number): number
   smooth(x: number, z: number, radius: number, strength: number): number
   level(x: number, z: number, radius: number, strength: number): number
-  applyToMeshes(): void
+  applyToMeshes(forceFull?: boolean): void
   /** Rebuild the editable parcel mask after bounds change. Returns true if it moved. */
   syncBounds(): boolean
   readonly dirty: boolean
@@ -73,7 +72,70 @@ export interface TerrainMeshBinding {
 
 const soilColorAttributeCache = new WeakMap<THREE.BufferGeometry, THREE.BufferAttribute>()
 
-/** RGBA color slot for depth bands; created lazily so plain meshes stay untouched. */
+interface TerrainPlaneTopology {
+  readonly widthSegments: number
+  readonly heightSegments: number
+  readonly width: number
+  readonly height: number
+  readonly indices: ArrayLike<number>
+}
+
+const terrainPlaneTopologyCache = new WeakMap<THREE.BufferGeometry, TerrainPlaneTopology | null>()
+
+function terrainPlaneTopology(geometry: THREE.BufferGeometry): TerrainPlaneTopology | null {
+  if (terrainPlaneTopologyCache.has(geometry)) return terrainPlaneTopologyCache.get(geometry) ?? null
+  const parameters = (geometry as THREE.BufferGeometry & { parameters?: {
+    width?: number
+    height?: number
+    widthSegments?: number
+    heightSegments?: number
+  } }).parameters
+  const index = geometry.getIndex()
+  const widthSegments = parameters?.widthSegments
+  const heightSegments = parameters?.heightSegments
+  const supported = !!index && !!parameters?.width && !!parameters.height
+    && !!widthSegments && !!heightSegments
+    && geometry.getAttribute('position').count === (widthSegments + 1) * (heightSegments + 1)
+  const topology: TerrainPlaneTopology | null = supported ? {
+    widthSegments: widthSegments!,
+    heightSegments: heightSegments!,
+    width: parameters!.width!,
+    height: parameters!.height!,
+    indices: index!.array,
+  } : null
+  terrainPlaneTopologyCache.set(geometry, topology)
+  return topology
+}
+
+function markAttributeRows(
+  attribute: THREE.BufferAttribute,
+  columns: number,
+  minColumn: number,
+  maxColumn: number,
+  minRow: number,
+  maxRow: number,
+): void {
+  attribute.clearUpdateRanges()
+  for (let row = minRow; row <= maxRow; row += 1) {
+    const firstComponent = (row * columns + minColumn) * attribute.itemSize
+    const componentCount = (maxColumn - minColumn + 1) * attribute.itemSize
+    attribute.addUpdateRange(firstComponent, componentCount)
+  }
+  attribute.needsUpdate = true
+}
+
+function setTerrainBoundingSphere(
+  geometry: THREE.BufferGeometry,
+  topology: TerrainPlaneTopology,
+  mesh: THREE.Mesh,
+  offset: number,
+): void {
+  const centerHeight = (TERRAIN_MIN_H + TERRAIN_MAX_H) * 0.5 - mesh.position.y + offset
+  const verticalRadius = (TERRAIN_MAX_H - TERRAIN_MIN_H) * 0.5
+  const radius = Math.hypot(topology.width * 0.5, topology.height * 0.5, verticalRadius)
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, centerHeight), radius)
+}
+
 function soilColorsAt(geometry: THREE.BufferGeometry): THREE.BufferAttribute {
   const cached = soilColorAttributeCache.get(geometry)
   if (cached) return cached
@@ -97,14 +159,23 @@ export function createGardenTerrain(
   bindings: readonly TerrainMeshBinding[],
   getActiveBounds: () => GardenBounds = () => GARDEN_BOUNDS,
 ): GardenTerrain {
-  let gridOriginX = -(GARDEN_MAX_BOUNDS.halfWidth + 0.08)
-  let gridOriginZ = -(GARDEN_MAX_BOUNDS.halfDepth + 0.08)
-  let gridCols = Math.round((GARDEN_MAX_BOUNDS.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1
-  let gridRows = Math.round((GARDEN_MAX_BOUNDS.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1
+  let gridCols = Math.ceil((GARDEN_MAX_BOUNDS.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1
+  let gridRows = Math.ceil((GARDEN_MAX_BOUNDS.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1
+  // Center the preallocated field on the farm so its vertices align exactly
+  // with the water field's cell centers and its full bounds cover max acreage.
+  let gridOriginX = -((gridCols - 1) * TERRAIN_CELL) / 2
+  let gridOriginZ = -((gridRows - 1) * TERRAIN_CELL) / 2
   let heights = new Float32Array(gridCols * gridRows)
   let outsideParcel = new Uint8Array(gridCols * gridRows)
+  let queuedEdges = new Uint8Array(heights.length * 2)
+  let edgeQueue = new Int32Array(queuedEdges.length)
   const initialBounds = getActiveBounds()
   let dirty = false
+  let fullMeshDirty = true
+  let dirtyMinGx = Infinity
+  let dirtyMaxGx = -Infinity
+  let dirtyMinGz = Infinity
+  let dirtyMaxGz = -Infinity
   let parcelBoundsHalfWidth = 0
   let parcelBoundsHalfDepth = 0
 
@@ -128,11 +199,13 @@ export function createGardenTerrain(
   function rebuildParcelMask(): void {
     const bounds = getActiveBounds()
     for (let gz = 0; gz < gridRows; gz += 1) {
+      const worldZ = gridOriginZ + gz * TERRAIN_CELL
+      const outsideZ = Math.abs(worldZ) > bounds.halfDepth
+      const row = gz * gridCols
       for (let gx = 0; gx < gridCols; gx += 1) {
-        const index = gz * gridCols + gx
         const worldX = gridOriginX + gx * TERRAIN_CELL
-        const worldZ = gridOriginZ + gz * TERRAIN_CELL
-        const outside = Math.abs(worldX) > bounds.halfWidth || Math.abs(worldZ) > bounds.halfDepth
+        const index = row + gx
+        const outside = outsideZ || Math.abs(worldX) > bounds.halfWidth
         outsideParcel[index] = outside ? 1 : 0
         if (outside) heights[index] = 0
       }
@@ -142,6 +215,19 @@ export function createGardenTerrain(
   /** True when the cell lies beyond the active garden bounds. */
   function isOutsideParcel(gx: number, gz: number): boolean {
     return outsideParcel[gz * gridCols + gx] === 1
+  }
+
+  function markCellChanged(gx: number, gz: number): void {
+    dirty = true
+    dirtyMinGx = Math.min(dirtyMinGx, gx)
+    dirtyMaxGx = Math.max(dirtyMaxGx, gx)
+    dirtyMinGz = Math.min(dirtyMinGz, gz)
+    dirtyMaxGz = Math.max(dirtyMaxGz, gz)
+  }
+
+  function markIndexChanged(index: number): void {
+    const gx = index % gridCols
+    markCellChanged(gx, (index - gx) / gridCols)
   }
 
   function heightAt(x: number, z: number): number {
@@ -174,7 +260,11 @@ export function createGardenTerrain(
     if (indexOutside) return clampPair(neighbor, index, limit)
     const delta = heights[neighbor] - heights[index]
     const excess = Math.abs(delta) - limit
-    if (excess <= 0) return 0
+    // Float32 heights can otherwise cause tiny pair corrections to ping-pong
+    // through the work queue without producing a meaningful terrain change.
+    if (excess <= 1e-5) return 0
+    const beforeIndex = heights[index]
+    const beforeNeighbor = heights[neighbor]
     if (neighborOutside) {
       // The parcel edge meets flat surrounding ground; slope correction moves
       // only the in-plot cell, never creates a hidden bank outside the fence.
@@ -197,37 +287,73 @@ export function createGardenTerrain(
       heights[index] -= drop
       heights[neighbor] += excess - drop
     }
+    if (heights[index] !== beforeIndex) markIndexChanged(index)
+    if (heights[neighbor] !== beforeNeighbor) markIndexChanged(neighbor)
     return excess
   }
 
-  /**
-   * Enforce walkability: |Δh| between neighbors ≤ MAX_SLOPE × cell. Sweeps a
-   * generously padded box around the edit until a sweep fixes nothing or stops
-   * making progress — sequential sweeps can ping-pong residual excess around a
-   * deep pit, and chasing it to a full fixed point inside one splat cost whole
-   * frames. Whatever residue remains is tiny and re-clamped by the next edit
-   * tick (~80 ms later).
-   */
+  /** Enforce |Δh| ≤ MAX_SLOPE × cell, revisiting only edges affected by a correction. */
   function clampSlope(minGx: number, maxGx: number, minGz: number, maxGz: number): void {
     const limit = TERRAIN_MAX_SLOPE * TERRAIN_CELL
     const fromGx = clampX(minGx)
     const toGx = clampX(maxGx)
     const fromGz = clampZ(minGz)
     const toGz = clampZ(maxGz)
-    const rightEnd = Math.min(toGx, gridCols - 2)
-    const downEnd = Math.min(toGz, gridRows - 2)
-    let previousExcess = Infinity
-    for (let sweep = 0; sweep < CLAMP_MAX_SWEEPS; sweep += 1) {
-      let totalExcess = 0
-      for (let gz = fromGz; gz <= toGz; gz += 1) {
-        const row = gz * gridCols
-        for (let gx = fromGx; gx <= rightEnd; gx += 1) totalExcess += clampPair(row + gx, row + gx + 1, limit)
-        if (gz <= downEnd) {
-          for (let gx = fromGx; gx <= toGx; gx += 1) totalExcess += clampPair(row + gx, row + gx + gridCols, limit)
-        }
+    const seedFromGx = clampX(fromGx - CLAMP_SEED_PAD_CELLS)
+    const seedToGx = clampX(toGx + CLAMP_SEED_PAD_CELLS)
+    const seedFromGz = clampZ(fromGz - CLAMP_SEED_PAD_CELLS)
+    const seedToGz = clampZ(toGz + CLAMP_SEED_PAD_CELLS)
+    // At most one entry per edge is pending; reuse the field-sized ring buffer.
+    const queue = edgeQueue
+    let queueHead = 0
+    let queueTail = 0
+    let queueSize = 0
+
+    function enqueueEdge(index: number, vertical: boolean): void {
+      const gx = index % gridCols
+      const gz = (index - gx) / gridCols
+      if (vertical ? gz + 1 >= gridRows : gx + 1 >= gridCols) return
+      const edge = index * 2 + (vertical ? 1 : 0)
+      if (queuedEdges[edge]) return
+      queuedEdges[edge] = 1
+      queue[queueTail] = edge
+      queueTail = (queueTail + 1) % queue.length
+      queueSize += 1
+    }
+
+    function enqueueAround(index: number): void {
+      const gx = index % gridCols
+      const gz = (index - gx) / gridCols
+      if (gx > 0) enqueueEdge(index - 1, false)
+      enqueueEdge(index, false)
+      if (gz > 0) enqueueEdge(index - gridCols, true)
+      enqueueEdge(index, true)
+    }
+
+    // Seed edges only in the edited brush footprint plus its immediate rim.
+    for (let gz = seedFromGz; gz <= seedToGz; gz += 1) {
+      const row = gz * gridCols
+      for (let gx = seedFromGx; gx <= seedToGx; gx += 1) {
+        const index = row + gx
+        enqueueEdge(index, false)
+        enqueueEdge(index, true)
       }
-      if (totalExcess <= 0 || totalExcess >= previousExcess) break
-      previousExcess = totalExcess
+    }
+
+    while (queueSize > 0) {
+      const edge = queue[queueHead]
+      queueHead = (queueHead + 1) % queue.length
+      queueSize -= 1
+      queuedEdges[edge] = 0
+      const index = Math.floor(edge / 2)
+      const vertical = edge % 2 === 1
+      const neighbor = index + (vertical ? gridCols : 1)
+      const beforeIndex = heights[index]
+      const beforeNeighbor = heights[neighbor]
+      clampPair(index, neighbor, limit)
+      if (heights[index] === beforeIndex && heights[neighbor] === beforeNeighbor) continue
+      enqueueAround(index)
+      enqueueAround(neighbor)
     }
   }
 
@@ -253,11 +379,12 @@ export function createGardenTerrain(
         const after = Math.min(TERRAIN_MAX_H, Math.max(TERRAIN_MIN_H, before + amount * effect))
         if (after === before) continue
         heights[index] = after
+        markCellChanged(gx, gz)
         changed += 1
       }
     }
     if (changed > 0) {
-      clampSlope(minGx - CLAMP_PAD_CELLS, maxGx + CLAMP_PAD_CELLS, minGz - CLAMP_PAD_CELLS, maxGz + CLAMP_PAD_CELLS)
+      clampSlope(minGx - CLAMP_SEED_PAD_CELLS, maxGx + CLAMP_SEED_PAD_CELLS, minGz - CLAMP_SEED_PAD_CELLS, maxGz + CLAMP_SEED_PAD_CELLS)
       dirty = true
     }
     return changed
@@ -301,12 +428,13 @@ export function createGardenTerrain(
       const after = Math.min(TERRAIN_MAX_H, Math.max(TERRAIN_MIN_H, before + (average - before) * Math.min(1, strength * weights[i])))
       if (after !== before) {
         heights[index] = after
+        const gx = index % gridCols
+        markCellChanged(gx, (index - gx) / gridCols)
         changed += 1
       }
     }
     if (changed > 0) {
-      clampSlope(minGx - CLAMP_PAD_CELLS, maxGx + CLAMP_PAD_CELLS, minGz - CLAMP_PAD_CELLS, maxGz + CLAMP_PAD_CELLS)
-      dirty = true
+      clampSlope(minGx - CLAMP_SEED_PAD_CELLS, maxGx + CLAMP_SEED_PAD_CELLS, minGz - CLAMP_SEED_PAD_CELLS, maxGz + CLAMP_SEED_PAD_CELLS)
     }
     return changed
   }
@@ -341,13 +469,13 @@ export function createGardenTerrain(
         const after = Math.min(TERRAIN_MAX_H, Math.max(TERRAIN_MIN_H, snapshot[index] + (target - snapshot[index]) * Math.min(1, strength * weight)))
         if (after !== snapshot[index]) {
           heights[index] = after
+          markCellChanged(gx, gz)
           changed += 1
         }
       }
     }
     if (changed > 0) {
-      clampSlope(minGx - CLAMP_PAD_CELLS, maxGx + CLAMP_PAD_CELLS, minGz - CLAMP_PAD_CELLS, maxGz + CLAMP_PAD_CELLS)
-      dirty = true
+      clampSlope(minGx - CLAMP_SEED_PAD_CELLS, maxGx + CLAMP_SEED_PAD_CELLS, minGz - CLAMP_SEED_PAD_CELLS, maxGz + CLAMP_SEED_PAD_CELLS)
     }
     return changed
   }
@@ -384,49 +512,210 @@ export function createGardenTerrain(
     }
   }
 
-  /** Re-derive mesh vertices from the grid; local +z maps to world height. */
-  function applyToMeshes(): void {
-    for (const binding of bindings) {
-      const mesh = binding.mesh
-      const geometry = mesh.geometry
-      const positions = geometry.getAttribute('position') as THREE.BufferAttribute
-      const offset = binding.offset ?? 0
-      const colors = binding.soilRings ? soilColorsAt(geometry) : null
-      if (colors) {
-        // The color attribute only renders if the material opts in; the soil
-        // material ships without vertexColors, so enable it on first ring bake.
-        const material = mesh.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[]
-        const standards = Array.isArray(material) ? material : [material]
-        for (const standard of standards) {
-          if (!standard.vertexColors) {
-            standard.vertexColors = true
-            standard.needsUpdate = true
+  function enableSoilVertexColors(mesh: THREE.Mesh): void {
+    const material = mesh.material as THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[]
+    const standards = Array.isArray(material) ? material : [material]
+    for (const standard of standards) {
+      if (!standard.vertexColors) {
+        standard.vertexColors = true
+        standard.needsUpdate = true
+      }
+    }
+  }
+
+  function writeTerrainVertex(
+    index: number,
+    mesh: THREE.Mesh,
+    offset: number,
+    positions: THREE.BufferAttribute,
+    colors: THREE.BufferAttribute | null,
+    bandRatio: THREE.Vector3,
+  ): boolean {
+    const worldX = positions.getX(index)
+    const worldZ = -positions.getY(index)
+    const height = heightAt(worldX, worldZ)
+    const localHeight = height - mesh.position.y + offset
+    const changed = positions.getZ(index) !== localHeight
+    positions.setZ(index, localHeight)
+    if (colors) {
+      soilBandColor(-height, bandRatio)
+      colors.setXYZ(index, bandRatio.x, bandRatio.y, bandRatio.z)
+    }
+    return changed
+  }
+
+  /** Rebuild normals only for the grid cells touching changed terrain vertices. */
+  function updatePlaneNormals(
+    topology: TerrainPlaneTopology,
+    positions: THREE.BufferAttribute,
+    normals: THREE.BufferAttribute,
+    changedVertices: readonly number[],
+  ): { minColumn: number; maxColumn: number; minRow: number; maxRow: number } | null {
+    const columns = topology.widthSegments + 1
+    const targets = new Set<number>()
+    let minColumn = topology.widthSegments
+    let maxColumn = 0
+    let minRow = topology.heightSegments
+    let maxRow = 0
+    for (const index of changedVertices) {
+      const column = index % columns
+      const row = Math.floor(index / columns)
+      for (let targetRow = Math.max(0, row - 1); targetRow <= Math.min(topology.heightSegments, row + 1); targetRow += 1) {
+        for (let targetColumn = Math.max(0, column - 1); targetColumn <= Math.min(topology.widthSegments, column + 1); targetColumn += 1) {
+          const target = targetRow * columns + targetColumn
+          targets.add(target)
+          minColumn = Math.min(minColumn, targetColumn)
+          maxColumn = Math.max(maxColumn, targetColumn)
+          minRow = Math.min(minRow, targetRow)
+          maxRow = Math.max(maxRow, targetRow)
+        }
+      }
+    }
+    if (!targets.size) return null
+
+    const indexAttribute = topology.indices
+    const positionArray = positions.array as ArrayLike<number>
+    const normal = new THREE.Vector3()
+    for (const target of targets) {
+      const targetColumn = target % columns
+      const targetRow = Math.floor(target / columns)
+      let nx = 0
+      let ny = 0
+      let nz = 0
+      for (let row = Math.max(0, targetRow - 1); row <= Math.min(topology.heightSegments - 1, targetRow); row += 1) {
+        for (let column = Math.max(0, targetColumn - 1); column <= Math.min(topology.widthSegments - 1, targetColumn); column += 1) {
+          const faceStart = (row * topology.widthSegments + column) * 6
+          for (let triangle = 0; triangle < 2; triangle += 1) {
+            const face = faceStart + triangle * 3
+            const a = indexAttribute[face]
+            const b = indexAttribute[face + 1]
+            const c = indexAttribute[face + 2]
+            if (a !== target && b !== target && c !== target) continue
+            const ai = a * 3
+            const bi = b * 3
+            const ci = c * 3
+            const cbx = positionArray[ci] - positionArray[bi]
+            const cby = positionArray[ci + 1] - positionArray[bi + 1]
+            const cbz = positionArray[ci + 2] - positionArray[bi + 2]
+            const abx = positionArray[ai] - positionArray[bi]
+            const aby = positionArray[ai + 1] - positionArray[bi + 1]
+            const abz = positionArray[ai + 2] - positionArray[bi + 2]
+            nx += cby * abz - cbz * aby
+            ny += cbz * abx - cbx * abz
+            nz += cbx * aby - cby * abx
           }
         }
       }
-      const bandRatio = new THREE.Vector3()
-      for (let index = 0; index < positions.count; index += 1) {
+      normal.set(nx, ny, nz).normalize()
+      normals.setXYZ(target, normal.x, normal.y, normal.z)
+    }
+    return { minColumn, maxColumn, minRow, maxRow }
+  }
+
+  function applyFullToMesh(
+    mesh: THREE.Mesh,
+    offset: number,
+    colors: THREE.BufferAttribute | null,
+    topology: TerrainPlaneTopology | null,
+  ): void {
+    const geometry = mesh.geometry
+    const positions = geometry.getAttribute('position') as THREE.BufferAttribute
+    const bandRatio = new THREE.Vector3()
+    for (let index = 0; index < positions.count; index += 1) {
+      writeTerrainVertex(index, mesh, offset, positions, colors, bandRatio)
+    }
+    positions.clearUpdateRanges()
+    positions.needsUpdate = true
+    if (colors) {
+      colors.clearUpdateRanges()
+      colors.needsUpdate = true
+    }
+    geometry.computeVertexNormals()
+    if (topology) setTerrainBoundingSphere(geometry, topology, mesh, offset)
+    else geometry.computeBoundingSphere()
+  }
+
+  function applyPartialPlaneToMesh(
+    mesh: THREE.Mesh,
+    offset: number,
+    colors: THREE.BufferAttribute | null,
+    topology: TerrainPlaneTopology,
+    minWorldX: number,
+    maxWorldX: number,
+    minWorldZ: number,
+    maxWorldZ: number,
+  ): void {
+    const geometry = mesh.geometry
+    const positions = geometry.getAttribute('position') as THREE.BufferAttribute
+    const normals = geometry.getAttribute('normal') as THREE.BufferAttribute | undefined
+    if (!normals) {
+      applyFullToMesh(mesh, offset, colors, topology)
+      return
+    }
+    const columns = topology.widthSegments + 1
+    const minColumn = Math.max(0, Math.floor((minWorldX + topology.width * 0.5) * topology.widthSegments / topology.width) - 2)
+    const maxColumn = Math.min(topology.widthSegments, Math.ceil((maxWorldX + topology.width * 0.5) * topology.widthSegments / topology.width) + 2)
+    const minRow = Math.max(0, Math.floor((minWorldZ + topology.height * 0.5) * topology.heightSegments / topology.height) - 2)
+    const maxRow = Math.min(topology.heightSegments, Math.ceil((maxWorldZ + topology.height * 0.5) * topology.heightSegments / topology.height) + 2)
+    const changedVertices: number[] = []
+    const bandRatio = new THREE.Vector3()
+    for (let row = minRow; row <= maxRow; row += 1) {
+      for (let column = minColumn; column <= maxColumn; column += 1) {
+        const index = row * columns + column
         const worldX = positions.getX(index)
         const worldZ = -positions.getY(index)
-        const height = heightAt(worldX, worldZ)
-        positions.setZ(index, height - mesh.position.y + offset)
-        if (colors) {
-          soilBandColor(-height, bandRatio)
-          colors.setXYZ(index, bandRatio.x, bandRatio.y, bandRatio.z)
+        if (worldX < minWorldX - 1e-5 || worldX > maxWorldX + 1e-5
+          || worldZ < minWorldZ - 1e-5 || worldZ > maxWorldZ + 1e-5) continue
+        if (writeTerrainVertex(index, mesh, offset, positions, colors, bandRatio)) changedVertices.push(index)
+      }
+    }
+    if (!changedVertices.length) return
+    const normalRange = updatePlaneNormals(topology, positions, normals, changedVertices)
+    markAttributeRows(positions, columns, minColumn, maxColumn, minRow, maxRow)
+    if (colors) markAttributeRows(colors, columns, minColumn, maxColumn, minRow, maxRow)
+    if (normalRange) markAttributeRows(normals, columns, normalRange.minColumn, normalRange.maxColumn, normalRange.minRow, normalRange.maxRow)
+  }
+
+  /** Re-derive mesh vertices from the grid; local +z maps to world height. */
+  function applyToMeshes(forceFull = false): void {
+    if (!dirty && !fullMeshDirty && !forceFull) return
+    const fullUpdate = fullMeshDirty || forceFull
+    const changedWorldBounds = fullUpdate ? null : {
+      minX: gridOriginX + dirtyMinGx * TERRAIN_CELL,
+      maxX: gridOriginX + dirtyMaxGx * TERRAIN_CELL,
+      minZ: gridOriginZ + dirtyMinGz * TERRAIN_CELL,
+      maxZ: gridOriginZ + dirtyMaxGz * TERRAIN_CELL,
+    }
+    for (const binding of bindings) {
+      const mesh = binding.mesh
+      const geometry = mesh.geometry
+      const offset = binding.offset ?? 0
+      const colors = binding.soilRings ? soilColorsAt(geometry) : null
+      if (colors) enableSoilVertexColors(mesh)
+      const topology = terrainPlaneTopology(geometry)
+      if (fullUpdate || !topology) {
+        applyFullToMesh(mesh, offset, colors, topology)
+      } else {
+        if (changedWorldBounds) {
+          applyPartialPlaneToMesh(mesh, offset, colors, topology,
+            changedWorldBounds.minX - TERRAIN_MESH_DIRTY_PAD, changedWorldBounds.maxX + TERRAIN_MESH_DIRTY_PAD,
+            changedWorldBounds.minZ - TERRAIN_MESH_DIRTY_PAD, changedWorldBounds.maxZ + TERRAIN_MESH_DIRTY_PAD)
         }
       }
-      positions.needsUpdate = true
-      if (colors) colors.needsUpdate = true
-      geometry.computeVertexNormals()
-      geometry.computeBoundingSphere()
     }
     dirty = false
+    fullMeshDirty = false
+    dirtyMinGx = Infinity
+    dirtyMaxGx = -Infinity
+    dirtyMinGz = Infinity
+    dirtyMaxGz = -Infinity
   }
 
   function clear(): void {
     heights.fill(0)
     rebuildParcelMask()
     dirty = true
+    fullMeshDirty = true
   }
 
   function stats(): { min: number; max: number; changedCells: number; depthBands: number; maxNeighborDelta: number } {
@@ -450,17 +739,24 @@ export function createGardenTerrain(
   }
 
   /**
-   * Update the editable parcel mask after a bounds change. Cheap (one pass over
-   * the grid) and only runs when the plot changes, not per frame. Returns true
-   * when it moved so the caller can re-solve water against the new grade edge.
+   * Update the editable parcel mask after a bounds change. Expansions reveal
+   * only the newly admitted rows and columns; returns true when bounds moved so
+   * the caller can re-solve water against the new grade edge.
    */
   function syncBounds(): boolean {
     const bounds = getActiveBounds()
     if (bounds.halfWidth === parcelBoundsHalfWidth && bounds.halfDepth === parcelBoundsHalfDepth) return false
+    const previousHalfWidth = parcelBoundsHalfWidth
+    const previousHalfDepth = parcelBoundsHalfDepth
+    const widthOnlyExpands = bounds.halfWidth >= previousHalfWidth
+    const depthOnlyExpands = bounds.halfDepth >= previousHalfDepth
+    const onlyExpanding = widthOnlyExpands && depthOnlyExpands
     parcelBoundsHalfWidth = bounds.halfWidth
     parcelBoundsHalfDepth = bounds.halfDepth
+    let gridResized = false
     if (bounds.halfWidth > (gridCols - 1) * TERRAIN_CELL / 2 - 0.08
       || bounds.halfDepth > (gridRows - 1) * TERRAIN_CELL / 2 - 0.08) {
+      gridResized = true
       const previous = { cols: gridCols, rows: gridRows, originX: gridOriginX, originZ: gridOriginZ, heights }
       gridCols = Math.max(gridCols, Math.ceil((bounds.halfWidth * 2 + 0.16) / TERRAIN_CELL) + 1)
       gridRows = Math.max(gridRows, Math.ceil((bounds.halfDepth * 2 + 0.16) / TERRAIN_CELL) + 1)
@@ -468,6 +764,8 @@ export function createGardenTerrain(
       gridOriginZ = -(gridRows - 1) * TERRAIN_CELL / 2
       heights = new Float32Array(gridCols * gridRows)
       outsideParcel = new Uint8Array(gridCols * gridRows)
+      queuedEdges = new Uint8Array(gridCols * gridRows * 2)
+      edgeQueue = new Int32Array(queuedEdges.length)
       for (let gz = 0; gz < gridRows; gz += 1) {
         const z = gridOriginZ + gz * TERRAIN_CELL
         const oldZ = (z - previous.originZ) / TERRAIN_CELL
@@ -486,9 +784,49 @@ export function createGardenTerrain(
         }
       }
     }
+    if (gridResized) {
+      // Resizing is a rare fallback beyond the preallocated progression grid;
+      // rebuild the full mask so newly allocated cells outside the current
+      // parcel cannot accidentally become editable.
+      rebuildParcelMask()
+      clampSlope(0, gridCols - 1, 0, gridRows - 1)
+      dirty = true
+      fullMeshDirty = true
+      return true
+    }
+    if (onlyExpanding) {
+      // Reveal only newly editable rows/columns. Newly admitted cells were held
+      // at grade while outside, so they need neither slope propagation nor a
+      // full-height-field scan. Expansion animates this mask each frame.
+      const widthColumns: number[] = []
+      for (let gx = 0; gx < gridCols; gx += 1) {
+        const x = gridOriginX + gx * TERRAIN_CELL
+        if (Math.abs(x) > previousHalfWidth && Math.abs(x) <= bounds.halfWidth) widthColumns.push(gx)
+      }
+      const depthRows: number[] = []
+      for (let gz = 0; gz < gridRows; gz += 1) {
+        const z = gridOriginZ + gz * TERRAIN_CELL
+        if (Math.abs(z) > previousHalfDepth && Math.abs(z) <= bounds.halfDepth) depthRows.push(gz)
+      }
+      for (let gz = 0; gz < gridRows; gz += 1) {
+        const z = gridOriginZ + gz * TERRAIN_CELL
+        if (Math.abs(z) > bounds.halfDepth) continue
+        const row = gz * gridCols
+        for (const gx of widthColumns) outsideParcel[row + gx] = 0
+      }
+      for (const gz of depthRows) {
+        const row = gz * gridCols
+        for (let gx = 0; gx < gridCols; gx += 1) {
+          const x = gridOriginX + gx * TERRAIN_CELL
+          if (Math.abs(x) <= bounds.halfWidth) outsideParcel[row + gx] = 0
+        }
+      }
+      return true
+    }
     rebuildParcelMask()
     clampSlope(0, gridCols - 1, 0, gridRows - 1)
     dirty = true
+    fullMeshDirty = true
     return true
   }
 

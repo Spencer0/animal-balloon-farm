@@ -364,6 +364,23 @@ test('a pour with no radius or no volume is a no-op', () => {
   assert.equal(field.summary().wetCells, 0)
 })
 
+test('terrain edits on an empty water field skip the expensive full hydrology solve', () => {
+  let terrainHeight = (_x, _z) => 0
+  const field = makeField((x, z) => terrainHeight(x, z))
+  field.markTerrainChanged()
+  const start = performance.now()
+  field.settle()
+  const dryEditMs = performance.now() - start
+  assert.equal(field.dirty, false)
+  assert.equal(field.hasWater, false)
+  assert.ok(dryEditMs < 10, `empty terrain sync should be trivial (got ${dryEditMs.toFixed(2)}ms)`)
+
+  terrainHeight = (x, z) => Math.hypot(x, z) < 2 ? -0.8 : 0
+  field.pour(0, 0, 1, 0.4)
+  settleFully(field)
+  assert.ok(field.summary().wetCells > 0, 'a pour after dry edits uses the latest ground')
+})
+
 test('clear empties the field and resets runoff', () => {
   const field = makeField(() => 0)
   field.pour(0, 0, 1, 0.5)

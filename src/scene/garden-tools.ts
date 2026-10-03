@@ -39,6 +39,7 @@ export interface GardenToolDebugState {
   readonly waterMaxDepth: number
   readonly waterSurface: number
   readonly waterRunoff: number
+  readonly terrainDirty: boolean
 }
 
 export interface GardenTools {
@@ -205,15 +206,28 @@ export function createGardenTools(
   const groundPaintAt = new Map<string, number>()
   const paintPositionKey = (x: number, z: number): string => `${Math.round(x * 4)},${Math.round(z * 4)}`
   function rebuildLawnCoverageLookup(): void {
-    lawnGeometry = lawn.geometry
+    const nextGeometry = lawn.geometry
+    const geometryChanged = nextGeometry !== lawnGeometry
+    lawnGeometry = nextGeometry
     lawnPositions = lawnGeometry.getAttribute('position') as THREE.BufferAttribute
     lawnColors = lawnGeometry.getAttribute('color') as THREE.BufferAttribute
-    groundCoverage = new Float32Array(lawnColors.count)
-    lawnVertices = Array.from({ length: lawnPositions.count }, (_, index) => ({
-      index,
-      x: lawnPositions.getX(index),
-      z: -lawnPositions.getY(index),
-    }))
+    if (geometryChanged || groundCoverage.length !== lawnColors.count || lawnVertices.length !== lawnPositions.count) {
+      const nextCoverage = new Float32Array(lawnColors.count)
+      const nextVertices = Array.from({ length: lawnPositions.count }, (_, index) => ({
+        index,
+        x: lawnPositions.getX(index),
+        z: -lawnPositions.getY(index),
+      }))
+      const oldByPosition = new Map<string, number>()
+      for (let index = 0; index < lawnVertices.length; index += 1) {
+        oldByPosition.set(paintPositionKey(lawnVertices[index].x, lawnVertices[index].z), groundCoverage[index])
+      }
+      for (const vertex of nextVertices) {
+        nextCoverage[vertex.index] = oldByPosition.get(paintPositionKey(vertex.x, vertex.z)) ?? 0
+      }
+      groundCoverage = nextCoverage
+      lawnVertices = nextVertices
+    }
     lawnCoverageLookup.clear()
     for (const vertex of lawnVertices) {
       const cellX = Math.floor(vertex.x / LAWN_VERTEX_SPACING)
@@ -278,9 +292,8 @@ export function createGardenTools(
   let grassCapacity = 0
   let terrainApplyTimer = 0
   let waterApplyTimer = 0
-  // Re-deriving two ~6.5k-vertex planes (positions + normals + contour colors)
-  // every rAF frame during a hold cost more than the rest of the game combined;
-  // 30 Hz is visually indistinguishable for slow ground deformation.
+  // Coalesce geometry uploads while the canonical terrain field updates. The
+  // terrain renderer patches only the affected mesh region at each commit.
   const TERRAIN_APPLY_INTERVAL = 1 / 30
   /**
    * Grass in water: shallow water leaves the meadow standing (reeds at the
@@ -1053,6 +1066,7 @@ export function createGardenTools(
         waterMaxDepth: waterStats.maxDepth,
         waterSurface: waterStats.highestSurface,
         waterRunoff: waterStats.runoff,
+        terrainDirty: terrain.dirty,
       }
     },
     clearGrass,

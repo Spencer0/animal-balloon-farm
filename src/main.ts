@@ -4,9 +4,8 @@ import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-anima
 import { createAnimalCrowdRenderer, type AnimalCrowdEntry, type AnimalCrowdStats } from './animals/animal-crowd-renderer'
 import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST } from './animals/animal-catalog'
 import { chooseDetailedAnimals, type AnimalRenderCandidate } from './game/animal-render-policy'
-import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, makeGardenLawnGeometry } from './scene/fairground'
+import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairground'
 import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent } from './game/animal-life'
-import { FARM_EXPANSION_CONFIG, farmBoundsAtLevel } from './game/farm-expansion'
 import { createProgressLedger, type ProgressAction } from './game/farm-progression'
 import { startNextEarnedExpansion } from './game/progression-rewards'
 import { type FarmSnapshot } from './game/animal-progress'
@@ -145,7 +144,7 @@ const gardenTerrain = fairground.gardenSurface && fairground.gardenSoil
       { mesh: fairground.gardenSurface },
     ], activeGardenBounds)
   : null
-gardenTerrain?.applyToMeshes()
+gardenTerrain?.applyToMeshes(true)
 // Water shares the terrain grid so it sees the flat parcel edge and every sculpt.
 const gardenWater = gardenTerrain
   ? createGardenWaterField({
@@ -155,7 +154,8 @@ const gardenWater = gardenTerrain
       cellHeight: (gx, gz) => gardenTerrain.cellHeightAt(gx, gz),
     })
   : null
-const gardenWaterMesh = gardenTerrain && gardenWater ? createGardenWaterMesh(gardenTerrain, gardenWater) : null
+const gardenWaterMesh = gardenTerrain && gardenWater  ? createGardenWaterMesh(gardenTerrain, gardenWater, activeGardenBounds)
+  : null
 if (gardenWaterMesh) {
   scene.add(gardenWaterMesh.mesh)
   gardenWaterMesh.update(0)
@@ -259,12 +259,6 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
 
 let gardenPlants: GardenPlants | null = null
 let coverageLookup: ((x: number, z: number) => number) | null = null
-let rebuildGardenSurfaceLookups: (() => void) | null = null
-
-function refreshGardenSurfaceLookups(): void {
-  rebuildGardenSurfaceLookups?.()
-}
-
 /** Egg meshes can be clicked independently from animals to hatch when ready. */
 function createEggVisual(egg: { readonly id: number; readonly x: number; readonly z: number; readonly ready: boolean; readonly incubationProgress: number }): void {
   removeEggVisual(egg.id)
@@ -400,7 +394,6 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
       return nearest >= 0 ? colors.getW(nearest) : 0
     }
   }
-  rebuildGardenSurfaceLookups = rebuildCoverageLookup
   rebuildCoverageLookup()
   gardenPlants = createGardenPlants(
     gameCanvas,
@@ -435,7 +428,6 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
 }
 
 let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
-let surfaceGeometryLevel = FARM_EXPANSION_CONFIG.maximumLevel
 
 // Animals arrive in wild balloon red. Capturing changes their materials in place, then restores
 // each animal's palette through a shared 6.8-second paint-bucket reveal. Scene options come from
@@ -1926,9 +1918,16 @@ interface GardenDebugHarness {
   pourAt(x: number, z: number, radius: number, amount: number): unknown
   clearGarden(): void
   waterSummary(): unknown
+  /** Select a garden tool for repeatable input tests. */
+  selectTool(tool: GardenToolId): void
+  /** Project a world point into the game canvas for real pointer-event tests. */
+  projectGardenPoint(x: number, z: number): { readonly x: number; readonly y: number } | null
+
   /** Live scene graph, for poking at a panel that is not drawing. */
   readonly scene: THREE.Scene
   readonly uiScene: THREE.Scene
+  /** Frame-by-frame performance samples for scripted stress tests. */
+  performanceSamples(): readonly GardenFrameTiming[]
   layout(): Record<string, unknown>
   /** Animal conditions: every rung, whether it is revealed, and live numbers. */
   conditions(): AnimalConditionReport
@@ -2061,9 +2060,11 @@ function reportConditions(): AnimalConditionReport {
 }
 
 interface GardenFrameTiming {
+  readonly frameNumber: number
   readonly intervalMs: number
   readonly workMs: number
   readonly fairgroundMs: number
+  readonly expansionBoundsMs: number
   readonly animalsMs: number
   readonly toolsMs: number
   readonly otherUpdateMs: number
@@ -2085,6 +2086,7 @@ interface GardenPerformanceSummary {
   readonly workMs: { readonly p50: number; readonly p95: number; readonly max: number }
   readonly updateMs: { readonly p50: number; readonly p95: number; readonly max: number }
   readonly fairgroundMs: { readonly p95: number; readonly max: number }
+  readonly expansionBoundsMs: { readonly p95: number; readonly max: number }
   readonly animalsMs: { readonly p95: number; readonly max: number }
   readonly toolsMs: { readonly p95: number; readonly max: number }
   readonly otherUpdateMs: { readonly p95: number; readonly max: number }
@@ -2101,6 +2103,7 @@ interface PerformanceOverlay {
 }
 
 const frameTimingSamples: GardenFrameTiming[] = []
+let performanceFrameNumber = 0
 const FRAME_TIMING_SAMPLE_LIMIT = 180
 const PERF_OVERLAY_REFRESH_MS = 400
 const PERF_LOG_INTERVAL_MS = 2000
@@ -2227,6 +2230,7 @@ function summarizeFrameTimings(): GardenPerformanceSummary | null {
     workMs: summarize(get('workMs')),
     updateMs: summarize(update),
     fairgroundMs: summarizeTail(get('fairgroundMs')),
+    expansionBoundsMs: summarizeTail(get('expansionBoundsMs')),
     animalsMs: summarizeTail(get('animalsMs')),
     toolsMs: summarizeTail(get('toolsMs')),
     otherUpdateMs: summarizeTail(get('otherUpdateMs')),
@@ -2259,6 +2263,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       propboxOpen: propboxPanel.isOpen,
       placing: gardenProps?.placingId ?? null,
       performance: summarizeFrameTimings(),
+      tools: gardenTools?.debugState() ?? null,
     }),
     focusGarden: focusCamera,
     openMenu: () => menu.open(),
@@ -2292,6 +2297,16 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       gardenWaterMesh?.update(performance.now() * 0.001)
     },
     waterSummary: () => gardenWater?.summary() ?? null,
+    selectTool: (tool) => selectGardenTool(tool),
+    projectGardenPoint: (x, z) => {
+      if (!gardenTerrain) return null
+      const rect = gameCanvas.getBoundingClientRect()
+      const projected = new THREE.Vector3(x, GARDEN_LAWN_Y + gardenTerrain.heightAt(x, z), z).project(camera)
+      return {
+        x: rect.left + (projected.x + 1) * rect.width / 2,
+        y: rect.top + (1 - projected.y) * rect.height / 2,
+      }
+    },
     farmState: () => measureFarm(),
     conditions: () => reportConditions(),
     setStage: (species, stage) => {
@@ -2535,6 +2550,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     pickUpProp: (clientX, clientY) => gardenProps?.pickUpAt(clientX, clientY) ?? null,
     scene,
     uiScene: ui.scene,
+    performanceSamples: () => frameTimingSamples,
     // Reports where every surface actually landed, so layout can be checked at
     // any window size without eyeballing a screenshot.
     layout: () => {
@@ -2601,23 +2617,20 @@ function frame(now: number): void {
   let stageStartedAt = workStartedAt
   removePreviousCameraShake()
   fairground.update(delta)
-  // The plot grows when the farm expands, so the bounds every frame has to be
-  // re-read: the terrain, the animals and the brush all clamp against it.
-  currentGardenBounds = fairground.farmExpansion?.state.bounds ?? GARDEN_BOUNDS
-  const expansionLevel = fairground.farmExpansion?.state.level ?? 0
-  if (expansionLevel > surfaceGeometryLevel && fairground.updateSurfaceGeometry) {
-    const surfaceBounds = farmBoundsAtLevel(expansionLevel)
-    fairground.updateSurfaceGeometry(makeGardenLawnGeometry(surfaceBounds))
-    surfaceGeometryLevel = expansionLevel
-    gardenTools?.syncSurfaceGeometry()
-    gardenTerrain?.applyToMeshes()
-    gardenWater?.resize(gardenTerrain?.gridCols ?? 0, gardenTerrain?.gridRows ?? 0)
-    gardenWater?.markTerrainChanged()
-    gardenWaterMesh?.syncBounds(surfaceBounds)
-    gardenWaterMesh?.markDirty()
-    refreshGardenSurfaceLookups()
-  }
   const fairgroundMs = timingEnabled ? performance.now() - stageStartedAt : 0
+  stageStartedAt = timingEnabled ? performance.now() : 0
+  // Avoid the much heavier state snapshot on the animation hot path; retain
+  // the exact final bounds as the animation settles.
+  let expansionLevel = 0
+  let expansionIsAnimating = false
+  if (fairground.farmExpansion) {
+    expansionLevel = fairground.farmExpansion.level
+    expansionIsAnimating = fairground.farmExpansion.isAnimating
+    currentGardenBounds = fairground.farmExpansion.bounds
+  } else {
+    currentGardenBounds = GARDEN_BOUNDS
+  }
+  const expansionBoundsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   viewerStage?.update(delta)
   updateMenuDrift(delta, now / 1000)
@@ -2640,19 +2653,22 @@ function frame(now: number): void {
   // A farm expansion moves the editable parcel edge; re-solve ponds only when
   // bounds actually change, never on every frame.
   if (gardenTerrain?.syncBounds()) {
-    gardenTerrain.applyToMeshes()
-    gardenWater?.resize(gardenTerrain.gridCols, gardenTerrain.gridRows)
-    gardenWater?.markTerrainChanged()
-    gardenWaterMesh?.markDirty()
+    // Smooth bounds animation reveals already-flat rows; the parcel's full
+    // mesh transition is handled once when its integer level first advances.
+    if (gardenTerrain.dirty) gardenTerrain.applyToMeshes()
+    if (!expansionIsAnimating) {
+      gardenWater?.resize(gardenTerrain.gridCols, gardenTerrain.gridRows)
+      gardenWater?.markTerrainChanged()
+      gardenWaterMesh?.markDirty()
+    }
   }
   gardenTools?.update(delta)
   if (gardenWaterMesh && (gardenWater?.dirty || gardenWaterMesh.dirty)) {
     gardenWaterMesh.update(now * 0.001)
   }
-  const expansionState = fairground.farmExpansion?.state
-  if (expansionState) {
-    if (expansionState.level > lastExpansionLevel) {
-      lastExpansionLevel = expansionState.level
+  if (fairground.farmExpansion) {
+    if (expansionLevel > lastExpansionLevel) {
+      lastExpansionLevel = expansionLevel
       expansionFeedbackSeconds = CAMERA_SHAKE_DURATION
       expansionFeedbackStrength = 1
     }
@@ -2701,9 +2717,11 @@ function frame(now: number): void {
     const finishedAt = performance.now()
     overlayRenderMs = finishedAt - stageStartedAt
     frameTimingSamples.push({
+      frameNumber: ++performanceFrameNumber,
       intervalMs,
       workMs: finishedAt - workStartedAt,
       fairgroundMs,
+      expansionBoundsMs,
       animalsMs,
       toolsMs,
       otherUpdateMs,

@@ -52,7 +52,7 @@ npm run garden:drag -- trim 600 400
 npm run garden:drag -- screenshot
 ```
 
-The screenshot command only captures a single viewport and refuses very large window sizes; resize to about 1280×720 first. The helper uses Node's built-in WebSocket client to attach over CDP; it adds no dependency. The `window.__gardenDebug` interface works in the browser console too. The command-line helper defaults to localhost port 8000; set `GARDEN_URL`/`GARDEN_CDP_URL` when needed. Normal game sessions do not expose the harness unless the query flag is present.
+The screenshot command only captures a single viewport and refuses very large window sizes; resize to about 1280×720 first. The helper uses Node's built-in WebSocket client to attach over CDP; it adds no dependency. `npm run perf:stress` builds a dense pond/grass fixture, performs a continuous shovel drag through the real pointer handlers, and fails if p95 frame work or frame intervals miss the configured FPS budget (60 FPS by default). Run it against Chromium with remote debugging enabled and the matching branch's debug server/build running; set `GARDEN_URL` / `GARDEN_CDP_URL` to target them. This is separate from `npm run check`; `.github/workflows/performance.yml` runs it as a CI gate. Its headless Chromium timings are runner-specific and have not yet been verified against a real 60 Hz browser session, so use the browser harness for device-level confirmation. `MIN_FPS` sets the threshold. The `window.__gardenDebug` interface works in the browser console too. The command-line helper defaults to localhost port 8000; set `GARDEN_URL`/`GARDEN_CDP_URL` when needed. Normal game sessions do not expose the harness unless the query flag is present.
 
 ### Frame timing harness
 

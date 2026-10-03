@@ -91,6 +91,11 @@ export interface FarmExpansionStart {
 
 export interface FarmExpansion {
   readonly state: FarmExpansionState
+  /** Lightweight live getters for the animation loop; state remains a snapshot API. */
+  readonly level: number
+  readonly bounds: GardenBounds
+  readonly isAnimating: boolean
+  readonly progress: number
   expand(): FarmExpansionStart | null
   update(deltaSeconds: number): void
 }
@@ -151,6 +156,10 @@ export function createFarmExpansion(config: FarmExpansionConfig = FARM_EXPANSION
   }
 
   return {
+    get level() { return level },
+    get bounds(): GardenBounds { return { ...bounds } },
+    get isAnimating() { return elapsed < stableConfig.durationSeconds },
+    get progress() { return progress },
     get state(): FarmExpansionState {
       return {
         level,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import * as THREE from 'three'
 import { build } from 'esbuild'
 import test from 'node:test'
 
@@ -11,6 +12,16 @@ const { outputFiles } = await build({
 })
 const terrainModule = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 const { createGardenTerrain } = terrainModule
+
+const { outputFiles: fairgroundOutput } = await build({
+  entryPoints: ['src/scene/fairground.ts'],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  write: false,
+})
+const fairgroundModule = await import(`data:text/javascript;base64,${Buffer.from(fairgroundOutput[0].text).toString('base64')}`)
+const { makeGardenLawnGeometry, updateLandRevealMask } = fairgroundModule
 
 const { outputFiles: waterOutput } = await build({
   entryPoints: ['src/game/garden-water.ts'],
@@ -182,4 +193,180 @@ test('expanding the parcel preserves a previously dug edge pond', () => {
     after.runoff - before.runoff < 0.05,
     `the pond should not suddenly leak during expansion (runoff ${before.runoff} -> ${after.runoff})`,
   )
+})
+
+function makeTerrainRenderHarness() {
+  const width = 76.16
+  const depth = 52.16
+  const widthSegments = 181
+  const heightSegments = 125
+  const soil = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, depth, widthSegments, heightSegments),
+    new THREE.MeshStandardMaterial({ vertexColors: true }),
+  )
+  const lawn = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, depth, widthSegments, heightSegments),
+    new THREE.MeshStandardMaterial(),
+  )
+  soil.rotation.x = -Math.PI / 2
+  lawn.rotation.x = -Math.PI / 2
+  const terrain = createGardenTerrain([
+    { mesh: soil, offset: -0.012, soilRings: true },
+    { mesh: lawn },
+  ])
+  terrain.applyToMeshes(true)
+  return { terrain, soil, lawn }
+}
+
+test('local terrain mesh updates exactly match a full rebuild, including normals and contour colors', () => {
+  const local = makeTerrainRenderHarness()
+  const full = makeTerrainRenderHarness()
+  const strokes = [
+    [0.1, -0.2, 1.25, -0.16],
+    [2.1, 0.7, 1.05, -0.19],
+    [1.3, 1.9, 0.9, 0.11],
+  ]
+  for (const [x, z, radius, amount] of strokes) {
+    assert.ok(local.terrain.splat(x, z, radius, amount) > 0)
+    full.terrain.splat(x, z, radius, amount)
+    local.terrain.applyToMeshes()
+    full.terrain.applyToMeshes(true)
+  }
+
+  for (const [localMesh, fullMesh] of [[local.soil, full.soil], [local.lawn, full.lawn]]) {
+    for (const name of ['position', 'normal', ...(localMesh === local.soil ? ['color'] : [])]) {
+      const actual = localMesh.geometry.getAttribute(name).array
+      const expected = fullMesh.geometry.getAttribute(name).array
+      assert.equal(actual.length, expected.length)
+      for (let index = 0; index < actual.length; index += 1) {
+        assert.ok(Math.abs(actual[index] - expected[index]) < 1e-6,
+          `${name}[${index}] differs: local ${actual[index]}, full ${expected[index]}`)
+      }
+    }
+  }
+  assert.equal(local.terrain.dirty, false)
+})
+
+test('smooth parcel expansion reveals the new border without forcing a full mesh rebuild', () => {
+  let active = { halfWidth: START.halfWidth, halfDepth: START.halfDepth }
+  const terrain = createGardenTerrain([], () => active)
+  terrain.applyToMeshes()
+  const before = terrain.stats()
+  active = { halfWidth: START.halfWidth + 0.35, halfDepth: START.halfDepth + 0.22 }
+  assert.equal(terrain.syncBounds(), true, 'smooth expansion updates the editable parcel mask')
+  assert.equal(terrain.dirty, false, 'revealing flat outside cells must not dirty the terrain mesh')
+  assert.equal(terrain.stats().changedCells, before.changedCells, 'expansion-only cells remain at grade')
+  assert.equal(terrain.splat(START.halfWidth + 0.6, 0, 0.15, -0.12), 0,
+    'a grid cell remains masked until its center is inside the animated parcel')
+  active = { halfWidth: START.halfWidth + 0.8, halfDepth: START.halfDepth + 0.22 }
+  assert.equal(terrain.syncBounds(), true)
+  assert.equal(terrain.dirty, false)
+  assert.ok(terrain.splat(START.halfWidth + 0.6, 0, 0.3, -0.12) > 0,
+    'newly revealed ground is editable without rebuilding mesh topology')
+  assert.equal(terrain.dirty, true, 'only an actual terrain edit dirties the mesh')
+})
+
+test('the expansion reveal only patches mesh rows near the moving boundary and matches a full mask', () => {
+  const geometry = makeGardenLawnGeometry()
+  const colors = geometry.getAttribute('color')
+  const positions = geometry.getAttribute('position')
+  const bounds = { halfWidth: 14, halfDepth: 9.5 }
+  updateLandRevealMask(geometry, null, bounds)
+  const previous = new Float32Array(colors.array)
+  colors.clearUpdateRanges()
+
+  const nextBounds = { halfWidth: 14.55, halfDepth: 9.88 }
+  updateLandRevealMask(geometry, bounds, nextBounds)
+  const patched = new Float32Array(colors.array)
+  const rowsWritten = colors.updateRanges.reduce((sum, range) => sum + range.count, 0)
+  assert.ok(rowsWritten < colors.array.length / 3,
+    `one expansion frame should upload a fraction of the mask (${rowsWritten}/${colors.array.length} components)`)
+
+  const expectedGeometry = makeGardenLawnGeometry()
+  const expectedColors = expectedGeometry.getAttribute('color')
+  for (let index = 0; index < positions.count; index += 1) {
+    const x = positions.getX(index)
+    const z = -positions.getY(index)
+    const radius = 0.9
+    const cornerX = nextBounds.halfWidth - radius
+    const cornerZ = nextBounds.halfDepth - radius
+    const qx = Math.abs(x) - cornerX
+    const qz = Math.abs(z) - cornerZ
+    const distance = Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - radius
+    const alpha = 1 - THREE.MathUtils.smoothstep(distance, 0, 0.38)
+    expectedColors.setXYZW(index, 1, 1, 1, alpha)
+  }
+  const expected = expectedColors.array
+  for (let index = 0; index < patched.length; index += 1) {
+    assert.ok(Math.abs(patched[index] - expected[index]) < 1e-6,
+      `incremental reveal component ${index} should match a full recompute`)
+    if (index % colors.itemSize !== colors.itemSize - 1) continue
+    const alphaUnchanged = Math.abs(previous[index] - patched[index]) < 1e-6
+    if (alphaUnchanged) continue
+    const vertex = Math.floor(index / colors.itemSize)
+    const x = positions.getX(vertex)
+    const z = -positions.getY(vertex)
+    assert.ok(Math.abs(x) > 12 || Math.abs(z) > 8,
+      `a changed reveal vertex should lie near an expanding edge, got (${x}, ${z})`)
+  }
+  geometry.dispose()
+  expectedGeometry.dispose()
+})
+
+test('animated parcel masks update faster than rebuilding the whole soil reveal', () => {
+  const incrementalGeometry = makeGardenLawnGeometry()
+  const fullGeometry = makeGardenLawnGeometry()
+  let previous = { halfWidth: 14, halfDepth: 9.5 }
+  updateLandRevealMask(incrementalGeometry, null, previous)
+  const incrementalTimes = []
+  const fullTimes = []
+  const samples = 12
+  for (let sample = 0; sample < samples; sample += 1) {
+    const bounds = {
+      halfWidth: 14 + (sample + 1) * 1.6 / samples,
+      halfDepth: 9.5 + (sample + 1) * 1.1 / samples,
+    }
+    const incrementalStart = performance.now()
+    updateLandRevealMask(incrementalGeometry, previous, bounds)
+    incrementalTimes.push(performance.now() - incrementalStart)
+
+    const fullStart = performance.now()
+    updateLandRevealMask(fullGeometry, null, bounds)
+    fullTimes.push(performance.now() - fullStart)
+    previous = bounds
+  }
+  const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+  const incrementalMedian = median(incrementalTimes)
+  const fullMedian = median(fullTimes)
+  console.log(`expansion mask benchmark: incremental=${incrementalMedian.toFixed(3)}ms full=${fullMedian.toFixed(3)}ms speedup=${(fullMedian / incrementalMedian).toFixed(1)}x`)
+  assert.ok(incrementalMedian < fullMedian,
+    'a moving parcel reveal should update faster than rewriting the complete soil mask')
+  incrementalGeometry.dispose()
+  fullGeometry.dispose()
+})
+
+test('localized terrain application is faster than full geometry rebuilds', () => {
+  const local = makeTerrainRenderHarness()
+  const full = makeTerrainRenderHarness()
+  const samples = 50
+  const localTimes = []
+  const fullTimes = []
+  for (let sample = 0; sample < samples; sample += 1) {
+    const x = -8 + (sample % 9) * 1.7
+    const z = -4 + (sample % 7) * 1.2
+    local.terrain.splat(x, z, 1.3, -0.08)
+    const localStart = performance.now()
+    local.terrain.applyToMeshes()
+    localTimes.push(performance.now() - localStart)
+
+    full.terrain.splat(x, z, 1.3, -0.08)
+    const fullStart = performance.now()
+    full.terrain.applyToMeshes(true)
+    fullTimes.push(performance.now() - fullStart)
+  }
+  const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+  const localMedian = median(localTimes)
+  const fullMedian = median(fullTimes)
+  console.log(`terrain mesh benchmark: localized=${localMedian.toFixed(3)}ms full=${fullMedian.toFixed(3)}ms speedup=${(fullMedian / localMedian).toFixed(1)}x`)
+  assert.ok(localMedian < fullMedian, 'localized geometry updates should beat full geometry rebuilds')
 })
