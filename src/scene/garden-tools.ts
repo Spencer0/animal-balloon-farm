@@ -40,6 +40,7 @@ export interface GardenToolDebugState {
   readonly waterSurface: number
   readonly waterRunoff: number
   readonly terrainDirty: boolean
+  readonly seederDragMaxSpeed: number
 }
 
 export interface GardenTools {
@@ -51,6 +52,13 @@ export interface GardenTools {
    * showing the hand, so the menu and journal are not left with no cursor.
    */
   readonly cursorVisible: boolean
+  /**
+   * Upgrade level of the grass seeder. Each level raises the drag speed cap;
+   * the shop/progression layers own when it increases, this module owns the
+   * tuning table it indexes into.
+   */
+  readonly seederLevel: number
+  setSeederLevel(level: number): void
   selectTool(id: GardenToolId): void
   cycleBrushSize(): void
   setPlantingMode(active: boolean): void
@@ -115,6 +123,27 @@ const ACTION_INTERVAL = 0.08
 const LAWN_VERTEX_SPACING = 0.58
 const GRASS_STROKE_SPACING = 0.34
 const GROW_PAINT_FACTOR = 1.06
+export interface SeederConfig {
+  /** Garden units per second the seeder brush may travel while held down. */
+  readonly dragMaxSpeed: number
+}
+
+/**
+ * Seeder drag caps by upgrade level. Level 0 is the starting hand-seeder:
+ * deliberately slow so early grass is earned. Future upgrades pick higher
+ * rows; the game wires the level, this table stays the tuning knob.
+ */
+export const SEEDER_CONFIGS: readonly SeederConfig[] = [
+  { dragMaxSpeed: 6 },
+  { dragMaxSpeed: 9 },
+  { dragMaxSpeed: 13 },
+] as const
+
+export function seederConfigForLevel(level: number): SeederConfig {
+  const index = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0
+  return SEEDER_CONFIGS[Math.min(index, SEEDER_CONFIGS.length - 1)]
+}
+
 const TRIM_PAINT_FACTOR = 0.9
 // Shovel: two verbs, no inventory — left-hold carves straight down, right-hold
 // mounds straight up. Depth contour rings baked into the soil (garden-terrain)
@@ -276,12 +305,51 @@ export function createGardenTools(
     return Math.max(4, Math.round(base * BRUSH_SIZE_LEVELS[brushLevelIndex()] ** 2))
   }
 
+  function seederDragMaxSpeed(): number {
+    return seederConfigForLevel(seederLevel).dragMaxSpeed
+  }
+
+  function stampSeederTrail(point: THREE.Vector3): void {
+    const spacing = Math.max(GRASS_STROKE_SPACING, brushRadius() * 0.3)
+    if (lastPaintPoint && lastPaintPoint.distanceTo(point) < spacing) return
+    lastPaintPoint = point.clone()
+    updateLawnCoverage(point.x, point.z, brushRadius() * GROW_PAINT_FACTOR, 1.05)
+    addGrass(point.x, point.z, brushRadius() * 0.88, stampBladeCount(MIN_SEED_BLADES))
+  }
+
+  /**
+   * Walk the seeder brush toward the pointer at the capped drag speed,
+   * seeding the ground it actually crosses. Fast flicks leave the brush
+   * behind instead of painting a free trail across the garden.
+   */
+  function advanceSeederBrush(deltaSeconds: number): void {
+    const brush = lastSeedPoint
+    const target = seederTarget
+    if (!brush || !target) return
+    const dx = target.x - brush.x
+    const dz = target.z - brush.z
+    const distance = Math.hypot(dx, dz)
+    if (distance <= 0.0001) return
+    const step = Math.min(distance, seederDragMaxSpeed() * Math.max(0, deltaSeconds))
+    brush.x += (dx / distance) * step
+    brush.z += (dz / distance) * step
+    brush.y = target.y
+    stampSeederTrail(brush)
+    // The ring shows where seeds actually land, not where the mouse ran to.
+    cursor.position.set(brush.x, brush.y + 0.008, brush.z)
+  }
+
   let cursorVisible = false
   let plantingMode = false
   let isPointerDown = false
   let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | null = null
   let lastPaintPoint: THREE.Vector3 | null = null
   let lastSeedPoint: THREE.Vector3 | null = null
+  let seederLevel = 0
+  // While the seeder (tool #2) is held down, the pointer only steers: the
+  // brush itself chases this target at the level's capped drag speed, so a
+  // fast mouse flick cannot sweep the whole garden in one stroke.
+  let seederTarget: THREE.Vector3 | null = null
   let hoverTint: string | null = null
   let paintTimer = 0
   let actionAccumulator = 0
@@ -850,6 +918,10 @@ export function createGardenTools(
     root,
     get selectedTool(): GardenToolId { return selectedTool },
     get cursorVisible(): boolean { return cursorVisible },
+    get seederLevel(): number { return seederLevel },
+    setSeederLevel(level: number): void {
+      seederLevel = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0
+    },
     selectTool(id): void {
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
@@ -873,6 +945,7 @@ export function createGardenTools(
       activeAction = null
       lastPaintPoint = null
       lastSeedPoint = null
+      seederTarget = null
       paintTimer = 0
       actionAccumulator = 0
       if (active) {
@@ -911,13 +984,11 @@ export function createGardenTools(
       // plants a light sprinkle of short blades. Height only accumulates where the
       // brush lingers (see update), so dragging leaves short grass, not tall.
       if (isPointerDown && activeAction === 'grow') {
-        const spacing = Math.max(GRASS_STROKE_SPACING, brushRadius() * 0.3)
-        if (!lastPaintPoint || lastPaintPoint.distanceTo(position) >= spacing) {
-          lastPaintPoint = position.clone()
-          lastSeedPoint = position.clone()
-          updateLawnCoverage(position.x, position.z, brushRadius() * GROW_PAINT_FACTOR, 1.05)
-          addGrass(position.x, position.z, brushRadius() * 0.88, stampBladeCount(MIN_SEED_BLADES))
-        }
+        // The pointer only steers while held: the brush chases it at the capped
+        // drag speed (see advanceSeederBrush), so coverage speed is bounded no
+        // matter how fast the mouse moves.
+        seederTarget = position.clone()
+        if (lastSeedPoint) cursor.position.set(lastSeedPoint.x, lastSeedPoint.y + 0.008, lastSeedPoint.z)
         return
       }
       if (activeAction) return
@@ -966,6 +1037,7 @@ export function createGardenTools(
       isPointerDown = true
       lastPaintPoint = position.clone()
       lastSeedPoint = position.clone()
+      seederTarget = position.clone()
       paintTimer = 0
       actionAccumulator = 0
       lastPaintDuration = 0
@@ -982,6 +1054,7 @@ export function createGardenTools(
       isPointerDown = false
       activeAction = null
       lastPaintPoint = null
+      seederTarget = null
       paintTimer = 0
       actionAccumulator = 0
     },
@@ -991,6 +1064,12 @@ export function createGardenTools(
       actionGlow.visible = false
       if (!isPointerDown) return
       // The pointer left the garden mid-stroke: pause painting until it returns.
+      // A held seeder keeps its brush so re-entry chases from where it waited
+      // instead of teleporting to the pointer.
+      if (activeAction === 'grow') {
+        seederTarget = null
+        return
+      }
       lastSeedPoint = null
       lastPaintPoint = null
     },
@@ -1067,6 +1146,7 @@ export function createGardenTools(
         waterSurface: waterStats.highestSurface,
         waterRunoff: waterStats.runoff,
         terrainDirty: terrain.dirty,
+        seederDragMaxSpeed: seederDragMaxSpeed(),
       }
     },
     clearGrass,
@@ -1116,6 +1196,9 @@ export function createGardenTools(
     },
     update(deltaSeconds): void {
       if (isPointerDown && cursorVisible && activeAction && lastSeedPoint) {
+        // The seeder brush chases the pointer at its capped speed before the
+        // hold-growth below runs, so each tick grows where seeds landed.
+        if (activeAction === 'grow') advanceSeederBrush(deltaSeconds)
         paintTimer += deltaSeconds
         actionAccumulator += deltaSeconds
         while (actionAccumulator >= ACTION_INTERVAL) {
