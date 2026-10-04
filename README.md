@@ -1,6 +1,6 @@
 # Animal Balloon Farm
 
-A new Three.js-first garden/animal sandbox with the spirit of a whimsical traveling carnival. See [`SPEC.md`](SPEC.md) for the research-informed design, gameplay loop, first playable scope, and technical direction.
+A new Three.js-first garden/animal sandbox with the spirit of a whimsical traveling carnival.
 
 **Live site:** <https://spencer0.github.io/animal-balloon-farm/>
 
@@ -124,3 +124,5 @@ Dependencies are pinned in `package.json` (Three.js 0.186.1 and type definitions
 ## Preserved old work
 
 Zoo Patrol source, documentation, artwork, Blender project, static build, tests, ignored cache, and local dependency directory are under `.archive/zoo-patrol/`. The archive is ignored by Git so it remains available locally without leaking into Animal Balloon Farm commits. The pre-existing deletion of tracked `elephant-arcade.html` was left untouched.
+
+
