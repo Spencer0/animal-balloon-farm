@@ -16,8 +16,8 @@ import { createSurface, fillRoundRect, strokeRoundRect } from './ui-theme'
  * beside each one, because that is the one thing a player cannot guess. The
  * bucket joins the seeder and shovel as a plain, readable tool silhouette.
  *
- * Selecting a tool lights it: a golden outline shell grows around the model's
- * silhouette and a warm halo blooms behind it.
+ * Selecting a tool sizes it: the selected tool grows a step while the rest
+ * shrink a step, so the bar reads by silhouette size instead of a glow.
  */
 
 const SLOT_WIDTH = 96
@@ -27,14 +27,9 @@ const BOTTOM_MARGIN = 26
 /** Resting tilt, so the tools read as three-dimensional objects at a glance. */
 const TILT_Y = -0.62
 const TILT_Z = 0.14
-const OUTLINE_COLOR = '#ffd75e'
-/**
- * The hull is grown from the model's own origin, so the thickness is a scale
- * factor rather than an offset. It had to go up when the icons shrank: at the
- * old size a 1.13 shell was several pixels wide, at half that it was a hairline
- * and the selected tool stopped reading as selected.
- */
-const OUTLINE_THICKNESS = 1.22
+/** Selection reads by size: selected grows, the rest shrink. */
+const SELECTED_SCALE = 1.3
+const IDLE_SCALE = 0.7
 
 export interface ToolsHud extends UIPanel {
   readonly selectedTool: GardenToolId
@@ -46,21 +41,6 @@ export interface ToolsHud extends UIPanel {
 
 function round(value: number): number {
   return Math.round(value * 10000) / 10000
-}
-
-/** A soft radial bloom drawn once and shared by every slot. */
-function createGlowTexture(): THREE.CanvasTexture {
-  const surface = createSurface(256, 256)
-  const context = surface.context
-  const gradient = context.createRadialGradient(128, 132, 8, 128, 132, 124)
-  gradient.addColorStop(0, 'rgba(255, 226, 140, .85)')
-  gradient.addColorStop(0.45, 'rgba(255, 198, 84, .34)')
-  gradient.addColorStop(1, 'rgba(255, 186, 60, 0)')
-  context.fillStyle = gradient
-  context.fillRect(0, 0, 256, 256)
-  const texture = new THREE.CanvasTexture(surface.canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  return texture
 }
 
 /**
@@ -90,45 +70,18 @@ function createBadgeTexture(hotkey: string): THREE.CanvasTexture {
   return texture
 }
 
-/**
- * An inverted hull around the model, the standard cheap silhouette outline.
- * Each shell is pushed out from the *model's* origin rather than its own, so
- * the whole outline grows evenly instead of each part ballooning on its own.
- */
-function buildOutline(model: THREE.Group, color: string, thickness: number): THREE.Group {
-  const outline = new THREE.Group()
-  outline.name = 'Tool selection outline'
-  outline.visible = false
-  const material = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide, depthWrite: false })
-  for (const child of model.children) {
-    if (!(child instanceof THREE.Mesh)) continue
-    const shell = new THREE.Mesh(child.geometry, material)
-    shell.position.copy(child.position).multiplyScalar(thickness)
-    shell.quaternion.copy(child.quaternion)
-    shell.scale.copy(child.scale).multiplyScalar(thickness)
-    shell.castShadow = false
-    shell.receiveShadow = false
-    outline.add(shell)
-  }
-  return outline
-}
-
 interface ToolSlot {
   readonly id: GardenToolId
   readonly hotkey: string
   readonly holder: THREE.Group
   readonly icon: THREE.Group
-  readonly outline: THREE.Group
-  readonly glowMaterial: THREE.MeshBasicMaterial
   readonly badgeMaterial: THREE.MeshBasicMaterial
-  readonly lights: THREE.MeshStandardMaterial[]
   rect: DesignRect
   centreX: number
   centreY: number
   hover: number
   press: number
-  glow: number
-  outlineAmount: number
+  selectedAmount: number
   bob: number
 }
 
@@ -144,30 +97,13 @@ export function createToolsHud(
   const object = new THREE.Group()
   object.name = 'Garden tool bar'
 
-  const glowTexture = createGlowTexture()
   const slots: ToolSlot[] = GARDEN_TOOLS.map((tool, index) => {
     const holder = new THREE.Group()
     holder.name = `Garden tool · ${tool.id}`
     object.add(holder)
 
-    const glowMaterial = new THREE.MeshBasicMaterial({
-      map: glowTexture,
-      transparent: true,
-      depthWrite: false,
-      depthTest: false,
-      opacity: 0,
-    })
-    const glow = new THREE.Mesh(new THREE.PlaneGeometry(SLOT_WIDTH * 1.1, SLOT_HEIGHT * 1.05), glowMaterial)
-    glow.name = 'Tool selection halo'
-    glow.position.z = -2
-    glow.renderOrder = -1
-    holder.add(glow)
-
     const icon = new THREE.Group()
     holder.add(icon)
-    // The model and its outline share one fitted frame. Keeping them as
-    // siblings of `icon` instead meant the outline drew at the model's raw
-    // size and vanished inside it.
     const fit = new THREE.Group()
     fit.name = 'Tool fitted frame'
     icon.add(fit)
@@ -184,22 +120,10 @@ export function createToolsHud(
     fit.position.set(-centre.x * scale, -centre.y * scale, 0)
     fit.add(model)
 
-    const outline = buildOutline(model, OUTLINE_COLOR, OUTLINE_THICKNESS)
-    fit.add(outline)
-
     // The icon tips toward the camera and leans, so the two tools do not read
     // as flat stickers pasted on the lawn.
     icon.rotation.set(0.06, TILT_Y, TILT_Z)
     icon.position.y = SLOT_HEIGHT * 0.06
-
-    const lights: THREE.MeshStandardMaterial[] = []
-    model.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        const material = child.material
-        if (Array.isArray(material)) material.forEach((entry) => lights.push(entry))
-        else lights.push(material)
-      }
-    })
 
     const badgeMaterial = new THREE.MeshBasicMaterial({
       map: createBadgeTexture(tool.hotkey),
@@ -223,17 +147,13 @@ export function createToolsHud(
       hotkey: tool.hotkey,
       holder,
       icon,
-      outline,
-      glowMaterial,
       badgeMaterial,
-      lights,
       rect: { x: 0, y: 0, width: SLOT_WIDTH, height: SLOT_HEIGHT },
       centreX: 0,
       centreY: 0,
       hover: 0,
       press: 0,
-      glow: 0,
-      outlineAmount: 0,
+      selectedAmount: 0,
       // Stagger the idle bob so the tools do not breathe in lockstep.
       bob: index * 1.9,
     }
@@ -278,30 +198,21 @@ export function createToolsHud(
       const hoverTarget = slot.hover > 0.5 ? 1 : 0
       slot.press += ((slot.press > 0.5 ? 1 : 0) - slot.press) * blend
       slot.hover += (hoverTarget - slot.hover) * blend
-      const glowTarget = isSelected ? 1 : 0
-      slot.glow += (glowTarget - slot.glow) * blend
-      const outlineTarget = isSelected ? 1 : 0
-      slot.outlineAmount += (outlineTarget - slot.outlineAmount) * blend
+      const selectedTarget = isSelected ? 1 : 0
+      slot.selectedAmount += (selectedTarget - slot.selectedAmount) * blend
 
-      // Float, then lean in on hover, then dip on press.
+      // Float, then lean in on hover, then dip on press. Selection reads by
+      // size: the picked tool grows a step while the rest shrink a step.
       const bob = Math.sin(elapsed * 1.9 + slot.bob) * 3
-      const scale = 1 + slot.hover * 0.07 - slot.press * 0.05 + slot.glow * 0.08
+      const scale = IDLE_SCALE
+        + slot.selectedAmount * (SELECTED_SCALE - IDLE_SCALE)
+        + slot.hover * 0.07
+        - slot.press * 0.05
       slot.icon.position.y = SLOT_HEIGHT * 0.06 + bob + slot.hover * 6 - slot.press * 6
-      slot.icon.rotation.set(0.06, TILT_Y + slot.hover * 0.14 - slot.glow * 0.05, TILT_Z - slot.hover * 0.05)
+      slot.icon.rotation.set(0.06, TILT_Y + slot.hover * 0.14, TILT_Z - slot.hover * 0.05)
       slot.icon.scale.setScalar(scale)
 
-      slot.glowMaterial.opacity = 0.06 + slot.glow * 0.44
-      slot.outline.visible = slot.outlineAmount > 0.01
-      slot.outline.scale.setScalar(0.9 + slot.outlineAmount * 0.1)
-      slot.badgeMaterial.opacity = 0.8 + slot.glow * 0.2
-
-      // A little warmth on the selected tool, not a floodlight: pushed further
-      // the seeder's glass jar blew out and the silhouette disappeared.
-      for (const material of slot.lights) {
-        if (!material.emissive) continue
-        material.emissive.set(isSelected ? '#ffcf63' : '#000000')
-        material.emissiveIntensity = slot.glow * 0.2
-      }
+      slot.badgeMaterial.opacity = 0.8 + slot.selectedAmount * 0.2
     }
   }
 
@@ -386,11 +297,9 @@ export function createToolsHud(
           if (!(child instanceof THREE.Mesh)) return
           child.geometry.dispose()
         })
-        slot.glowMaterial.dispose()
         slot.badgeMaterial.map?.dispose()
         slot.badgeMaterial.dispose()
       }
-      glowTexture.dispose()
     },
   }
 }

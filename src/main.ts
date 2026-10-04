@@ -1369,6 +1369,14 @@ function updateCursor(point: DesignPoint | null): void {
     }
   }
   if (toolsHud.selectedTool !== 'hand' && !cameraToolSelected() && !gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
+    // A tool stroke lags the pointer by design (drag speed cap), so the OS
+    // pointer stays visible mid-stroke: it marks the real mouse while the
+    // ring marks where the tool actually works. Without it the mouse goes
+    // invisible mid-drag and flies off the screen.
+    if (gardenTools?.strokeHeld) {
+      setCursor('point', gameCanvas)
+      return
+    }
     setCursor('hidden', gameCanvas)
     return
   }
