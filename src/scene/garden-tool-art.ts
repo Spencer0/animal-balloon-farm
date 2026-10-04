@@ -22,7 +22,7 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
   },
   {
     id: 'grass', hotkey: '2', label: 'Grass Seeder', subtitle: 'A little green goes a long way',
-    description: 'A trusty hand tool for turning bare soil into a soft patch of meadow.',
+    description: 'A burlap sack of seed for turning bare soil into a soft patch of meadow.',
     note: 'Hold and drag to sow grass. Right-click to gently trim it back.',
     tint: '#b7d97a', accent: '#f3d78a',
   },
@@ -93,54 +93,79 @@ function createHandModel(): THREE.Group {
 
 function createGrassSeederModel(): THREE.Group {
   const model = new THREE.Group()
-  model.name = 'Handmade grass seeder'
+  model.name = 'Grass seed bag'
 
-  const wood = new THREE.MeshStandardMaterial({ color: '#a8754c', roughness: 0.54 })
-  const lightWood = new THREE.MeshStandardMaterial({ color: '#d7b47a', roughness: 0.48 })
-  const brass = new THREE.MeshStandardMaterial({ color: '#d7b765', roughness: 0.3, metalness: 0.48 })
-  const jarMaterial = new THREE.MeshStandardMaterial({ color: '#d4b77e', roughness: 0.44 })
-  const leafMaterials = ['#9fbe69', '#b9d47b', '#739f5b'].map((color) => new THREE.MeshStandardMaterial({ color, roughness: 0.62 }))
+  const burlap = new THREE.MeshStandardMaterial({ color: '#c9a06b', roughness: 0.92 })
+  const burlapDark = new THREE.MeshStandardMaterial({ color: '#b58e5c', roughness: 0.94 })
+  const burlapLight = new THREE.MeshStandardMaterial({ color: '#d4af75', roughness: 0.9 })
+  const twine = new THREE.MeshStandardMaterial({ color: '#8a6f3f', roughness: 0.85 })
+  const sprout = new THREE.MeshStandardMaterial({ color: '#6fa055', roughness: 0.62 })
+  const seedTan = new THREE.MeshStandardMaterial({ color: '#a5804e', roughness: 0.7 })
+  const seedGreen = new THREE.MeshStandardMaterial({ color: '#7fae62', roughness: 0.7 })
 
-  const jar = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.19, 0.3, 20), jarMaterial)
-  jar.position.set(-0.05, 0.38, 0)
-  jar.castShadow = true
-  jar.receiveShadow = true
-  model.add(jar)
+  // Slouching sack body, flattened front-to-back like the other tool reliefs.
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 22, 16), burlap)
+  body.position.set(0, 0.32, 0)
+  body.scale.set(1, 1.12, 0.62)
+  body.castShadow = true
+  body.receiveShadow = true
+  model.add(body)
 
-  const jarFoot = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.035, 20), brass)
-  jarFoot.position.set(-0.05, 0.23, 0)
-  model.add(jarFoot)
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.022, 8, 24), brass)
-  rim.position.set(-0.05, 0.53, 0)
-  model.add(rim)
-  const lid = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 10), lightWood)
-  lid.position.set(-0.05, 0.54, 0)
-  lid.scale.y = 0.38
-  model.add(lid)
+  // Cinched neck gathered under the tie.
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.2, 0.22, 16), burlapDark)
+  neck.position.set(0, 0.76, 0)
+  model.add(neck)
+  const ruffle = new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 10), burlapLight)
+  ruffle.position.set(0, 0.9, 0)
+  ruffle.scale.set(1, 0.62, 0.7)
+  model.add(ruffle)
 
-  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.72, 12), wood)
-  handle.position.set(0.31, 0.76, 0)
-  handle.rotation.z = -0.56
-  handle.castShadow = true
-  model.add(handle)
-  const grip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 10), lightWood)
-  grip.position.set(0.53, 1.06, 0)
-  grip.scale.set(1.15, 0.76, 0.85)
-  model.add(grip)
-  const ferrule = new THREE.Mesh(new THREE.TorusGeometry(0.057, 0.014, 8, 18), brass)
-  ferrule.position.set(0.11, 0.48, 0)
-  ferrule.rotation.z = -0.56
-  model.add(ferrule)
+  // Twine tie with a knot and two bow ends.
+  const tie = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.028, 8, 20), twine)
+  tie.position.set(0, 0.8, 0)
+  tie.rotation.x = Math.PI / 2
+  model.add(tie)
+  const knot = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), twine)
+  knot.position.set(0.15, 0.8, 0.05)
+  model.add(knot)
+  for (const side of [-1, 1] as const) {
+    const bow = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.026, 0.16, 8), twine)
+    bow.position.set(0.15 + side * 0.05, 0.71, 0.05)
+    bow.rotation.z = side * 0.5
+    model.add(bow)
+  }
 
-  for (const [x, z, colorIndex, scale] of [
-    [-0.17, 0.04, 0, 1],
-    [0.02, 0.12, 1, 0.82],
-    [0.03, -0.12, 2, 0.76],
-  ] as const) {
-    const seed = new THREE.Mesh(new THREE.SphereGeometry(0.055 * scale, 10, 8), leafMaterials[colorIndex])
-    seed.position.set(x, 0.59, z)
-    seed.scale.set(1, 0.76, 0.86)
-    model.add(seed)
+  // Stitched sprout emblem on the front of the sack.
+  const patch = new THREE.Mesh(new THREE.CircleGeometry(0.2, 20), burlapDark)
+  patch.position.set(0, 0.34, 0.2)
+  model.add(patch)
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.16, 8), sprout)
+  stem.position.set(0, 0.33, 0.21)
+  model.add(stem)
+  for (const side of [-1, 1] as const) {
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), sprout)
+    leaf.position.set(side * 0.07, 0.43, 0.21)
+    leaf.scale.set(1.3, 0.5, 0.4)
+    leaf.rotation.z = side * -0.5
+    model.add(leaf)
+  }
+
+  // Spilled seeds scattered at the foot of the sack.
+  const spillSpecs = [
+    [-0.2, 0.02, 0.16, 0, 1],
+    [-0.08, 0.0, 0.22, 1, 0.85],
+    [0.06, 0.01, 0.18, 0, 0.9],
+    [0.18, 0.03, 0.24, 1, 1],
+    [0.28, 0.0, 0.14, 0, 0.8],
+  ] as const
+  for (const [x, y, z, colorIndex, scale] of spillSpecs) {
+    const spill = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045 * scale, 10, 8),
+      colorIndex === 0 ? seedTan : seedGreen,
+    )
+    spill.position.set(x, y, z)
+    spill.scale.set(1, 0.6, 0.9)
+    model.add(spill)
   }
 
   model.traverse((object) => {
@@ -267,45 +292,68 @@ function createCameraModel(): THREE.Group {
 
 function createShovelModel(): THREE.Group {
   const model = new THREE.Group()
-  model.name = 'Handmade garden shovel'
+  model.name = 'Storybook garden shovel'
 
-  const wood = new THREE.MeshStandardMaterial({ color: '#9c6b45', roughness: 0.52 })
-  const lightWood = new THREE.MeshStandardMaterial({ color: '#d7b47a', roughness: 0.46 })
+  const wood = new THREE.MeshStandardMaterial({ color: '#a8754c', roughness: 0.54 })
+  const lightWood = new THREE.MeshStandardMaterial({ color: '#d7b47a', roughness: 0.48 })
   const brass = new THREE.MeshStandardMaterial({ color: '#d7b765', roughness: 0.3, metalness: 0.48 })
-  const steel = new THREE.MeshStandardMaterial({ color: '#c8cdd4', roughness: 0.34, metalness: 0.62 })
-  const steelDark = new THREE.MeshStandardMaterial({ color: '#9aa3ad', roughness: 0.42, metalness: 0.55 })
+  const twine = new THREE.MeshStandardMaterial({ color: '#8a6f3f', roughness: 0.85 })
+  const steel = new THREE.MeshStandardMaterial({ color: '#c3ccd6', roughness: 0.32, metalness: 0.6 })
+  const steelDark = new THREE.MeshStandardMaterial({ color: '#98a1ac', roughness: 0.42, metalness: 0.55 })
+  const sprout = new THREE.MeshStandardMaterial({ color: '#6fa055', roughness: 0.62 })
 
   // Shaft rises from the blade toward the cursor ring's grip corner.
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.042, 0.92, 10), wood)
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.05, 0.92, 12), wood)
   shaft.position.set(0.18, 0.52, 0)
   shaft.rotation.z = -0.5
   shaft.castShadow = true
   model.add(shaft)
 
-  const ferrule = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.013, 8, 16), brass)
-  ferrule.position.set(0.06, 0.29, 0)
-  ferrule.rotation.z = -0.5
-  model.add(ferrule)
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.016, 8, 18), brass)
+  collar.position.set(0.3, 0.74, 0)
+  collar.rotation.z = -0.5
+  model.add(collar)
 
-  const grip = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.026, 8, 18, Math.PI), lightWood)
+  const grip = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.028, 8, 18, Math.PI), lightWood)
   grip.position.set(0.4, 0.9, 0)
   grip.rotation.set(Math.PI / 2, 0, -0.5 + Math.PI)
   grip.castShadow = true
   model.add(grip)
 
-  // Dished blade: flattened sphere socketed into the shaft foot.
-  const blade = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 10), steel)
-  blade.position.set(-0.09, 0.1, 0)
-  blade.scale.set(0.78, 1.05, 0.5)
+  // Twine wrap where the shaft meets the blade, echoing the seed bag's tie.
+  for (const index of [0, 1, 2] as const) {
+    const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.013, 8, 16), twine)
+    wrap.position.set(0.055 - index * 0.028, 0.27 - index * 0.016, 0)
+    wrap.rotation.z = -0.5
+    model.add(wrap)
+  }
+
+  // Round, friendly blade: darker steel edge behind a dished face.
+  const bladeEdge = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 12), steelDark)
+  bladeEdge.position.set(-0.1, 0.08, -0.015)
+  bladeEdge.scale.set(0.82, 1.08, 0.42)
+  bladeEdge.rotation.z = 0.34
+  bladeEdge.castShadow = true
+  model.add(bladeEdge)
+
+  const blade = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 12), steel)
+  blade.position.set(-0.09, 0.1, 0.03)
+  blade.scale.set(0.78, 1.05, 0.4)
   blade.rotation.z = 0.34
   blade.castShadow = true
   model.add(blade)
 
-  const bladeTip = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.16, 4), steelDark)
-  bladeTip.position.set(-0.17, -0.04, 0)
-  bladeTip.scale.set(1.15, 1, 0.55)
-  bladeTip.rotation.set(0, Math.PI / 4, 0.5)
-  model.add(bladeTip)
+  // Sprout stamp on the blade face, matching the seed bag's emblem.
+  const stampStem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.09, 8), sprout)
+  stampStem.position.set(-0.09, 0.1, 0.12)
+  model.add(stampStem)
+  for (const side of [-1, 1] as const) {
+    const stampLeaf = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 6), sprout)
+    stampLeaf.position.set(-0.09 + side * 0.04, 0.16, 0.12)
+    stampLeaf.scale.set(1.3, 0.5, 0.4)
+    stampLeaf.rotation.z = side * -0.5
+    model.add(stampLeaf)
+  }
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {
