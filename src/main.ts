@@ -12,7 +12,7 @@ import { createProgressLedger, type ProgressAction } from './game/farm-progressi
 import { startNextEarnedExpansion } from './game/progression-rewards'
 import { type FarmSnapshot } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
-import { conditionMetricUnit, stageDefinition, stageTitle } from './game/animal-conditions'
+import { CARNIVAL_STARTERS, conditionMetricUnit, stageDefinition, stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
@@ -38,6 +38,7 @@ import { createPropboxPanel } from './ui/propbox-panel'
 import { setCursor } from './ui/ui-cursor'
 import type { DesignPoint } from './ui/ui-viewport'
 import { createViewerPanel } from './ui/viewer-panel'
+import { createNotificationPanel } from './ui/notification-panel'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
@@ -702,6 +703,11 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
         // the same thing a live promotion does.
         console.info(`[Animal Balloon Farm] ${event.species} -> stage ${event.stage}`)
       }
+      if (event.kind === 'arriveCarnival' || event.kind === 'enterFarm') {
+        if (!CARNIVAL_STARTERS.includes(event.species)) {
+          notificationPanel.notifyMilestone(event.kind === 'arriveCarnival' ? 'carnival' : 'farm', animalDisplayName(event.species))
+        }
+      }
     }
     if (event.kind === 'arriveCarnival' && event.animalId && !animal) {
       const record = progress.animal(event.animalId)
@@ -731,6 +737,7 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
     if (event.kind === 'layEgg') {
       const egg = progress.eggs().find((entry) => entry.id === event.eggId)
       if (egg) createEggVisual(egg)
+      notificationPanel.notifyMilestone('egg', animalDisplayName(event.species))
       console.info(`[Animal Balloon Farm] ${event.species} laid an egg`)
     }
     if (event.kind === 'hatch' && event.eggId !== undefined) removeEggVisual(event.eggId)
@@ -745,6 +752,16 @@ function updateAnimalProgress(deltaSeconds: number): void {
   handleAnimalLifeEvents(events)
   const records = progress.all()
   const recordsById = new Map(records.map((record) => [record.id, record]))
+  for (const record of records) {
+    if (record.stage < 3 || celebratedResidency.has(record.id)) continue
+    const celebrant = animalById.get(record.id)
+    if (!celebrant || celebrant.isSold || celebrant.appearance !== 'standard') continue
+    celebratedResidency.add(record.id)
+    notificationPanel.notifyMilestone('resident', animalDisplayName(record.species))
+  }
+  for (const celebratedId of [...celebratedResidency]) {
+    if (!recordsById.has(celebratedId)) celebratedResidency.delete(celebratedId)
+  }
   for (const record of records) {
     const animal = animalById.get(record.id)
     if (!animal || animal.isSold) continue
@@ -820,6 +837,18 @@ const journal = createJournalPanel(window.innerWidth, window.innerHeight, () => 
   syncFarmChrome()
 })
 const progressionHud = createProgressionHud(window.innerWidth, window.innerHeight)
+const notificationPanel = createNotificationPanel(window.innerWidth, window.innerHeight)
+const knownMaturePlants = new Set<number>()
+/** Instance ids whose residency reveal has already been celebrated. */
+const celebratedResidency = new Set<string>()
+
+function animalDisplayName(species: string): string {
+  return ANIMAL_CATALOG.find((entry) => entry.id === species)?.name ?? species
+}
+
+function plantDisplayName(species: string): string {
+  return PLANT_CATALOG.find((entry) => entry.id === species)?.name ?? species
+}
 const toolsHud = createToolsHud(
   gardenTools?.selectedTool ?? 'hand',
   (id: GardenToolId) => selectGardenTool(id),
@@ -978,7 +1007,7 @@ const shopPanel = createShopPanel(
 shopPanel.setCountsSource((id) => gardenProps?.inventory.count(id) ?? 0)
 shopPanel.setWallet(wallet.balance)
 
-const panels: UIPanel[] = [progressionHud, toolsHud, seedbox, propboxPanel, menu, viewer, journal, salePanel, shopPanel]
+const panels: UIPanel[] = [progressionHud, notificationPanel, toolsHud, seedbox, propboxPanel, menu, viewer, journal, salePanel, shopPanel]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -1976,6 +2005,8 @@ interface GardenDebugHarness {
   /** Frame-by-frame performance samples for scripted stress tests. */
   performanceSamples(): readonly GardenFrameTiming[]
   layout(): Record<string, unknown>
+  /** Fire a ticket on demand, for visual checks without playing to the milestone. */
+  notify(kind: 'carnival' | 'farm' | 'resident' | 'egg' | 'plant', subject: string): void
   /** Animal conditions: every rung, whether it is revealed, and live numbers. */
   conditions(): AnimalConditionReport
   /** What the farm currently measures, in square meters. */
@@ -2705,6 +2736,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     placeProp: (id, cellX, cellZ, rotation = 0) => gardenProps?.placeProp(id as PropId, cellX, cellZ, rotation) ?? null,
     placeFence: (fromX, fromZ, toX, toZ) => gardenProps?.placeFence(fromX, fromZ, toX, toZ) ?? null,
     propReport: () => gardenProps?.report() ?? null,
+    notify: (kind, subject) => {
+      if (kind === 'plant') notificationPanel.notifyPlantGrown(String(subject ?? 'Clover'))
+      else notificationPanel.notifyMilestone(kind, String(subject ?? 'Pig'))
+    },
     pickUpProp: (clientX, clientY) => gardenProps?.pickUpAt(clientX, clientY) ?? null,
     scene,
     uiScene: ui.scene,
@@ -2833,12 +2868,20 @@ function frame(now: number): void {
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
   gardenProps?.update(delta)
+  const matureIds = new Set<number>()
   for (const plant of gardenPlants?.simulation.plants ?? []) {
     if (!plant.mature) continue
     awardProgress('growPlant', `grow-plant:${plant.instanceId}`)
+    matureIds.add(plant.instanceId)
+    if (!knownMaturePlants.has(plant.instanceId)) {
+      knownMaturePlants.add(plant.instanceId)
+      notificationPanel.notifyPlantGrown(plantDisplayName(plant.species))
+    }
   }
+  for (const knownId of [...knownMaturePlants]) if (!matureIds.has(knownId)) knownMaturePlants.delete(knownId)
   progressionHud.setState(progressionHudState())
   progressionHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shopPanel.isOpen)
+  notificationPanel.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shopPanel.isOpen)
   if (!gardenPlants?.selectedSpecies && !seedbox.isOpen) gardenTools?.setPlantingMode(false)
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shopPanel.isOpen) refreshShopUi()
   seedbox.refresh()
