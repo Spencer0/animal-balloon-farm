@@ -414,8 +414,9 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
 
 /**
  * The shop stands on the apron beyond the plot, outside even the fully expanded
- * bounds, so no amount of farm growth can swallow it. It faces +Z, which is the
- * side the farm camera watches from.
+ * bounds, so no amount of farm growth can swallow it. The model is authored
+ * facing +Z; the half-turn here swings its storefront around to face the farm
+ * plot (-Z), so the hatch, sign and porch greet the farm rather than the meadow.
  */
 let gardenProps: GardenProps | null = null
 if (fairground.gardenSurface && gardenTerrain && gardenWater) {
@@ -426,7 +427,7 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
     terrain: gardenTerrain,
     water: gardenWater,
     getBounds: activeGardenBounds,
-    shop: { x: 2.5, z: 18, rotationY: 0.08, url: 'assets/buildings/farm-shop.glb', size: 6.4 },
+    shop: { x: 2.5, z: 18, rotationY: Math.PI + 0.08, url: 'assets/buildings/farm-shop.glb', size: 6.4 },
     onChange: () => refreshShopUi(),
   })
   scene.add(gardenProps.root)
