@@ -255,6 +255,7 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
       phase: animal.animationPhase,
     })
   }
+  for (const fixture of crowdFixtureEntries) entries.push(fixture)
   animalCrowd.setVisible(mode === 'farm')
   animalCrowd.update(entries, actuallyDetailedIds, nowSeconds)
   crowdStats = animalCrowd.stats()
@@ -470,6 +471,31 @@ const animalPopulationLimit = ANIMAL_LIFE_CONFIG.maximumPopulation
 const animalCrowd = createAnimalCrowdRenderer(fairground.root)
 let focusedAnimalId: string | null = null
 let crowdStats = animalCrowd.stats()
+/**
+ * Live crowd fixtures for sustained load ramps. Empty in normal play; the
+ * debug harness fills it via setCrowd and every reset path drains it, so a
+ * fixture can never leak into a shipped session.
+ */
+let crowdFixtureEntries: AnimalCrowdEntry[] = []
+function makeCrowdFixtures(requestedCount: number): AnimalCrowdEntry[] {
+  const count = Math.max(0, Math.min(animalPopulationLimit, Math.floor(requestedCount)))
+  return Array.from({ length: count }, (_, index) => {
+    const catalog = ANIMAL_CATALOG[index % ANIMAL_CATALOG.length]
+    const column = index % 40
+    const row = Math.floor(index / 40)
+    return {
+      id: `crowd-stress-${index}`,
+      species: catalog.id,
+      x: (column - 19.5) * 1.15,
+      y: GARDEN_LAWN_Y,
+      z: (row - 12.5) * 1.15,
+      heading: (index % 16) * Math.PI / 8,
+      scale: 0.85 + (index % 5) * 0.04,
+      wild: index % 3 === 0,
+      phase: (index * 0.61803398875) % (Math.PI * 2),
+    }
+  })
+}
 let lastCrowdRefreshAt = 0
 const eggVisuals = new Map<number, THREE.Group>()
 const farmHomes = new Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>()
@@ -1991,6 +2017,16 @@ interface GardenDebugHarness {
   simulate(seconds: number, steps?: number): AnimalConditionReport
   /** Build deterministic render-load fixtures without changing shipped farm progression. */
   crowdStressTest(count?: number): { readonly count: number; readonly renderCalls: number; readonly triangles: number; readonly crowd: AnimalCrowdStats }
+  /** One-line usage for every harness command, so agents stop rediscovering this surface. */
+  help(): Record<string, string>
+  /**
+   * Fill the live crowd with deterministic fixtures that stay up until cleared.
+   * Unlike crowdStressTest (one render, then restore), this keeps the load on
+   * screen so scripted ramps can sample sustained frame times.
+   */
+  setCrowd(count?: number): { readonly count: number; readonly crowd: AnimalCrowdStats }
+  /** Remove live crowd fixtures and restore the real herd. */
+  clearCrowd(): { readonly count: number; readonly crowd: AnimalCrowdStats }
 
   /** Snapshot the current terrain, water and active parcel dimensions. */
   gardenReport(): { readonly bounds: { readonly halfWidth: number; readonly halfDepth: number }; readonly terrain: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number }; readonly water: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number } }
@@ -2326,6 +2362,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       gardenWater?.settle()
       gardenWaterMesh?.markDirty()
       gardenWaterMesh?.update(performance.now() * 0.001)
+      crowdFixtureEntries = []
+      refreshAnimalCrowd(performance.now() / 1000, true)
     },
     waterSummary: () => gardenWater?.summary() ?? null,
     selectTool: (tool) => selectGardenTool(tool),
@@ -2409,6 +2447,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       for (const eggId of [...eggVisuals.keys()]) removeEggVisual(eggId)
       progressionHud.setState(progressionHudState())
       animalById.clear()
+      crowdFixtureEntries = []
       focusedAnimalId = null
       animalCrowd.update([], new Set(), performance.now() / 1000)
       crowdStats = animalCrowd.stats()
@@ -2453,24 +2492,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     progression: () => ({ points: progression.points, level: progression.level, pointsToNextLevel: progression.pointsToNextLevel }),
     rendering: () => ({ animalCount: animals.filter((animal) => !animal.isSold).length, populationLimit: animalPopulationLimit, crowd: { ...crowdStats } }),
     crowdStressTest: (requestedCount = animalPopulationLimit) => {
-      const count = Math.max(0, Math.min(animalPopulationLimit, Math.floor(requestedCount)))
+      const fixtures = makeCrowdFixtures(requestedCount)
+      const count = fixtures.length
       const nowSeconds = performance.now() / 1000
-      const fixtures: AnimalCrowdEntry[] = Array.from({ length: count }, (_, index) => {
-        const catalog = ANIMAL_CATALOG[index % ANIMAL_CATALOG.length]
-        const column = index % 40
-        const row = Math.floor(index / 40)
-        return {
-          id: `crowd-stress-${index}`,
-          species: catalog.id,
-          x: (column - 19.5) * 1.15,
-          y: GARDEN_LAWN_Y,
-          z: (row - 12.5) * 1.15,
-          heading: (index % 16) * Math.PI / 8,
-          scale: 0.85 + (index % 5) * 0.04,
-          wild: index % 3 === 0,
-          phase: (index * 0.61803398875) % (Math.PI * 2),
-        }
-      })
       if (mode !== 'farm') throw new Error('Crowd stress tests can run only while the farm scene is active')
       const savedHalfHeight = viewHalfHeight
       const savedTarget = cameraTarget.clone()
@@ -2511,6 +2535,49 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
         renderer.info.reset()
       }
     },
+    setCrowd: (requestedCount = animalPopulationLimit) => {
+      if (mode !== 'farm') throw new Error('Crowd fixtures can run only while the farm scene is active')
+      crowdFixtureEntries = makeCrowdFixtures(requestedCount)
+      focusCamera()
+      refreshAnimalCrowd(performance.now() / 1000, true)
+      crowdStats = animalCrowd.stats()
+      return { count: crowdFixtureEntries.length, crowd: { ...crowdStats } }
+    },
+    clearCrowd: () => {
+      crowdFixtureEntries = []
+      refreshAnimalCrowd(performance.now() / 1000, true)
+      crowdStats = animalCrowd.stats()
+      return { count: 0, crowd: { ...crowdStats } }
+    },
+    help: () => ({
+      state: 'Snapshot: mode, menu, camera, tools, water, herd summary.',
+      help: 'This table: one-line usage for every harness command.',
+      focusGarden: 'Frame the whole garden. Run before pointer scenarios.',
+      focusPoint: 'focusPoint(x, z, height?) — frame a habitat, e.g. a pond.',
+      focusSpecies: 'focusSpecies(species, height?) — close-up for model review.',
+      resetCamera: 'Back to the opening shot.',
+      'openMenu / closeMenu / openJournal / openViewer': 'Drive the menu without clicks.',
+      layout: 'Every UI panel rect — use instead of screenshots for layout checks.',
+      camera: 'Camera pose + tour state. advanceTour(seconds) steps the cinematic.',
+      'startTour / endTour': 'Deterministic tour on a fixed seed for review passes.',
+      farmState: 'Measured m2: tall grass, water, flat grass, plant counts.',
+      conditions: 'Every species ladder rung + live numbers.',
+      setStage: 'setStage(species, 0-4) — force a rung and play its transition.',
+      'advance / simulate': 'Tick progression without waiting (advance) or without browser time (simulate).',
+      resetConditions: 'Forget everything: clears garden, herd, fixtures, progression.',
+      'sowGrass / digPond / digAt / pourAt / clearGarden': 'Terrain + water fixtures in garden meters.',
+      'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
+      'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
+      expandFarm: 'expandFarm(level) — reveal parcels without earning them.',
+      progression: 'Points, level, next expansion milestone.',
+      'selectTool / projectGardenPoint': 'Arm a tool; project garden meters to canvas pixels for pointer tests.',
+      'animalReport / rendering': 'Herd list; live counts + crowd stats.',
+      hatch: 'Hatch a ready egg by id.',
+      'grantCoins / shop / buy / placeProp / placeFence / propCounts': 'Wallet + prop placement without UI clicks.',
+      crowdStressTest: 'crowdStressTest(n) — one render of n fixtures; returns calls/tris. Restores after.',
+      'setCrowd / clearCrowd': 'setCrowd(n) keeps n fixtures live for sustained ramps; clearCrowd restores.',
+      performanceSamples: 'Per-frame work/interval splits. Basis for every perf scenario; see TESTING.md.',
+    }),
     simulate: (seconds, steps = Math.max(1, Math.ceil(seconds * 4))) => {
       if (!Number.isFinite(seconds) || seconds < 0 || !Number.isFinite(steps) || steps < 1) return reportConditions()
       const dt = seconds / Math.floor(steps)

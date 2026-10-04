@@ -66,4 +66,16 @@ jobs:
             if curl -fsS http://127.0.0.1:9222/json/version >/dev/null; then break; fi
             sleep 0.2
           done
-          GARDEN_URL=http://127.0.0.1:4173/ node scripts/perf-stress.mjs
+          GARDEN_URL=http://127.0.0.1:4173/ node scripts/perf-stress.mjs --json shovel.json
+          GARDEN_URL=http://127.0.0.1:4173/ node scripts/perf-scenario.mjs --scenario crowd-ramp --ramp 10,20,30,40,50 --minFps 0 --json crowd-ramp.json
+
+      - name: Upload perf scenario results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-scenarios
+          path: |
+            shovel.json
+            crowd-ramp.json
+          if-no-files-found: warn
+          retention-days: 14
