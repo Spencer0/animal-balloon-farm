@@ -51,8 +51,12 @@ function trackSlidingProp(group: THREE.Group, radius: number): SlidingProp {
 function updateSlidingProp(prop: SlidingProp, bounds: GardenBounds, deltaSeconds: number): void {
   const requiredX = Math.max(0, bounds.halfWidth + prop.radius + 1.5 - Math.abs(prop.originX))
   const requiredZ = Math.max(0, bounds.halfDepth + prop.radius + 1.5 - Math.abs(prop.originZ))
-  const moveAlongX = requiredX > 0 && (requiredZ <= 0 || requiredX <= requiredZ)
-  const moveAlongZ = requiredZ > 0 && (requiredX <= 0 || requiredZ < requiredX)
+  // A prop only moves while its footprint truly overlaps the plot (inside on
+  // both axes); hugging the plot on one axis is a stable station. When
+  // overlapped, the cheaper axis wins -- the same rule as clearOfFarmBounds
+  // in animal-travel, so hand-placed ring stations survive a reload.
+  const moveAlongX = requiredX > 0 && requiredZ > 0 && requiredX <= requiredZ
+  const moveAlongZ = requiredX > 0 && requiredZ > 0 && requiredZ < requiredX
   const targetX = prop.originX + Math.sign(prop.originX || 1) * (moveAlongX ? requiredX : 0)
   const targetZ = prop.originZ + Math.sign(prop.originZ || 1) * (moveAlongZ ? requiredZ : 0)
   const smoothing = 1 - Math.exp(-2.6 * Math.max(0, deltaSeconds))
@@ -712,7 +716,7 @@ function createCarousel(parent: THREE.Group): { group: THREE.Group; rotor: THREE
 function createFerrisWheel(parent: THREE.Group): { group: THREE.Group; rotor: THREE.Group; cabins: THREE.Group[]; radius: number; centerY: number; angle: number } {
   const group = new THREE.Group()
   group.name = 'Painted carnival Ferris wheel'
-  group.position.set(-25.5,-.04,-13.5)
+  group.position.set(-27,-.04,-14)
   const frame = standard('#dfca94',.48)
   const gold = standard('#f2c75c',.36)
   const radius = 6.2
@@ -882,10 +886,12 @@ export function createFairground(): Fairground {
   root.add(lawn)
 
   // No parade lane: the rides stand straight on the meadow, so the clipped
-  // parcel is the only paved thing in view. The dressing that came back with
-  // the midway is deliberately clustered around the rides -- lantern groups,
-  // garland arches, extra tents and balloons -- instead of being spaced evenly
-  // around the plot, which would rebuild the ring that read as a track.
+  // parcel is the only paved thing in view. The midway itself is a tight,
+  // hand-placed ring hugging the starter plot -- gate flankers north and
+  // south, ride anchors south-east and north-west, tents filling the sides --
+  // with garlands, lamps and balloons stationed at gates and entrances rather
+  // than scattered. Stations start just outside the plot and slide outward
+  // with expansion, so the circus always reads as enclosing the farm.
 
   const boundaryCurve=roundedRectangleCurve(GARDEN_BOUNDS.halfWidth*2+.20,GARDEN_BOUNDS.halfDepth*2+.20,.92,.14)
   const boundary=new THREE.Mesh(new THREE.TubeGeometry(boundaryCurve,180,.075,8,true),borderMaterial)
@@ -917,32 +923,39 @@ export function createFairground(): Fairground {
   addTufts(root,random,2700,false,tufts)
   addFlowerPatches(root,random)
 
-  trackProp(addTent(root,21.5,-17.5,1.02,0),4.5)
-  trackProp(addTent(root,29,3,.82,2),4)
-  trackProp(addTent(root,-31.5,6.5,.88,4),4.2)
-  trackProp(addTent(root,23.5,17.5,.66,1),3.2)
-  trackProp(addTent(root,-28.5,-30,.62,3),3.2)
-  // Two more tents carry the midway further around the meadow so the farm does
-  // not sit in a puddle of empty grass; both are tracked like every other prop,
-  // so a larger plot slides them out rather than swallowing them.
+  // The midway is a hand-placed ring hugging the starter plot: gate flankers
+  // north and south, ride anchors south-east (carousel) and north-west (Ferris
+  // wheel), tents filling the east and west sides, and three tall silhouettes
+  // further out for depth. Everything is tracked, so a growing farm slides the
+  // whole ring outward instead of swallowing it.
+  trackProp(addTent(root,-8,-18.5,.95,0),4.2)
+  trackProp(addTent(root,8,-18.5,.8,2),3.8)
+  trackProp(addTent(root,24,-4,.9,4),4.2)
+  trackProp(addTent(root,24,8,.78,1),3.6)
+  trackProp(addTent(root,-24,-4,.9,3),4.2)
+  trackProp(addTent(root,-24,8,.78,2),3.6)
+  trackProp(addTent(root,-12,21,.7,5),3.2)
+  trackProp(addTent(root,15,22,.62,1),3)
   trackProp(addTent(root,37,-21,.76,5),3.6)
   trackProp(addTent(root,-37,3.5,.72,2),3.4)
-  for(const [x,z,scale,seed] of [[-18.5,-12.5,1.05,30],[17.5,-12.8,1,33],[-23.5,11.8,1.12,37],[22.7,11.2,.9,42],[-36.5,-7,1,51],[36.5,8,.95,55],[11.5,-27.5,.85,59],[-11.5,25,.8,63]] as const)trackProp(addBalloonBunch(root,x,z,scale,seed),1)
+  trackProp(addTent(root,10,-30,.62,3),3.2)
+  for(const [x,z,scale,seed] of [[6.5,-14,.9,67],[-3.5,13.5,.9,71],[28.5,-6.5,1,30],[28.5,10,.9,33],[-28.5,-6.5,1,37],[-28.5,10,.9,42],[29,25.5,1,51],[-22,-15.5,1.05,55],[-2,20,.85,59],[7.5,20,.85,63]] as const)trackProp(addBalloonBunch(root,x,z,scale,seed),1)
   const wheel=createFerrisWheel(root)
   trackProp(wheel.group,6.8)
 
-  // Fairground lighting travels in clusters around the rides and tents rather
-  // than as a ring around the plot: the old even fence-line of lamp posts was
-  // half of what made the midway read as a track the farm sat inside.
+  // Lanterns stand in pairs flanking the four gates and the two ride entrances,
+  // so light marks every way in rather than dotting the grass at random.
   const lamplight=['#ffd782','#ffb26b','#ffe9ad','#f7a1c4']
-  const lanterns:[number,number][]=[[15.6,-20.4],[16.9,-14.2],[27.4,-21.8],[-19.5,-16.5],[-20.2,-9.4],[-31.8,-19.5],[-25.4,3.2],[-26.6,10.4],[23.4,-1.2],[24.8,7.4],[19.8,14.6],[-18.4,-21.6]]
+  const lanterns:[number,number][]=[[-4.5,-13.8],[4.5,-13.8],[-1.8,13.5],[6.8,13.5],[18.7,-1.5],[18.7,5.5],[-18.7,-1.5],[-18.7,5.5],[29.5,20],[31,22.5],[-22.5,-10],[-20.5,-11]]
   lanterns.forEach(([x,z],i)=>trackProp(addLantern(root,x,z,lamplight[i%lamplight.length]),.6))
 
-  // Garlanded arches stand off the tents' flanks and at the gates of the
-  // midway. Each arch is one prop, so nothing is left hanging in mid-air when
+  // Each arch frames a way through: the north meadow gate and the south
+  // forecourt gate on the farm axis, midway gates east and west between the
+  // side tents, and an entrance arch each for the carousel and the Ferris
+  // wheel. Each arch is one prop, so nothing is left hanging in mid-air when
   // the expansion pushes a single piece of dressing outward.
   const buntingPalette=COLORS.tent.map((color)=>standard(color,.65))
-  const arches:[number,number,number,number][]=[[19,-13.5,.5,7.4],[-22,-12.5,-.35,7],[-24,9,.7,6.6],[18,12.5,-.5,6.8],[20.5,-24,.9,8],[-33,-14,.2,7.2]]
+  const arches:[number,number,number,number][]=[[0,-16,0,7],[2.5,14.2,0,4],[20,2,1.5708,6],[-20,2,1.5708,6],[28.5,19.5,.7,5.5],[-21,-10.5,.4,5.5]]
   arches.forEach(([x,z,rotationY,span])=>trackProp(addBuntingArch(root,x,z,rotationY,span,buntingPalette),span*.5+1))
 
   const carousel=createCarousel(root)

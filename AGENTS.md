@@ -30,8 +30,20 @@ silently. Use its checklist rather than rediscovering the wiring.
 - A large screenshot permanently poisons an agent thread: once an oversized
   image is in the transcript, every later request re-uploads it and fails with
   "Downloaded image content cannot exceed 30MB" until the thread is abandoned.
-- Never take fullPage screenshots of the game canvas.
-- Before any screenshot, resize the browser viewport to about 1280x720.
+- Take screenshots with headless Chromium via `scripts/screenshot.mjs`, never
+  with computer-use (it does not work in this harness) and never fullPage on
+  the game canvas. The helper already pins the viewport to 1280x720 and
+  JPEG quality 70 so files stay small enough for the transcript.
+- One-time setup lives outside the repo: `npm install playwright-core` in a
+  scratch dir (browsers already sit in `%LOCALAPPDATA%/ms-playwright`; if
+  they are ever missing, `npx playwright install chromium` fetches them).
+  Never add playwright to `package.json`.
+- Run it against the worktree dev server with output outside the repo:
+  `$env:NODE_PATH="<scratch>/node_modules"; node scripts/screenshot.mjs`
+  `http://127.0.0.1:<port>/ C:/Users/Spencer/.codex/agent-shots/<name>.jpg`
+  `1 9000` (the trailing `1` presses ENTER on the main menu so the shot shows
+  the farm, not the menu). Allow ~25s: browser launch plus settle time.
+  The helper also prints any page console/page errors.
 - Take one screenshot per state change, never in a loop.
 
 ## Shipping
