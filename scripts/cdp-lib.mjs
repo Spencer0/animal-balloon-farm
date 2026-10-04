@@ -6,9 +6,13 @@
 // served with `?gardenDebug=1` (see TESTING.md).
 import process from 'node:process';
 
+/** First-frame shader compile stalls the main thread for ~2s cold; sit it out. */
+const BOOT_SETTLE_MS = 8000;
+
 /**
  * @typedef {{ send: (method: string, params?: Record<string, unknown>) => Promise<any>,
- *   evaluate: (expression: string) => Promise<any>, targetUrl: URL }} CDPClient
+ *   evaluate: (expression: string) => Promise<any>, targetUrl: URL,
+ *   waitForEvent: (method: string, timeoutMs?: number) => Promise<any> }} CDPClient
  */
 
 /** @typedef {{ type: string, url: string, webSocketDebuggerUrl: string }} DevToolsTarget */
@@ -16,7 +20,7 @@ import process from 'node:process';
 
 /**
  * @param {{ cdpUrl?: string, baseUrl?: string }} [options]
- * @returns {Promise<{ socket: WebSocket, send: CDPClient['send'], evaluate: CDPClient['evaluate'], targetUrl: URL, close: () => void }>}
+ * @returns {Promise<{ socket: WebSocket, send: CDPClient['send'], evaluate: CDPClient['evaluate'], waitForEvent: CDPClient['waitForEvent'], targetUrl: URL, close: () => void }>}
  */
 export async function connectCDP(options = {}) {
   const baseUrl = options.baseUrl ?? process.env.GARDEN_URL ?? 'http://127.0.0.1:8000/';
@@ -46,20 +50,66 @@ export async function connectCDP(options = {}) {
   let nextId = 0;
   /** @type {Map<number, PendingRequest>} */
   const pending = new Map();
+  /** @param {string} reason */
+  const failPending = (reason) => {
+    if (!pending.size) return;
+    for (const [id, request] of pending) {
+      pending.delete(id);
+      request.reject(new Error(`CDP connection closed before a response arrived (${reason}).`));
+    }
+  };
   socket.addEventListener('message', ({ data }) => {
     const message = JSON.parse(data);
-    if (!message.id) return;
+    if (!message.id) {
+      const waiters = eventWaiters.get(message.method);
+      if (waiters) for (const waiter of waiters.splice(0)) waiter(message.params);
+      return;
+    }
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
     if (message.error) request.reject(new Error(message.error.message));
     else request.resolve(message.result);
   });
+  // A dropped session must fail loudly: without this, an awaited send hangs
+  // forever and the runner exits silently with no output.
+  socket.addEventListener('close', (event) => failPending(`close code ${event.code}`));
+  socket.addEventListener('error', () => failPending('socket error'));
+  /** @type {Map<string, Array<(params: any) => void>>} */
+  const eventWaiters = new Map();
+  /** Wait for the next pushed browser event, e.g. Page.loadEventFired.
+   * @param {string} method @param {number} [timeoutMs] */
+  function waitForEvent(method, timeoutMs = 30_000) {
+    return new Promise((resolve, reject) => {
+      const list = eventWaiters.get(method) ?? [];
+      const timer = setTimeout(() => {
+        eventWaiters.set(method, (eventWaiters.get(method) ?? []).filter((waiter) => waiter !== onEvent));
+        reject(new Error(`Timed out waiting for ${method}.`));
+      }, timeoutMs);
+      /** @param {any} params */
+      function onEvent(params) {
+        clearTimeout(timer);
+        eventWaiters.set(method, (eventWaiters.get(method) ?? []).filter((waiter) => waiter !== onEvent));
+        resolve(params);
+      }
+      list.push(onEvent);
+      eventWaiters.set(method, list);
+    });
+  }
   /** @param {string} method @param {Record<string, unknown>} [params] */
   const send = (method, params = {}) => new Promise((resolve, reject) => {
+    if (socket.readyState !== WebSocket.OPEN) {
+      reject(new Error('CDP connection is not open.'));
+      return;
+    }
     const id = ++nextId;
     pending.set(id, { resolve, reject });
-    socket.send(JSON.stringify({ id, method, params }));
+    try {
+      socket.send(JSON.stringify({ id, method, params }));
+    } catch (error) {
+      pending.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
   /** @param {string} expression */
   async function evaluate(expression) {
@@ -70,16 +120,69 @@ export async function connectCDP(options = {}) {
     }
     return result.result?.value;
   }
-  return { socket, send, evaluate, targetUrl, close: () => socket.close() };
+  return { socket, send, evaluate, waitForEvent, targetUrl, close: () => socket.close() };
 }
 
 /**
- * @param {{ send: CDPClient['send'], evaluate: CDPClient['evaluate'], targetUrl: URL }} cdp
- * @param {number} [timeoutMs]
+ * True for transport deaths (dropped session, dead socket). Scenario and
+ * page errors (failed fixtures, bad expressions) are never retried.
+ * @param {unknown} error
  */
-export async function openDebugPage(cdp, timeoutMs = 30_000) {
+export function isConnectionError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('CDP connection closed') || message.includes('CDP connection is not open');
+}
+
+/**
+ * Run body with a fresh debugger session, retrying once on a transport
+ * death. Debugger sessions are expendable: the browser intermittently
+ * clean-closes them (no traffic in flight, no page navigation), so a dead
+ * session is reattached, never debugged. Bodies must be idempotent -- every
+ * scenario expression resets its own fixtures -- and reattach never
+ * re-navigates, so a load in progress simply continues.
+ * @param {{ cdpUrl?: string, baseUrl?: string }} connectOptions
+ * @param {(cdp: CDPClient) => Promise<any>} body
+ */
+export async function withSession(connectOptions, body) {
+  let cdp = await connectCDP(connectOptions);
+  try {
+    const result = await body(cdp);
+    cdp.close();
+    return result;
+  } catch (error) {
+    if (!isConnectionError(error)) throw error;
+    try { cdp.close(); } catch { /* already dead */ }
+    cdp = await connectCDP(connectOptions);
+    try {
+      return await body(cdp);
+    } finally {
+      cdp.close();
+    }
+  }
+}
+
+/**
+ * Cold first frames stall the main thread for seconds (shader compile) and
+ * the browser answers by dropping the debugger session: the next send then
+ * dies on a clean close. So this never evaluates during boot. When the page
+ * is already warm from an earlier run it skips navigation entirely (every
+ * scenario resets its own fixtures via clearGarden, and the live GL context
+ * keeps its compiled shaders). Otherwise it navigates, waits for load, and
+ * sits out the boot wedge with zero sends before polling for readiness.
+ * @param {{ send: CDPClient['send'], evaluate: CDPClient['evaluate'], waitForEvent: CDPClient['waitForEvent'], targetUrl: URL }} cdp
+ * @param {number} [timeoutMs]
+ * @param {boolean} [forceReload] Navigate even when the page is already warm.
+ */
+export async function openDebugPage(cdp, timeoutMs = 30_000, forceReload = false) {
   await cdp.send('Page.enable');
+  if (!forceReload) {
+    const warm = await cdp.evaluate('window.__gardenDebug?.enabled === true').catch(() => false);
+    if (warm) return;
+  }
+  const loaded = cdp.waitForEvent('Page.loadEventFired', timeoutMs);
   await cdp.send('Page.navigate', { url: cdp.targetUrl.href });
+  await loaded;
+  await new Promise((resolve) => setTimeout(resolve, BOOT_SETTLE_MS));
   const readyBy = Date.now() + timeoutMs;
   let ready = false;
   while (Date.now() < readyBy) {

@@ -16,7 +16,7 @@
 // CI gates on work; humans read FPS locally.
 import { writeFile } from 'node:fs/promises';
 import process from 'node:process';
-import { assertViewport, connectCDP, openDebugPage, summarizeTiming } from './cdp-lib.mjs';
+import { assertViewport, openDebugPage, summarizeTiming, withSession } from './cdp-lib.mjs';
 
 const DEFAULT_MIN_FPS = 60;
 const DEFAULT_MIN_SAMPLES = 60;
@@ -220,15 +220,18 @@ const SCENARIOS = {
   },
 };
 
+export { SCENARIOS };
+
 /**
  * @param {string[]} argv
- * @returns {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], list: boolean, help: boolean }}
+ * @returns {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], list: boolean, help: boolean, reload: boolean }}
  */
 function parseArgs(argv) {
-  const options = /** @type {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], list: boolean, help: boolean }} */ ({ scenario: 'shovel', minFps: DEFAULT_MIN_FPS, json: null, settleMs: 1200, sampleMs: 1500, ramp: [10, 20, 30, 40, 50], list: false, help: false });
+  const options = /** @type {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], list: boolean, help: boolean, reload: boolean }} */ ({ scenario: 'shovel', minFps: DEFAULT_MIN_FPS, json: null, settleMs: 1200, sampleMs: 1500, ramp: [10, 20, 30, 40, 50], list: false, help: false, reload: false });
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--list') options.list = true;
+    else if (arg === '--reload') options.reload = true;
     else if (arg === '--scenario') options.scenario = argv[++i];
     else if (arg === '--minFps') options.minFps = Number(argv[++i]);
     else if (arg === '--json') options.json = argv[++i];
@@ -340,7 +343,7 @@ async function runCrowdRamp(cdp, options) {
 /**
  * Shared entry so perf-stress.mjs stays a thin compatibility wrapper.
  * @param {string} name
- * @param {{ minFps?: number, settleMs?: number, sampleMs?: number, ramp?: number[], cdpUrl?: string, baseUrl?: string }} [options]
+ * @param {{ minFps?: number, settleMs?: number, sampleMs?: number, ramp?: number[], cdpUrl?: string, baseUrl?: string, reload?: boolean }} [options]
  */
 export async function runScenario(name, options = {}) {
   const full = {
@@ -350,14 +353,11 @@ export async function runScenario(name, options = {}) {
     ramp: options.ramp ?? [10, 20, 30, 40, 50],
   };
   if (!Number.isFinite(full.minFps) || full.minFps < 0) throw new Error('minFps must be a non-negative number.');
-  const cdp = await connectCDP(options);
-  try {
-    await openDebugPage(cdp);
+  return withSession(options, async (cdp) => {
+    await openDebugPage(cdp, undefined, options.reload ?? false);
     if (name === 'crowd-ramp') return runCrowdRamp(cdp, full);
     return runSingle(cdp, name, full);
-  } finally {
-    cdp.close();
-  }
+  });
 }
 
 const invokedDirectly = process.argv[1]?.endsWith('perf-scenario.mjs');
@@ -365,7 +365,7 @@ if (invokedDirectly) {
   (async () => {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
-      console.log('Usage: node scripts/perf-scenario.mjs --scenario <name> [--minFps 60] [--json out.json]');
+      console.log('Usage: node scripts/perf-scenario.mjs --scenario <name> [--minFps 60] [--json out.json] [--reload]');
       console.log('       --scenario crowd-ramp --ramp 10,20,30,40,50 [--settleMs 1200] [--sampleMs 1500] [--minFps 0]');
       console.log('Scenarios:');
       for (const [name, scenario] of Object.entries(SCENARIOS)) console.log(`  ${name}: ${scenario.description}`);
