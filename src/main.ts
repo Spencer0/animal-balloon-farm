@@ -31,7 +31,8 @@ import { createJournalPanel, type JournalConditionSource } from './ui/journal-pa
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
 import { createToolsHud } from './ui/tools-hud'
-import { createProgressionHud } from './ui/progression-hud'
+import { createBalloonPanel } from './ui/balloon-panel'
+import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
@@ -843,7 +844,6 @@ const journalDom: JournalDomPanel = createJournalDomPanel({
   onClose: () => journal.close(),
 })
 journal.setSpreadSuppressed(true)
-const progressionHud = createProgressionHud(window.innerWidth, window.innerHeight)
 const notificationPanel = createNotificationPanel(window.innerWidth, window.innerHeight)
 const knownMaturePlants = new Set<number>()
 /** Instance ids whose residency reveal has already been celebrated. */
@@ -990,7 +990,60 @@ const shop: ShopDomPanel = createShopDomPanel({
   balance: () => wallet.balance,
 })
 
-const panels: UIPanel[] = [progressionHud, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel]
+function playerDomStats() {
+  const base = progressionHudState()
+  const parcel = (fairground.farmExpansion?.state.level ?? 0) + 1
+  return {
+    points: base.points,
+    level: base.level,
+    pointsToNext: base.pointsToNextLevel,
+    parcel,
+    population: base.population,
+    capacity: base.capacity,
+    eggs: base.eggs,
+    readyEggs: base.readyEggs,
+    levels: playerLevelCards(base.points, base.level),
+  }
+}
+
+const playerDom = createPlayerDomPanel({
+  onClose: () => {
+    playerDom.setOpen(false)
+    syncFarmChrome()
+    refreshCursor()
+  },
+})
+
+const balloon = createBalloonPanel(window.innerWidth, window.innerHeight, (quadrant) => {
+  if (quadrant === 'journal') {
+    shed.close()
+    shop.setOpen(false)
+    playerDom.setOpen(false)
+    journal.open()
+  } else if (quadrant === 'shed') {
+    journal.close()
+    shop.setOpen(false)
+    playerDom.setOpen(false)
+    shed.open()
+  } else if (quadrant === 'player') {
+    journal.close()
+    shed.close()
+    shop.setOpen(false)
+    playerDom.refresh(playerDomStats())
+    playerDom.setOpen(true)
+  } else {
+    journal.close()
+    shed.close()
+    shop.setOpen(false)
+    playerDom.setOpen(false)
+    notificationPanel.setVisible(true)
+    notificationPanel.toggleInbox()
+  }
+  syncFarmChrome()
+  refreshCursor()
+})
+
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -1180,10 +1233,13 @@ function syncFarmChrome(): void {
   if (menu.isOpen && shop.isOpen) shop.setOpen(false)
   const shopOpen = shop.isOpen
   const shedOpen = shed.isOpen
-  toolsHud.setVisible(farmOnly && !journal.isOpen && !shedOpen && !salePanel.isOpen && !shopOpen && !gardenProps?.placingId)
-  shed.setVisible(farmOnly && !journal.isOpen && !shopOpen)
+  const playerOpen = playerDom.isOpen
+  toolsHud.setVisible(farmOnly && !journal.isOpen && !shedOpen && !salePanel.isOpen && !shopOpen && !gardenProps?.placingId && !playerOpen)
+  shed.setVisible(false)
   shed.setInteractEnabled(toolsHud.selectedTool === 'hand')
-  journal.setLauncherVisible(farmOnly && !shedOpen && !shopOpen)
+  journal.setLauncherVisible(false)
+  balloon.setVisible(farmOnly)
+  balloon.setInteractEnabled(toolsHud.selectedTool === 'hand')
   if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
   refreshCursor()
 }
@@ -1962,7 +2018,7 @@ window.addEventListener('resize', () => {
   ui.resize(window.innerWidth, window.innerHeight)
   shed.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
-  progressionHud.resize(window.innerWidth, window.innerHeight)
+  balloon.resize(window.innerWidth, window.innerHeight)
 })
 
 // ------------------------------------------------------------- garden debug --
@@ -2084,6 +2140,10 @@ interface GardenDebugHarness {
   shop(): void
   /** Open the shed inventory without clicking the 3D shed. */
   shed(): void
+  /** Balloon radial nav state, for verifying quadrants without pointer math. */
+  balloon(): unknown
+  /** Open the player panel without clicking the balloon. */
+  player(): unknown
   /** Buy one prop from the shared wallet, exactly as the Buy button does. */
   buy(id: string): unknown
   propCounts(): Record<string, number>
@@ -2470,7 +2530,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       for (const animal of animals) animal.dispose()
       animals.length = 0
       for (const eggId of [...eggVisuals.keys()]) removeEggVisual(eggId)
-      progressionHud.setState(progressionHudState())
       animalById.clear()
       crowdFixtureEntries = []
       focusedAnimalId = null
@@ -2720,6 +2779,13 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       shed.open()
       return shed.describe?.() ?? null
     },
+    balloon: () => balloon.describe?.() ?? null,
+    player: () => {
+      playerDom.refresh(playerDomStats())
+      playerDom.setOpen(true)
+      syncFarmChrome()
+      return { open: playerDom.isOpen }
+    },
     buy: (id) => {
       if (!gardenProps) return null
       const result = purchaseProp(wallet, gardenProps.inventory, id as PropId)
@@ -2875,9 +2941,8 @@ function frame(now: number): void {
     }
   }
   for (const knownId of [...knownMaturePlants]) if (!matureIds.has(knownId)) knownMaturePlants.delete(knownId)
-  progressionHud.setState(progressionHudState())
-  progressionHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen)
-  notificationPanel.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen)
+  if (playerDom.isOpen) playerDom.refresh(playerDomStats())
+  notificationPanel.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen)
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
   shedDom.refresh()

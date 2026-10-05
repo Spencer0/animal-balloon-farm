@@ -33,6 +33,8 @@ export interface NotificationPanel extends UIPanel {
   notifyMilestone(milestone: SpeciesMilestone, subject: string): void
   notifyPlantGrown(subject: string): void
   setVisible(visible: boolean): void
+  toggleInbox(): void
+  readonly isInboxOpen: boolean
 }
 
 const MAILBOX_SIZE = 76
@@ -465,6 +467,15 @@ export function createNotificationPanel(width: number, height: number): Notifica
         inboxOpen = false
         refreshInbox()
       }
+    },
+    toggleInbox(): void {
+      if (!shown) return
+      inboxOpen = !inboxOpen
+      if (inboxOpen) center.markAllRead()
+      refreshInbox()
+    },
+    get isInboxOpen(): boolean {
+      return inboxOpen
     },
     pointerDown(point: DesignPoint): boolean {
       if (!shown) return false
