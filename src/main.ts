@@ -41,6 +41,7 @@ import { setCursor } from './ui/ui-cursor'
 import type { DesignPoint } from './ui/ui-viewport'
 import { createViewerPanel } from './ui/viewer-panel'
 import { createNotificationPanel } from './ui/notification-panel'
+import { createNotificationDomPanel } from './ui/notification-dom'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
@@ -845,6 +846,14 @@ const journalDom: JournalDomPanel = createJournalDomPanel({
 })
 journal.setSpreadSuppressed(true)
 const notificationPanel = createNotificationPanel(window.innerWidth, window.innerHeight)
+notificationPanel.setMailboxVisible(false)
+const notificationDom = createNotificationDomPanel({
+  onClose: () => {
+    notificationDom.setOpen(false)
+    syncFarmChrome()
+    refreshCursor()
+  },
+})
 const knownMaturePlants = new Set<number>()
 /** Instance ids whose residency reveal has already been celebrated. */
 const celebratedResidency = new Set<string>()
@@ -1036,12 +1045,31 @@ const balloon = createBalloonPanel(window.innerWidth, window.innerHeight, (quadr
     shed.close()
     shop.setOpen(false)
     playerDom.setOpen(false)
-    notificationPanel.setVisible(true)
-    notificationPanel.toggleInbox()
+    if (notificationDom.isOpen) {
+      notificationDom.setOpen(false)
+    } else {
+      notificationPanel.markAllRead()
+      notificationDom.refresh(notificationPanel.getLetters(), notificationPanel.nowSeconds())
+      notificationDom.setOpen(true, balloonInboxAnchor())
+      balloon.setPostBadge('')
+    }
   }
   syncFarmChrome()
   refreshCursor()
 })
+
+function balloonInboxAnchor(): { x: number; y: number } {
+  const vw = ui.viewport.width
+  const vh = ui.viewport.height
+  const described = balloon.describe?.() as { center?: { x: number; y: number }; radius?: number } | undefined
+  const cx = described?.center?.x ?? vw / 2 - 150
+  const cy = described?.center?.y ?? 195 - vh / 2
+  const top = cy + (described?.radius ?? 108) + 10
+  return {
+    x: ((cx + vw / 2) / vw) * window.innerWidth,
+    y: ((vh / 2 - top) / vh) * window.innerHeight,
+  }
+}
 
 const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel]
 
@@ -1239,7 +1267,8 @@ function syncFarmChrome(): void {
   shed.setInteractEnabled(toolsHud.selectedTool === 'hand')
   journal.setLauncherVisible(false)
   balloon.setVisible(farmOnly)
-  balloon.setInteractEnabled(toolsHud.selectedTool === 'hand')
+  balloon.setInteractEnabled(true)
+  if (!farmOnly && notificationDom.isOpen) notificationDom.setOpen(false)
   if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
   refreshCursor()
 }
@@ -2140,6 +2169,8 @@ interface GardenDebugHarness {
   shop(): void
   /** Open the shed inventory without clicking the 3D shed. */
   shed(): void
+  /** Open the farm-post inbox without clicking the balloon. */
+  inbox(): unknown
   /** Balloon radial nav state, for verifying quadrants without pointer math. */
   balloon(): unknown
   /** Open the player panel without clicking the balloon. */
@@ -2786,6 +2817,13 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       syncFarmChrome()
       return { open: playerDom.isOpen }
     },
+    inbox: () => {
+      notificationPanel.markAllRead()
+      notificationDom.refresh(notificationPanel.getLetters(), notificationPanel.nowSeconds())
+      notificationDom.setOpen(true, balloonInboxAnchor())
+      syncFarmChrome()
+      return { open: notificationDom.isOpen }
+    },
     buy: (id) => {
       if (!gardenProps) return null
       const result = purchaseProp(wallet, gardenProps.inventory, id as PropId)
@@ -2942,6 +2980,11 @@ function frame(now: number): void {
   }
   for (const knownId of [...knownMaturePlants]) if (!matureIds.has(knownId)) knownMaturePlants.delete(knownId)
   if (playerDom.isOpen) playerDom.refresh(playerDomStats())
+  if (notificationDom.isOpen) notificationDom.refresh(notificationPanel.getLetters(), notificationPanel.nowSeconds())
+  {
+    const unread = notificationPanel.getUnreadCount()
+    balloon.setPostBadge(unread > 9 ? '9+' : unread > 0 ? String(unread) : '')
+  }
   notificationPanel.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen)
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()

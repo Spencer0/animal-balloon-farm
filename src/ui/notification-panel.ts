@@ -35,6 +35,11 @@ export interface NotificationPanel extends UIPanel {
   setVisible(visible: boolean): void
   toggleInbox(): void
   readonly isInboxOpen: boolean
+  setMailboxVisible(visible: boolean): void
+  getUnreadCount(): number
+  getLetters(): readonly LedgerEntry[]
+  nowSeconds(): number
+  markAllRead(): void
 }
 
 const MAILBOX_SIZE = 76
@@ -271,6 +276,7 @@ export function createNotificationPanel(width: number, height: number): Notifica
   const center: NotificationCenter = createNotificationCenter()
   const group = new THREE.Group()
   group.name = 'Farm postbox and center ring'
+  let mailboxVisible = true
   const cards = new Map<number, CardEntry>()
   let shown = true
   let inboxOpen = false
@@ -408,6 +414,7 @@ export function createNotificationPanel(width: number, height: number): Notifica
     const bounce = bounceAge < 0.5 ? 1 + 0.22 * Math.sin((bounceAge / 0.5) * Math.PI) : 1
     mailbox.position.set(slot.x, slot.y, 0)
     mailbox.scale.setScalar(bounce)
+    mailbox.visible = mailboxVisible
     const live = center.visible()
     const spotlight = live.find((entry) => entry.spotlight)
     if (spotlight) {
@@ -477,10 +484,26 @@ export function createNotificationPanel(width: number, height: number): Notifica
     get isInboxOpen(): boolean {
       return inboxOpen
     },
+    setMailboxVisible(next: boolean): void {
+      mailboxVisible = next
+      layout()
+    },
+    getUnreadCount(): number {
+      return center.unreadCount()
+    },
+    getLetters(): readonly LedgerEntry[] {
+      return center.history()
+    },
+    nowSeconds(): number {
+      return center.now()
+    },
+    markAllRead(): void {
+      center.markAllRead()
+    },
     pointerDown(point: DesignPoint): boolean {
       if (!shown) return false
       if (inboxRect && rectContains(inboxRect, point)) return true
-      if (rectContains(mailboxRect(), point)) {
+      if (mailboxVisible && rectContains(mailboxRect(), point)) {
         inboxOpen = !inboxOpen
         if (inboxOpen) center.markAllRead()
         refreshInbox()
@@ -501,13 +524,13 @@ export function createNotificationPanel(width: number, height: number): Notifica
     },
     cursor(point: DesignPoint): UiCursorKind | undefined {
       if (!shown) return undefined
-      if (rectContains(mailboxRect(), point)) return 'point'
+      if (mailboxVisible && rectContains(mailboxRect(), point)) return 'point'
       if (inboxRect && rectContains(inboxRect, point)) return undefined
       return spotlightCardAt(point) ? 'point' : undefined
     },
     hitTest(point: DesignPoint): boolean {
       if (!shown) return false
-      if (rectContains(mailboxRect(), point)) return true
+      if (mailboxVisible && rectContains(mailboxRect(), point)) return true
       if (inboxRect && rectContains(inboxRect, point)) return true
       return spotlightCardAt(point) !== undefined
     },

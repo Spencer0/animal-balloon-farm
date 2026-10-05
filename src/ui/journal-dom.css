@@ -99,6 +99,7 @@
 }
 
 .fj-close {
+  margin-left: auto;
   width: 38px;
   height: 38px;
   border-radius: 12px;

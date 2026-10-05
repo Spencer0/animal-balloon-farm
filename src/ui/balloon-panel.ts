@@ -10,6 +10,7 @@ export interface BalloonPanel extends UIPanel {
   setInteractEnabled(enabled: boolean): void;
   contains(point: DesignPoint): boolean;
   refresh(): void;
+  setPostBadge(text: string): void;
 }
 
 const RADIUS = 108;
@@ -33,6 +34,28 @@ const QUADRANT_ICONS: Record<BalloonQuadrant, string> = {
 };
 
 const QUADRANTS: readonly BalloonQuadrant[] = ["journal", "shed", "player", "post"];
+const BADGE_SIZE = 34;
+
+function drawPostBadge(text: string): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  if (!context) return canvas;
+  context.beginPath();
+  context.arc(32, 32, 27, 0, Math.PI * 2);
+  context.fillStyle = "#c65a3a";
+  context.fill();
+  context.lineWidth = 5;
+  context.strokeStyle = "#fff6e8";
+  context.stroke();
+  context.fillStyle = "#fff6e8";
+  context.font = "900 30px 'Trebuchet MS', Verdana, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(text, 32, 34);
+  return canvas;
+}
 
 function quadrantAt(centerX: number, centerY: number, point: DesignPoint): BalloonQuadrant | null {
   const dx = point.x - centerX;
@@ -134,6 +157,18 @@ export function createBalloonPanel(
     object.add(icon);
   }
 
+  const badgeTexture = new THREE.CanvasTexture(drawPostBadge(""));
+  badgeTexture.colorSpace = THREE.SRGBColorSpace;
+  const badge = new THREE.Mesh(
+    new THREE.PlaneGeometry(BADGE_SIZE, BADGE_SIZE),
+    new THREE.MeshBasicMaterial({ map: badgeTexture, transparent: true, depthWrite: false, depthTest: false }),
+  );
+  badge.name = "Balloon post badge";
+  badge.position.z = 7;
+  badge.visible = false;
+  object.add(badge);
+  let badgeText = "";
+
   const knot = new THREE.Mesh(
     new THREE.PlaneGeometry(30, 20),
     new THREE.MeshBasicMaterial({ color: "#4a3a2e", transparent: true, depthWrite: false, depthTest: false }),
@@ -175,6 +210,12 @@ export function createBalloonPanel(
     }
     knot.position.x = 0;
     knot.position.y = -RADIUS - 12;
+    const postIcon = icons.get("post");
+    if (postIcon) {
+      badge.position.x = postIcon.position.x + 24;
+      badge.position.y = postIcon.position.y + 24;
+    }
+    badge.visible = badgeText.length > 0;
     object.visible = visible;
   }
 
@@ -199,6 +240,14 @@ export function createBalloonPanel(
     },
     refresh(): void {
       layout();
+    },
+    setPostBadge(text: string): void {
+      if (text === badgeText) return;
+      badgeText = text;
+      badge.visible = text.length > 0;
+      if (text.length === 0) return;
+      badgeTexture.image = drawPostBadge(text);
+      badgeTexture.needsUpdate = true;
     },
     pointerDown(point, event): boolean {
       if (!visible || !interactEnabled) return false;
@@ -248,7 +297,7 @@ export function createBalloonPanel(
       layout();
     },
     describe() {
-      return { center: { x: centerX, y: centerY }, radius: RADIUS, hovered, visible, ready: loadedIcons >= QUADRANTS.length };
+      return { center: { x: centerX, y: centerY }, radius: RADIUS, hovered, visible, badge: badgeText, ready: loadedIcons >= QUADRANTS.length };
     },
     dispose(): void {
       rim.geometry.dispose();
@@ -267,6 +316,9 @@ export function createBalloonPanel(
         (icon.material as THREE.Material).dispose();
       }
       for (const texture of iconTextures) texture.dispose();
+      badge.geometry.dispose();
+      (badge.material as THREE.Material).dispose();
+      badgeTexture.dispose();
       knot.geometry.dispose();
       (knot.material as THREE.Material).dispose();
       stringLine.geometry.dispose();
