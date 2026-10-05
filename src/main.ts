@@ -27,14 +27,15 @@ import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
 import { createCameraTour, type CameraTour, type CameraTourSubject } from './game/camera-tour'
 import { cameraPanStep } from './game/camera-rig'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
-import { createJournalPanel } from './ui/journal-panel'
+import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
+import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
 import { createToolsHud } from './ui/tools-hud'
 import { createProgressionHud } from './ui/progression-hud'
-import { createSeedboxPanel } from './ui/seedbox-panel'
 import { createSalePanel } from './ui/sale-panel'
-import { createShopPanel } from './ui/shop-panel'
-import { createPropboxPanel } from './ui/propbox-panel'
+import { createShedPanel } from './ui/shed-panel'
+import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
+import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
 import { setCursor } from './ui/ui-cursor'
 import type { DesignPoint } from './ui/ui-viewport'
 import { createViewerPanel } from './ui/viewer-panel'
@@ -816,9 +817,14 @@ const ui = createUILayer()
 const performanceOverlay = __GARDEN_DEBUG__ && gardenDebugMode ? createPerformanceOverlay() : null
 ui.resize(window.innerWidth, window.innerHeight)
 
-const journal = createJournalPanel(window.innerWidth, window.innerHeight, () => {
+const journal = createJournalPanel(window.innerWidth, window.innerHeight, (isJournalOpen) => {
   syncFarmChrome()
+  journalDom.setOpen(isJournalOpen)
 })
+const journalDom: JournalDomPanel = createJournalDomPanel({
+  onClose: () => journal.close(),
+})
+journal.setSpreadSuppressed(true)
 const progressionHud = createProgressionHud(window.innerWidth, window.innerHeight)
 const toolsHud = createToolsHud(
   gardenTools?.selectedTool ?? 'hand',
@@ -869,7 +875,7 @@ const salePanel = createSalePanel((target) => {
   const plantId = Number(target.id)
   const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantId)
   if (!plant || !gardenPlants?.removePlant(plantId)) return null
-  seedbox.refresh()
+  shedDom.refresh()
   const balance = wallet.credit(plantSaleValue(plant.species, plant.growth))
   awardProgress('sellPlant', `sell-plant:${plant.instanceId}`)
   salePanel.setWallet(balance)
@@ -879,106 +885,82 @@ const salePanel = createSalePanel((target) => {
     if (isOpen) {
       gardenPlants?.cancelPlacement()
       gardenTools?.setPlantingMode(false)
-      seedbox.setPlacementActive(false)
+      shed.setPlacementActive(false)
     } else {
       gardenPlants?.clearSelection()
     }
-    toolsHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && !isOpen)
+    toolsHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !isOpen)
     refreshCursor()
   }
 })
 salePanel.setWallet(wallet.balance)
+salePanel.setWalletVisible(false)
 
-const seedbox = createSeedboxPanel(
-  (species: PlantId) => {
+const shed = createShedPanel(window.innerWidth, window.innerHeight, (isShedOpen) => {
+  shedDom.setOpen(isShedOpen)
+  syncFarmChrome()
+  refreshCursor()
+})
+const shedDom: ShedDomPanel = createShedDomPanel({
+  onClose: () => shed.close(),
+  onPlant: (species: PlantId) => {
     if (!gardenPlants) return
+    shed.close()
     gardenTools?.setPlantingMode(true)
     gardenPlants.selectSpecies(species)
-    seedbox.setPlacementActive(true)
+    shed.setPlacementActive(true)
     syncFarmChrome()
-    seedbox.refresh()
+    shedDom.refresh()
     refreshCursor()
   },
-  window.innerWidth,
-  window.innerHeight,
-  (isOpen) => {
-    toolsHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOpen && !salePanel.isOpen)
-    journal.setLauncherVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOpen)
-    if (isOpen) {
-      gardenPlants?.cancelPlacement()
-      gardenTools?.setPlantingMode(false)
-    }
-    refreshCursor()
-  },
-)
-seedbox.setSeedsSource((species) => gardenPlants?.simulation.seedsFor(species) ?? 0)
-
-/** Keep the shop and the Propbox showing the same counts the world does. */
-function refreshShopUi(): void {
-  shopPanel?.refresh()
-  propboxPanel?.refresh()
-}
-
-const propboxPanel = createPropboxPanel(
-  (id: PropId) => {
+  onPlace: (id: PropId) => {
     if (!gardenProps) return
+    shed.close()
     gardenProps.beginPlacement(id)
     gardenPlants?.cancelPlacement()
     gardenTools?.setPlantingMode(false)
-    seedbox.setPlacementActive(false)
-    propboxPanel.setPlacementActive(true)
+    shed.setPlacementActive(true)
     syncFarmChrome()
     refreshCursor()
   },
-  window.innerWidth,
-  window.innerHeight,
-  (isOpen) => {
-    if (isOpen && gardenProps?.placingId) gardenProps.cancelPlacement()
-    if (isOpen) {
-      gardenPlants?.cancelPlacement()
-      gardenTools?.setPlantingMode(false)
-    }
-    syncFarmChrome()
-    refreshCursor()
-  },
-)
-propboxPanel.setCountsSource((id) => gardenProps?.inventory.count(id) ?? 0)
+  seedsFor: (species) => gardenPlants?.simulation.seedsFor(species) ?? 0,
+  countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
+  balance: () => wallet.balance,
+})
 
-const shopPanel = createShopPanel(
-  (id: PropId) => {
-    if (!gardenProps) return { ok: false, reason: 'The shopkeeper is still unpacking.', balance: wallet.balance }
+/* Keep the shed and the shop showing the same counts the world does. */
+function refreshShopUi(): void {
+  shedDom.refresh()
+  shop.refresh()
+}
+
+const shop: ShopDomPanel = createShopDomPanel({
+  onClose: () => {
+    shop.setOpen(false)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  onBuy: (id: PropId) => {
+    if (!gardenProps) return { ok: false, text: 'The shopkeeper is still unpacking.' }
     const result = purchaseProp(wallet, gardenProps.inventory, id)
     if (result.ok) {
       salePanel.setWallet(wallet.balance)
-      seedbox.refresh()
-      propboxPanel.refresh()
+      shedDom.refresh()
+      shop.refresh()
     }
     return {
       ok: result.ok,
-      reason: result.ok
-        ? null
-        : `Not enough coins for the ${PROP_CATALOG[id].name} — it costs ${PROP_CATALOG[id].price}.`,
-      balance: wallet.balance,
+      text: result.ok
+        ? 'Shed stock updated -- Pip slides it across the counter.'
+        : `Not enough coins for the ${PROP_CATALOG[id].name} -- it costs ${PROP_CATALOG[id].price}.`,
     }
   },
-  window.innerWidth,
-  window.innerHeight,
-  (isOpen) => {
-    if (isOpen) {
-      gardenProps?.cancelPlacement()
-      gardenPlants?.cancelPlacement()
-      gardenTools?.setPlantingMode(false)
-      seedbox.setPlacementActive(false)
-      propboxPanel.setPlacementActive(false)
-    }
-    syncFarmChrome()
-    refreshCursor()
-  },
-)
-shopPanel.setCountsSource((id) => gardenProps?.inventory.count(id) ?? 0)
-shopPanel.setWallet(wallet.balance)
+  countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
+  seedsFor: (species) => gardenPlants?.simulation.seedsFor(species) ?? 0,
+  balance: () => wallet.balance,
+})
 
-const panels: UIPanel[] = [progressionHud, toolsHud, seedbox, propboxPanel, menu, viewer, journal, salePanel, shopPanel]
+const panels: UIPanel[] = [progressionHud, toolsHud, shed, menu, viewer, journal, salePanel]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -987,7 +969,7 @@ const panels: UIPanel[] = [progressionHud, toolsHud, seedbox, propboxPanel, menu
  * knowledge of the progression model -- it draws rows, and the model decides
  * what a row says and whether it is sealed yet.
  */
-journal.setConditionsSource({
+const journalConditionsSource: JournalConditionSource = {
   get: (species) => {
     const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
     if (!animal) return null
@@ -1034,7 +1016,9 @@ journal.setConditionsSource({
       }),
     }
   },
-})
+};
+journal.setConditionsSource(journalConditionsSource)
+journalDom.setConditionsSource(journalConditionsSource)
 
 /** Where the pointer was last seen, so the cursor can be re-resolved on a
  * mode or visibility change without waiting for the mouse to move again. */
@@ -1053,8 +1037,7 @@ function selectGardenTool(id: GardenToolId): void {
   if (id !== 'camera') endCameraTour(true)
   gardenPlants?.cancelPlacement()
   gardenProps?.cancelPlacement()
-  seedbox.setPlacementActive(false)
-  propboxPanel.setPlacementActive(false)
+  shed.setPlacementActive(false)
   gardenTools?.setPlantingMode(false)
   if (gardenTools) {
     // Tapping the active tool's hotkey again cycles its brush size rather than
@@ -1063,7 +1046,7 @@ function selectGardenTool(id: GardenToolId): void {
     else if (gardenTools.selectedTool !== id) gardenTools.selectTool(id)
   }
   toolsHud.setSelectedTool(id)
-  seedbox.setInteractEnabled(id === 'hand')
+  shed.setInteractEnabled(id === 'hand')
   syncFarmChrome()
 }
 
@@ -1083,12 +1066,11 @@ function setMode(next: GameMode): void {
   endCameraTour(false)
   if (next !== 'farm') {
     salePanel.close()
-    seedbox.close()
-    propboxPanel.setPlacementActive(false)
-    shopPanel.close()
+    shed.close()
+    shed.setPlacementActive(false)
+    shop.setOpen(false)
     gardenPlants?.cancelPlacement()
     gardenProps?.cancelPlacement()
-    seedbox.setPlacementActive(false)
     gardenTools?.setPlantingMode(false)
   }
   if (next === mode) {
@@ -1165,15 +1147,13 @@ function focusCamera(): void {
  */
 function syncFarmChrome(): void {
   const farmOnly = mode === 'farm' && !menu.isOpen
-  // The main menu owns the screen outright, so the storefront must not out-rank it.
-  if (menu.isOpen && shopPanel.isOpen) shopPanel.close()
-  const shopOpen = shopPanel.isOpen
-  toolsHud.setVisible(farmOnly && !journal.isOpen && !seedbox.isOpen && !salePanel.isOpen && !shopOpen && !gardenProps?.placingId)
-  seedbox.setVisible(farmOnly && !journal.isOpen && !shopOpen && !gardenPlants?.selectedSpecies)
-  seedbox.setInteractEnabled(toolsHud.selectedTool === 'hand')
-  propboxPanel.setVisible(farmOnly && !journal.isOpen && !shopOpen)
-  propboxPanel.setInteractEnabled(toolsHud.selectedTool === 'hand')
-  journal.setLauncherVisible(farmOnly && !seedbox.isOpen && !propboxPanel.isOpen && !shopOpen)
+  if (menu.isOpen && shop.isOpen) shop.setOpen(false)
+  const shopOpen = shop.isOpen
+  const shedOpen = shed.isOpen
+  toolsHud.setVisible(farmOnly && !journal.isOpen && !shedOpen && !salePanel.isOpen && !shopOpen && !gardenProps?.placingId)
+  shed.setVisible(farmOnly && !journal.isOpen && !shopOpen)
+  shed.setInteractEnabled(toolsHud.selectedTool === 'hand')
+  journal.setLauncherVisible(farmOnly && !shedOpen && !shopOpen)
   if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
   refreshCursor()
 }
@@ -1225,7 +1205,7 @@ function isWorldToolActive(): boolean {
 }
 
 function beginCameraTour(seed = Math.floor(Math.random() * 0xffffffff)): boolean {
-  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || seedbox.isOpen || shopPanel.isOpen) return false
+  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) return false
   savedCameraView = {
     target: cameraTarget.clone(),
     position: camera.position.clone(),
@@ -1285,7 +1265,7 @@ function tourSubjects(): CameraTourSubject[] {
 
 function updateCameraTour(deltaSeconds: number): void {
   if (!cameraTour) return
-  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || seedbox.isOpen || shopPanel.isOpen) {
+  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) {
     endCameraTour(true)
     return
   }
@@ -1336,7 +1316,7 @@ function updateCursor(point: DesignPoint | null): void {
     setCursor('hand', gameCanvas)
     return
   }
-  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
+  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen) {
     setCursor('plant', gameCanvas)
     return
   }
@@ -1353,7 +1333,7 @@ function updateCursor(point: DesignPoint | null): void {
     setCursor('camera', gameCanvas)
     return
   }
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen) {
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen) {
     const markerKind = gardenPlants?.markerKindAt(lastPointerClient.x, lastPointerClient.y)
     if (markerKind) {
       setCursor(toolsHud.selectedTool === 'hand'
@@ -1427,12 +1407,11 @@ function refreshCursor(): void {
  * rectangle is measured in device pixels.
  */
 function isOverGameHUD(clientX: number, clientY: number): boolean {
-  if (menu.isOpen || journal.isOpen || mode === 'viewer' || shopPanel.isOpen) return true
+  if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen || mode === 'viewer') return true
   const point = ui.viewport.toDesign(clientX, clientY, gameCanvas.getBoundingClientRect())
   return Boolean(point && (
     (toolsHud.isVisible && toolsHud.hitTest?.(point))
-    || seedbox.contains(point)
-    || propboxPanel.contains(point)
+    || shed.contains(point)
     || salePanel.hitTest?.(point)
   ))
 }
@@ -1561,11 +1540,11 @@ function orbitPointerDown(event: PointerEvent): void {
       gardenProps.pointerMove(event)
       gardenProps.pointerDown(event)
       gardenProps.update(0)
-      propboxPanel.refresh()
+      shedDom.refresh()
       syncFarmChrome()
       return
     }
-    if (!journal.isOpen && !seedbox.isOpen && !propboxPanel.isOpen) {
+    if (!journal.isOpen && !shed.isOpen && !shop.isOpen) {
       const egg = pickEgg(event.clientX, event.clientY)
       if (egg) {
         const hatched = egg.ready ? progress.hatch(egg.id) : null
@@ -1585,16 +1564,19 @@ function orbitPointerDown(event: PointerEvent): void {
       // Hand-tool pick-up first, then the shop door. Both are the same grab the
       // sale panel already trained the player to make.
       if (gardenProps?.pickUpAt(event.clientX, event.clientY)) {
-        propboxPanel.refresh()
+        shedDom.refresh()
         syncFarmChrome()
         return
       }
       if (gardenProps?.pickShop(event.clientX, event.clientY)) {
         salePanel.close()
-        shopPanel.setWallet(wallet.balance)
-        shopPanel.refresh()
-        shopPanel.open()
+        gardenProps?.cancelPlacement()
+        gardenPlants?.cancelPlacement()
+        gardenTools?.setPlantingMode(false)
+        shed.setPlacementActive(false)
+        shop.setOpen(true)
         syncFarmChrome()
+        refreshCursor()
         return
       }
     }
@@ -1638,14 +1620,14 @@ function orbitPointerDown(event: PointerEvent): void {
     }
   }
   if (salePanel.isOpen) salePanel.close()
-  if (event.button === 0 && selectedTool === 'hand' && !journal.isOpen && !seedbox.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
+  if (event.button === 0 && selectedTool === 'hand' && !journal.isOpen && !shed.isOpen && !shop.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
     event.preventDefault()
     if (!gardenPlants.selectedSpecies) {
-      seedbox.setPlacementActive(false)
+      shed.setPlacementActive(false)
       gardenTools?.setPlantingMode(false)
     }
     syncFarmChrome()
-    seedbox.refresh()
+    shedDom.refresh()
     return
   }
   if (event.button === 0 && event.detail >= 2) return
@@ -1689,7 +1671,7 @@ function orbitPointerDown(event: PointerEvent): void {
 function orbitPointerMove(event: PointerEvent): void {
   if (uiPointerMove(event)) return
   if (gardenProps?.placingId) gardenProps.pointerMove(event)
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove(event)
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove(event)
   if (isWorldToolActive()) gardenTools?.pointerMove(event)
   updateCursor(pointerDesign(event))
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
@@ -1727,7 +1709,7 @@ function orbitPointerUp(event: PointerEvent): void {
   uiPointerUp(event)
   if (gardenProps?.placingId) {
     gardenProps.pointerUp()
-    propboxPanel.refresh()
+    shedDom.refresh()
     syncFarmChrome()
   }
   if (toolPointer === event.pointerId) {
@@ -1779,7 +1761,7 @@ function toolHotkey(event: KeyboardEvent): string {
 const PAN_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright']
 
 function handleKeyDown(event: KeyboardEvent): void {
-  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
+  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
     const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event))
     if (tool) {
       event.preventDefault()
@@ -1801,7 +1783,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       event.preventDefault()
       gardenProps.cancelPlacement()
-      propboxPanel.setPlacementActive(false)
+      shed.setPlacementActive(false)
       refreshShopUi()
       syncFarmChrome()
       return
@@ -1841,7 +1823,7 @@ function handleKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && !menu.isOpen && mode === 'farm' && !journal.isOpen) {
     if (gardenPlants?.selectedSpecies) {
       gardenPlants.cancelPlacement()
-      seedbox.setPlacementActive(false)
+      shed.setPlacementActive(false)
       gardenTools?.setPlantingMode(false)
       if (lastPointerClient.x >= 0) gardenTools?.pointerMove({ clientX: lastPointerClient.x, clientY: lastPointerClient.y })
       syncFarmChrome()
@@ -1943,11 +1925,12 @@ window.addEventListener('keyup', handleKeyUp)
 window.addEventListener('blur', handleWindowBlur)
 window.addEventListener('mouseleave', handleWindowBlur)
 gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
-seedbox.resize(window.innerWidth, window.innerHeight)
+shed.resize(window.innerWidth, window.innerHeight)
 salePanel.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
+  shed.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
   progressionHud.resize(window.innerWidth, window.innerHeight)
 })
@@ -1998,7 +1981,7 @@ interface GardenDebugHarness {
   /** Dig a pond of the given radius, which is what the water conditions want. */
   digPond(x: number, z: number, radius: number): FarmState
   /**
-   * Plant one seed, through the same rules the seedbox uses, and report the
+   * Plant one seed, through the same rules the shed uses, and report the
    * placement failure rather than doing nothing silently. A lily pad needs
    * visible pond water, so this is normally `digPond` then `pourAt` first.
    */
@@ -2067,6 +2050,8 @@ interface GardenDebugHarness {
   grantCoins(amount: number): number
   /** Open the storefront screen without walking up to the building. */
   shop(): void
+  /** Open the shed inventory without clicking the 3D shed. */
+  shed(): void
   /** Buy one prop from the shared wallet, exactly as the Buy button does. */
   buy(id: string): unknown
   propCounts(): Record<string, number>
@@ -2334,8 +2319,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       menuOpen: menu.isOpen,
       journalOpen: journal.isOpen,
       viewerOpen: viewer.isOpen,
-      shopOpen: shopPanel.isOpen,
-      propboxOpen: propboxPanel.isOpen,
+      shopOpen: shop.isOpen,
+      shedOpen: shed.isOpen,
       placing: gardenProps?.placingId ?? null,
       performance: summarizeFrameTimings(),
       tools: gardenTools?.debugState() ?? null,
@@ -2690,23 +2675,25 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     grantCoins: (amount) => {
       const balance = wallet.credit(amount)
       salePanel.setWallet(balance)
-      shopPanel.setWallet(balance)
+      shedDom.refresh()
+      shop.refresh()
       return balance
     },
     shop: () => {
-      shopPanel.setWallet(wallet.balance)
-      shopPanel.refresh()
-      shopPanel.open()
+      shop.setOpen(true)
       syncFarmChrome()
-      return shopPanel.describe?.() ?? null
+      return { open: shop.isOpen }
+    },
+    shed: () => {
+      shed.open()
+      return shed.describe?.() ?? null
     },
     buy: (id) => {
       if (!gardenProps) return null
       const result = purchaseProp(wallet, gardenProps.inventory, id as PropId)
       salePanel.setWallet(wallet.balance)
-      shopPanel.setWallet(wallet.balance)
-      shopPanel.refresh()
-      propboxPanel.refresh()
+      shedDom.refresh()
+      shop.refresh()
       return result
     },
     propCounts: () => (gardenProps ? { ...gardenProps.inventory.counts } : {}),
@@ -2846,16 +2833,16 @@ function frame(now: number): void {
     awardProgress('growPlant', `grow-plant:${plant.instanceId}`)
   }
   progressionHud.setState(progressionHudState())
-  progressionHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shopPanel.isOpen)
-  if (!gardenPlants?.selectedSpecies && !seedbox.isOpen) gardenTools?.setPlantingMode(false)
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shopPanel.isOpen) refreshShopUi()
-  seedbox.refresh()
+  progressionHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen)
+  if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
+  shedDom.refresh()
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   updateCameraPan(delta)
   applyExpansionCameraShake(delta, now / 1000)
   if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
-    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !seedbox.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
+    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
     gardenProps?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
     if (isWorldToolActive()) gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
   } else {

@@ -1,0 +1,264 @@
+/* Shed inventory + Pip shop (DOM, feature/journal-redesign-dom).
+ *
+ * Shares the journal chrome (fj-overlay, fj-journal, fj-header, fj-tabs,
+ * fj-close, fj-body, fj-sidebar, fj-card, fj-badge) from journal-dom.css and
+ * adds the inventory grid, count badges, preview pane and shop bits.
+ */
+
+.sh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 12px;
+  padding: 16px 18px;
+  overflow-y: auto;
+  align-content: start;
+}
+
+.sh-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  min-height: 0;
+}
+
+.sh-items {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.sh-card {
+  position: relative;
+  background: #f3e6c9;
+  border: 2.5px solid #6b4a33;
+  border-radius: 14px;
+  padding: 10px 8px 9px;
+  text-align: center;
+  cursor: pointer;
+  font: 700 13px/1.25 "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+}
+
+.sh-card img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 6px;
+}
+
+.sh-card[aria-current="true"] {
+  outline: 3px solid #5aa3a0;
+  background: #fffdf6;
+}
+
+.sh-count {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #4a3a2e;
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sh-new {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: #d95f43;
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.sh-fav {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  color: #d9a02e;
+  font-size: 15px;
+}
+
+.sh-preview {
+  width: 250px;
+  flex: none;
+  border-left: 3px dashed #b08c5e;
+  background: #f5ead2;
+  padding: 18px 16px;
+  overflow-y: auto;
+  text-align: center;
+}
+
+.sh-preview img {
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+}
+
+.sh-preview h2 {
+  margin: 8px 0 6px;
+  font-size: 22px;
+  font-weight: 900;
+  color: #5a3d2b;
+}
+
+.sh-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.sh-pill {
+  background: #fffdf6;
+  border: 2px solid #8a6749;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sh-blurb {
+  font-size: 13px;
+  color: #6b4f38;
+  margin: 0 0 14px;
+}
+
+.sh-coin {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d9a02e;
+  border: 1.5px solid #8a5f36;
+  margin-right: 4px;
+  vertical-align: baseline;
+}
+
+.sh-btn {
+  display: block;
+  width: 100%;
+  border-radius: 12px;
+  padding: 11px;
+  font: 800 15px/1 "Trebuchet MS", Verdana, sans-serif;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.sh-btn-primary {
+  background: #5aa3a0;
+  border: 3px solid #35605e;
+  color: #fff;
+  box-shadow: 0 3px 0 #35605e;
+}
+
+.sh-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sh-btn-warm {
+  background: #d96f4a;
+  border: 3px solid #8d3d2a;
+  color: #fff;
+  box-shadow: 0 3px 0 #8d3d2a;
+}
+
+.sh-btn-warm:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sh-btn-quiet {
+  background: #f3e6c9;
+  border: 2.5px solid #6b4a33;
+  color: #5a3d2b;
+}
+
+.sh-feedback {
+  font-size: 13px;
+  font-weight: 700;
+  color: #8d3d2a;
+  min-height: 18px;
+}
+
+.sh-coins {
+  margin-left: auto;
+  background: #fffdf6;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sh-pip {
+  margin: 14px 18px 0;
+  background: #f2c14e;
+  border: 2.5px solid #6b4a33;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.sh-locked {
+  grid-column: 1 / -1;
+  border: 2px dashed #a0805a;
+  border-radius: 16px;
+  padding: 36px 20px;
+  text-align: center;
+  color: #8a6749;
+  font-size: 15px;
+}
+
+.fj-journal.sh-journal {
+  min-width: 0;
+}
+
+.fj-journal.sh-journal .fj-header {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.fj-journal.sh-journal .fj-title {
+  font-size: 20px;
+}
+
+.fj-journal.sh-journal .fj-tabs {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+@media (max-width: 920px) {
+  .fj-journal.sh-journal {
+    width: 94vw;
+    height: 92vh;
+  }
+  .fj-journal.sh-journal .fj-tabs {
+    order: 5;
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  .fj-journal.sh-journal .sh-main {
+    flex-direction: column;
+  }
+  .fj-journal.sh-journal .sh-preview {
+    width: auto;
+    border-left: 0;
+    border-top: 3px dashed #b08c5e;
+    max-height: 46%;
+  }
+  .fj-journal.sh-journal .sh-grid {
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    padding: 12px;
+  }
+}

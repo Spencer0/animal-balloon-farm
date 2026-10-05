@@ -21,6 +21,7 @@ export interface SalePanel extends UIPanel {
   open(target: SaleTarget): void
   close(): void
   setWallet(balance: number): void
+  setWalletVisible(visible: boolean): void
   readonly walletRect: DesignRect
 }
 
@@ -61,6 +62,7 @@ export function createSalePanel(
 
   let target: SaleTarget | null = null
   let wallet = 0
+  let walletVisible = true
   let receipt: { earned: number; balance: number } | null = null
   let sold = false
   let visible = true
@@ -183,8 +185,12 @@ export function createSalePanel(
       drawWallet()
       draw()
     },
+    setWalletVisible(next): void {
+      walletVisible = next
+      walletMesh.visible = next
+    },
     pointerDown(point, event): boolean {
-      if (rectContains(this.walletRect, point)) {
+      if (walletVisible && rectContains(this.walletRect, point)) {
         event.preventDefault()
         return true
       }
@@ -206,14 +212,14 @@ export function createSalePanel(
       }
       return true
     },
-    pointerMove(point): boolean { return rectContains(this.walletRect, point) || Boolean(target && visible && containsCard(point)) },
-    pointerUp(point): boolean { return rectContains(this.walletRect, point) || Boolean(target && visible && containsCard(point)) },
+    pointerMove(point): boolean { return (walletVisible && rectContains(this.walletRect, point)) || Boolean(target && visible && containsCard(point)) },
+    pointerUp(point): boolean { return (walletVisible && rectContains(this.walletRect, point)) || Boolean(target && visible && containsCard(point)) },
     cursor(point): UiCursorKind | undefined {
-      if (rectContains(this.walletRect, point)) return 'hand'
+      if (walletVisible && rectContains(this.walletRect, point)) return 'hand'
       if (!target || !visible || !containsCard(point)) return undefined
       return rectContains(SELL_BUTTON, toLocal(point)) && !sold && target.sellable !== false ? 'point' : 'hand'
     },
-    hitTest(point): boolean { return Boolean(target && visible && containsCard(point)) || rectContains(this.walletRect, point) },
+    hitTest(point): boolean { return Boolean(target && visible && containsCard(point)) || (walletVisible && rectContains(this.walletRect, point)) },
     update(): void {},
     resize(width, height): void { viewport.resize(width, height); layout() },
     describe() { return { open: Boolean(target && visible), target, wallet, receipt, sellButton: { ...SELL_BUTTON } } },

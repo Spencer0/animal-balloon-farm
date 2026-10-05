@@ -173,6 +173,7 @@ export interface JournalPanel extends UIPanel {
    * sit on top of the menu, and so its hit box goes with it.
    */
   setLauncherVisible(visible: boolean): void
+  setSpreadSuppressed(suppressed: boolean): void
   toggle(): void
   close(): void
   open(): void
@@ -221,6 +222,7 @@ export function createJournalPanel(
   let spreadScale = 1
   let isOpen = false
   let launcherVisible = true
+  let spreadSuppressed = false
   let category: JournalCategory | null = null
   let selectedEntry: JournalEntry | null = null
   let scrollOffset = 0
@@ -918,13 +920,13 @@ export function createJournalPanel(
     book.position.set(BOOK_LOCAL.x * spreadScale, BOOK_LOCAL.y * spreadScale, 1)
     book.visible = !isOpen && launcherVisible
     fitScrim(scrim, viewport)
-    scrim.visible = isOpen
+    scrim.visible = isOpen && !spreadSuppressed
   }
 
   function renderPage(): void {
     const context = surface.context
     context.clearRect(0, 0, SPREAD_WIDTH, SPREAD_HEIGHT)
-    page.visible = isOpen
+    page.visible = isOpen && !spreadSuppressed
     if (!isOpen) {
       texture.needsUpdate = true
       return
@@ -1061,6 +1063,12 @@ export function createJournalPanel(
       if (launcherVisible === visible) return
       launcherVisible = visible
       layout()
+    },
+    setSpreadSuppressed(suppressed: boolean): void {
+      if (spreadSuppressed === suppressed) return
+      spreadSuppressed = suppressed
+      layout()
+      renderPage()
     },
     setConditionsSource(source) {
       conditionsSource = source
@@ -1496,4 +1504,5 @@ function createAntiqueBook(): THREE.Group {
   book.userData.coverTexture = coverTexture
   return book
 }
+
 

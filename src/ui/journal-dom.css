@@ -1,0 +1,489 @@
+/* Farm Journal (DOM redesign, feature/journal-redesign-dom).
+ *
+ * Temporary Graphite-paper look matching the Farm Journal mockup: cream pages,
+ * chocolate borders, terracotta tabs. This file is intentionally separate from
+ * style.css (boot shell only) so the DOM journal can be reverted by unwiring
+ * journal-dom.ts without touching anything else.
+ */
+
+.fj-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fj-overlay[hidden] {
+  display: none;
+}
+
+.fj-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(24, 62, 59, 0.55);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.fj-journal {
+  position: relative;
+  width: 80vw;
+  height: 80vh;
+  min-width: 660px;
+  min-height: 480px;
+  max-width: 1240px;
+  max-height: 860px;
+  display: flex;
+  flex-direction: column;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 20px;
+  box-shadow: 0 24px 80px rgba(20, 12, 6, 0.55), inset 0 0 0 2px #fffdf6;
+  overflow: hidden;
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+}
+
+.fj-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: #f5ead2;
+  border-bottom: 3px dashed #b08c5e;
+}
+
+.fj-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 24px;
+  font-weight: 800;
+  color: #5a3d2b;
+  white-space: nowrap;
+}
+
+.fj-title svg {
+  width: 30px;
+  height: 30px;
+}
+
+.fj-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 auto;
+}
+
+.fj-tab {
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  background: #e8d9bd;
+  color: #6b4a33;
+  font: 700 14px/1 "Trebuchet MS", Verdana, sans-serif;
+  padding: 9px 18px;
+  cursor: pointer;
+}
+
+.fj-tab[aria-selected="true"] {
+  background: #c65a3a;
+  border-color: #8d3d2a;
+  color: #fff6e8;
+}
+
+.fj-tab:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.fj-close {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 3px solid #6b2318;
+  background: #d95f43;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fj-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.fj-sidebar {
+  width: 248px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: #efe1c6;
+  border-right: 3px dashed #b08c5e;
+  padding: 12px;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.fj-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: #fffdf6;
+  border: 2px solid #6b4a33;
+  border-radius: 12px;
+  padding: 7px 10px;
+  font: 700 14px/1.2 "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  cursor: pointer;
+}
+
+.fj-row img {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  object-fit: cover;
+  background: #d9eaf5;
+  flex: none;
+}
+
+.fj-row .fj-q {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: #e2cfa8;
+  color: #8a5f36;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.fj-row[aria-current="true"] {
+  background: #5aa3a0;
+  border-color: #35605e;
+  color: #fff;
+}
+
+.fj-found {
+  margin-top: auto;
+  background: #fffdf6;
+  border: 2px solid #6b4a33;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.fj-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 18px 22px 28px;
+}
+
+.fj-hero {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.fj-portrait {
+  width: 230px;
+  flex: none;
+  background: #d9eaf5;
+  border: 3px solid #4a3a2e;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 4px 0 #4a3a2e;
+}
+
+.fj-portrait img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.fj-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 4px;
+}
+
+.fj-number {
+  display: inline-block;
+  background: #f2c14e;
+  border: 2px solid #8a5f36;
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  transform: rotate(-2deg);
+}
+
+.fj-name {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 900;
+  color: #d97b2e;
+  letter-spacing: 0.5px;
+}
+
+.fj-desc {
+  margin: 6px 0 10px;
+  font-size: 14.5px;
+  color: #6b4f38;
+}
+
+.fj-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fj-trait {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f3e6c9;
+  border: 2px solid #8a6749;
+  border-radius: 999px;
+  padding: 4px 12px 4px 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.fj-trait i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #7aa14f;
+  flex: none;
+}
+
+.fj-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 16px 0 6px;
+  background: #e9d7b4;
+  border: 2px dashed #a0805a;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.fj-stage {
+  border: 2px solid #6b4a33;
+  background: #fffdf6;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #5a3d2b;
+}
+
+.fj-stage.is-current {
+  background: #4a3a2e;
+  border-color: #4a3a2e;
+  color: #fff;
+}
+
+.fj-stage.is-past {
+  background: #fffdf6;
+}
+
+.fj-stage.is-future {
+  opacity: 0.65;
+}
+
+.fj-how {
+  margin: 14px 0 10px;
+  font-size: 16px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fj-how::after {
+  content: "";
+  flex: 1;
+  border-top: 2px dashed #a0805a;
+}
+
+.fj-card {
+  background: #fffdf6;
+  border: 2.5px solid #6b4a33;
+  border-radius: 16px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.fj-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.fj-bubble {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: #4a3a2e;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 15px;
+}
+
+.fj-card-title {
+  font-weight: 900;
+  font-size: 16px;
+}
+
+.fj-card-sub {
+  font-size: 13px;
+  color: #8a6749;
+}
+
+.fj-badge {
+  margin-left: auto;
+  flex: none;
+  background: #7aa14f;
+  color: #fff;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.fj-badge.is-pending {
+  background: transparent;
+  color: #8a6749;
+  border: 2px dashed #a0805a;
+}
+
+.fj-req {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.fj-req img {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  object-fit: contain;
+}
+
+.fj-req-label {
+  width: 150px;
+  flex: none;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.fj-bar {
+  flex: 1;
+  height: 18px;
+  background: #e5d3ae;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.fj-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(#8ab45e, #6d9440);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.fj-numbers {
+  width: 110px;
+  flex: none;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.fj-note {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #8a6749;
+}
+
+.fj-sealed {
+  border-style: dashed;
+  text-align: center;
+  color: #8a6749;
+  font-size: 14px;
+  padding: 18px;
+}
+
+.fj-empty {
+  border: 2px dashed #a0805a;
+  border-radius: 16px;
+  padding: 40px 20px;
+  text-align: center;
+  color: #8a6749;
+  font-size: 15px;
+  margin-top: 20px;
+}
+
+.fj-locked {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.fj-locked .fj-q-big {
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 16px;
+  border-radius: 24px;
+  background: #e9d7b4;
+  border: 3px dashed #a0805a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+  font-weight: 900;
+  color: #a0805a;
+}
+
+@media (max-width: 900px) {
+  .fj-journal {
+    min-width: 0;
+    width: 94vw;
+  }
+  .fj-hero {
+    flex-direction: column;
+  }
+  .fj-sidebar {
+    width: 190px;
+  }
+  .fj-req-label {
+    width: 110px;
+  }
+  .fj-numbers {
+    width: 86px;
+  }
+}
