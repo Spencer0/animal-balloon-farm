@@ -143,3 +143,15 @@ test('reset rewinds the center clock', () => {
   center.reset()
   assert.equal(center.now(), 0)
 })
+
+test('accomplishment tickets play as spotlights with custom copy', () => {
+  const center = createNotificationCenter()
+  const entry = center.pushAccomplishment('Pig appear', 'First Pig spotted at the tents.')
+  assert.ok(entry)
+  assert.equal(entry.spotlight, true)
+  assert.equal(entry.title, 'Pig appear')
+  assert.equal(center.visible().length, 1)
+  center.tick(99)
+  assert.equal(center.visible().length, 0)
+  assert.equal(center.unreadCount(), 1)
+})

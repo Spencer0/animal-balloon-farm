@@ -32,6 +32,7 @@ import { createSurface, fillRoundRect, strokeRoundRect, UI_THEME, withShadow } f
 export interface NotificationPanel extends UIPanel {
   notifyMilestone(milestone: SpeciesMilestone, subject: string): void
   notifyPlantGrown(subject: string): void
+  notifyAccomplishment(title: string, detail: string): void
   setVisible(visible: boolean): void
   toggleInbox(): void
   readonly isInboxOpen: boolean
@@ -59,6 +60,7 @@ const DOT_COLORS: Readonly<Record<LedgerEntry['kind'], string>> = {
   resident: UI_THEME.barnRed,
   egg: '#c98f2e',
   plantGrown: UI_THEME.meadow,
+  accomplishment: UI_THEME.gilt,
   firstCarnival: UI_THEME.leather,
   firstFarm: UI_THEME.leather,
   firstResident: UI_THEME.leather,
@@ -464,6 +466,11 @@ export function createNotificationPanel(width: number, height: number): Notifica
     },
     notifyPlantGrown(subject: string): void {
       center.pushPlantGrown(subject)
+      sync()
+      layout()
+    },
+    notifyAccomplishment(title: string, detail: string): void {
+      center.pushAccomplishment(title, detail)
       sync()
       layout()
     },

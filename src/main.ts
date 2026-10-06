@@ -8,11 +8,12 @@ import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS } f
 import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent } from './game/animal-life'
 import { FARM_EXPANSION_CONFIG } from './game/farm-expansion'
 import { clearOfFarmBounds } from './game/animal-travel'
-import { createProgressLedger, type ProgressAction } from './game/farm-progression'
+import { createProgressLedger } from './game/farm-progression'
+import { buildAccomplishmentCatalog, createAccomplishmentTracker, type AccomplishmentDef, type AccomplishmentStage } from './game/accomplishments'
 import { startNextEarnedExpansion } from './game/progression-rewards'
 import { type FarmSnapshot } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
-import { CARNIVAL_STARTERS, conditionMetricUnit, stageDefinition, stageTitle } from './game/animal-conditions'
+import { conditionMetricUnit, stageDefinition, stageTitle } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
@@ -449,6 +450,10 @@ let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
 const speciesIds = getAnimalSceneOptions(false, gameCanvas, camera).map((options) => options.id)
 const progress = createAnimalLife(speciesIds)
 const progression = createProgressLedger()
+const accomplishments = createAccomplishmentTracker(buildAccomplishmentCatalog(
+  ANIMAL_CATALOG.map((entry) => ({ id: entry.id, name: entry.name })),
+  PLANT_CATALOG.map((entry) => ({ id: entry.id, name: entry.name })),
+))
 /** Stages 0 and 1 live at the carnival; 2 and up are inside the fence. */
 const isLoose = (animalId: string): boolean => progress.animal(animalId)?.stage === 1
 
@@ -687,14 +692,36 @@ function currentFarmSnapshot(): FarmSnapshot {
   return { state: measureFarm(), residentSpecies }
 }
 
-function awardProgress(action: ProgressAction, key: string, count = 1): void {
-  progression.awardOnce(key, action, count)
+function accomplishmentStageForKind(kind: AnimalLifeEvent['kind']): AccomplishmentStage | null {
+  if (kind === 'arriveCarnival') return 'appear'
+  if (kind === 'enterFarm') return 'visit'
+  if (kind === 'settle') return 'live'
+  if (kind === 'fallInLove') return 'breed'
+  return null
+}
+
+function unlockAccomplishment(def: AccomplishmentDef): void {
+  progression.awardPoints(def.id, def.points)
+  notificationPanel.notifyAccomplishment(def.title + ' · +' + def.points + ' pts', def.detail)
+}
+
+function ownedSeedSpecies(): ReadonlySet<string> {
+  const owned = new Set<string>()
+  for (const entry of PLANT_CATALOG) {
+    if ((gardenPlants?.simulation.seedsFor(entry.id) ?? 0) > 0) owned.add(entry.id)
+  }
+  for (const plant of gardenPlants?.simulation.plants ?? []) owned.add(plant.species)
+  return owned
 }
 
 function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
   for (const event of events) {
     const animal = event.animalId ? animalById.get(event.animalId) : undefined
-    if (event.action) awardProgress(event.action, `${event.action}:${event.eggId ?? event.animalId ?? ''}`)
+    const stage = accomplishmentStageForKind(event.kind)
+    if (stage) {
+      const earned = accomplishments.discoverAnimalStage(event.species, stage)
+      if (earned) unlockAccomplishment(earned)
+    }
     if (event.stage !== undefined && animal) {
       animal.stage = event.stage
       animal.setDetailedVisible(animal.instanceId === focusedAnimalId || animal.isCapturing || animal.isRomancing)
@@ -706,11 +733,6 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
         // Logged here rather than beside the tick so the debug setStage reports
         // the same thing a live promotion does.
         console.info(`[Animal Balloon Farm] ${event.species} -> stage ${event.stage}`)
-      }
-      if (event.kind === 'arriveCarnival' || event.kind === 'enterFarm') {
-        if (!CARNIVAL_STARTERS.includes(event.species)) {
-          notificationPanel.notifyMilestone(event.kind === 'arriveCarnival' ? 'carnival' : 'farm', animalDisplayName(event.species))
-        }
       }
     }
     if (event.kind === 'arriveCarnival' && event.animalId && !animal) {
@@ -756,16 +778,6 @@ function updateAnimalProgress(deltaSeconds: number): void {
   handleAnimalLifeEvents(events)
   const records = progress.all()
   const recordsById = new Map(records.map((record) => [record.id, record]))
-  for (const record of records) {
-    if (record.stage < 3 || celebratedResidency.has(record.id)) continue
-    const celebrant = animalById.get(record.id)
-    if (!celebrant || celebrant.isSold || celebrant.appearance !== 'standard') continue
-    celebratedResidency.add(record.id)
-    notificationPanel.notifyMilestone('resident', animalDisplayName(record.species))
-  }
-  for (const celebratedId of [...celebratedResidency]) {
-    if (!recordsById.has(celebratedId)) celebratedResidency.delete(celebratedId)
-  }
   for (const record of records) {
     const animal = animalById.get(record.id)
     if (!animal || animal.isSold) continue
@@ -855,8 +867,6 @@ const notificationDom = createNotificationDomPanel({
   },
 })
 const knownMaturePlants = new Set<number>()
-/** Instance ids whose residency reveal has already been celebrated. */
-const celebratedResidency = new Set<string>()
 
 function animalDisplayName(species: string): string {
   return ANIMAL_CATALOG.find((entry) => entry.id === species)?.name ?? species
@@ -897,7 +907,7 @@ const salePanel = createSalePanel((target) => {
   if (target.kind === 'animal') {
     const animal = animalById.get(target.id)
     if (!animal || !animal.canSell || !animal.sell()) return null
-    const removed = progress.remove(animal.instanceId)
+    progress.remove(animal.instanceId)
     animalById.delete(animal.instanceId)
     const animalIndex = animals.indexOf(animal)
     if (animalIndex >= 0) animals.splice(animalIndex, 1)
@@ -907,7 +917,6 @@ const salePanel = createSalePanel((target) => {
     farmHomes.delete(animal.instanceId)
     viewerStands.delete(animal.instanceId)
     const balance = wallet.credit(target.price)
-    if (removed) awardProgress('sellAnimal', `sell:${animal.instanceId}`)
     salePanel.setWallet(balance)
     return balance
   }
@@ -916,7 +925,6 @@ const salePanel = createSalePanel((target) => {
   if (!plant || !gardenPlants?.removePlant(plantId)) return null
   shedDom.refresh()
   const balance = wallet.credit(plantSaleValue(plant.species, plant.growth))
-  awardProgress('sellPlant', `sell-plant:${plant.instanceId}`)
   salePanel.setWallet(balance)
   return balance
 }, window.innerWidth, window.innerHeight, (isOpen) => {
@@ -1011,6 +1019,8 @@ function playerDomStats() {
     capacity: base.capacity,
     eggs: base.eggs,
     readyEggs: base.readyEggs,
+    accomplishments: accomplishments.list(ownedSeedSpecies()),
+    recentAccomplishments: accomplishments.recent(),
     levels: playerLevelCards(base.points, base.level),
   }
 }
@@ -2558,6 +2568,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       gardenTools?.clearGrass()
       progress.reset()
       progression.reset()
+      accomplishments.reset()
+      knownMaturePlants.clear()
       for (const animal of animals) animal.dispose()
       animals.length = 0
       for (const eggId of [...eggVisuals.keys()]) removeEggVisual(eggId)
@@ -2971,11 +2983,12 @@ function frame(now: number): void {
   const matureIds = new Set<number>()
   for (const plant of gardenPlants?.simulation.plants ?? []) {
     if (!plant.mature) continue
-    awardProgress('growPlant', `grow-plant:${plant.instanceId}`)
     matureIds.add(plant.instanceId)
     if (!knownMaturePlants.has(plant.instanceId)) {
       knownMaturePlants.add(plant.instanceId)
-      notificationPanel.notifyPlantGrown(plantDisplayName(plant.species))
+      const earned = accomplishments.discoverPlantGrown(plant.species)
+      if (earned) unlockAccomplishment(earned)
+      else notificationPanel.notifyPlantGrown(plantDisplayName(plant.species))
     }
   }
   for (const knownId of [...knownMaturePlants]) if (!matureIds.has(knownId)) knownMaturePlants.delete(knownId)

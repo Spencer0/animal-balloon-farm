@@ -15,6 +15,7 @@ const DOT_COLORS: Readonly<Record<string, string>> = {
   resident: "#c65a3a",
   egg: "#c98f2e",
   plantGrown: "#5f8f4e",
+  accomplishment: "#c98f2e",
   firstCarnival: "#6b4a33",
   firstFarm: "#6b4a33",
   firstResident: "#6b4a33",

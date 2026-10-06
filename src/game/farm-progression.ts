@@ -33,6 +33,7 @@ export interface ProgressLedger {
   readonly pointsToNextLevel: number
   award(action: ProgressAction, count?: number): number
   awardOnce(key: string, action: ProgressAction, count?: number): number
+  awardPoints(key: string, points: number): number
   pointsForNextExpansion(level?: number): number
   reset(): void
 }
@@ -64,6 +65,13 @@ export function createProgressLedger(config: ProgressionConfig = PROGRESSION_CON
       if (awarded.has(key)) return points
       awarded.add(key)
       return ledger.award(action, count)
+    },
+    awardPoints(key, pointsValue) {
+      if (awarded.has(key)) return points
+      if (!Number.isFinite(pointsValue) || pointsValue < 0) return points
+      awarded.add(key)
+      points += Math.floor(pointsValue)
+      return points
     },
     pointsForNextExpansion,
     reset() {

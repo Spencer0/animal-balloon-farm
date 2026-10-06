@@ -7,9 +7,9 @@
  *              plant finishes growing). It never pops up; it lands in the
  *              postbox behind a badge count, for the player to read at
  *              leisure.
- *   spotlight  the center-ring call for species firsts (first circus visit,
- *              first farm visit, first resident, first egg). Bigger, gold,
- *              and only ever once per species per milestone. It plays on
+ *   spotlight  the center-ring call for accomplishments and species firsts
+ *              (first appear, visit, resident, breed, first plant grown). Bigger,
+ *              gold, and only ever once each. It plays on
  *              stage and is also filed in the postbox.
  *
  * Every ticket is filed in a ledger with one of three states:
@@ -32,6 +32,7 @@ export type NotificationKind =
   | 'resident'
   | 'egg'
   | 'plantGrown'
+  | 'accomplishment'
   | 'firstCarnival'
   | 'firstFarm'
   | 'firstResident'
@@ -54,6 +55,8 @@ export function notificationCopy(kind: NotificationKind, subject: string): Notif
       return { title: `${subject} laid an egg!`, detail: 'Something is incubating.' }
     case 'plantGrown':
       return { title: `${subject} is fully grown!`, detail: 'Fresh from the soil.' }
+    case 'accomplishment':
+      return { title: subject, detail: 'An accomplishment was earned.' }
     case 'firstCarnival':
       return { title: 'New arrival at the circus!', detail: `${subject} showed up at the tents for the very first time.` }
     case 'firstFarm':
@@ -125,12 +128,13 @@ const MILESTONE_ROUTINE_KIND: Readonly<Record<SpeciesMilestone, NotificationKind
 }
 
 function isSpotlightKind(kind: NotificationKind): boolean {
-  return kind === 'firstCarnival' || kind === 'firstFarm' || kind === 'firstResident' || kind === 'firstEgg'
+  return kind === 'accomplishment' || kind === 'firstCarnival' || kind === 'firstFarm' || kind === 'firstResident' || kind === 'firstEgg'
 }
 
 export interface NotificationCenter {
   pushMilestone(milestone: SpeciesMilestone, subject: string): LedgerEntry | null
   pushPlantGrown(subject: string): LedgerEntry | null
+  pushAccomplishment(title: string, detail: string): LedgerEntry
   tick(deltaSeconds: number): void
   visible(): readonly Notification[]
   queuedCount(): number
@@ -172,16 +176,18 @@ export function createNotificationCenter(options: NotificationCenterOptions = {}
    * File a ticket. A repeat of something already sitting in the postbox
    * unread updates nothing -- five eggs in a minute is one letter, not five.
    */
-  function file(kind: NotificationKind, subject: string): LedgerEntry {
+  function file(kind: NotificationKind, subject: string, detail?: string): LedgerEntry {
     const copy = notificationCopy(kind, subject)
-    const duplicate = ledger.find((entry) => entry.kind === kind && entry.title === copy.title && entry.state !== 'read')
+    const title = detail === undefined ? copy.title : subject
+    const body = detail ?? copy.detail
+    const duplicate = ledger.find((entry) => entry.kind === kind && entry.title === title && entry.state !== 'read')
     if (duplicate) return duplicate
     const entry: LedgerEntry = {
       filedAt: nowSeconds,
       id: nextId++,
       kind,
-      title: copy.title,
-      detail: copy.detail,
+      title,
+      detail: body,
       spotlight: isSpotlightKind(kind),
       state: 'unseen',
     }
@@ -228,6 +234,9 @@ export function createNotificationCenter(options: NotificationCenterOptions = {}
     pushPlantGrown(subject: string): LedgerEntry | null {
       const name = subject.trim() || 'A plant'
       return file('plantGrown', name)
+    },
+    pushAccomplishment(title: string, detail: string): LedgerEntry {
+      return file('accomplishment', title.trim() || 'Accomplishment earned!', detail.trim() || 'An accomplishment was earned.')
     },
     tick(deltaSeconds: number): void {
       const delta = Number.isFinite(deltaSeconds) ? Math.max(0, deltaSeconds) : 0

@@ -39,3 +39,13 @@ test('expansion milestone thresholds continue indefinitely', () => {
   assert.equal(ledger.level, 1)
   assert.equal(ledger.pointsToNextLevel, 40)
 })
+
+test('one-off point awards cannot be claimed twice', () => {
+  const ledger = createProgressLedger()
+  ledger.awardPoints('pig-appear', 10)
+  ledger.awardPoints('pig-appear', 10)
+  assert.equal(ledger.points, 10)
+  ledger.awardPoints('pig-visit', 15)
+  assert.equal(ledger.points, 25)
+  assert.equal(ledger.level, 0)
+})
