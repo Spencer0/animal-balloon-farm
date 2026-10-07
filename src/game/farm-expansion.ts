@@ -1,6 +1,8 @@
 export interface GardenBounds {
   readonly halfWidth: number
   readonly halfDepth: number
+  /** Omitted for legacy rectangular layouts and numeric test fixtures. */
+  readonly footprint?: 'organic'
 }
 
 export interface FarmExpansionStep {
@@ -20,7 +22,7 @@ export interface FarmExpansionConfig {
 
 /** Progression tuning lives in one place; adding/removing parcels needs no scene edits. */
 export const FARM_EXPANSION_CONFIG = {
-  startBounds: { halfWidth: 14, halfDepth: 9.5 },
+  startBounds: { halfWidth: 10, halfDepth: 9, footprint: 'organic' as const },
   durationSeconds: 3.2,
   maximumLevel: 15,
   // Parcel styles repeat until the farm reaches its progression cap.
@@ -41,7 +43,7 @@ function parcelAt(level: number, steps: readonly FarmExpansionStep[]): FarmExpan
 }
 
 function roundedBounds(bounds: GardenBounds): GardenBounds {
-  return { halfWidth: +bounds.halfWidth.toFixed(3), halfDepth: +bounds.halfDepth.toFixed(3) }
+  return { ...bounds, halfWidth: +bounds.halfWidth.toFixed(3), halfDepth: +bounds.halfDepth.toFixed(3) }
 }
 
 export function farmBoundsAtLevel(
@@ -59,7 +61,7 @@ export function farmBoundsAtLevel(
     halfWidth += config.steps[index].width
     halfDepth += config.steps[index].depth
   }
-  return roundedBounds({ halfWidth, halfDepth })
+  return roundedBounds({ ...config.startBounds, halfWidth, halfDepth })
 }
 
 /** Allocate surfaces through the final progression parcel. */
@@ -149,6 +151,7 @@ export function createFarmExpansion(config: FarmExpansionConfig = FARM_EXPANSION
     const linear = elapsed / stableConfig.durationSeconds
     progress = linear * linear * (3 - 2 * linear)
     bounds = {
+      ...stableConfig.startBounds,
       halfWidth: fromBounds.halfWidth + (targetBounds.halfWidth - fromBounds.halfWidth) * progress,
       halfDepth: fromBounds.halfDepth + (targetBounds.halfDepth - fromBounds.halfDepth) * progress,
     }

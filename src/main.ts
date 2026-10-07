@@ -62,7 +62,8 @@ renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.info.autoReset = false // reset manually each frame so stats survive the HUD pass
 
 const scene = new THREE.Scene()
-scene.background = new THREE.Color('#a7d5d3')
+scene.background = new THREE.Color('#c2d8cf')
+scene.fog = new THREE.Fog('#c2d8cf', 185, 345)
 scene.add(createSkyDome())
 
 /**
@@ -76,7 +77,7 @@ declare const __GARDEN_DEBUG__: boolean
 
 const pageParams = new URLSearchParams(window.location.search)
 const gardenDebugMode = __GARDEN_DEBUG__ && pageParams.has('gardenDebug')
-const normalViewHeight = 39.5
+const normalViewHeight = 43
 /**
  * The viewer looks at a small stage, so it zooms right in. The farm keeps its
  * own wide framing because the whole fairground has to fit on screen.
@@ -105,7 +106,9 @@ const camera = new THREE.OrthographicCamera(
   0.1,
   720,
 )
-const initialOffset = new THREE.Vector3(35, 34, 47)
+// Orthographic distance does not change framing. Keep the eye far enough back
+// that the bottom rays stay above ground at maximum zoom and shallow tilt.
+const initialOffset = new THREE.Vector3(35, 34, 47).multiplyScalar(2)
 camera.position.copy(cameraTarget).add(initialOffset)
 camera.lookAt(cameraTarget)
 
@@ -2150,6 +2153,9 @@ interface GardenDebugHarness {
   gardenReport(): { readonly bounds: { readonly halfWidth: number; readonly halfDepth: number }; readonly terrain: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number }; readonly water: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number } }
   /** Reveal parcels on demand so expansion-only visuals can be reviewed. */
   expandFarm(level: number): number
+  /** Begin a real-time packing/reveal sequence rather than fast-forwarding it. */
+  expandOnce(): unknown
+  carnivalReport(): unknown
   /** What the topmost visible surfaces at a garden point are, for finding stray planes. */
   probeGround(x: number, z: number): readonly { readonly name: string; readonly y: number; readonly color: string | null }[]
   /**
@@ -2696,6 +2702,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
       expandFarm: 'expandFarm(level) — reveal parcels without earning them.',
+      expandOnce: 'expandOnce() — watch one real-time carnival pack-up and land reveal.',
+      carnivalReport: 'carnivalReport() — inspect close attraction identities and migration phases.',
       progression: 'Points, level, next expansion milestone.',
       'selectTool / projectGardenPoint': 'Arm a tool; project garden meters to canvas pixels for pointer tests.',
       'animalReport / rendering': 'Herd list; live counts + crowd stats.',
@@ -2723,6 +2731,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       terrain: { cols: gardenTerrain?.gridCols ?? 0, rows: gardenTerrain?.gridRows ?? 0, originX: gardenTerrain?.originX ?? 0, originZ: gardenTerrain?.originZ ?? 0 },
       water: { cols: gardenWater?.gridCols ?? 0, rows: gardenWater?.gridRows ?? 0, originX: gardenWater?.originX ?? 0, originZ: gardenWater?.originZ ?? 0 },
     }),
+    expandOnce: () => fairground.farmExpansion?.expand() ?? null,
+    carnivalReport: () => fairground.carnivalReport?.() ?? [],
     expandFarm: (level) => {
       const expansion = fairground.farmExpansion
       if (!expansion) return 0
@@ -2730,7 +2740,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       let guard = 0
       while (expansion.state.level < target && guard < FARM_EXPANSION_CONFIG.maximumLevel * 3 + 10) {
         expansion.expand()
-        for (let step = 0; step < 40; step += 1) expansion.update(1)
+        for (let step = 0; step < 160; step += 1) fairground.update(.5)
         guard += 1
       }
       currentGardenBounds = expansion.state.bounds
@@ -2740,6 +2750,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       gardenWater?.markTerrainChanged()
       gardenWaterMesh?.markDirty()
       gardenTools?.syncSurfaceGeometry()
+      // Attribute update ranges describe pending GPU uploads, not just CPU
+      // writes. Fast-forwarding many steps without a render must commit the
+      // whole final mask, otherwise the GPU keeps the original starter patch.
+      fairground.refreshLandReveal?.()
       return expansion.state.level
     },
     probeGround: (x, z) => {

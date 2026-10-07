@@ -51,7 +51,7 @@ export function createGardenWaterMesh(
   mesh.rotation.x = -Math.PI / 2
   mesh.position.y = GARDEN_LAWN_Y
   mesh.receiveShadow = false
-  mesh.renderOrder = 0
+  mesh.renderOrder = 3
   mesh.frustumCulled = false
 
   let dirty = true

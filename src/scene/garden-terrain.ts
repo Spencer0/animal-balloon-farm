@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GARDEN_BOUNDS, GARDEN_MAX_BOUNDS } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
+import { containsFarmPoint } from '../game/farm-footprint'
 
 /**
  * Canonical garden height field (SPEC §9: garden coordinates independent of
@@ -214,7 +215,9 @@ export function createGardenTerrain(
       for (let gx = 0; gx < gridCols; gx += 1) {
         const worldX = gridOriginX + gx * TERRAIN_CELL
         const index = row + gx
-        const outside = outsideZ || Math.abs(worldX) > bounds.halfWidth
+        const outside = bounds.footprint === 'organic'
+          ? !containsFarmPoint(worldX, worldZ, bounds)
+          : outsideZ || Math.abs(worldX) > bounds.halfWidth
         outsideParcel[index] = outside ? 1 : 0
         if (outside) heights[index] = 0
       }
@@ -801,6 +804,12 @@ export function createGardenTerrain(
       clampSlope(0, gridCols - 1, 0, gridRows - 1)
       dirty = true
       fullMeshDirty = true
+      return true
+    }
+    if (bounds.footprint === 'organic' && onlyExpanding) {
+      // Fixed angular lobes are monotonic, but diagonal cells cannot be admitted
+      // using only the old rectangular row/column strips.
+      rebuildParcelMask()
       return true
     }
     if (onlyExpanding) {

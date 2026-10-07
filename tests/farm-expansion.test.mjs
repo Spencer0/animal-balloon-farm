@@ -21,22 +21,22 @@ const oneStepConfig = {
 
 test('default farm parcels repeat through level 15 with linearly growing bounds', () => {
   const expansion = createFarmExpansion()
-  assert.deepEqual(expansion.state.bounds, { halfWidth: 14, halfDepth: 9.5 })
+  assert.deepEqual(expansion.state.bounds, { halfWidth: 10, halfDepth: 9, footprint: 'organic' })
   assert.equal(expansion.state.level, 0)
   assert.equal(expansion.state.totalLevels, 15)
   assert.equal(expansion.state.nextStep.name, 'Clover Patch')
   assert.equal(FARM_EXPANSION_CONFIG.steps.length, 5)
   assert.deepEqual(GARDEN_MAX_BOUNDS, farmBoundsAtLevel(15))
-  assert.deepEqual(GARDEN_MAX_BOUNDS, { halfWidth: 38, halfDepth: 26 })
-  assert.deepEqual(farmBoundsAtLevel(99), { halfWidth: 172.4, halfDepth: 118.4 })
+  assert.deepEqual(GARDEN_MAX_BOUNDS, { halfWidth: 34, halfDepth: 25.5, footprint: 'organic' })
+  assert.deepEqual(farmBoundsAtLevel(99), { halfWidth: 168.4, halfDepth: 117.9, footprint: 'organic' })
   assert.notDeepEqual(GARDEN_MAX_BOUNDS, farmBoundsAtLevel(5))
   const farBounds = farmBoundsAtLevel(99)
-  assert.ok(Math.abs(farBounds.halfWidth - 172.4) < 0.001)
-  assert.ok(Math.abs(farBounds.halfDepth - 118.4) < 0.001)
+  assert.ok(Math.abs(farBounds.halfWidth - 168.4) < 0.001)
+  assert.ok(Math.abs(farBounds.halfDepth - 117.9) < 0.001)
   assert.deepEqual(farmBoundsAtLevel(Number.NaN), FARM_START_BOUNDS)
 })
 
-const FARM_START_BOUNDS = { halfWidth: 14, halfDepth: 9.5 }
+const FARM_START_BOUNDS = { halfWidth: 10, halfDepth: 9, footprint: 'organic' }
 
 test('expansion is irreversible, eased, monotonic, and cannot overlap an active animation', () => {
   const expansion = createFarmExpansion(oneStepConfig)

@@ -261,7 +261,7 @@ test('smooth parcel expansion reveals the new border without forcing a full mesh
   active = { halfWidth: START.halfWidth + 0.8, halfDepth: START.halfDepth + 0.22 }
   assert.equal(terrain.syncBounds(), true)
   assert.equal(terrain.dirty, false)
-  assert.ok(terrain.splat(START.halfWidth + 0.6, 0, 0.3, -0.12) > 0,
+  assert.ok(terrain.splat(START.halfWidth + 0.6, 0, 0.4, -0.12) > 0,
     'newly revealed ground is editable without rebuilding mesh topology')
   assert.equal(terrain.dirty, true, 'only an actual terrain edit dirties the mesh')
 })

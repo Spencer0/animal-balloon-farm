@@ -28,7 +28,7 @@ test('animation getters track bounds without allocating a full state snapshot', 
   assert.deepEqual(previousSnapshot.bounds, stateBounds, 'previous snapshots stay immutable as the farm grows')
 
   liveBounds.halfWidth = -1
-  assert.ok(expansion.bounds.halfWidth > 14, 'live bounds are still returned as an isolated value')
+  assert.ok(expansion.bounds.halfWidth > stateBounds.halfWidth, 'live bounds are still returned as an isolated value')
   expansion.update(10)
   assert.equal(expansion.isAnimating, false)
   assert.deepEqual(expansion.bounds, expansion.state.bounds)
