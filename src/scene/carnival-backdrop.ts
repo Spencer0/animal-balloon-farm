@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { GardenBounds } from '../game/farm-expansion'
 import type { CarnivalKind } from '../game/carnival-migration'
+import { isInShopClearing } from '../game/shop-site'
 
 const PALETTE = ['#c78385', '#d9bd83', '#73aaa6', '#99a2bd', '#c19aaa', '#e2d4b1']
 const material = (color: string) => new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true })
@@ -141,7 +142,11 @@ export function createCarnivalBackdrop() {
   for (let i = 0; i < 72; i += 1) {
     const angle = i / 72 * Math.PI * 2 + Math.sin(i * 7) * .025
     const radius = 52 + (i % 4) * 9 + Math.sin(i * 3.1) * 3
-    const attraction = createDistantAttraction(staticFar, i % 5 === 0 ? 'stall' : 'tent', Math.cos(angle) * radius, Math.sin(angle) * radius, i)
+    const x = Math.cos(angle) * radius
+    const z = Math.sin(angle) * radius
+    // The arcade store's site stays clear of distant tents.
+    if (isInShopClearing(x, z, 9)) continue
+    const attraction = createDistantAttraction(staticFar, i % 5 === 0 ? 'stall' : 'tent', x, z, i)
     attraction.scale.setScalar(.65 + (i % 5) * .15)
   }
   bakeStatic(staticFar)
@@ -186,9 +191,11 @@ export function createCarnivalBackdrop() {
     const radius = 43 + i % 7 * 6.5
     const x = Math.cos(angle) * radius
     const z = Math.sin(angle) * radius
-    dummy.position.set(x, .8, z); dummy.scale.set(1, 1, 1); dummy.rotation.set(0, i, 0); dummy.updateMatrix()
+    // A tree inside the arcade store's clearing is zero-sized, which hides it.
+    const cleared = isInShopClearing(x, z) ? 0 : 1
+    dummy.position.set(x, .8, z); dummy.scale.set(cleared, cleared, cleared); dummy.rotation.set(0, i, 0); dummy.updateMatrix()
     trunks.setMatrixAt(i, dummy.matrix)
-    dummy.position.y = 3.3; dummy.scale.set(1.7 + i % 3 * .3, 2.2 + i % 4 * .2, 1.6); dummy.updateMatrix()
+    dummy.position.y = 3.3; dummy.scale.set(cleared * (1.7 + i % 3 * .3), cleared * (2.2 + i % 4 * .2), cleared * 1.6); dummy.updateMatrix()
     crowns.setMatrixAt(i, dummy.matrix)
   }
   crowns.computeBoundingSphere(); trunks.computeBoundingSphere()

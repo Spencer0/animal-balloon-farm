@@ -1,23 +1,30 @@
-"""Animal Balloon Farm: the midway supply store.
+"""Animal Balloon Farm: the balloon arcade store.
 
 Run from repository root:
   blender --background --factory-startup --python art/blender/shop_building.py
 
 Regenerates public/assets/buildings/farm-shop.blend, farm-shop-review.png and
 farm-shop.glb. The building is the clickable shop: with the Hand tool selected
-it opens the storefront screen.
+it opens the storefront screen. It unlocks after garden expansion #3 and is
+built on site in the game, so every build piece is its own named node:
 
-Design: a circus midway supply stall, not a barn. Teal wainscot, cream walls
-with coral stripe insets, a striped coral/cream canopy roof with gold trim and
-a pennant finial, an open serving hatch with a striped awning, a hanging teal
-sign, porch posts with gold caps, bunting across the fascia, and a balloon
-stake beside the door. Same painted-tin vocabulary as the tents, carousel and
-Ferris wheel in src/scene/fairground.ts.
+  SHOP BUILD site        construction barrier, sign and materials (removed last)
+  SHOP BUILD foundation  slab that is poured first
+  SHOP BUILD walls       shell, arcade window and interior cabinets
+  SHOP BUILD marquee     plum marquee lintel with a row of bulbs
+  SHOP BUILD roof        mint roof, pink fascia and chrome corner balls
+  SHOP BUILD balloons    three balloon bunches on strings, inflated last
 
-Authored in Blender Z-up with the storefront (hatch, awning, sign, porch)
-facing -Y, which the glTF exporter lands in Three.js facing +Z toward the farm
-camera. Rests on z = 0, centred on the origin in X/Y. Envelope ~6.2 x 5.0 x
-5.0 m so the existing shop placement (size 6.4) keeps working unchanged.
+src/game/shop-construction.ts holds the matching timeline, keyed by these names.
+
+Design: a pastel balloon arcade. Mint roof, bubblegum pilasters, a plum
+marquee with a bulb row, a glowing cabinet window, and balloon bunches tied to
+the roof. Same sweet palette as the carnival tents, without the circus stripes.
+
+Authored in Blender Z-up with the storefront (window, marquee, site) facing
+-Y, which the glTF exporter lands in Three.js facing +Z. Rests on z = 0,
+centred on the origin in X/Y. Envelope about 6.0 x 6.4 x 4.8 m; the placement
+normalises the longest side, so the exact size is not load-bearing.
 
 Verify with `node scripts/inspect-glb.mjs public/assets/buildings/farm-shop.glb`.
 """
@@ -45,7 +52,7 @@ def color_rgba(value: str):
     return (*rgb, 1.0)
 
 
-def make_material(name, value, roughness=.68, metallic=0.0, coat=.14):
+def make_material(name, value, roughness=.68, metallic=0.0, coat=.14, emit=0.0):
     mat = bpy.data.materials.new(name)
     mat.diffuse_color = color_rgba(value)
     mat.use_nodes = True
@@ -55,6 +62,9 @@ def make_material(name, value, roughness=.68, metallic=0.0, coat=.14):
     shader.inputs["Metallic"].default_value = metallic
     shader.inputs["Coat Weight"].default_value = coat
     shader.inputs["Coat Roughness"].default_value = .26
+    if emit > 0.0:
+        shader.inputs["Emission Color"].default_value = color_rgba(value)
+        shader.inputs["Emission Strength"].default_value = emit
     return mat
 
 
@@ -77,9 +87,7 @@ def parent_local(obj, parent, location):
     if parent:
         obj.parent = parent
         obj.matrix_parent_inverse.identity()
-        obj.location = location
-    else:
-        obj.location = location
+    obj.location = location
     return obj
 
 
@@ -114,39 +122,20 @@ def sphere(name, location, scale, mat, parent=None, segments=24, rings=16):
     return parent_local(obj, parent, location)
 
 
-def cylinder(name, location, radius, depth, mat, parent=None, axis="Z", segments=24, bevel=0.0):
+def cylinder(name, location, radius, depth, mat, parent=None, segments=16, rotation=(0, 0, 0)):
     bpy.ops.mesh.primitive_cylinder_add(vertices=segments, radius=radius, depth=depth, location=(0, 0, 0))
     obj = bpy.context.object
     obj.name = name
     obj.data.name = name + " mesh"
-    if bevel > 0.0:
-        mod = obj.modifiers.new("rounded rim", "BEVEL")
-        mod.width = bevel
-        mod.segments = 3
-        mod.limit_method = "ANGLE"
     obj.data.materials.append(mat)
     for face in obj.data.polygons:
-        face.use_smooth = len(face.vertices) == 4
-    parent_local(obj, parent, location)
-    if axis == "Y":
-        obj.rotation_euler = (math.radians(90), 0, 0)
-    elif axis == "X":
-        obj.rotation_euler = (0, math.radians(90), 0)
-    return obj
-
-
-def cone(name, location, radius, depth, mat, parent=None, segments=3, rotation=(0, 0, 0)):
-    bpy.ops.mesh.primitive_cone_add(vertices=segments, radius1=radius, depth=depth, location=(0, 0, 0))
-    obj = bpy.context.object
-    obj.name = name
-    obj.data.name = name + " mesh"
-    obj.data.materials.append(mat)
+        face.use_smooth = True
     if any(rotation):
         obj.rotation_euler = rotation
     return parent_local(obj, parent, location)
 
 
-def pivot(name, location, parent=None):
+def pivot(name, location=(0, 0, 0), parent=None):
     obj = bpy.data.objects.new(name, None)
     bpy.context.collection.objects.link(obj)
     obj.empty_display_type = "PLAIN_AXES"
@@ -167,175 +156,166 @@ for collection in (bpy.data.meshes, bpy.data.curves, bpy.data.materials,
             collection.remove(block)
 
 M = {
-    "cream": make_material("SHOP cream boards", "#fff0c7", .7, 0, .16),
-    "coral": make_material("SHOP coral stripe", "#ed5d66", .62, 0, .2),
-    "pink": make_material("SHOP pink stripe", "#e88eb7", .62, 0, .2),
-    "teal": make_material("SHOP teal wainscot", "#2f9d96", .66, 0, .18),
-    "tealDeep": make_material("SHOP deep teal trim", "#247a75", .7, 0, .12),
-    "gold": make_material("SHOP brass fittings", "#e0b155", .3, .6, .3),
-    "goldSoft": make_material("SHOP gold trim", "#f2c75c", .42, .1, .24),
-    "timber": make_material("SHOP counter timber", "#a9764a", .78, 0, .06),
-    "timberDark": make_material("SHOP dark stained frame", "#7c5334", .8, 0, .05),
-    "glass": make_material("SHOP window glass", "#cfe7e4", .18, 0, .34),
-    "iron": make_material("SHOP wrought iron", "#4f4740", .48, .68, .08),
-    "stone": make_material("SHOP foundation stone", "#b8b2a4", .86, 0, .03),
-    "sign": make_material("SHOP sign field", "#247a75", .58, 0, .22),
-    "balloonRed": make_material("SHOP balloon coral", "#f26d83", .24, 0, .5),
-    "balloonGold": make_material("SHOP balloon gold", "#ffd15c", .24, 0, .5),
-    "balloonTeal": make_material("SHOP balloon teal", "#65c4bd", .24, 0, .5),
+    "cream": make_material("SHOP cream walls", "#fff3d6", .7, 0, .16),
+    "pink": make_material("SHOP bubblegum pilaster", "#ff9dbf", .6, 0, .2),
+    "mint": make_material("SHOP mint roof", "#8ee6cf", .62, 0, .18),
+    "teal": make_material("SHOP teal wainscot", "#2fb8b0", .66, 0, .16),
+    "plum": make_material("SHOP plum marquee", "#5a3c7a", .5, 0, .24),
+    "bulb": make_material("SHOP marquee bulb", "#ffe066", .3, 0, .1, emit=6.0),
+    "navy": make_material("SHOP arcade interior", "#1e2a4a", .85, 0, .04),
+    "screen": make_material("SHOP cabinet screen", "#7ff6ff", .3, 0, .1, emit=5.0),
+    "cabPink": make_material("SHOP cabinet pink", "#ff7fb0", .5, 0, .2),
+    "cabTeal": make_material("SHOP cabinet teal", "#3fd0c6", .5, 0, .2),
+    "cabViolet": make_material("SHOP cabinet violet", "#9d7bff", .5, 0, .2),
+    "chrome": make_material("SHOP chrome ball", "#d6e0ea", .2, .9, .3),
+    "stone": make_material("SHOP foundation stone", "#cbc3b3", .86, 0, .03),
+    "fascia": make_material("SHOP bubblegum fascia", "#ff7fb0", .58, 0, .2),
+    "stripe": make_material("SHOP fascia cream stripe", "#fff8ea", .6, 0, .16),
+    "coral": make_material("SHOP balloon coral", "#ff6b6b", .24, 0, .5),
+    "sun": make_material("SHOP balloon sun", "#ffd23f", .24, 0, .5),
+    "aqua": make_material("SHOP balloon aqua", "#4ce0d2", .24, 0, .5),
+    "violet": make_material("SHOP balloon violet", "#9d7bff", .24, 0, .5),
+    "string": make_material("SHOP balloon string", "#f5f5f5", .6, 0, .02),
+    "hazardYellow": make_material("SHOP hazard yellow", "#ffcc00", .55, 0, .1),
+    "hazardBlack": make_material("SHOP hazard black", "#222222", .6, 0, .05),
+    "wood": make_material("SHOP crate wood", "#c79a60", .8, 0, .05),
+    "iron": make_material("SHOP site iron", "#4f4740", .5, .6, .08),
     "stageFloor": make_material("STAGE buttercream floor", "#f6e6c6", .88, 0, .02),
     "stageBack": make_material("STAGE mint studio backdrop", "#a6d8cf", .9, 0, .02),
 }
 
-root = pivot("SHOP BUILDING export root", (0, 0, 0))
+root = pivot("SHOP BUILDING export root")
 root["asset_id"] = "farm_shop"
-root["design_size"] = "6.2 x 5.0 x 5.0"
-root["description"] = "Midway supply store for Animal Balloon Farm"
+root["design_size"] = "6.0 x 6.4 x 4.8"
+root["description"] = "Balloon arcade store for Animal Balloon Farm"
 
-HALF_W, HALF_D = 3.1, 2.3
-WALL_TOP = 2.7
+HALF_W, HALF_D = 2.8, 2.2
+WALL_TOP = 2.8
 WALL_T = .22
-WAINSCOT_H = 1.0
-
-box("SHOP foundation", (HALF_W * 2, HALF_D * 2, .3), (0, 0, .15), M["stone"], root, bevel=.04)
-
-# Teal wainscot ring + cream upper walls on all four sides.
-for side in (-1, 1):
-    box("SHOP wainscot side %d" % side, (WALL_T, HALF_D * 2, WAINSCOT_H),
-        (side * (HALF_W - WALL_T / 2), 0, .3 + WAINSCOT_H / 2), M["teal"], root, bevel=.04)
-    box("SHOP upper wall side %d" % side, (WALL_T, HALF_D * 2, WALL_TOP - .3 - WAINSCOT_H),
-        (side * (HALF_W - WALL_T / 2), 0, .3 + WAINSCOT_H + (WALL_TOP - .3 - WAINSCOT_H) / 2),
-        M["cream"], root, bevel=.04)
-box("SHOP wainscot back", (HALF_W * 2, WALL_T, WAINSCOT_H),
-    (0, HALF_D - WALL_T / 2, .3 + WAINSCOT_H / 2), M["teal"], root, bevel=.04)
-box("SHOP upper wall back", (HALF_W * 2, WALL_T, WALL_TOP - .3 - WAINSCOT_H),
-    (0, HALF_D - WALL_T / 2, .3 + WAINSCOT_H + (WALL_TOP - .3 - WAINSCOT_H) / 2),
-    M["cream"], root, bevel=.04)
-
-# Front (-Y): wainscot full width, upper wall split around the serving hatch.
+FLOOR_Z = .3
+WAINSCOT_H = .9
+UPPER_H = WALL_TOP - FLOOR_Z - WAINSCOT_H
 FRONT_Y = -(HALF_D - WALL_T / 2)
-HATCH_W, HATCH_H = 2.6, 1.15
-HATCH_SILL = 1.15
-box("SHOP wainscot front", (HALF_W * 2, WALL_T, WAINSCOT_H),
-    (0, FRONT_Y, .3 + WAINSCOT_H / 2), M["teal"], root, bevel=.04)
+WINDOW_X, WINDOW_Z0, WINDOW_Z1 = 1.9, .95, 2.1
+
+# ------------------------------------------------------------ SHOP BUILD foundation
+foundation = pivot("SHOP BUILD foundation", parent=root)
+box("SHOP foundation slab", (HALF_W * 2 + .2, HALF_D * 2 + .2, FLOOR_Z), (0, 0, FLOOR_Z / 2),
+    M["stone"], foundation, bevel=.04)
+box("SHOP foundation mint trim", (HALF_W * 2 + .3, HALF_D * 2 + .3, .08), (0, 0, FLOOR_Z + .04),
+    M["mint"], foundation, bevel=.02)
+
+# ------------------------------------------------------------ SHOP BUILD walls
+walls = pivot("SHOP BUILD walls", parent=root)
 for side in (-1, 1):
-    span = HALF_W - HATCH_W / 2
-    box("SHOP upper wall front %d" % side, (span, WALL_T, WALL_TOP - .3 - WAINSCOT_H),
-        (side * (HALF_W - span / 2), FRONT_Y, .3 + WAINSCOT_H + (WALL_TOP - .3 - WAINSCOT_H) / 2),
-        M["cream"], root, bevel=.04)
-box("SHOP front apron above hatch", (HATCH_W, WALL_T, WALL_TOP - .3 - HATCH_SILL - HATCH_H),
-    (0, FRONT_Y, HATCH_SILL + HATCH_H + (WALL_TOP - .3 - HATCH_SILL - HATCH_H) / 2),
-    M["cream"], root, bevel=.04)
-box("SHOP front apron below hatch", (HATCH_W, WALL_T, HATCH_SILL - .3 - WAINSCOT_H),
-    (0, FRONT_Y, .3 + WAINSCOT_H + (HATCH_SILL - .3 - WAINSCOT_H) / 2),
-    M["tealDeep"], root, bevel=.04)
+    x = side * (HALF_W - WALL_T / 2)
+    # Side walls stop short of the front and back walls, which own the corners. Two faces
+    # at the same depth would z-fight, so this keeps every outer face distinct.
+    box("SHOP wainscot side %d" % side, (WALL_T, (HALF_D - WALL_T) * 2, WAINSCOT_H), (x, 0, FLOOR_Z + WAINSCOT_H / 2),
+        M["teal"], walls, bevel=.04)
+    box("SHOP upper wall side %d" % side, (WALL_T, (HALF_D - WALL_T) * 2, UPPER_H),
+        (x, 0, FLOOR_Z + WAINSCOT_H + UPPER_H / 2), M["cream"], walls, bevel=.04)
+box("SHOP wainscot back", (HALF_W * 2, WALL_T, WAINSCOT_H), (0, HALF_D - WALL_T / 2, FLOOR_Z + WAINSCOT_H / 2),
+    M["teal"], walls, bevel=.04)
+box("SHOP upper wall back", (HALF_W * 2, WALL_T, UPPER_H),
+    (0, HALF_D - WALL_T / 2, FLOOR_Z + WAINSCOT_H + UPPER_H / 2), M["cream"], walls, bevel=.04)
 
-# Coral stripe insets on the cream walls: the tent vocabulary at shop scale.
-for x in (-2.2, -1.35, 1.35, 2.2):
-    box("SHOP front stripe %s" % x, (.42, .06, WALL_TOP - .3 - WAINSCOT_H),
-        (x, FRONT_Y + FACE * .04, .3 + WAINSCOT_H + (WALL_TOP - .3 - WAINSCOT_H) / 2),
-        M["coral"], root, bevel=.02)
-for x in (-2.2, -0.75, 0.75, 2.2):
-    box("SHOP back stripe %s" % x, (.42, .06, WALL_TOP - .3 - WAINSCOT_H),
-        (x, HALF_D - WALL_T / 2 + .04, .3 + WAINSCOT_H + (WALL_TOP - .3 - WAINSCOT_H) / 2),
-        M["pink"] if abs(x) < 1.0 else M["coral"], root, bevel=.02)
-
-# Serving hatch: dark interior, timber counter shelf, side menu boards.
-box("SHOP hatch interior", (HATCH_W, .1, HATCH_H),
-    (0, FRONT_Y + .02, HATCH_SILL + HATCH_H / 2),
-    make_material("SHOP hatch shadow", "#2a1c14", .95, 0, .0), root, bevel=0)
-box("SHOP hatch counter", (HATCH_W + .5, .55, .12),
-    (0, FRONT_Y + FACE * .32, HATCH_SILL), M["timber"], root, bevel=.05)
+# Front: teal wainscot full width, cream piers either side of the arcade window.
+# The wainscot is a hair thicker than the piers so its face sits proud of them, not flush.
+box("SHOP wainscot front", (HALF_W * 2, WALL_T + .03, WAINSCOT_H), (0, FRONT_Y, FLOOR_Z + WAINSCOT_H / 2),
+    M["teal"], walls, bevel=.04)
 for side in (-1, 1):
-    box("SHOP hatch post %d" % side, (.14, .14, HATCH_H + .1),
-        (side * (HATCH_W / 2 + .05), FRONT_Y, HATCH_SILL + HATCH_H / 2),
-        M["timberDark"], root, bevel=.03)
-    box("SHOP menu board %d" % side, (.62, .08, .9),
-        (side * (HATCH_W / 2 + .62), FRONT_Y + FACE * .06, 1.85),
-        M["timberDark"], root, bevel=.03)
-    box("SHOP menu card %d" % side, (.46, .04, .7),
-        (side * (HATCH_W / 2 + .62), FRONT_Y + FACE * .1, 1.85),
-        M["cream"], root, bevel=.02)
+    span = HALF_W - WINDOW_X
+    box("SHOP front pier %d" % side, (span, WALL_T, WALL_TOP - FLOOR_Z),
+        (side * (HALF_W - span / 2), FRONT_Y, FLOOR_Z + (WALL_TOP - FLOOR_Z) / 2), M["cream"], walls, bevel=.04)
+box("SHOP front under window", (WINDOW_X * 2, WALL_T, WINDOW_Z0 - FLOOR_Z),
+    (0, FRONT_Y, FLOOR_Z + (WINDOW_Z0 - FLOOR_Z) / 2), M["teal"], walls, bevel=.04)
+box("SHOP front above window", (WINDOW_X * 2, WALL_T, WALL_TOP - WINDOW_Z1),
+    (0, FRONT_Y, WINDOW_Z1 + (WALL_TOP - WINDOW_Z1) / 2), M["cream"], walls, bevel=.04)
 
-# Striped awning over the hatch: alternating coral/cream tilted panels.
-AWN_Y = FRONT_Y - .55
-for index in range(7):
-    stripe = M["coral"] if index % 2 else M["cream"]
-    box("SHOP awning stripe %d" % index, (.5, 1.05, .09),
-        (-1.5 + index * .5, AWN_Y, 3.15), stripe, root, bevel=.02,
-        rotation=(math.radians(28), 0, 0))
-box("SHOP awning scallop bar", (3.6, .12, .12), (0, AWN_Y - .42, 2.78), M["goldSoft"], root, bevel=.03)
+# Bubblegum pilasters with chrome caps on the front corners.
+for side in (-1, 1):
+    box("SHOP pilaster %d" % side, (.18, .14, WALL_TOP - FLOOR_Z - .1),
+        (side * (WINDOW_X + .18), FRONT_Y + FACE * .1, FLOOR_Z + (WALL_TOP - FLOOR_Z - .1) / 2),
+        M["pink"], walls, bevel=.03)
 
-# Corner posts in cream with gold ball caps.
+# Arcade window: a navy room with three glowing cabinets facing the street.
+window_depth = .9
+box("SHOP arcade interior", (WINDOW_X * 2, .1, WINDOW_Z1 - WINDOW_Z0), (0, FRONT_Y + 1.0,
+    (WINDOW_Z0 + WINDOW_Z1) / 2), M["navy"], walls, bevel=0)
+for index, (x, mat_key) in enumerate([(-1.2, "cabPink"), (0, "cabTeal"), (1.2, "cabViolet")]):
+    box("SHOP cabinet %d" % index, (.7, .7, 1.0), (x, FRONT_Y + .42, WINDOW_Z0 + .55), M[mat_key], walls, bevel=.05)
+    box("SHOP cabinet screen %d" % index, (.46, .03, .42), (x, FRONT_Y + .07, WINDOW_Z0 + .62),
+        M["screen"], walls, bevel=.02)
+    box("SHOP cabinet marquee %d" % index, (.7, .05, .14), (x, FRONT_Y + .42, WINDOW_Z0 + 1.07),
+        M["bulb"], walls, bevel=.02)
+
+# Right side of the front: a small ticket counter ledge in the pier.
+box("SHOP ticket ledge", (.8, .4, .12), (2.2, FRONT_Y + FACE * .32, 1.1), M["mint"], walls, bevel=.04)
+
+# ------------------------------------------------------------ SHOP BUILD marquee
+marquee = pivot("SHOP BUILD marquee", parent=root)
+box("SHOP marquee board", (WINDOW_X * 2 + 1.4, .2, WALL_TOP - WINDOW_Z1 + .02),
+    (0, FRONT_Y + FACE * .02, (WINDOW_Z1 + WALL_TOP) / 2), M["plum"], marquee, bevel=.05)
+bulb_count = 13
+for index in range(bulb_count):
+    x = -1.7 + index * (3.4 / (bulb_count - 1))
+    sphere("SHOP marquee bulb %d" % index, (x, FRONT_Y + FACE * .14, WALL_TOP - .14),
+           (.07, .07, .07), M["bulb"], marquee, 10, 8)
+for index in range(bulb_count):
+    x = -1.7 + index * (3.4 / (bulb_count - 1))
+    sphere("SHOP marquee bulb low %d" % index, (x, FRONT_Y + FACE * .14, WINDOW_Z1 + .14),
+           (.07, .07, .07), M["bulb"], marquee, 10, 8)
+
+# ------------------------------------------------------------ SHOP BUILD roof
+roof = pivot("SHOP BUILD roof", parent=root)
+box("SHOP roof slab", (HALF_W * 2 + .5, HALF_D * 2 + .5, .2), (0, 0, WALL_TOP + .1), M["mint"], roof, bevel=.05)
+box("SHOP roof fascia", (HALF_W * 2 + .5, .26, .42), (0, FRONT_Y + FACE * .2, WALL_TOP + .21), M["fascia"], roof, bevel=.04)
+for index in range(9):
+    x = -2.8 + index * .7
+    box("SHOP fascia stripe %d" % index, (.36, .08, .28), (x, FRONT_Y + FACE * .38, WALL_TOP + .21),
+        M["stripe"] if index % 2 else M["coral"], roof, bevel=.02)
 for sx in (-1, 1):
     for sy in (-1, 1):
-        box("SHOP corner post %d %d" % (sx, sy), (.2, .2, WALL_TOP - .3),
-            (sx * (HALF_W - .1), sy * (HALF_D - .1), .3 + (WALL_TOP - .3) / 2),
-            M["cream"], root, bevel=.03)
-        sphere("SHOP corner cap %d %d" % (sx, sy),
-               (sx * (HALF_W - .1), sy * (HALF_D - .1), WALL_TOP + .08),
-               (.11, .11, .11), M["gold"], root, 14, 10)
+        sphere("SHOP chrome ball %d %d" % (sx, sy), (sx * (HALF_W + .15), sy * (HALF_D + .15), WALL_TOP + .34),
+               (.14, .14, .14), M["chrome"], roof, 14, 10)
 
-# Striped canopy roof: front/back slopes split into alternating panels.
-RIDGE_Z = 4.35
-RIDGE_RUN = HALF_D + .55
-slope = math.atan2(RIDGE_Z - WALL_TOP, RIDGE_RUN)
-length = math.hypot(RIDGE_Z - WALL_TOP, RIDGE_RUN)
-PANEL_W = (HALF_W * 2 + .8) / 7
-for side, ySign in (("front", -1), ("back", 1)):
-    for index in range(7):
-        stripe = M["coral"] if (index + (0 if ySign < 0 else 1)) % 2 else M["cream"]
-        box("SHOP roof %s panel %d" % (side, index), (PANEL_W + .02, length + .25, .14),
-            (-(HALF_W + .4) + PANEL_W / 2 + index * PANEL_W, ySign * RIDGE_RUN / 2,
-             (WALL_TOP + RIDGE_Z) / 2), stripe, root, bevel=.02,
-            rotation=(math.radians(math.degrees(slope)) if ySign < 0 else math.radians(-math.degrees(slope)), 0, 0))
-box("SHOP roof ridge", (HALF_W * 2 + .9, .3, .2), (0, 0, RIDGE_Z + .05), M["goldSoft"], root, bevel=.05)
-sphere("SHOP roof finial", (0, 0, RIDGE_Z + .42), (.2, .2, .2), M["gold"], root, 16, 12)
-cone("SHOP roof pennant", (0, 0, RIDGE_Z + .78), .3, .62, M["coral"], root, 3,
-     rotation=(0, math.radians(90), 0))
+# ------------------------------------------------------------ SHOP BUILD balloons
+balloons = pivot("SHOP BUILD balloons", parent=root)
+bunches = [
+    (-2.1, -.6, [(-.32, .0, .75, "coral", .34), (.26, .1, 1.0, "sun", .3), (.0, -.2, 1.36, "aqua", .32)]),
+    (.7, 1.0, [(-.24, .08, .82, "violet", .3), (.3, -.08, .98, "coral", .34), (.02, .2, 1.4, "sun", .3)]),
+    (2.3, -.5, [(-.28, .0, .8, "aqua", .32), (.24, .12, 1.04, "violet", .34), (0, -.1, 1.42, "coral", .3)]),
+]
+for index, (bx, by, puffs) in enumerate(bunches):
+    base = WALL_TOP + .2
+    for puff_index, (dx, dy, height, key, radius) in enumerate(puffs):
+        px, py, pz = bx + dx, by + dy, base + height
+        cylinder("SHOP balloon string %d %d" % (index, puff_index), (px, py, base + (pz - base) / 2 - .02),
+                 .012, pz - base, M["string"], balloons, 6)
+        sphere("SHOP balloon %d %d" % (index, puff_index), (px, py, pz), (radius, radius, radius * 1.22),
+               M[key], balloons, 24, 16)
+    cylinder("SHOP balloon weight %d" % index, (bx, by, base + .05), .14, .1, M["iron"], balloons, 10)
 
-# Porch: fascia beam on two cream posts, bunting below it, hanging sign.
-PORCH_Y = -(HALF_D + 1.15)
-box("SHOP porch fascia", (HALF_W * 2 + .34, .16, .34), (0, PORCH_Y + .72, 3.0), M["cream"], root, bevel=.04)
-for side in (-1, 1):
-    box("SHOP porch post %d" % side, (.18, .18, 2.7),
-        (side * (HALF_W - .45), PORCH_Y + .55, 1.35), M["cream"], root, bevel=.03)
-    sphere("SHOP porch ball %d" % side,
-           (side * (HALF_W - .45), PORCH_Y + .55, 2.82), (.12, .12, .12), M["gold"], root, 14, 10)
-    box("SHOP porch base %d" % side, (.34, .34, .24),
-        (side * (HALF_W - .45), PORCH_Y + .55, .12), M["tealDeep"], root, bevel=.04)
-box("SHOP porch canopy", (HALF_W * 2 + .3, 1.15, .12), (0, PORCH_Y + .1, 3.02), M["teal"], root, bevel=.04,
-    rotation=(math.radians(-8), 0, 0))
-
-# Bunting triangles under the fascia in tent colours.
-BUNT = ["#ed5d66", "#fff0c7", "#40a9a2", "#f3bf4f", "#6488c5", "#e88eb7"]
+# ------------------------------------------------------------ SHOP BUILD site
+site = pivot("SHOP BUILD site", parent=root)
+SITE_Y = FRONT_Y - 1.5
 for index in range(9):
-    mat = make_material("SHOP bunt %d" % index, BUNT[index % len(BUNT)], .66, 0, .14)
-    cone("SHOP bunt flag %d" % index, (-2.8 + index * .7, PORCH_Y + .72, 2.62),
-         .2, .42, mat, root, 3, rotation=(math.radians(180), 0, 0))
-
-# Hanging sign from the fascia: teal field, cream border, gold studs.
-sign_root = pivot("SHOP sign swing", (0, PORCH_Y + .5, 2.82), root)
-for side in (-1, 1):
-    box("SHOP sign chain %d" % side, (.04, .04, .34), (side * .55, 0, 0), M["iron"], sign_root)
-box("SHOP sign board", (1.7, .12, .8), (0, 0, -.5), M["cream"], sign_root, bevel=.06)
-box("SHOP sign field", (1.48, .05, .6), (0, FACE * .08, -.5), M["sign"], sign_root, bevel=.02)
-for side in (-1, 1):
-    sphere("SHOP sign stud %d" % side, (side * .62, FACE * .09, -.5),
-           (.05, .04, .05), M["gold"], sign_root, 12, 8)
-
-# Circus-painted crates + a balloon stake beside the hatch.
-box("SHOP crate teal", (.8, .8, .8), (2.55, PORCH_Y + 1.0, .4), M["teal"], root, bevel=.05)
-box("SHOP crate cream", (.64, .64, .64), (2.5, PORCH_Y + 1.0, 1.1), M["cream"], root, bevel=.05,
-    rotation=(0, math.radians(14), 0))
-box("SHOP crate band", (.82, .82, .14), (2.55, PORCH_Y + 1.0, .62), M["goldSoft"], root, bevel=.02)
-cylinder("SHOP balloon pole", (-2.7, PORCH_Y + .9, 1.5), .05, 3.0, M["timberDark"], root, bevel=.02)
-sphere("SHOP balloon A", (-2.95, PORCH_Y + .75, 3.2), (.34, .44, .32), M["balloonRed"], root, 20, 14)
-sphere("SHOP balloon B", (-2.5, PORCH_Y + 1.05, 3.35), (.32, .42, .3), M["balloonGold"], root, 20, 14)
-sphere("SHOP balloon C", (-2.7, PORCH_Y + .9, 2.85), (.3, .4, .3), M["balloonTeal"], root, 20, 14)
-cylinder("SHOP barrel", (-2.5, FRONT_Y - .5, .5), .44, 1.0, M["teal"], root, bevel=.05)
-for height in (.24, .76):
-    cylinder("SHOP barrel hoop %s" % height, (-2.5, FRONT_Y - .5, height), .46, .09, M["goldSoft"], root, bevel=.02)
+    x = -2.0 + index * .5
+    box("SHOP barrier stripe %d" % index, (.5, .12, .5), (x, SITE_Y, .72),
+        M["hazardYellow"] if index % 2 else M["hazardBlack"], site, bevel=.02)
+for x in (-2.3, 2.3):
+    box("SHOP barrier leg %s" % x, (.1, .6, .14), (x, SITE_Y, .3), M["iron"], site, bevel=.02)
+box("SHOP sign board", (1.9, .1, 1.1), (3.6, SITE_Y - .05, 1.4), M["hazardYellow"], site, bevel=.04)
+for index in range(5):
+    box("SHOP sign stripe %d" % index, (.22, .12, 1.2), (2.85 + index * .39, SITE_Y - .05, 1.4),
+        M["hazardBlack"], site, bevel=.02, rotation=(0, math.radians(20), 0))
+for x in (3.0, 4.2):
+    box("SHOP sign post %s" % x, (.1, .1, 1.3), (x, SITE_Y, .65), M["iron"], site, bevel=.02)
+box("SHOP crate stack base", (.8, .8, .8), (-3.8, SITE_Y + .3, .4), M["wood"], site, bevel=.05)
+box("SHOP crate stack top", (.7, .7, .7), (-3.8, SITE_Y + .3, 1.15), M["wood"], site, bevel=.05,
+    rotation=(0, math.radians(12), 0))
+box("SHOP crate beside", (.7, .7, .7), (-2.9, SITE_Y + .1, .35), M["wood"], site, bevel=.05)
 
 # Review stage, excluded from the export selection.
 scene = bpy.context.scene
@@ -350,7 +330,7 @@ scene.view_settings.look = "AgX - Medium High Contrast"
 scene.view_settings.exposure = .25
 scene.render.threads_mode = "FIXED"
 scene.render.threads = 8
-scene.world = bpy.data.worlds.new("Midway store review mint morning")
+scene.world = bpy.data.worlds.new("Balloon arcade review mint morning")
 scene.world.use_nodes = True
 scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = color_rgba("#b7dcd2")
 scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = .7
@@ -366,13 +346,13 @@ backdrop.dimensions = (140, .25, 22)
 bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 backdrop.data.materials.append(M["stageBack"])
 
-camera_data = bpy.data.cameras.new("STAGE midway store three-quarter")
-camera = bpy.data.objects.new("STAGE midway store three-quarter", camera_data)
+camera_data = bpy.data.cameras.new("STAGE arcade store three-quarter")
+camera = bpy.data.objects.new("STAGE arcade store three-quarter", camera_data)
 bpy.context.collection.objects.link(camera)
 camera.location = (7.5, -13.5, 5.2)
 camera.rotation_euler = (Vector((0, 0, 2.1)) - Vector(camera.location)).to_track_quat("-Z", "Y").to_euler()
 camera_data.type = "ORTHO"
-camera_data.ortho_scale = 12.6
+camera_data.ortho_scale = 13.2
 scene.camera = camera
 
 for name, location, energy, size, tint in [

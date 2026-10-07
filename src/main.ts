@@ -31,6 +31,8 @@ import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { advanceClock, calendarOf, createDayNightClock, formatCalendarDate, phaseOf, setTimeOfDay, skipToNext } from './game/day-night'
 import { createDayNightRig } from './scene/day-night-rig'
 import { weekdayName } from './game/carnival-schedule'
+import { shopSite } from './game/shop-site'
+import type { ShopBuildReport } from './scene/shop-build'
 import { createClockCalendarHud } from './ui/clock-calendar-hud'
 import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
@@ -432,10 +434,9 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
 }
 
 /**
- * The shop stands on the apron beyond the plot, outside even the fully expanded
- * bounds, so no amount of farm growth can swallow it. The model is authored
- * facing +Z; the half-turn here swings its storefront around to face the farm
- * plot (-Z), so the hatch, sign and porch greet the farm rather than the meadow.
+ * The arcade store stands at the treeline, past the fully expanded farm, so no
+ * amount of growth can reach it. It unlocks with garden expansion #3 and is built
+ * on site. The site and facing come from shop-site.ts, which the grove reads too.
  */
 let gardenProps: GardenProps | null = null
 if (fairground.gardenSurface && gardenTerrain && gardenWater) {
@@ -446,7 +447,7 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
     terrain: gardenTerrain,
     water: gardenWater,
     getBounds: activeGardenBounds,
-    shop: { x: 2.5, z: 18, rotationY: Math.PI + 0.08, url: 'assets/buildings/farm-shop.glb', size: 6.4 },
+    shop: { ...shopSite(), url: 'assets/buildings/farm-shop.glb', size: 6.4 },
     onChange: () => refreshShopUi(),
   })
   scene.add(gardenProps.root)
@@ -2253,6 +2254,8 @@ interface GardenDebugHarness {
   /** Begin a real-time packing/reveal sequence rather than fast-forwarding it. */
   expandOnce(): unknown
   carnivalReport(): unknown
+  /** The arcade store's build: null before the model loads, else started/finished. */
+  shopBuild(): ShopBuildReport | null
   /** What the topmost visible surfaces at a garden point are, for finding stray planes. */
   probeGround(x: number, z: number): readonly { readonly name: string; readonly y: number; readonly color: string | null }[]
   /**
@@ -2840,6 +2843,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     }),
     expandOnce: () => fairground.farmExpansion?.expand() ?? null,
     carnivalReport: () => fairground.carnivalReport?.() ?? [],
+    shopBuild: () => gardenProps?.shopBuildState() ?? null,
     expandFarm: (level) => {
       const expansion = fairground.farmExpansion
       if (!expansion) return 0
@@ -3118,7 +3122,7 @@ function frame(now: number): void {
     }
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
-  gardenProps?.update(delta)
+  gardenProps?.update(delta, fairground.farmExpansion?.level ?? 0)
   const matureIds = new Set<number>()
   for (const plant of gardenPlants?.simulation.plants ?? []) {
     if (!plant.mature) continue
