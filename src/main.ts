@@ -30,6 +30,7 @@ import { cameraPanStep } from './game/camera-rig'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { advanceClock, calendarOf, createDayNightClock, formatCalendarDate, phaseOf, setTimeOfDay, skipToNext } from './game/day-night'
 import { createDayNightRig } from './scene/day-night-rig'
+import { weekdayName } from './game/carnival-schedule'
 import { createClockCalendarHud } from './ui/clock-calendar-hud'
 import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
@@ -149,7 +150,7 @@ const dayNightClock = createDayNightClock()
 const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, skyDome)
 const clockCalendarHud = createClockCalendarHud(window.innerWidth, window.innerHeight)
 
-const fairground = createFairground()
+const fairground = createFairground(dayNightClock.elapsedDays)
 scene.add(fairground.root)
 // The height field is the terrain source of truth; the soil sits 12 mm below
 // the lawn paint layer so the two displaced planes never z-fight.
@@ -2180,6 +2181,8 @@ interface GardenDebugHarness {
   setTimeOfDay(time: number): void
   skipToMorning(): void
   skipToNight(): void
+  /** Jump whole days ahead, e.g. to watch the carnival set up on a Sunday. */
+  skipDays(days: number): void
   /** Project a world point into the game canvas for real pointer-event tests. */
   projectGardenPoint(x: number, z: number): { readonly x: number; readonly y: number } | null
 
@@ -2597,6 +2600,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     setTimeOfDay: (time) => { setTimeOfDay(dayNightClock, time) },
     skipToMorning: () => { skipToNext(dayNightClock, 0.32) },
     skipToNight: () => { skipToNext(dayNightClock, 0) },
+    skipDays: (days) => { dayNightClock.elapsedDays += Math.max(0, Math.floor(days)) },
     projectGardenPoint: (x, z) => {
       if (!gardenTerrain) return null
       const rect = gameCanvas.getBoundingClientRect()
@@ -2843,7 +2847,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       let guard = 0
       while (expansion.state.level < target && guard < FARM_EXPANSION_CONFIG.maximumLevel * 3 + 10) {
         expansion.expand()
-        for (let step = 0; step < 160; step += 1) fairground.update(.5)
+        for (let step = 0; step < 160; step += 1) fairground.update(.5, dayNightClock.elapsedDays)
         guard += 1
       }
       currentGardenBounds = expansion.state.bounds
@@ -3046,8 +3050,8 @@ function frame(now: number): void {
   removePreviousCameraShake()
   advanceClock(dayNightClock, delta)
   dayNightRig.update(dayNightClock.timeOfDay)
-  clockCalendarHud.setState({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: calendarOf(dayNightClock.elapsedDays) })
-  fairground.update(delta)
+  clockCalendarHud.setState({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: calendarOf(dayNightClock.elapsedDays), weekday: weekdayName(dayNightClock.elapsedDays) })
+  fairground.update(delta, dayNightClock.elapsedDays)
   const fairgroundMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   // Avoid the much heavier state snapshot on the animation hot path; retain

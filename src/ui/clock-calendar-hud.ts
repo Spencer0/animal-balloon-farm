@@ -18,6 +18,8 @@ export interface ClockCalendarHudState {
   readonly timeOfDay: number
   readonly phase: DayPhase
   readonly date: CalendarDate
+  /** Weekday name, e.g. "Sunday". The carnival is set up on Sundays. */
+  readonly weekday: string
 }
 
 export interface ClockCalendarHud extends UIPanel {
@@ -219,7 +221,7 @@ export function createClockCalendarHud(width: number, height: number): ClockCale
       withTracking(context, 1, () => {
         context.fillStyle = UI_THEME.inkSoft
         context.font = 'bold 10px Georgia, "Times New Roman", serif'
-        context.fillText('YEAR ' + state.date.year + ' · DAY ' + state.date.dayOfYear, CARD_WIDTH / 2, 152)
+        context.fillText(state.weekday.toUpperCase() + ' · YEAR ' + state.date.year + ' · DAY ' + state.date.dayOfYear, CARD_WIDTH / 2, 152)
       })
     }
     cardTexture.needsUpdate = true
@@ -244,7 +246,7 @@ export function createClockCalendarHud(width: number, height: number): ClockCale
     setState(state): void {
       lastState = state
       const step = Math.round(state.timeOfDay * 500)
-      const nextSignature = (expanded ? '1' : '0') + '|' + step + '|' + state.phase + '|' + state.date.year + '|' + state.date.monthIndex + '|' + state.date.day
+      const nextSignature = (expanded ? '1' : '0') + '|' + step + '|' + state.phase + '|' + state.date.year + '|' + state.date.monthIndex + '|' + state.date.day + '|' + state.weekday
       if (nextSignature === signature) return
       signature = nextSignature
       redraw()

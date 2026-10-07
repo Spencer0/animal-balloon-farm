@@ -64,12 +64,17 @@ function pathGeometry(points: THREE.Vector3[], width: number): THREE.BufferGeome
   return geometry
 }
 
-export function createCarnivalDressing(parent: THREE.Group): { props: readonly DressingProp[]; update(delta: number, bounds: GardenBounds): void } {
+export function createCarnivalDressing(parent: THREE.Group): { props: readonly DressingProp[]; midway: THREE.Group; update(delta: number, bounds: GardenBounds): void } {
   const props: DressingProp[] = []
   const holders: { holder: THREE.Group; model: string }[] = []
+  // The midway promenades and visitors are carnival crowd, so they share one group
+  // that the fairground hides on weekdays.
+  const midway = new THREE.Group()
+  midway.name = 'Midway promenades and visitors · sundays only'
+  parent.add(midway)
   const paths = new THREE.Group()
   paths.name = 'Winding midway promenades · outside cultivated soil'
-  parent.add(paths)
+  midway.add(paths)
   const pathMat = standard('#bcb38e')
   pathMat.side = THREE.DoubleSide
   // Asymmetric loops, not a square apron. Soil sits above paths when land is claimed.
@@ -168,7 +173,7 @@ export function createCarnivalDressing(parent: THREE.Group): { props: readonly D
   const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(.19, 7, 5), standard('#e5c4a3'), count)
   const bodies = new THREE.InstancedMesh(new THREE.CylinderGeometry(.17, .23, .6, 6), new THREE.MeshStandardMaterial({ roughness: 1 }), count)
   heads.name = 'Midway visitors · instanced heads'; bodies.name = 'Midway visitors · instanced coats'
-  parent.add(heads, bodies)
+  midway.add(heads, bodies)
   const dummy = new THREE.Object3D()
   const colors = ['#ce7f87', '#689c9a', '#b9a379', '#9698b1', '#d7c6a1']
   for (let i = 0; i < count; i += 1) bodies.setColorAt(i, new THREE.Color(colors[i % colors.length]))
@@ -178,6 +183,7 @@ export function createCarnivalDressing(parent: THREE.Group): { props: readonly D
   let elapsed = 0
   return {
     props,
+    midway,
     update(delta, bounds): void {
       elapsed += Math.max(0, delta)
       for (const { holder } of holders) {
