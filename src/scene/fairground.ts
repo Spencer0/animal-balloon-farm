@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { containsFarmPoint, farmEdgeDistance, farmEdgePoint } from '../game/farm-footprint'
-import { createCarnivalMigration, type CarnivalKind, type CarnivalStatus } from '../game/carnival-migration'
-import { createCarnivalBackdrop, createDistantAttraction } from './carnival-backdrop'
+import type { CarnivalKind } from '../game/carnival-migration'
+import { createCarnivalSchedule, placeOutsideFarm } from '../game/carnival-schedule'
+import { createCarnivalBackdrop } from './carnival-backdrop'
 import { createCarnivalDressing } from './carnival-dressing'
 import { createFarmExpansion, FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS, type FarmExpansion, type GardenBounds } from '../game/farm-expansion'
 
@@ -28,12 +29,20 @@ export interface Fairground {
   readonly gardenSurface?: THREE.Mesh
   readonly gardenSoil?: THREE.Mesh
   readonly farmExpansion?: FarmExpansion
-  carnivalReport?(): readonly CarnivalStatus[]
+  carnivalReport?(): readonly CarnivalReport[]
   /** Commit a full reveal after debug fast-forwarding without intervening renders. */
   refreshLandReveal?(): void
   /** Legacy full replacement for consumers without a reusable surface template. */
   updateSurfaceGeometry?(geometry: THREE.BufferGeometry): void
-  update(deltaSeconds: number): void
+  /** `elapsedDays` drives the weekly carnival: it is set up on Sundays and packed away otherwise. Stages without a calendar omit it. */
+  update(deltaSeconds: number, elapsedDays?: number): void
+}
+
+export interface CarnivalReport {
+  readonly id: string
+  readonly kind: CarnivalKind
+  /** 0 = set up, 1 = packed away. */
+  readonly packProgress: number
 }
 
 interface CarnivalSceneProp {
@@ -44,7 +53,9 @@ interface CarnivalSceneProp {
   readonly scale: THREE.Vector3
   readonly rotation: THREE.Euler
   readonly packingCrate: THREE.Group
-  relocated?: THREE.Group
+  /** Emissive meshes, each with its lit and lights-off material, built the first time they are needed. */
+  emissive?: { readonly mesh: THREE.Mesh; readonly lit: THREE.Material | THREE.Material[]; readonly dark: THREE.Material | THREE.Material[] }[]
+  lightsOff?: boolean
 }
 
 const COLORS = {
@@ -793,29 +804,27 @@ function addBalloonBunch(parent: THREE.Group,x:number,z:number,scale:number,seed
   return group
 }
 
-export function createFairground(): Fairground {
+export function createFairground(initialElapsedDays = 0): Fairground {
   const root=new THREE.Group()
   root.name='Animal Balloon Farm carnival grounds and expandable garden'
   const random=seededRandom(20260927)
   const progression=createFarmExpansion()
   const carnivalProps:CarnivalSceneProp[]=[]
-  let migration: ReturnType<typeof createCarnivalMigration> | null = null
+  // The carnival sits beyond the largest footprint the farm can ever reach, so
+  // expanding never has to pack anything away. It is set up on Sundays only.
+  let schedule: ReturnType<typeof createCarnivalSchedule> | null = null
   const farmExpansion: FarmExpansion = {
     get level() { return progression.level },
     get bounds() { return progression.bounds },
     get progress() { return progression.progress },
-    get isAnimating() { return progression.isAnimating || (migration?.busy ?? false) },
+    get isAnimating() { return progression.isAnimating },
     get state() { return { ...progression.state, isAnimating: this.isAnimating } },
     expand() {
       if (this.isAnimating) return null
-      const started = progression.expand()
-      if (started) migration?.target(started.targetBounds)
-      return started
+      return progression.expand()
     },
     update(delta) {
-      const available = migration?.update(delta) ?? delta
-      // Packing owns the old frontier. Soil cannot grow through an occupied tent.
-      if (!migration?.busy) progression.update(available)
+      progression.update(delta)
     },
   }
   const close = new THREE.Group()
@@ -847,6 +856,11 @@ export function createFairground(): Fairground {
     group.userData.carnivalId = id
     group.userData.worldLayer = 'close'
     group.userData.removable = true
+    const radius = propRadius(group,fallbackRadius)
+    // Authored inside the fence, then pushed beyond the largest farm footprint.
+    const outside = placeOutsideFarm(group.position.x, group.position.z, radius, GARDEN_MAX_BOUNDS)
+    group.position.x = outside.x
+    group.position.z = outside.z
     const packingCrate = new THREE.Group()
     packingCrate.name = `${id} · folded freight crate`
     packingCrate.position.copy(group.position)
@@ -859,7 +873,7 @@ export function createFairground(): Fairground {
     }
     packingCrate.visible=false
     root.add(packingCrate)
-    carnivalProps.push({ id, kind: category, group, radius: propRadius(group,fallbackRadius), scale: group.scale.clone(), rotation: group.rotation.clone(), packingCrate })
+    carnivalProps.push({ id, kind: category, group, radius, scale: group.scale.clone(), rotation: group.rotation.clone(), packingCrate })
   }
 
   const far=makeGrassTexture(37,'#7ba95d','#466f49')
@@ -1012,10 +1026,7 @@ export function createFairground(): Fairground {
   }
   root.add(skyPuffs)
 
-  migration = createCarnivalMigration(carnivalProps.map((prop) => ({
-    id: prop.id, kind: prop.kind, label: prop.group.name, x: prop.group.position.x, z: prop.group.position.z,
-    radius: prop.radius, removable: true, priority: prop.kind === 'ride' ? 2 : prop.kind === 'tent' ? 1 : 0,
-  })))
+  schedule = createCarnivalSchedule(carnivalProps.length, initialElapsedDays)
 
   let lastRevealBounds: GardenBounds | null = null
   function updateLandReveal(bounds: GardenBounds): void {
@@ -1043,12 +1054,37 @@ export function createFairground(): Fairground {
     previousOuter.dispose()
   }
 
+  // Lights go dark while a prop is packed. Each mesh keeps its lit and dark materials
+  // so unpacking can switch the glow back on without cloning anything every frame.
+  function setLightsOff(prop: CarnivalSceneProp, off: boolean): void {
+    if (prop.lightsOff === off) return
+    if (!prop.emissive) {
+      prop.emissive = []
+      prop.group.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return
+        const lit = object.material
+        const materials = Array.isArray(lit) ? lit : [lit]
+        if (!materials.some((mat) => mat instanceof THREE.MeshStandardMaterial && mat.emissiveIntensity > 0)) return
+        const darkened = materials.map((mat) => {
+          if (!(mat instanceof THREE.MeshStandardMaterial)) return mat
+          const dark = mat.clone(); dark.emissiveIntensity = 0; return dark
+        })
+        prop.emissive!.push({ mesh: object, lit, dark: Array.isArray(lit) ? darkened : darkened[0] })
+      })
+    }
+    for (const entry of prop.emissive) entry.mesh.material = off ? entry.dark : entry.lit
+    prop.lightsOff = off
+  }
+
   return {
     root,
     gardenSurface:lawn,
     gardenSoil:soil,
     farmExpansion,
-    carnivalReport: () => migration!.statuses(),
+    carnivalReport: () => {
+      const progress = schedule!.packProgress()
+      return carnivalProps.map((prop, index) => ({ id: prop.id, kind: prop.kind, packProgress: progress[index] }))
+    },
     refreshLandReveal: () => {
       updateLandRevealMask(soil.geometry, null, farmExpansion.bounds, true, LAND_REVEAL_FADE_START, LAND_REVEAL_FADE_END)
       lastRevealBounds = { ...farmExpansion.bounds }
@@ -1066,10 +1102,13 @@ export function createFairground(): Fairground {
       updateLandRevealMask(soil.geometry, null, farmExpansion.state.bounds, true, LAND_REVEAL_FADE_START, LAND_REVEAL_FADE_END)
       lastRevealBounds = { ...farmExpansion.state.bounds }
     },
-    update(delta):void{
-      const running = new Set(migration!.statuses().filter((prop) => prop.phase === 'active' || prop.phase === 'threatened').map((prop) => prop.id))
-      const wheelRunning = running.has(wheel.group.userData.carnivalId)
-      const carouselRunning = running.has(carousel.group.userData.carnivalId)
+    update(delta, elapsedDays):void{
+      if (elapsedDays !== undefined) schedule!.update(delta, elapsedDays)
+      const progress = schedule!.packProgress()
+      // Rides turn only while they are fully set up; a folded ride stands still.
+      const isSetUp = (group: THREE.Group): boolean => progress[carnivalProps.findIndex((prop) => prop.group === group)] === 0
+      const wheelRunning = isSetUp(wheel.group)
+      const carouselRunning = isSetUp(carousel.group)
       wheel.angle=(wheel.angle+(wheelRunning ? delta*.10 : 0))%(Math.PI*2)
       wheel.rotor.rotation.z=wheel.angle
       wheel.cabins.forEach((c,i)=>{
@@ -1093,43 +1132,23 @@ export function createFairground(): Fairground {
       lawn.scale.set(1, 1, 1)
       activeBoundary.scale.set(scaleX,1,scaleZ)
       boundaryStakes.scale.set(scaleX,1,scaleZ)
-      const statuses = migration!.statuses()
       for (let index = 0; index < carnivalProps.length; index += 1) {
         const prop = carnivalProps[index]
-        const status = statuses[index]
-        const removed = status.phase === 'removed' || status.phase === 'relocated'
-        prop.group.visible = !removed
-        prop.packingCrate.visible = status.phase === 'packing' && status.progress > .35
-        if (prop.packingCrate.visible) prop.packingCrate.scale.setScalar(THREE.MathUtils.smoothstep(status.progress,.35,.8))
-        if (status.phase === 'shutdown' || status.phase === 'packing') {
-          if (prop.group.userData.lightsOff !== true) {
-            prop.group.traverse((object) => {
-              if (!(object instanceof THREE.Mesh)) return
-              const materials = Array.isArray(object.material) ? object.material : [object.material]
-              if (!materials.some((mat) => mat instanceof THREE.MeshStandardMaterial && mat.emissiveIntensity > 0)) return
-              const darkened = materials.map((mat) => {
-                if (!(mat instanceof THREE.MeshStandardMaterial)) return mat
-                const dark = mat.clone(); dark.emissiveIntensity = 0; return dark
-              })
-              object.material = Array.isArray(object.material) ? darkened : darkened[0]
-            })
-            prop.group.userData.lightsOff = true
-          }
-          const fold = THREE.MathUtils.smoothstep(status.progress, 0, 1)
-          prop.group.scale.set(prop.scale.x * (1 - fold * .7), prop.scale.y * Math.max(.015, 1 - fold), prop.scale.z * (1 - fold * .7))
-          prop.group.rotation.z = prop.rotation.z + Math.sin(status.progress * Math.PI * 6) * .025 * (1 - fold)
-        }
-        if (status.phase === 'relocated' && !prop.relocated) {
-          const angle = Math.atan2(status.z, status.x)
-          const radius = 57 + index % 5 * 3.2
-          prop.relocated = createDistantAttraction(backdrop.far, prop.kind, Math.cos(angle) * radius, Math.sin(angle) * radius, index, prop.group.name)
-          prop.relocated.userData.sourceId = prop.id
-          prop.relocated.scale.setScalar(.01)
-        }
+        const packed = progress[index]
+        // Packing away plays the set-up in reverse: the crate swells as the prop
+        // folds, and unpacking shrinks it back out of sight as the prop rises.
+        prop.group.visible = packed < 1
+        prop.packingCrate.visible = packed > .35 && packed < 1
+        if (prop.packingCrate.visible) prop.packingCrate.scale.setScalar(THREE.MathUtils.smoothstep(packed,.35,.8))
+        setLightsOff(prop, packed > .5)
+        const fold = THREE.MathUtils.smoothstep(packed, 0, 1)
+        prop.group.scale.set(prop.scale.x * (1 - fold * .7), prop.scale.y * Math.max(.015, 1 - fold), prop.scale.z * (1 - fold * .7))
+        prop.group.rotation.z = prop.rotation.z + Math.sin(packed * Math.PI * 6) * .025 * (1 - fold)
       }
-      for (const prop of carnivalProps) {
-        if (prop.relocated) prop.relocated.scale.lerp(new THREE.Vector3(1,1,1), 1 - Math.exp(-delta * 2.4))
-      }
+      // The whole carnival is in town while any of it is set up, and is gone on weekdays.
+      const inTown = schedule!.amount > 0
+      backdrop.distantCarnival.visible = inTown
+      dressing.midway.visible = inTown
       backdrop.update(delta, state.bounds)
       dressing.update(delta, state.bounds)
       updateGroundCutouts(state.bounds)

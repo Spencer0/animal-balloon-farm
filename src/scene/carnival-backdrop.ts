@@ -131,8 +131,13 @@ export function createCarnivalBackdrop() {
   const horizon = new THREE.Group()
   horizon.name = 'Layer 3 · 360 degree hills and carnival horizon'
   root.add(far, horizon)
+  // Distant tents, wheels and balloons are the carnival itself, so they come and go
+  // with the Sunday set-up. Hills and the tree grove stay as permanent scenery.
+  const distantCarnival = new THREE.Group()
+  distantCarnival.name = 'Distant carnival · tents, wheels and balloons · sundays only'
+  far.add(distantCarnival)
   const staticFar = new THREE.Group()
-  far.add(staticFar)
+  distantCarnival.add(staticFar)
   for (let i = 0; i < 72; i += 1) {
     const angle = i / 72 * Math.PI * 2 + Math.sin(i * 7) * .025
     const radius = 52 + (i % 4) * 9 + Math.sin(i * 3.1) * 3
@@ -143,7 +148,7 @@ export function createCarnivalBackdrop() {
   const rides: THREE.Object3D[] = []
   for (let i = 0; i < 5; i += 1) {
     const angle = i / 5 * Math.PI * 2 - 1.1
-    const ride = createDistantAttraction(far, 'ride', Math.cos(angle) * 64, Math.sin(angle) * 64, i)
+    const ride = createDistantAttraction(distantCarnival, 'ride', Math.cos(angle) * 64, Math.sin(angle) * 64, i)
     ride.scale.setScalar(1.2 + i % 2 * .35)
     const rotor = ride.getObjectByName('Distant wheel rotor')
     if (rotor) rides.push(rotor)
@@ -164,7 +169,7 @@ export function createCarnivalBackdrop() {
   hills.computeBoundingSphere()
   horizon.add(hills)
   const silhouettes = new THREE.Group()
-  horizon.add(silhouettes)
+  distantCarnival.add(silhouettes)
   for (let i = 0; i < 24; i += 1) {
     const angle = i / 24 * Math.PI * 2 + .08
     const tent = createDistantAttraction(silhouettes, 'tent', Math.cos(angle) * 117, Math.sin(angle) * 117, i + 3)
@@ -196,11 +201,11 @@ export function createCarnivalBackdrop() {
     mesh(balloon, new THREE.SphereGeometry(2.4, 10, 8), distantMaterials[i], 0, 0, 0).scale.set(1, 1.35, 1)
     mesh(balloon, new THREE.BoxGeometry(1.2, .7, 1), wood, 0, -4.3, 0)
     for (const x of [-.45, .45]) mesh(balloon, new THREE.CylinderGeometry(.035, .035, 1.6, 4), wood, x, -3.4, 0)
-    horizon.add(balloon); balloons.push(balloon)
+    distantCarnival.add(balloon); balloons.push(balloon)
   }
   let elapsed = 0
   return {
-    root, far, horizon,
+    root, far, horizon, distantCarnival,
     update(delta: number, _bounds: GardenBounds): void {
       elapsed += Math.max(0, delta)
       rides.forEach((rotor, i) => { rotor.rotation.z += delta * (.035 + i * .004) })
