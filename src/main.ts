@@ -28,6 +28,9 @@ import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
 import { createCameraTour, type CameraTour, type CameraTourSubject } from './game/camera-tour'
 import { cameraPanStep } from './game/camera-rig'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
+import { advanceClock, calendarOf, createDayNightClock, formatCalendarDate, phaseOf, setTimeOfDay, skipToNext } from './game/day-night'
+import { createDayNightRig } from './scene/day-night-rig'
+import { createClockCalendarHud } from './ui/clock-calendar-hud'
 import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
@@ -66,7 +69,8 @@ renderer.info.autoReset = false // reset manually each frame so stats survive th
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#c2d8cf')
 scene.fog = new THREE.Fog('#c2d8cf', 185, 345)
-scene.add(createSkyDome())
+const skyDome = createSkyDome()
+scene.add(skyDome)
 
 /**
  * Substituted at build time by scripts/build.mjs and scripts/dev.mjs. It has to
@@ -140,6 +144,10 @@ scene.add(fill)
 const rim = new THREE.DirectionalLight('#ffbf9a', 1.15)
 rim.position.set(1, 24, -32)
 scene.add(rim)
+
+const dayNightClock = createDayNightClock()
+const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, skyDome)
+const clockCalendarHud = createClockCalendarHud(window.innerWidth, window.innerHeight)
 
 const fairground = createFairground()
 scene.add(fairground.root)
@@ -1164,7 +1172,7 @@ function balloonInboxAnchor(): { x: number; y: number } {
   }
 }
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, clockCalendarHud]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -1361,6 +1369,7 @@ function syncFarmChrome(): void {
   shed.setInteractEnabled(toolsHud.selectedTool === 'hand')
   journal.setLauncherVisible(false)
   balloon.setVisible(farmOnly)
+  clockCalendarHud.setVisible(farmOnly)
   balloon.setInteractEnabled(true)
   if (!farmOnly && notificationDom.isOpen) notificationDom.setOpen(false)
   if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
@@ -2167,6 +2176,10 @@ interface GardenDebugHarness {
   waterSummary(): unknown
   /** Select a garden tool for repeatable input tests. */
   selectTool(tool: GardenToolId): void
+  clock(): { readonly timeOfDay: number; readonly phase: string; readonly date: string; readonly elapsedDays: number }
+  setTimeOfDay(time: number): void
+  skipToMorning(): void
+  skipToNight(): void
   /** Project a world point into the game canvas for real pointer-event tests. */
   projectGardenPoint(x: number, z: number): { readonly x: number; readonly y: number } | null
 
@@ -2580,6 +2593,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     waterSummary: () => gardenWater?.summary() ?? null,
     selectTool: (tool) => selectGardenTool(tool),
+    clock: () => ({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: formatCalendarDate(calendarOf(dayNightClock.elapsedDays)), elapsedDays: dayNightClock.elapsedDays }),
+    setTimeOfDay: (time) => { setTimeOfDay(dayNightClock, time) },
+    skipToMorning: () => { skipToNext(dayNightClock, 0.32) },
+    skipToNight: () => { skipToNext(dayNightClock, 0) },
     projectGardenPoint: (x, z) => {
       if (!gardenTerrain) return null
       const rect = gameCanvas.getBoundingClientRect()
@@ -3027,6 +3044,9 @@ function frame(now: number): void {
   previousTime = now
   let stageStartedAt = workStartedAt
   removePreviousCameraShake()
+  advanceClock(dayNightClock, delta)
+  dayNightRig.update(dayNightClock.timeOfDay)
+  clockCalendarHud.setState({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: calendarOf(dayNightClock.elapsedDays) })
   fairground.update(delta)
   const fairgroundMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
