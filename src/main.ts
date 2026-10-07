@@ -13,7 +13,7 @@ import { buildAccomplishmentCatalog, createAccomplishmentTracker, type Accomplis
 import { startNextEarnedExpansion } from './game/progression-rewards'
 import { type FarmSnapshot } from './game/animal-progress'
 import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
-import { conditionMetricUnit, stageDefinition, stageTitle } from './game/animal-conditions'
+import { conditionMetricUnit, stageDefinition } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
@@ -35,6 +35,8 @@ import { createToolsHud } from './ui/tools-hud'
 import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
+import { createAnimalCard } from './ui/animal-card'
+import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -903,22 +905,43 @@ const viewer = createViewerPanel({
   },
 }, window.innerWidth, window.innerHeight, VIEWER_CAST)
 
+/**
+ * Opens the animal info card for a live animal. Shared by the farm click
+ * and the garden-debug harness so the card stays verifiable headlessly.
+ * The card pins to the right of the balloon (flipping left at the edge).
+ */
+function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }): void {
+  focusedAnimalId = animal.instanceId
+  refreshAnimalCrowd(performance.now() / 1000, true)
+  gardenPlants?.clearSelection()
+  const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
+  // A preview renders states the live ladder cannot hold on demand (a
+  // resident with no meadow behind it). Selling still validates the live
+  // animal, so this never mints coins; it only draws.
+  const stage = preview?.stage ?? animal.stage
+  const sellable = preview?.sellable ?? animal.canSell
+  const anchorWorld = animal.root.getWorldPosition(new THREE.Vector3())
+  anchorWorld.y += 2.6
+  const anchorNdc = anchorWorld.project(camera)
+  const anchor = {
+    x: anchorNdc.x * ui.viewport.width / 2,
+    y: anchorNdc.y * ui.viewport.height / 2,
+  }
+  animalCard.open({
+    instanceId: animal.instanceId,
+    speciesId: animal.id,
+    name: animalNames.get(animal.instanceId) ?? species?.name ?? animal.id,
+    speciesLabel: `Balloon ${species?.name ?? animal.id}`,
+    stage,
+    price: animalSaleValue(animal.id, stage),
+    sellable,
+  }, anchor)
+  syncFarmChrome()
+}
+
 const salePanel = createSalePanel((target) => {
   if (target.kind === 'animal') {
-    const animal = animalById.get(target.id)
-    if (!animal || !animal.canSell || !animal.sell()) return null
-    progress.remove(animal.instanceId)
-    animalById.delete(animal.instanceId)
-    const animalIndex = animals.indexOf(animal)
-    if (animalIndex >= 0) animals.splice(animalIndex, 1)
-    if (focusedAnimalId === animal.instanceId) focusedAnimalId = null
-    animal.dispose()
-    refreshAnimalCrowd(performance.now() / 1000, true)
-    farmHomes.delete(animal.instanceId)
-    viewerStands.delete(animal.instanceId)
-    const balance = wallet.credit(target.price)
-    salePanel.setWallet(balance)
-    return balance
+    return completeAnimalSale(target.id)?.balance ?? null
   }
   const plantId = Number(target.id)
   const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantId)
@@ -942,6 +965,63 @@ const salePanel = createSalePanel((target) => {
 })
 salePanel.setWallet(wallet.balance)
 salePanel.setWalletVisible(false)
+
+const sellBursts: SellBurst[] = []
+
+/**
+ * The shared goodbye behind the sale card and the animal info card: the
+ * animal leaves the world, the wallet grows, and a quick gold burst pops
+ * where it stood. Sales never touch the accomplishment banner -- that is for
+ * milestones, not routine farm business.
+ */
+function completeAnimalSale(instanceId: string): { balance: number; price: number; name: string } | null {
+  const animal = animalById.get(instanceId)
+  if (!animal || !animal.canSell || !animal.sell()) return null
+  const name = animalNames.get(instanceId) ?? animal.id
+  const price = animalSaleValue(animal.id, animal.stage)
+  const farewellAt = animal.root.getWorldPosition(new THREE.Vector3())
+  progress.remove(animal.instanceId)
+  animalById.delete(animal.instanceId)
+  const animalIndex = animals.indexOf(animal)
+  if (animalIndex >= 0) animals.splice(animalIndex, 1)
+  if (focusedAnimalId === animal.instanceId) focusedAnimalId = null
+  animal.dispose()
+  refreshAnimalCrowd(performance.now() / 1000, true)
+  farmHomes.delete(animal.instanceId)
+  viewerStands.delete(animal.instanceId)
+  const balance = wallet.credit(price)
+  salePanel.setWallet(balance)
+  const burst = createSellBurst(farewellAt, price)
+  scene.add(burst.root)
+  sellBursts.push(burst)
+  return { balance, price, name }
+}
+
+const animalCard = createAnimalCard({
+  onSell: (target) => {
+    const result = completeAnimalSale(target.instanceId)
+    if (!result) return null
+    animalCard.close()
+    syncFarmChrome()
+    refreshCursor()
+    return { balance: result.balance, price: result.price }
+  },
+  onJournal: (speciesId) => {
+    animalCard.close()
+    journal.openToSpecies(speciesId)
+    journalDom.selectSpecies(speciesId)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  onRename: (instanceId, name) => {
+    animalNames.set(instanceId, name)
+  },
+  // The card is a pinned note, not a modal: opening it never hides the tool
+  // bar, never cancels placement, and never pauses the farm underneath.
+  onToggle: () => {
+    refreshCursor()
+  },
+}, window.innerWidth, window.innerHeight)
 
 const shed = createShedPanel(window.innerWidth, window.innerHeight, (isShedOpen) => {
   shedDom.setOpen(isShedOpen)
@@ -1081,7 +1161,7 @@ function balloonInboxAnchor(): { x: number; y: number } {
   }
 }
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -1187,6 +1267,7 @@ function setMode(next: GameMode): void {
   endCameraTour(false)
   if (next !== 'farm') {
     salePanel.close()
+    animalCard.close()
     shed.close()
     shed.setPlacementActive(false)
     shop.setOpen(false)
@@ -1538,6 +1619,7 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
     (toolsHud.isVisible && toolsHud.hitTest?.(point))
     || shed.contains(point)
     || salePanel.hitTest?.(point)
+    || animalCard.hitTest?.(point)
   ))
 }
 
@@ -1695,6 +1777,7 @@ function orbitPointerDown(event: PointerEvent): void {
       }
       if (gardenProps?.pickShop(event.clientX, event.clientY)) {
         salePanel.close()
+        animalCard.close()
         gardenProps?.cancelPlacement()
         gardenPlants?.cancelPlacement()
         gardenTools?.setPlantingMode(false)
@@ -1713,21 +1796,7 @@ function orbitPointerDown(event: PointerEvent): void {
     }
     const animal = pickAnimal(event.clientX, event.clientY)
     if (animal) {
-      focusedAnimalId = animal.instanceId
-      refreshAnimalCrowd(performance.now() / 1000, true)
-      gardenPlants?.clearSelection()
-      const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
-      salePanel.open({
-        id: animal.instanceId,
-        kind: 'animal',
-        name: animalNames.get(animal.instanceId) ?? species?.name ?? animal.id,
-        detail: animal.canSell
-          ? `${stageTitle(animal.id, animal.stage)} · ${species?.subtitle ?? 'A farm friend'}`
-          : 'Needs to settle at the farm before selling',
-        price: animal.canSell ? animalSaleValue(animal.id, animal.stage) : 0,
-        sellable: animal.canSell,
-      })
-      syncFarmChrome()
+      openAnimalCardFor(animal)
       return
     }
     const plant = gardenPlants?.selectAt(event.clientX, event.clientY)
@@ -1744,7 +1813,9 @@ function orbitPointerDown(event: PointerEvent): void {
       return
     }
   }
-  if (salePanel.isOpen) salePanel.close()
+  if (salePanel.isOpen) {
+    salePanel.close()
+  }
   if (event.button === 0 && selectedTool === 'hand' && !journal.isOpen && !shed.isOpen && !shop.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
     event.preventDefault()
     if (!gardenPlants.selectedSpecies) {
@@ -1939,8 +2010,9 @@ function handleKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  if (event.key === 'Escape' && salePanel.isOpen) {
+  if (event.key === 'Escape' && (salePanel.isOpen || animalCard.isOpen)) {
     salePanel.close()
+    animalCard.close()
     syncFarmChrome()
     event.preventDefault()
     return
@@ -2052,11 +2124,13 @@ window.addEventListener('mouseleave', handleWindowBlur)
 gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
 shed.resize(window.innerWidth, window.innerHeight)
 salePanel.resize(window.innerWidth, window.innerHeight)
+animalCard.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
   shed.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
+  animalCard.resize(window.innerWidth, window.innerHeight)
   balloon.resize(window.innerWidth, window.innerHeight)
 })
 
@@ -2076,6 +2150,13 @@ interface GardenDebugHarness {
   openJournal(): void
   closeMenu(): void
   openViewer(): void
+  /**
+   * Open the animal info card for an instance or species id. A preview
+   * forces the rendered stage/sellable so states the live ladder cannot
+   * hold on demand can still be checked headlessly; selling still
+   * validates the live animal.
+   */
+  animalCard(id: string, preview?: { stage?: number; sellable?: boolean }): unknown
   /** Direct water/terrain controls for repeatable visual checks, compiled out in production. */
   digAt(x: number, z: number, radius: number, amount: number): number
   pourAt(x: number, z: number, radius: number, amount: number): unknown
@@ -2574,6 +2655,11 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       animals.length = 0
       for (const eggId of [...eggVisuals.keys()]) removeEggVisual(eggId)
       animalById.clear()
+      for (const burst of sellBursts) {
+        scene.remove(burst.root)
+        burst.dispose()
+      }
+      sellBursts.length = 0
       crowdFixtureEntries = []
       focusedAnimalId = null
       animalCrowd.update([], new Set(), performance.now() / 1000)
@@ -2823,6 +2909,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       return shed.describe?.() ?? null
     },
     balloon: () => balloon.describe?.() ?? null,
+    animalCard: (id, preview?: { stage?: number; sellable?: boolean }) => {
+      const animal = animalById.get(id) ?? animals.find((entry) => entry.id === id)
+      if (!animal) return null
+      openAnimalCardFor(animal, preview)
+      return animalCard.describe?.() ?? null
+    },
     player: () => {
       playerDom.refresh(playerDomStats())
       playerDom.setOpen(true)
@@ -2941,6 +3033,15 @@ function frame(now: number): void {
   updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
+  // Farewell bursts are fire-and-forget: tick them with the herd and prune
+  // the finished ones so a selling spree cannot leak scene nodes.
+  for (let burstIndex = sellBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {
+    const burst = sellBursts[burstIndex]
+    if (burst.update(delta)) continue
+    scene.remove(burst.root)
+    burst.dispose()
+    sellBursts.splice(burstIndex, 1)
+  }
   // The condition ladder runs after the animals have moved, so a settle
   // triggered this frame is applied against the farm as it is right now.
   updateAnimalProgress(delta)

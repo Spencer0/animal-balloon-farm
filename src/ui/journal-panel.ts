@@ -177,6 +177,8 @@ export interface JournalPanel extends UIPanel {
   toggle(): void
   close(): void
   open(): void
+  /** Open straight to a species page; falls back to the animal list. */
+  openToSpecies(speciesId: string): void
   /** True while the journal owns the pointer, so the farm ignores input. */
   readonly blocksGarden: boolean
 }
@@ -1014,6 +1016,24 @@ export function createJournalPanel(
     onToggle?.(false)
   }
 
+  /**
+   * Opens the journal straight to a species page for the animal info card.
+   * Unknown ids still open the journal, on the animal list, rather than
+   * stranding the player on a closed card with nowhere to go.
+   */
+  function openToSpecies(speciesId: string): void {
+    const entry = ANIMALS.find((item) => item.id === speciesId) ?? null
+    isOpen = true
+    category = 'animals'
+    selectedEntry = entry
+    measuredEntryBottom = 0
+    heightCorrectionUsed = false
+    scrollOffset = 0
+    layout()
+    renderPage()
+    onToggle?.(true)
+  }
+
   function setCategory(next: JournalCategory | null): void {
     category = next
     selectedEntry = null
@@ -1080,6 +1100,7 @@ export function createJournalPanel(
     },
     open: openJournal,
     close: closeJournal,
+    openToSpecies,
     toggle(): void {
       if (isOpen) closeJournal()
       else openJournal()

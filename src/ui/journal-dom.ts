@@ -24,6 +24,8 @@ export type JournalDomCategory = "animals" | "plants" | "tools" | "photos";
 export interface JournalDomPanel {
   setConditionsSource(source: JournalConditionSource | null): void;
   setOpen(open: boolean): void;
+  /** Jump the reader to a species page; unknown ids keep the current page. */
+  selectSpecies(speciesId: string): void;
   refresh(): void;
   dispose(): void;
 }
@@ -363,6 +365,13 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
   const panel: JournalDomPanel = {
     setConditionsSource(source: JournalConditionSource | null): void {
       conditionsSource = source;
+      lastSignature = "";
+      if (open) render();
+    },
+    selectSpecies(speciesId: string): void {
+      if (!ANIMAL_CATALOG.some((entry) => entry.id === speciesId)) return;
+      category = "animals";
+      selectedId = speciesId;
       lastSignature = "";
       if (open) render();
     },
