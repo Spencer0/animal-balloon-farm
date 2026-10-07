@@ -4,6 +4,7 @@ import { containsGardenPoint, GARDEN_LAWN_Y } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
+import { createShopBuild, type ShopBuild, type ShopBuildReport } from './shop-build'
 import {
   createPropInventory,
   createPropOccupancy,
@@ -90,6 +91,8 @@ export interface GardenProps {
   readonly inventory: PropInventory
   readonly shopBuilding: THREE.Object3D | null
   readonly shopBuildingReady: boolean
+  /** Null until the model loads; then whether the build has started and whether it has finished. */
+  shopBuildState(): ShopBuildReport | null
   /** True when the click landed on the shop building. */
   pickShop(clientX: number, clientY: number): boolean
   readonly placingId: PropId | null
@@ -107,7 +110,8 @@ export interface GardenProps {
   placeFence(fromX: number, fromZ: number, toX: number, toZ: number): PropPlacementOutcome
   /** Hand tool: return a placed prop to the inventory. */
   pickUpAt(clientX: number, clientY: number): PropId | null
-  update(deltaSeconds: number): void
+  /** `expansionLevel` drives the shop's build, which starts once expansion #3 is reached. */
+  update(deltaSeconds: number, expansionLevel?: number): void
   report(): PropReport
   dispose(): void
 }
@@ -300,6 +304,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   // ------------------------------------------------------------------ shop ----
 
   let shopBuilding: THREE.Object3D | null = null
+  let shopBuild: ShopBuild | null = null
   const shopMeshes: THREE.Mesh[] = []
   let shopReady = false
   /** Farm-safe landmark: unlike traveling attractions, the shop takes root. */
@@ -334,6 +339,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       })
       root.add(holder)
       shopBuilding = holder
+      shopBuild = createShopBuild(holder)
       shopReady = true
       options.onChange?.()
     },
@@ -366,7 +372,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   }
 
   function pickShop(clientX: number, clientY: number): boolean {
-    if (!shopBuilding || !pointerRay({ clientX, clientY })) return false
+    // The storefront opens only once the build is finished; a site under construction is not a shop yet.
+    if (!shopBuilding || !shopBuild?.finished || !pointerRay({ clientX, clientY })) return false
     return raycaster.intersectObjects(shopMeshes, false).length > 0
   }
 
@@ -812,6 +819,9 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     inventory,
     get shopBuilding() { return shopBuilding },
     get shopBuildingReady() { return shopReady },
+    shopBuildState() {
+      return shopBuild ? shopBuild.report() : null
+    },
     pickShop,
     get placingId() { return placingId },
     get rotation() { return rotation },
@@ -825,10 +835,11 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     placeProp,
     placeFence,
     pickUpAt,
-    update(_deltaSeconds: number): void {
+    update(deltaSeconds: number, expansionLevel = 0): void {
       if (fencesDirty) rebuildFences()
       syncVisuals()
       updateShopPlacement()
+      shopBuild?.update(deltaSeconds, expansionLevel)
     },
     report,
     dispose(): void {

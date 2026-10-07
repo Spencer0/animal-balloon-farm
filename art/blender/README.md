@@ -76,7 +76,7 @@ Author standing rather than laying a prop flat and tipping the export root. An e
 ## The shop: building, garden props, storefront furniture
 
 - Authoring scripts: [`shop_building.py`](shop_building.py), [`shop_props.py`](shop_props.py), [`shop_interior.py`](shop_interior.py)
-- Building source / portrait / runtime GLB: `../../public/assets/buildings/farm-shop.blend`, `farm-shop-review.png`, `farm-shop.glb` (placed and picked in `src/scene/garden-props.ts`)
+- Building source / portrait / runtime GLB: `../../public/assets/buildings/farm-shop.blend`, `farm-shop-review.png`, `farm-shop.glb` (placed and picked in `src/scene/garden-props.ts`). It is a balloon arcade store that unlocks with garden expansion #3 and is built on its treeline site. Its build pieces are the `SHOP BUILD <piece>` nodes, which `src/scene/shop-build.ts` drives (GLTFLoader loads them as `SHOP_BUILD_<piece>`). The timeline is in `src/game/shop-construction.ts`.
 - Garden props source / contact sheet / GLBs: `../../public/assets/props/shop-props.blend`, `shop-props-review.png`, and `fountain.glb`, `statue.glb`, `fence.glb`, `coop.glb`
 - Storefront furniture source / contact sheet / GLBs: `../../public/assets/ui/shop-interior.blend`, `shop-interior-review.png`, and `ui-counter.glb`, `ui-shelf.glb`, `ui-crate.glb`
 
