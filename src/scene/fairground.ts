@@ -1,7 +1,11 @@
 import * as THREE from 'three'
+import { containsFarmPoint, farmEdgeDistance, farmEdgePoint } from '../game/farm-footprint'
+import { createCarnivalMigration, type CarnivalKind, type CarnivalStatus } from '../game/carnival-migration'
+import { createCarnivalBackdrop, createDistantAttraction } from './carnival-backdrop'
+import { createCarnivalDressing } from './carnival-dressing'
 import { createFarmExpansion, FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS, type FarmExpansion, type GardenBounds } from '../game/farm-expansion'
 
-export const GARDEN_BOUNDS = FARM_EXPANSION_CONFIG.startBounds
+export const GARDEN_BOUNDS: GardenBounds = FARM_EXPANSION_CONFIG.startBounds
 export { FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS }
 const PLOT_CORNER_RADIUS = 0.9
 const PLOT_EDGE_INSET = 0.08
@@ -14,15 +18,7 @@ const PLOT_EDGE_INSET = 0.08
 const GROUND_CUTOUT_OUTSET = 0.45
 
 export function containsGardenPoint(x: number, z: number, bounds: GardenBounds, inset = PLOT_EDGE_INSET): boolean {
-  const halfWidth = bounds.halfWidth - inset
-  const halfDepth = bounds.halfDepth - inset
-  const absX = Math.abs(x)
-  const absZ = Math.abs(z)
-  if (absX > halfWidth || absZ > halfDepth) return false
-  const cornerX = halfWidth - PLOT_CORNER_RADIUS
-  const cornerZ = halfDepth - PLOT_CORNER_RADIUS
-  if (absX <= cornerX || absZ <= cornerZ) return true
-  return Math.hypot(absX - cornerX, absZ - cornerZ) <= PLOT_CORNER_RADIUS
+  return containsFarmPoint(x, z, bounds, inset)
 }
 
 export const GARDEN_LAWN_Y = 0.03
@@ -32,36 +28,23 @@ export interface Fairground {
   readonly gardenSurface?: THREE.Mesh
   readonly gardenSoil?: THREE.Mesh
   readonly farmExpansion?: FarmExpansion
+  carnivalReport?(): readonly CarnivalStatus[]
+  /** Commit a full reveal after debug fast-forwarding without intervening renders. */
+  refreshLandReveal?(): void
   /** Legacy full replacement for consumers without a reusable surface template. */
   updateSurfaceGeometry?(geometry: THREE.BufferGeometry): void
   update(deltaSeconds: number): void
 }
 
-interface SlidingProp {
+interface CarnivalSceneProp {
+  readonly id: string
+  readonly kind: CarnivalKind
   readonly group: THREE.Group
-  readonly originX: number
-  readonly originZ: number
   readonly radius: number
-}
-
-function trackSlidingProp(group: THREE.Group, radius: number): SlidingProp {
-  return { group, originX: group.position.x, originZ: group.position.z, radius }
-}
-
-function updateSlidingProp(prop: SlidingProp, bounds: GardenBounds, deltaSeconds: number): void {
-  const requiredX = Math.max(0, bounds.halfWidth + prop.radius + 1.5 - Math.abs(prop.originX))
-  const requiredZ = Math.max(0, bounds.halfDepth + prop.radius + 1.5 - Math.abs(prop.originZ))
-  // A prop only moves while its footprint truly overlaps the plot (inside on
-  // both axes); hugging the plot on one axis is a stable station. When
-  // overlapped, the cheaper axis wins -- the same rule as clearOfFarmBounds
-  // in animal-travel, so hand-placed ring stations survive a reload.
-  const moveAlongX = requiredX > 0 && requiredZ > 0 && requiredX <= requiredZ
-  const moveAlongZ = requiredX > 0 && requiredZ > 0 && requiredZ < requiredX
-  const targetX = prop.originX + Math.sign(prop.originX || 1) * (moveAlongX ? requiredX : 0)
-  const targetZ = prop.originZ + Math.sign(prop.originZ || 1) * (moveAlongZ ? requiredZ : 0)
-  const smoothing = 1 - Math.exp(-2.6 * Math.max(0, deltaSeconds))
-  prop.group.position.x = THREE.MathUtils.lerp(prop.group.position.x, targetX, smoothing)
-  prop.group.position.z = THREE.MathUtils.lerp(prop.group.position.z, targetZ, smoothing)
+  readonly scale: THREE.Vector3
+  readonly rotation: THREE.Euler
+  readonly packingCrate: THREE.Group
+  relocated?: THREE.Group
 }
 
 const COLORS = {
@@ -79,6 +62,26 @@ function seededRandom(seed: number): () => number {
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296
   }
+}
+
+/** Reorder static triangles by material: alternating stripes need two calls, not twenty. */
+export function consolidateMaterialGroups(geometry: THREE.BufferGeometry): void {
+  const index = geometry.getIndex()
+  if (!index || geometry.groups.length < 2) return
+  const buckets = new Map<number, number[]>()
+  for (const group of geometry.groups) {
+    const material = group.materialIndex ?? 0
+    const triangles = buckets.get(material) ?? []
+    for (let offset = group.start; offset < group.start + group.count; offset += 1) triangles.push(index.getX(offset))
+    buckets.set(material, triangles)
+  }
+  const reordered: number[] = []
+  geometry.clearGroups()
+  for (const [material, triangles] of buckets) {
+    geometry.addGroup(reordered.length, triangles.length, material)
+    reordered.push(...triangles)
+  }
+  geometry.setIndex(reordered)
 }
 
 function standard(color: THREE.ColorRepresentation, roughness = 0.85): THREE.MeshStandardMaterial {
@@ -207,49 +210,26 @@ function makeGrassTexture(seed: number, base: string, mark: string): THREE.Canva
   return texture
 }
 
-function roundedRectangle(width: number, depth: number, radius: number): THREE.Shape {
-  const halfWidth = width / 2
-  const halfDepth = depth / 2
-  const r = Math.min(radius, halfWidth, halfDepth)
-  const shape = new THREE.Shape()
-  shape.moveTo(-halfWidth + r, -halfDepth)
-  shape.lineTo(halfWidth - r, -halfDepth)
-  shape.quadraticCurveTo(halfWidth, -halfDepth, halfWidth, -halfDepth + r)
-  shape.lineTo(halfWidth, halfDepth - r)
-  shape.quadraticCurveTo(halfWidth, halfDepth, halfWidth - r, halfDepth)
-  shape.lineTo(-halfWidth + r, halfDepth)
-  shape.quadraticCurveTo(-halfWidth, halfDepth, -halfWidth, halfDepth - r)
-  shape.lineTo(-halfWidth, -halfDepth + r)
-  shape.quadraticCurveTo(-halfWidth, -halfDepth, -halfWidth + r, -halfDepth)
-  return shape
-}
-
-function roundedRectangleCurve(width: number, depth: number, radius: number, y: number): THREE.CatmullRomCurve3 {
-  const points = roundedRectangle(width, depth, radius).getPoints(10)
-    .map((point) => new THREE.Vector3(point.x, y, -point.y))
-  return new THREE.CatmullRomCurve3(points, true, 'centripetal')
-}
-
 /** The buildable garden footprint as a path, outset outward by `outset`. */
 function gardenHolePath(outset: number, bounds: GardenBounds = GARDEN_BOUNDS): THREE.Path {
   const halfWidth = bounds.halfWidth + outset
   const halfDepth = bounds.halfDepth + outset
   const hole = new THREE.Path()
+  if (bounds.footprint === 'organic') {
+    for (let index = 0; index <= 96; index += 1) {
+      const point = farmEdgePoint(-index / 96 * Math.PI * 2, bounds, outset)
+      if (index === 0) hole.moveTo(point.x, -point.z)
+      else hole.lineTo(point.x, -point.z)
+    }
+    hole.closePath()
+    return hole
+  }
   hole.moveTo(-halfWidth, -halfDepth)
   hole.lineTo(-halfWidth, halfDepth)
   hole.lineTo(halfWidth, halfDepth)
   hole.lineTo(halfWidth, -halfDepth)
   hole.closePath()
   return hole
-}
-
-function roundedRectangleDistance(x: number, z: number, bounds: GardenBounds): number {
-  const radius = Math.min(PLOT_CORNER_RADIUS, bounds.halfWidth, bounds.halfDepth)
-  const cornerX = bounds.halfWidth - radius
-  const cornerZ = bounds.halfDepth - radius
-  const qx = Math.abs(x) - cornerX
-  const qz = Math.abs(z) - cornerZ
-  return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - radius
 }
 
 const LAND_REVEAL_FEATHER = 0.38
@@ -289,12 +269,31 @@ export function updateLandRevealMask(
 
   colors.clearUpdateRanges()
   const writeVertex = (index: number): void => {
-    const distance = roundedRectangleDistance(positions.getX(index), -positions.getY(index), bounds)
+    const distance = farmEdgeDistance(positions.getX(index), -positions.getY(index), bounds)
     const alpha = 1 - THREE.MathUtils.smoothstep(distance, fadeStart, fadeEnd)
     colors.setXYZW(index, 1, 1, 1, alpha)
   }
 
-  if (!previousBounds || !hasPlaneGrid) {
+  if (bounds.footprint === 'organic' && previousBounds && hasPlaneGrid && !fullUpdate) {
+    // Patch only vertices crossing the swept organic frontier. Unlike rectangular
+    // row strips this also catches changes at diagonal lobes, without uploading
+    // the entire maximum-acreage buffer.
+    let first = -1
+    const flush = (end: number): void => {
+      if (first >= 0) colors.addUpdateRange(first * 4, (end - first) * 4)
+      first = -1
+    }
+    for (let index = 0; index < positions.count; index += 1) {
+      const x = positions.getX(index)
+      const z = -positions.getY(index)
+      const current = farmEdgeDistance(x, z, bounds)
+      if (current <= fadeEnd && farmEdgeDistance(x, z, previousBounds) >= fadeStart) {
+        if (first < 0) first = index
+        writeVertex(index)
+      } else flush(index)
+    }
+    flush(positions.count)
+  } else if (!previousBounds || !hasPlaneGrid || fullUpdate) {
     for (let index = 0; index < positions.count; index += 1) writeVertex(index)
     colors.addUpdateRange(0, colors.count * colors.itemSize)
   } else {
@@ -501,6 +500,7 @@ function addTent(parent: THREE.Group, x: number, z: number, scale: number, varia
   walls.setIndex(wallIndices)
   wallGroups.forEach((index,i) => walls.addGroup(i*6,6,index))
   walls.computeVertexNormals()
+  consolidateMaterialGroups(walls)
   const wallMesh = new THREE.Mesh(walls,[palette[0],palette[1]])
   wallMesh.material.forEach((mat) => { mat.side = THREE.DoubleSide })
   wallMesh.castShadow = wallMesh.receiveShadow = true
@@ -510,6 +510,7 @@ function addTent(parent: THREE.Group, x: number, z: number, scale: number, varia
   roof.setIndex(roofIndices)
   roofGroups.forEach((index,i) => roof.addGroup(i*3,3,index))
   roof.computeVertexNormals()
+  consolidateMaterialGroups(roof)
   const roofMesh = new THREE.Mesh(roof,palette)
   roofMesh.material.forEach((mat) => { mat.side = THREE.DoubleSide })
   roofMesh.castShadow = true
@@ -529,7 +530,7 @@ function addTent(parent: THREE.Group, x: number, z: number, scale: number, varia
   // A ring of little pennants under the eaves. The tents are the biggest colour
   // masses out here, and one instanced mesh per tent keeps them fizzing without
   // adding a draw call per flag. Kept inside the tent group so the flags ride
-  // along when a growing farm slides the tent outward.
+  // along when a growing farm packs the tent away.
   const pennantGeometry = new THREE.BufferGeometry()
   pennantGeometry.setAttribute('position', new THREE.Float32BufferAttribute([-0.26, 0, 0, 0.26, 0, 0, 0, -0.66, 0.07], 3))
   pennantGeometry.setIndex([0, 1, 2])
@@ -557,7 +558,7 @@ function addTent(parent: THREE.Group, x: number, z: number, scale: number, varia
  * A garland of cloth flags on a drooping string.
  *
  * The string and its flags live in one parent, so a caller that groups them
- * with their own posts gets a single prop the expansion can slide outward
+ * with their own posts gets a single prop the expansion can pack up
  * without tearing any string off its anchor.
  */
 function addBunting(parent: THREE.Group, start: THREE.Vector3, end: THREE.Vector3, palette: THREE.Material[]): void {
@@ -656,6 +657,7 @@ function createCarousel(parent: THREE.Group): { group: THREE.Group; rotor: THREE
   canopy.setIndex(canopyIndices)
   for (let i = 0; i < sides; i += 1) canopy.addGroup(i * 3, 3, i % stripeMaterials.length)
   canopy.computeVertexNormals()
+  consolidateMaterialGroups(canopy)
   const roof = new THREE.Mesh(canopy, stripeMaterials)
   roof.position.y = 2.62
   roof.castShadow = true
@@ -791,20 +793,36 @@ function addBalloonBunch(parent: THREE.Group,x:number,z:number,scale:number,seed
   return group
 }
 
-function addHill(parent:THREE.Group,x:number,z:number,sx:number,sy:number,sz:number,hue:string,seed:number):void {
-  const hill=new THREE.Mesh(new THREE.IcosahedronGeometry(1,2),new THREE.MeshStandardMaterial({color:hue,roughness:1,flatShading:true}))
-  hill.position.set(x,sy*.25,z)
-  hill.scale.set(sx,sy,sz)
-  hill.rotation.y=seed*.37
-  parent.add(hill)
-}
-
 export function createFairground(): Fairground {
   const root=new THREE.Group()
   root.name='Animal Balloon Farm carnival grounds and expandable garden'
   const random=seededRandom(20260927)
-  const farmExpansion=createFarmExpansion()
-  const slidingProps:SlidingProp[]=[]
+  const progression=createFarmExpansion()
+  const carnivalProps:CarnivalSceneProp[]=[]
+  let migration: ReturnType<typeof createCarnivalMigration> | null = null
+  const farmExpansion: FarmExpansion = {
+    get level() { return progression.level },
+    get bounds() { return progression.bounds },
+    get progress() { return progression.progress },
+    get isAnimating() { return progression.isAnimating || (migration?.busy ?? false) },
+    get state() { return { ...progression.state, isAnimating: this.isAnimating } },
+    expand() {
+      if (this.isAnimating) return null
+      const started = progression.expand()
+      if (started) migration?.target(started.targetBounds)
+      return started
+    },
+    update(delta) {
+      const available = migration?.update(delta) ?? delta
+      // Packing owns the old frontier. Soil cannot grow through an occupied tent.
+      if (!migration?.busy) progression.update(available)
+    },
+  }
+  const close = new THREE.Group()
+  close.name = 'Layer 1 · authored close carnival · removable'
+  root.add(close)
+  const backdrop = createCarnivalBackdrop()
+  root.add(backdrop.root)
   const apron=new THREE.Group()
   apron.name='Expandable gravel apron'
   root.add(apron)
@@ -822,8 +840,26 @@ export function createFairground(): Fairground {
     const size=bounds.getSize(new THREE.Vector3())
     return Math.max(fallback,Math.hypot(size.x,size.z)*.5)
   }
-  function trackProp(group:THREE.Group,fallbackRadius:number):void{
-    slidingProps.push(trackSlidingProp(group,propRadius(group,fallbackRadius)))
+  function trackProp(group:THREE.Group,fallbackRadius:number,kind?:CarnivalKind):void{
+    close.attach(group)
+    const category = kind ?? (group.name.includes('tent') ? 'tent' : group.name.includes('wheel') || group.name.includes('carousel') ? 'ride' : 'decoration')
+    const id = `close-${carnivalProps.length}-${category}`
+    group.userData.carnivalId = id
+    group.userData.worldLayer = 'close'
+    group.userData.removable = true
+    const packingCrate = new THREE.Group()
+    packingCrate.name = `${id} · folded freight crate`
+    packingCrate.position.copy(group.position)
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(1.1,.48,.8),standard('#b58b58'))
+    crate.position.y=.27
+    packingCrate.add(crate)
+    for (const x of [-.37,.37]) {
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(.08,.5,.82),standard('#ead0a1'))
+      strap.position.set(x,.27,0); packingCrate.add(strap)
+    }
+    packingCrate.visible=false
+    root.add(packingCrate)
+    carnivalProps.push({ id, kind: category, group, radius: propRadius(group,fallbackRadius), scale: group.scale.clone(), rotation: group.rotation.clone(), packingCrate })
   }
 
   const far=makeGrassTexture(37,'#7ba95d','#466f49')
@@ -838,7 +874,7 @@ export function createFairground(): Fairground {
   root.add(meadow)
   const outerTexture=makeGrassTexture(73,'#88bb69','#578e53')
   outerTexture.repeat.set(18,14)
-  const outer=new THREE.Mesh(groundPlaneGeometry(115,82,farmExpansion.state.bounds),new THREE.MeshStandardMaterial({color:'#7bb766',map:outerTexture,roughness:1,side:THREE.DoubleSide}))
+  const outer=new THREE.Mesh(groundPlaneGeometry(520,520,farmExpansion.state.bounds),new THREE.MeshStandardMaterial({color:'#b8c99b',map:outerTexture,roughness:1,side:THREE.DoubleSide}))
   outer.position.y=-.13
   outer.receiveShadow=true
   root.add(outer)
@@ -849,8 +885,8 @@ export function createFairground(): Fairground {
 
   const pathMat=standard('#d4bb83',.92)
   // The ivory boundary is the level-one build limit. The revealed gravel apron is outside it.
-  const apronShape=roundedRectangle(GARDEN_BOUNDS.halfWidth*2+2.35,GARDEN_BOUNDS.halfDepth*2+2.5,1.05)
-  apronShape.holes.push(gardenHolePath(0))
+  const apronShape = new THREE.Shape(gardenHolePath(1.1).getPoints().reverse())
+  apronShape.holes.push(gardenHolePath(0.18))
   const gravel=new THREE.Mesh(new THREE.ShapeGeometry(apronShape,12),pathMat)
   gravel.rotation.x=-Math.PI/2
   gravel.position.y=.018
@@ -874,6 +910,9 @@ export function createFairground(): Fairground {
   soil.rotation.x=-Math.PI/2
   soil.position.y=.012
   soil.name='Starter garden soil'
+  // Both surfaces are transparent; render soil before the alpha-zero lawn can
+  // write depth. Terrain edits otherwise expose the deep brown pit backstop.
+  soil.renderOrder=1
   soil.receiveShadow=true
   root.add(soil)
 
@@ -882,30 +921,32 @@ export function createFairground(): Fairground {
   lawn.rotation.x=-Math.PI/2
   lawn.position.y=GARDEN_LAWN_Y
   lawn.name='Starter garden · growable level-one footprint'
+  lawn.renderOrder=2
   lawn.receiveShadow=true
   root.add(lawn)
 
-  // No parade lane: the rides stand straight on the meadow, so the clipped
-  // parcel is the only paved thing in view. The midway itself is a tight,
-  // hand-placed ring hugging the starter plot -- gate flankers north and
-  // south, ride anchors south-east and north-west, tents filling the sides --
-  // with garlands, lamps and balloons stationed at gates and entrances rather
-  // than scattered. Stations start just outside the plot and slide outward
-  // with expansion, so the circus always reads as enclosing the farm.
+  // Authored close attractions keep their world positions for their entire life.
+  // The organic frontier claims their footprints only after the packing queue.
+  // Permanent far scenery maintains depth even when the close midway retreats.
 
-  const boundaryCurve=roundedRectangleCurve(GARDEN_BOUNDS.halfWidth*2+.20,GARDEN_BOUNDS.halfDepth*2+.20,.92,.14)
+  const boundaryCurve = new THREE.CatmullRomCurve3(Array.from({ length: 96 }, (_, i) => {
+    const point = farmEdgePoint(i / 96 * Math.PI * 2, GARDEN_BOUNDS, 0.1)
+    return new THREE.Vector3(point.x, 0.12, point.z)
+  }), true)
   const boundary=new THREE.Mesh(new THREE.TubeGeometry(boundaryCurve,180,.075,8,true),borderMaterial)
   boundary.name='Ivory starter garden expansion limit'
   activeBoundary.add(boundary)
-  const goldFrontier=new THREE.Mesh(new THREE.TubeGeometry(roundedRectangleCurve(GARDEN_BOUNDS.halfWidth*2+.44,GARDEN_BOUNDS.halfDepth*2+.44,1,.075),180,.034,6,true),frontierGlow)
+  const goldFrontier=new THREE.Mesh(new THREE.TubeGeometry(boundaryCurve,180,.034,6,true),frontierGlow)
+  goldFrontier.scale.set(1.012,1,1.012)
   goldFrontier.name='Gilded edge · growing garden frontier'
   activeBoundary.add(goldFrontier)
 
   const stakeColors=['#ed6970','#f5d16a','#61aaa3'].map((color)=>standard(color,.54))
   const stakePositions:[number,number][]=[[-13.8,-9.1],[0,-9.55],[13.8,-9.1],[13.9,0],[13.8,9.1],[0,9.55],[-13.8,9.1],[-13.9,0]]
-  stakePositions.forEach(([x,z],i)=>{
+  stakePositions.forEach((_,i)=>{
     const stake=new THREE.Group()
-    stake.position.set(x,0,z)
+    const point = farmEdgePoint(i / stakePositions.length * Math.PI * 2, GARDEN_BOUNDS, 0.24)
+    stake.position.set(point.x,0,point.z)
     const pole=new THREE.Mesh(new THREE.CylinderGeometry(.07,.1,.85,9),standard('#f8eed5',.63))
     pole.position.y=.35
     stake.add(pole)
@@ -917,30 +958,27 @@ export function createFairground(): Fairground {
     boundaryStakes.add(stake)
   })
 
-  const hills:[number,number,number,number,number,string][]=[[-67,-69,31,18,25,'#83a768'],[-25,-82,37,23,29,'#99b66c'],[25,-88,42,20,34,'#83a666'],[72,-68,34,18,27,'#a6bb70'],[-82,-4,28,17,23,'#8eae65'],[88,8,30,18,26,'#92ad63'],[-65,66,33,21,29,'#92ae67'],[0,84,45,22,30,'#9bb66d'],[69,68,35,20,27,'#84a566']]
-  hills.forEach(([x,z,sx,sy,sz,hue],i)=>addHill(root,x,z,sx,sy,sz,hue,i))
+  // The quieter hills live in the horizon layer; nothing blocks the midway.
   const tufts=new THREE.MeshStandardMaterial({color:'#a1c66b',roughness:.9,side:THREE.DoubleSide})
   addTufts(root,random,2700,false,tufts)
   addFlowerPatches(root,random)
 
-  // The midway is a hand-placed ring hugging the starter plot: gate flankers
-  // north and south, ride anchors south-east (carousel) and north-west (Ferris
-  // wheel), tents filling the east and west sides, and three tall silhouettes
-  // further out for depth. Everything is tracked, so a growing farm slides the
-  // whole ring outward instead of swallowing it.
-  trackProp(addTent(root,-8,-18.5,.95,0),4.2)
-  trackProp(addTent(root,8,-18.5,.8,2),3.8)
-  trackProp(addTent(root,24,-4,.9,4),4.2)
-  trackProp(addTent(root,24,8,.78,1),3.6)
-  trackProp(addTent(root,-24,-4,.9,3),4.2)
-  trackProp(addTent(root,-24,8,.78,2),3.6)
-  trackProp(addTent(root,-12,21,.7,5),3.2)
-  trackProp(addTent(root,15,22,.62,1),3)
+  // Major close silhouettes anchor the authored districts; each is removable.
+  // Smaller food stalls, queues and picnic dressing fill the space between.
+  trackProp(addTent(root,-9,-17,.95,0),4.2)
+  trackProp(addTent(root,7,-17,.8,2),3.8)
+  trackProp(addTent(root,20,-4,.9,4),4.2)
+  trackProp(addTent(root,20,8,.78,1),3.6)
+  trackProp(addTent(root,-20,-4,.9,3),4.2)
+  trackProp(addTent(root,-20,8,.78,2),3.6)
+  trackProp(addTent(root,-12,18,.7,5),3.2)
+  trackProp(addTent(root,14,18,.62,1),3)
   trackProp(addTent(root,37,-21,.76,5),3.6)
   trackProp(addTent(root,-37,3.5,.72,2),3.4)
   trackProp(addTent(root,10,-30,.62,3),3.2)
   for(const [x,z,scale,seed] of [[6.5,-14,.9,67],[-3.5,13.5,.9,71],[28.5,-6.5,1,30],[28.5,10,.9,33],[-28.5,-6.5,1,37],[-28.5,10,.9,42],[29,25.5,1,51],[-22,-15.5,1.05,55],[-2,20,.85,59],[7.5,20,.85,63]] as const)trackProp(addBalloonBunch(root,x,z,scale,seed),1)
   const wheel=createFerrisWheel(root)
+  wheel.group.position.set(-24,-.04,-14)
   trackProp(wheel.group,6.8)
 
   // Lanterns stand in pairs flanking the four gates and the two ride entrances,
@@ -953,13 +991,17 @@ export function createFairground(): Fairground {
   // forecourt gate on the farm axis, midway gates east and west between the
   // side tents, and an entrance arch each for the carousel and the Ferris
   // wheel. Each arch is one prop, so nothing is left hanging in mid-air when
-  // the expansion pushes a single piece of dressing outward.
+  // the expansion packs a complete station rather than leaving dangling flags.
   const buntingPalette=COLORS.tent.map((color)=>standard(color,.65))
   const arches:[number,number,number,number][]=[[0,-16,0,7],[2.5,14.2,0,4],[20,2,1.5708,6],[-20,2,1.5708,6],[28.5,19.5,.7,5.5],[-21,-10.5,.4,5.5]]
   arches.forEach(([x,z,rotationY,span])=>trackProp(addBuntingArch(root,x,z,rotationY,span,buntingPalette),span*.5+1))
 
   const carousel=createCarousel(root)
+  carousel.group.position.set(27,-.06,21)
   trackProp(carousel.group,4.4)
+
+  const dressing = createCarnivalDressing(root)
+  dressing.props.forEach((prop) => trackProp(prop.group, prop.radius, prop.kind))
 
   const skyPuffs=new THREE.Group()
   const cloudMat=new THREE.MeshStandardMaterial({color:'#fff3d9',roughness:.94,transparent:true,opacity:.76})
@@ -969,6 +1011,11 @@ export function createFairground(): Fairground {
     skyPuffs.add(cloud)
   }
   root.add(skyPuffs)
+
+  migration = createCarnivalMigration(carnivalProps.map((prop) => ({
+    id: prop.id, kind: prop.kind, label: prop.group.name, x: prop.group.position.x, z: prop.group.position.z,
+    radius: prop.radius, removable: true, priority: prop.kind === 'ride' ? 2 : prop.kind === 'tent' ? 1 : 0,
+  })))
 
   let lastRevealBounds: GardenBounds | null = null
   function updateLandReveal(bounds: GardenBounds): void {
@@ -991,7 +1038,7 @@ export function createFairground(): Fairground {
     const previousMeadow = meadow.geometry
     const previousOuter = outer.geometry
     meadow.geometry = groundPlaneGeometry(520, 520, bounds)
-    outer.geometry = groundPlaneGeometry(115, 82, bounds)
+    outer.geometry = groundPlaneGeometry(520, 520, bounds)
     previousMeadow.dispose()
     previousOuter.dispose()
   }
@@ -1001,6 +1048,11 @@ export function createFairground(): Fairground {
     gardenSurface:lawn,
     gardenSoil:soil,
     farmExpansion,
+    carnivalReport: () => migration!.statuses(),
+    refreshLandReveal: () => {
+      updateLandRevealMask(soil.geometry, null, farmExpansion.bounds, true, LAND_REVEAL_FADE_START, LAND_REVEAL_FADE_END)
+      lastRevealBounds = { ...farmExpansion.bounds }
+    },
     updateSurfaceGeometry(geometry): void {
       const previousSoilGeometry = soil.geometry
       const previousLawnGeometry = lawn.geometry
@@ -1015,14 +1067,17 @@ export function createFairground(): Fairground {
       lastRevealBounds = { ...farmExpansion.state.bounds }
     },
     update(delta):void{
-      wheel.angle=(wheel.angle+delta*.10)%(Math.PI*2)
+      const running = new Set(migration!.statuses().filter((prop) => prop.phase === 'active' || prop.phase === 'threatened').map((prop) => prop.id))
+      const wheelRunning = running.has(wheel.group.userData.carnivalId)
+      const carouselRunning = running.has(carousel.group.userData.carnivalId)
+      wheel.angle=(wheel.angle+(wheelRunning ? delta*.10 : 0))%(Math.PI*2)
       wheel.rotor.rotation.z=wheel.angle
       wheel.cabins.forEach((c,i)=>{
         const angle=i/wheel.cabins.length*Math.PI*2+wheel.angle
         c.position.set(Math.cos(angle)*wheel.radius,wheel.centerY+Math.sin(angle)*wheel.radius,0)
         c.rotation.z=-wheel.angle
       })
-      carousel.angle=(carousel.angle+delta*.42)%(Math.PI*2)
+      carousel.angle=(carousel.angle+(carouselRunning ? delta*.42 : 0))%(Math.PI*2)
       carousel.rotor.rotation.y=carousel.angle
       carousel.horses.forEach((mount,i)=>{
         mount.position.y=1.42+Math.sin(carousel.angle*2+i*Math.PI/4)*.16
@@ -1038,7 +1093,45 @@ export function createFairground(): Fairground {
       lawn.scale.set(1, 1, 1)
       activeBoundary.scale.set(scaleX,1,scaleZ)
       boundaryStakes.scale.set(scaleX,1,scaleZ)
-      slidingProps.forEach((prop)=>updateSlidingProp(prop,state.bounds,delta))
+      const statuses = migration!.statuses()
+      for (let index = 0; index < carnivalProps.length; index += 1) {
+        const prop = carnivalProps[index]
+        const status = statuses[index]
+        const removed = status.phase === 'removed' || status.phase === 'relocated'
+        prop.group.visible = !removed
+        prop.packingCrate.visible = status.phase === 'packing' && status.progress > .35
+        if (prop.packingCrate.visible) prop.packingCrate.scale.setScalar(THREE.MathUtils.smoothstep(status.progress,.35,.8))
+        if (status.phase === 'shutdown' || status.phase === 'packing') {
+          if (prop.group.userData.lightsOff !== true) {
+            prop.group.traverse((object) => {
+              if (!(object instanceof THREE.Mesh)) return
+              const materials = Array.isArray(object.material) ? object.material : [object.material]
+              if (!materials.some((mat) => mat instanceof THREE.MeshStandardMaterial && mat.emissiveIntensity > 0)) return
+              const darkened = materials.map((mat) => {
+                if (!(mat instanceof THREE.MeshStandardMaterial)) return mat
+                const dark = mat.clone(); dark.emissiveIntensity = 0; return dark
+              })
+              object.material = Array.isArray(object.material) ? darkened : darkened[0]
+            })
+            prop.group.userData.lightsOff = true
+          }
+          const fold = THREE.MathUtils.smoothstep(status.progress, 0, 1)
+          prop.group.scale.set(prop.scale.x * (1 - fold * .7), prop.scale.y * Math.max(.015, 1 - fold), prop.scale.z * (1 - fold * .7))
+          prop.group.rotation.z = prop.rotation.z + Math.sin(status.progress * Math.PI * 6) * .025 * (1 - fold)
+        }
+        if (status.phase === 'relocated' && !prop.relocated) {
+          const angle = Math.atan2(status.z, status.x)
+          const radius = 57 + index % 5 * 3.2
+          prop.relocated = createDistantAttraction(backdrop.far, prop.kind, Math.cos(angle) * radius, Math.sin(angle) * radius, index, prop.group.name)
+          prop.relocated.userData.sourceId = prop.id
+          prop.relocated.scale.setScalar(.01)
+        }
+      }
+      for (const prop of carnivalProps) {
+        if (prop.relocated) prop.relocated.scale.lerp(new THREE.Vector3(1,1,1), 1 - Math.exp(-delta * 2.4))
+      }
+      backdrop.update(delta, state.bounds)
+      dressing.update(delta, state.bounds)
       updateGroundCutouts(state.bounds)
       updateLandReveal(state.bounds)
       borderMaterial.emissiveIntensity=.14+(state.isAnimating?Math.sin(state.progress*Math.PI)*.58:0)

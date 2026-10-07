@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
-import { FARM_EXPANSION_CONFIG } from '../game/farm-expansion'
+import { FARM_EXPANSION_CONFIG, type GardenBounds } from '../game/farm-expansion'
+import { clampToFarm, containsFarmPoint } from '../game/farm-footprint'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
@@ -37,7 +38,7 @@ export interface BalloonAnimalOptions {
   readonly speed: number
   readonly bounds: { readonly x: number; readonly z: number }
   /** Current expandable plot limits; stationary-wanderer games may omit it. */
-  readonly getGardenBounds?: () => { readonly halfWidth: number; readonly halfDepth: number }
+  readonly getGardenBounds?: () => GardenBounds
   /** Ignore animal clicks when an in-game HUD panel is occupying the pointer. */
   readonly isPointerBlocked?: (clientX: number, clientY: number) => boolean
   readonly canvas: HTMLCanvasElement
@@ -506,13 +507,12 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   function insideFarmPlot(): boolean {
     if (travelRoute !== null) return false
     const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-    return Math.abs(wrapper.position.x) <= bounds.halfWidth - RESIDENT_INSIDE_MARGIN
-      && Math.abs(wrapper.position.z) <= bounds.halfDepth - RESIDENT_INSIDE_MARGIN
+    return containsFarmPoint(wrapper.position.x, wrapper.position.z, bounds, RESIDENT_INSIDE_MARGIN)
   }
 
   function beginTravel(direction: 'enter' | 'leave'): void {
     const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-    if (direction === 'enter' && Math.abs(wrapper.position.x) < bounds.halfWidth && Math.abs(wrapper.position.z) < bounds.halfDepth) {
+    if (direction === 'enter' && containsFarmPoint(wrapper.position.x, wrapper.position.z, bounds)) {
       // A carnival wanderer may already have crossed the open ground before
       // its timed visit arrives; never send it back out just to re-enter.
       travelSide = 'farm'
@@ -576,6 +576,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       )
       nextX = cleared.x
       nextZ = cleared.z
+    }
+    if (!isCarnivalSide()) {
+      const clamped = clampToFarm(nextX, nextZ, options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds, 1.2)
+      nextX = clamped.x
+      nextZ = clamped.z
     }
     target.set(nextX, 0, nextZ)
     nextDecision = 2 + random() * 2.4
@@ -922,6 +927,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const limits = leash()
         wrapper.position.x = THREE.MathUtils.clamp(wrapper.position.x, -limits.x, limits.x)
         wrapper.position.z = THREE.MathUtils.clamp(wrapper.position.z, -limits.z, limits.z)
+        if (!isCarnivalSide()) {
+          const clamped = clampToFarm(wrapper.position.x, wrapper.position.z, options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds, 1.2)
+          wrapper.position.x = clamped.x
+          wrapper.position.z = clamped.z
+        }
         if (isCarnivalSide()) {
           // The farm can grow over a carnival animal's footing, and the fence is
           // not a door: step back onto the meadow rather than stand inside the

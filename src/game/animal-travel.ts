@@ -1,3 +1,5 @@
+import { clampToFarm, containsFarmPoint, farmEdgePoint } from './farm-footprint'
+
 /**
  * Shared entry-gate routes for animals travelling between the carnival and farm.
  * Pure numeric helpers keep the travel arc deterministic and easy to regression-test.
@@ -11,6 +13,7 @@ export interface AnimalPosition {
 export interface AnimalTravelBounds {
   readonly halfWidth: number
   readonly halfDepth: number
+  readonly footprint?: 'organic'
 }
 
 export interface AnimalTravelRoute {
@@ -48,6 +51,11 @@ export function clearOfFarmBounds(
   bounds: AnimalTravelBounds,
   clearance = FARM_WALL_CLEARANCE,
 ): AnimalPosition {
+  if (bounds.footprint === 'organic') {
+    if (!containsFarmPoint(position.x, position.z, bounds, -clearance)) return { ...position }
+    const angle = Math.atan2(position.z / bounds.halfDepth, position.x / bounds.halfWidth)
+    return farmEdgePoint(angle, bounds, clearance + .1)
+  }
   const requiredX = Math.max(0, bounds.halfWidth + clearance - Math.abs(position.x))
   const requiredZ = Math.max(0, bounds.halfDepth + clearance - Math.abs(position.z))
   if (requiredX <= 0 || requiredZ <= 0) return { ...position }
@@ -76,6 +84,14 @@ export function createAnimalTravelRoute(
   bounds: AnimalTravelBounds,
   start: AnimalPosition,
 ): AnimalTravelRoute {
+  if (bounds.footprint === 'organic') {
+    const isInside = containsFarmPoint(start.x, start.z, bounds)
+    const angle = Math.atan2(start.z / bounds.halfDepth, start.x / bounds.halfWidth)
+    const outer = farmEdgePoint(angle, bounds, APPROACH_CLEARANCE)
+    const edge = farmEdgePoint(angle, bounds, -GATE_CLEARANCE)
+    const inner = clampToFarm(edge.x, edge.z, bounds, GATE_CLEARANCE)
+    return { waypoints: direction === 'enter' ? isInside ? [inner] : [outer, inner] : isInside ? [inner, outer] : [outer], nextWaypoint: 0 }
+  }
   const isInside = Math.abs(start.x) < bounds.halfWidth && Math.abs(start.z) < bounds.halfDepth
   const side = nearestSide(start, bounds)
   const gateX = clamp(start.x, -bounds.halfWidth + GATE_CLEARANCE, bounds.halfWidth - GATE_CLEARANCE)
