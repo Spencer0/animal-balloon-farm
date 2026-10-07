@@ -9,13 +9,16 @@ import { farmEdgeDistance, farmEdgePoint } from './farm-footprint'
  * in `src/scene/fairground.ts` turns `packProgress` into fold and crate
  * animation, and `tests/carnival-schedule.test.mjs` covers the rules.
  *
- * The epoch day (elapsed day 0) is a Sunday, so the game starts with the
- * carnival already set up.
+ * The epoch day (elapsed day 0) is a Saturday, so the first Sunday is day two
+ * and the carnival first appears then.
  */
 
 export const CARNIVAL_OPEN_WEEKDAY = 0
 
 export const WEEKDAY_NAMES: readonly string[] = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+/** Index into WEEKDAY_NAMES of the epoch day. */
+export const EPOCH_WEEKDAY = 6
 
 /** Real seconds for the whole set to pack away, or to unpack again. */
 export const SETUP_SWEEP_SECONDS = 8
@@ -24,9 +27,8 @@ export const SETUP_SWEEP_SECONDS = 8
 export const PROP_WINDOW = 0.35
 
 export function weekdayOf(elapsedDays: number): number {
-  if (!Number.isFinite(elapsedDays)) return CARNIVAL_OPEN_WEEKDAY
-  const day = Math.max(0, Math.floor(elapsedDays))
-  return day % WEEKDAY_NAMES.length
+  const day = Number.isFinite(elapsedDays) ? Math.max(0, Math.floor(elapsedDays)) : 0
+  return (day + EPOCH_WEEKDAY) % WEEKDAY_NAMES.length
 }
 
 export function weekdayName(elapsedDays: number): string {

@@ -15,36 +15,37 @@ const { weekdayOf, weekdayName, isCarnivalOpen, createCarnivalSchedule, placeOut
 const { farmBoundsAtLevel, GARDEN_MAX_BOUNDS } = await load('farm-expansion')
 const { farmEdgeDistance } = await load('farm-footprint')
 
-test('the epoch day is a Sunday and the week repeats every seven days', () => {
-  assert.equal(weekdayName(0), 'Sunday')
-  assert.equal(weekdayName(1), 'Monday')
-  assert.equal(weekdayName(6), 'Saturday')
-  assert.equal(weekdayOf(7), 0)
-  assert.equal(weekdayOf(14.9), 0)
-  assert.equal(weekdayOf(-3), 0)
-  assert.equal(weekdayOf(Number.NaN), 0)
+test('the epoch day is a Saturday, so the first Sunday is day two', () => {
+  assert.equal(weekdayName(0), 'Saturday')
+  assert.equal(weekdayName(1), 'Sunday')
+  assert.equal(weekdayName(2), 'Monday')
+  assert.equal(weekdayOf(8), 0)
+  assert.equal(weekdayOf(7.9), 6)
+  assert.equal(weekdayOf(-3), 6)
+  assert.equal(weekdayOf(Number.NaN), 6)
 })
 
 test('the carnival is open only on Sundays', () => {
-  assert.equal(isCarnivalOpen(0), true)
-  assert.equal(isCarnivalOpen(1), false)
-  assert.equal(isCarnivalOpen(6), false)
-  assert.equal(isCarnivalOpen(7), true)
-  assert.equal(isCarnivalOpen(21), true)
+  assert.equal(isCarnivalOpen(0), false)
+  assert.equal(isCarnivalOpen(1), true)
+  assert.equal(isCarnivalOpen(2), false)
+  assert.equal(isCarnivalOpen(8), true)
+  assert.equal(isCarnivalOpen(15), true)
+  assert.equal(isCarnivalOpen(7), false)
 })
 
-test('the schedule starts set up on a Sunday and packed on other days', () => {
-  assert.equal(createCarnivalSchedule(3, 0).amount, 1)
-  assert.equal(createCarnivalSchedule(3, 2).amount, 0)
-  assert.deepEqual(createCarnivalSchedule(3, 0).packProgress(), [0, 0, 0])
-  assert.deepEqual(createCarnivalSchedule(3, 2).packProgress(), [1, 1, 1])
+test('the schedule starts packed on the Saturday epoch and set up on Sundays', () => {
+  assert.equal(createCarnivalSchedule(3, 0).amount, 0)
+  assert.equal(createCarnivalSchedule(3, 1).amount, 1)
+  assert.deepEqual(createCarnivalSchedule(3, 0).packProgress(), [1, 1, 1])
+  assert.deepEqual(createCarnivalSchedule(3, 1).packProgress(), [0, 0, 0])
 })
 
 test('packing away takes one sweep and every prop ends fully packed', () => {
-  const schedule = createCarnivalSchedule(4, 0)
-  schedule.update(SETUP_SWEEP_SECONDS / 2, 1)
+  const schedule = createCarnivalSchedule(4, 1)
+  schedule.update(SETUP_SWEEP_SECONDS / 2, 2)
   assert.ok(schedule.amount > 0.4 && schedule.amount < 0.6, 'halfway through the sweep')
-  schedule.update(SETUP_SWEEP_SECONDS, 1)
+  schedule.update(SETUP_SWEEP_SECONDS, 2)
   assert.equal(schedule.amount, 0)
   assert.ok(schedule.packProgress().every((progress) => progress === 1))
 })
@@ -52,28 +53,28 @@ test('packing away takes one sweep and every prop ends fully packed', () => {
 test('unpacking plays the pack sweep in reverse', () => {
   // Props are listed in pack order: index 0 packs first, index 3 packs last.
   const schedule = createCarnivalSchedule(4, 2)
-  schedule.update(SETUP_SWEEP_SECONDS, 7)
+  schedule.update(SETUP_SWEEP_SECONDS, 8)
   assert.equal(schedule.amount, 1)
   assert.ok(schedule.packProgress().every((progress) => progress === 0))
 
   // Partway through unpacking, the last prop in pack order rises first.
   const partial = createCarnivalSchedule(4, 2)
-  partial.update(SETUP_SWEEP_SECONDS * 0.2, 7)
+  partial.update(SETUP_SWEEP_SECONDS * 0.2, 8)
   const progress = partial.packProgress()
   assert.ok(progress[3] < progress[0], 'last-packed prop rises before the first-packed prop')
   assert.ok(progress[0] > 0.9, 'first-packed prop is still folded while the last one rises')
 })
 
 test('packing away starts with the first prop in pack order', () => {
-  const schedule = createCarnivalSchedule(4, 0)
-  schedule.update(SETUP_SWEEP_SECONDS * 0.1, 1)
+  const schedule = createCarnivalSchedule(4, 1)
+  schedule.update(SETUP_SWEEP_SECONDS * 0.1, 2)
   const progress = schedule.packProgress()
   assert.ok(progress[0] > progress[3], 'first-packed prop folds first')
   assert.equal(progress[3], 0)
 })
 
 test('bad time steps and empty sets are ignored or safe', () => {
-  const schedule = createCarnivalSchedule(0, 0)
+  const schedule = createCarnivalSchedule(0, 1)
   schedule.update(Number.NaN, 1)
   schedule.update(-1, 1)
   assert.equal(schedule.amount, 1)
