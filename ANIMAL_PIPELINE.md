@@ -91,7 +91,7 @@ emits exactly `WALK` and `IDLE` because the NLA tracks are named that way.
 - A third clip, **`SLEEP`**, is optional (any clip name containing `SLEEP`). A night animal that has it
   lies down by day; one without it is crouched in code from its `IDLE` pose. The raccoon's
   `animate_sleep()` shows the recipe: belly on the lawn (body lowered so its underside is at z = 0),
-  legs folded flat, chin on the front paws, ears drooped, tail curled, plus eyelid pivots that are
+  legs folded under it, the head tucked round onto one flank, the tail wrapped along that flank to meet the nose (a curled ball), ears drooped, plus eyelid pivots that are
   flat slivers in `WALK`/`IDLE` (`animate(..., held=lids)`) and swell shut in `SLEEP`. Call
   `animate_sleep` **before** `animate` so its NLA track sits under the others and the review portrait
   still shows the standing pose. To see the lying pose, open the saved `.blend` in Blender, mute the
@@ -557,7 +557,7 @@ none of the owl's code. A ground night animal also sleeps through the day:
 |---------|----------------|
 | Who sleeps when | `shouldSleep(species, night)` in `src/game/sleep.ts` (pure, tested in `tests/raccoon.test.mjs`) |
 | Which can, which spot | `pickAnchor` (least crowded, then nearest) and `bedBeside` (a point `BED_RADIUS` from the can, facing it) in the same file |
-| Choosing and keeping a bed | `updateSleepers()` in `src/main.ts`: a resident (stage 3+) beds down beside a placed garbage can, anything else where it stands; beds are chosen once per sleep and dropped at dusk |
+| Choosing and keeping a bed | `updateSleepers()` in `src/main.ts`: a resident (stage 3+) beds down beside its home: a placed dumpster if there is one, else a garbage can (a bed is `BED_RADIUS` or `DUMPSTER_BED_RADIUS` from the prop's centre; a later feature will move sleepers *inside* homes), anything else where it stands; beds are chosen once per sleep and dropped at dusk |
 | The sleeping pose | `setSleepSpot(spot)` / `isSleeping` on `BalloonAnimal`. A model with a `SLEEP` clip plays it (lying down, eyes shut); one without it plays `IDLE` at 0.3x squashed into a crouch (`applySleepPose`) |
 | Where `placements()` comes from | `GardenProps.placements(id)`: the world centre of every placed prop of one id |
 
@@ -590,6 +590,7 @@ Open the game with `?gardenDebug=1&scenario=<id>` and it lands in that state on 
 | `owl/low-helium` | night, a resident owl with no oak and about 15 s of helium left: it sags, shrinks and pops |
 | `raccoon/first-night` | night, a resident cow, a wild raccoon visiting, no garbage can yet |
 | `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its garbage can and curls up beside it |
+| `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: the raccoon curls up by the dumpster, its house |
 | `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (an egg is laid shortly) |
 
 Use the full id (`owl/first-night`): bare names such as `first-night` are now shared by two animals and

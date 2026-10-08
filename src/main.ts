@@ -46,7 +46,7 @@ import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
 import { createPredationLedger, isNightTime } from './game/predator'
-import { BED_RADIUS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
+import { BED_RADIUS, DUMPSTER_BED_RADIUS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -939,13 +939,18 @@ const sleepBeds = new Map<string, Bed>()
 function updateSleepers(): void {
   if (mode === 'viewer') return
   const night = isNightTime(dayNightClock.timeOfDay)
+  // A dumpster is its house, so a raccoon sleeps by one when there is one; failing that, by a can.
+  const dumpsters = gardenProps?.placements('dumpster') ?? []
   const cans = gardenProps?.placements('garbage-can') ?? []
-  const occupancy = cans.map(() => 0)
-  const nearCan = (bed: Bed, can: { x: number; z: number }): boolean => Math.hypot(bed.x - can.x, bed.z - can.z) < BED_RADIUS + 0.5
+  const homes = dumpsters.length > 0
+    ? dumpsters.map((spot) => ({ ...spot, radius: DUMPSTER_BED_RADIUS }))
+    : cans.map((spot) => ({ ...spot, radius: BED_RADIUS }))
+  const occupancy = homes.map(() => 0)
+  const nearHome = (bed: Bed, home: { x: number; z: number; radius: number }): boolean => Math.hypot(bed.x - home.x, bed.z - home.z) < home.radius + 0.5
   for (const animal of animals) {
     const bed = sleepBeds.get(animal.instanceId)
     if (!bed || !shouldSleep(animal.id, night)) continue
-    const index = cans.findIndex((can) => nearCan(bed, can))
+    const index = homes.findIndex((home) => nearHome(bed, home))
     if (index >= 0) occupancy[index] += 1
   }
   for (const animal of animals) {
@@ -962,13 +967,13 @@ function updateSleepers(): void {
       continue
     }
     let bed = sleepBeds.get(animal.instanceId)
-    // A resident prefers a can; if one is placed after it lay down, it moves over.
+    // A resident prefers a home; if one is placed after it lay down, it moves over.
     const resident = (record?.stage ?? 0) >= 3
-    if (!bed || (resident && cans.length > 0 && !cans.some((can) => nearCan(bed!, can)))) {
+    if (!bed || (resident && homes.length > 0 && !homes.some((home) => nearHome(bed!, home)))) {
       const from = { x: animal.currentPosition.x, z: animal.currentPosition.z }
-      const index = resident ? pickAnchor(cans, occupancy, from) : -1
+      const index = resident ? pickAnchor(homes, occupancy, from) : -1
       bed = index >= 0
-        ? bedBeside(cans[index], occupancy[index]++)
+        ? bedBeside(homes[index], occupancy[index]++, homes[index].radius)
         : { x: from.x, z: from.z, heading: animal.currentHeading }
       sleepBeds.set(animal.instanceId, bed)
     }

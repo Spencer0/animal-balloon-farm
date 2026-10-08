@@ -1021,7 +1021,7 @@ def animate_owl(body, neck, head, tufts, wings, tips, tail, eyes, bell, body_z):
 
 
 def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, lids, body_z=1.2):
-    """A third clip, SLEEP: belly on the ground, legs folded flat, chin on the paws, eyes shut.
+    """A third clip, SLEEP: a curled-up ball, head tucked onto the flank, tail wrapped round, eyes shut.
 
     The runtime picks it up by name (any clip containing SLEEP) and only for a species that
     ships one; everything else falls back to a crouched IDLE. Call this BEFORE `animate()` so
@@ -1039,18 +1039,21 @@ def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_
         # lowered only the body and left the legs, head and eyes standing. Keep this variation.
         tremor = math.radians(.6) * breath
         wob = .004 * breath
-        key(body, frame, location=(0, 0, lying_z + .012 * breath), rotation=(0, 0, 0), scale=(1 + .012 * breath, 1 + .02 * breath, 1 + .03 * breath))
-        key(head, frame, location=(.78, 0, -.20 + wob), rotation=(0, math.radians(24) + tremor, math.radians(5)))
-        key(neck, frame, rotation=(0, math.radians(8) + tremor, 0))
+        # A curled ball, as a real raccoon sleeps: the body puffs rounder and sits low, the head is
+        # tucked round onto the near flank, and the tail wraps along that flank so its tip meets the
+        # nose. The legs fold underneath and only the paws show. "Near" is the -Y side.
+        key(body, frame, location=(0, 0, lying_z + .012 * breath), rotation=(0, 0, 0), scale=(.96 + .012 * breath, 1.08 + .02 * breath, 1.1 + .03 * breath))
+        key(head, frame, location=(.56, -.40 + wob, -.24), rotation=(0, math.radians(30) + tremor, math.radians(-64)))
+        key(neck, frame, rotation=(0, math.radians(8) + tremor, math.radians(-20)))
         key(bell, frame, rotation=(0, math.radians(2) * breath, 0))
         for index, ear in enumerate(ears):
             side = -1 if index == 0 else 1
-            key(ear, frame, rotation=(math.radians(side * 34) + tremor, math.radians(-6), math.radians(side * -14)))
-        key(tail, frame, location=(-.80, 0, -.50), rotation=(0, math.radians(-18), math.radians(68 + 2 * breath)))
+            key(ear, frame, rotation=(math.radians(side * 38) + tremor, math.radians(-6), math.radians(side * -16)))
+        key(tail, frame, location=(-.62, -.66 + wob, -.34), rotation=(0, math.radians(-24) + tremor, math.radians(168)))
         for index, (leg, hoof, (x, y, _)) in enumerate(zip(legs, hooves, leg_positions)):
             front = index < 2
-            # Front paws stretch ahead under the chin; hind legs fold back along the flank.
-            key(leg, frame, location=(x + (.12 if front else -.05), y, -.60 + wob), rotation=(0, math.radians(-76 if front else 66) + tremor, math.radians(0)))
+            # Front paws tuck under the chin; hind legs fold forward under the belly.
+            key(leg, frame, location=(x - (.05 if front else -.18), y * .55, -.62 + wob), rotation=(0, math.radians(-58 if front else -62) + tremor, math.radians(0)))
             key(hoof, frame, rotation=(0, tremor, 0))
         for lid in lids:
             key(lid, frame, scale=(1 + .01 * breath, 1, 1 + .01 * breath))

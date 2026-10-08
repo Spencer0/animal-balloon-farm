@@ -315,7 +315,7 @@ const RACCOON_CONDITIONS: SpeciesConditions = {
     ),
     COUNT_STAGE(
       'Love the farm',
-      'Wants a dumpster to call home, and the garbage can kept close.',
+      'Wants a dumpster to call home, with the garbage can kept close. It sleeps beside the dumpster.',
       { kind: 'propCount', species: 'dumpster', amount: 1, and: [{ kind: 'propCount', species: 'garbage-can', amount: 1 }] },
       'Eyes go to hearts. Ready to court and breed.',
     ),

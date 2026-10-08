@@ -8,11 +8,12 @@ import { residentRoosting } from './owl/resident-roosting'
 import { breedReady as raccoonBreedReady } from './raccoon/breed-ready'
 import { firstNight as raccoonFirstNight } from './raccoon/first-night'
 import { sleepingByCan } from './raccoon/sleeping-by-can'
+import { sleepingByDumpster } from './raccoon/sleeping-by-dumpster'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
   firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium,
-  raccoonFirstNight, sleepingByCan, raccoonBreedReady,
+  raccoonFirstNight, sleepingByCan, sleepingByDumpster, raccoonBreedReady,
 ]
 
 /** Accepts `owl/hunt-now` or the bare `hunt-now`, as long as the bare name is unambiguous. */

@@ -114,3 +114,13 @@ test('a sleeper picks the emptiest can, then the nearest', () => {
   assert.equal(sleep.pickAnchor(cans, [1, 0], { x: 1, z: 0 }), 1)
   assert.equal(sleep.pickAnchor([], [], { x: 0, z: 0 }), -1)
 })
+
+test('a dumpster bed sits further out than a can bed, and still faces its anchor', () => {
+  assert.ok(sleep.DUMPSTER_BED_RADIUS > sleep.BED_RADIUS)
+  const home = { x: 1, z: 1 }
+  const bed = sleep.bedBeside(home, 0, sleep.DUMPSTER_BED_RADIUS)
+  assert.ok(Math.abs(Math.hypot(bed.x - home.x, bed.z - home.z) - sleep.DUMPSTER_BED_RADIUS) < 1e-9)
+  const toHome = { x: home.x - bed.x, z: home.z - bed.z }
+  const length = Math.hypot(toHome.x, toHome.z)
+  assert.ok(Math.abs(Math.cos(bed.heading) - toHome.x / length) < 1e-9)
+})

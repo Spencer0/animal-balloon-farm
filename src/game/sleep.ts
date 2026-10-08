@@ -19,7 +19,9 @@ export interface Bed extends BedPoint {
 }
 
 /** How far from a can's centre a sleeper lies: its own half-length plus the can's radius, so it lies beside the can, not on it. */
-export const BED_RADIUS = 2.3
+export const BED_RADIUS = 1.8
+/** The same for a dumpster, which is 3.6 m long: measured from its centre, so it lies a little off the end or side. */
+export const DUMPSTER_BED_RADIUS = 2.6
 /** Angle between neighbouring sleepers around one can, in radians. */
 const BED_STEP = 2.2
 
@@ -29,10 +31,10 @@ export function shouldSleep(species: string, night: boolean): boolean {
 }
 
 /** The spot beside `anchor` for the `slot`-th sleeper, facing the anchor. */
-export function bedBeside(anchor: BedPoint, slot: number): Bed {
+export function bedBeside(anchor: BedPoint, slot: number, radius: number = BED_RADIUS): Bed {
   const angle = 0.6 + slot * BED_STEP
-  const x = anchor.x + Math.cos(angle) * BED_RADIUS
-  const z = anchor.z + Math.sin(angle) * BED_RADIUS
+  const x = anchor.x + Math.cos(angle) * radius
+  const z = anchor.z + Math.sin(angle) * radius
   return { x, z, heading: Math.atan2(-(anchor.z - z), anchor.x - x) }
 }
 
