@@ -22,6 +22,12 @@ interface AnimalCatalogFields {
   readonly size: number
   readonly speed: number
   readonly bounds: { readonly x: number; readonly z: number }
+  /**
+   * True for a species that flies instead of wandering. A flier is positioned
+   * by the predator sim (`src/game/predator.ts`) rather than by the ground
+   * wander, and only comes out at night.
+   */
+  readonly flier?: boolean
 }
 
 export const ANIMAL_CATALOG = [
@@ -67,6 +73,13 @@ export const ANIMAL_CATALOG = [
     note: 'Follow the splash sounds — that bobbing green dot is the frog, mid-hop.', color: '#6ab84e', gesture: 'Springs skyward',
     assetUrl: 'assets/animals/balloon-frog.glb', spawn: [-5.6, -5.2], carnivalSpawn: [21, 14], showcaseSpawn: [-11, 0], seed: 6107, size: 1.9, speed: 0.85, bounds: { x: 10.5, z: 6.1 },
   },
+  {
+    id: 'owl', name: 'Owl', label: 'owl', spriteUrl: 'assets/animals/balloon-owl-review.png',
+    subtitle: 'The night-shift hunter', description: 'A plump hazelnut balloon that drifts over the farm after dark and swoops on anything that clucks.',
+    note: 'It barely flaps. Balloons are most of the way to flying already. Keep an eye on the flock.', color: '#a9774b', gesture: 'Drifts on wide wings',
+    assetUrl: 'assets/animals/balloon-owl.glb', spawn: [-6, 3], carnivalSpawn: [-24, 6], showcaseSpawn: [11, 0], seed: 7312, size: 2.5, speed: 3, bounds: { x: 10.5, z: 6.1 },
+    flier: true,
+  },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']
@@ -96,6 +109,7 @@ export function getAnimalSceneOptions(
     size: animal.size,
     speed: animal.speed,
     bounds: animal.bounds,
+    flier: 'flier' in animal && animal.flier,
     canvas,
     camera,
     groundSampler,

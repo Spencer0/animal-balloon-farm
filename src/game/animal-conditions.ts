@@ -33,6 +33,12 @@ export type ConditionKind =
   | 'flatArea'
   | 'residentSpecies'
   | 'plantCount'
+  /** How many adults of a species are residents right now, e.g. three chickens. */
+  | 'residentCount'
+  /** How many of a prey species have been eaten on this farm, in total. */
+  | 'preyEaten'
+  /** How many of a shop prop the player has placed, e.g. an oak tree. */
+  | 'propCount'
 
 export interface ConditionRequirement {
   readonly kind: ConditionKind
@@ -42,6 +48,12 @@ export interface ConditionRequirement {
   readonly species?: string
   /** Minimum grass maturity (0..1) for a patch to count toward `grassArea`. */
   readonly maturity?: number
+  /**
+   * Further requirements that must hold at the same time. A stage still has one
+   * headline number for the journal, but a few species need two things at once
+   * (the owl stays for eaten chickens *and* an oak to roost in).
+   */
+  readonly and?: readonly ConditionRequirement[]
 }
 
 /**
@@ -69,8 +81,28 @@ export function conditionMetricLabel(requirement: ConditionRequirement | null): 
     case 'waterArea': return 'Visible pond water'
     case 'flatArea': return 'Level grassy pasture'
     case 'plantCount': return requirement.species ? plantMetricLabel(requirement.species) : null
+    case 'residentCount': return requirement.species ? `Resident ${speciesPlural(requirement.species)}` : null
+    case 'preyEaten': return requirement.species ? `${capitalise(speciesPlural(requirement.species))} eaten` : null
+    case 'propCount': return requirement.species ? `${capitalise(propPlural(requirement.species))} on the farm` : null
     case 'residentSpecies': return null
   }
+}
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function speciesPlural(species: string): string {
+  return species === 'sheep' ? 'sheep' : species === 'goose' ? 'geese' : `${species}s`
+}
+
+function propPlural(prop: string): string {
+  return `${prop} tree${prop === 'oak' ? 's' : ''}`
+}
+
+/** True for the kinds that are a whole number of things rather than square meters. */
+export function isCountKind(kind: ConditionKind | undefined): boolean {
+  return kind === 'plantCount' || kind === 'residentCount' || kind === 'preyEaten' || kind === 'propCount'
 }
 
 /**
@@ -81,7 +113,7 @@ export function conditionMetricLabel(requirement: ConditionRequirement | null): 
  * and the journal is exactly where a player would read it.
  */
 export function conditionMetricUnit(requirement: ConditionRequirement | null): string {
-  return requirement?.kind === 'plantCount' ? '' : ' m²'
+  return isCountKind(requirement?.kind) ? '' : ' m²'
 }
 
 /**
@@ -89,7 +121,7 @@ export function conditionMetricUnit(requirement: ConditionRequirement | null): s
  * decimal of square meter.
  */
 export function formatConditionMetric(requirement: ConditionRequirement | null, value: number): string {
-  return requirement?.kind === 'plantCount' ? value.toFixed(0) : value.toFixed(1)
+  return isCountKind(requirement?.kind) ? value.toFixed(0) : value.toFixed(1)
 }
 
 export interface StageDefinition {
@@ -173,6 +205,18 @@ const PLANT_LOVE = (plant: string, amount: number, hint: string): Omit<StageDefi
   result: 'Eyes go to hearts. Ready to court and breed.',
 })
 
+/**
+ * A stage whose requirement is a count of something rather than an area: so
+ * many resident chickens, so many chickens eaten, so many oaks. `title` and
+ * `result` default to the shared wording for that rung.
+ */
+const COUNT_STAGE = (
+  title: string,
+  hint: string,
+  requirement: ConditionRequirement,
+  result: string,
+): Omit<StageDefinition, 'stage'> => ({ title, hint, requirement, result })
+
 const REQUIRE_RESIDENT = (species: string, name: string): Omit<StageDefinition, 'stage'> => ({
   title: 'Call the farm home',
   hint: `Likes what it sees here. Wants a ${name} already living on the farm.`,
@@ -189,6 +233,44 @@ const SHARE_LIFE = (species: string, name: string): Omit<StageDefinition, 'stage
 
 function withStageNumbers(stages: readonly Omit<StageDefinition, 'stage'>[]): readonly StageDefinition[] {
   return stages.map((stage, index) => ({ ...stage, stage: (index + 1) as AnimalStage }))
+}
+
+/**
+ * The owl is the first predator, and the first species with a night shift.
+ *
+ *  - Appears (DISCOVERY): a resident chicken is something to hunt.
+ *  - Visits the farm: a flock of three, so a hunt does not empty the yard.
+ *  - Stays: five chickens eaten *and* an oak to roost in. This is the stage
+ *    that makes predator and prey a mechanic and not just an animation.
+ *  - Breeds: a second oak, because owls roost alone, and a flock left to hunt.
+ */
+const OWL_CONDITIONS: SpeciesConditions = {
+  stages: withStageNumbers([
+    {
+      title: 'Appear at the carnival',
+      hint: 'Comes out after dark, drawn by the sound of chickens.',
+      requirement: null,
+      result: 'Turns up at the carnival in wild balloon red, but only after dark.',
+    },
+    COUNT_STAGE(
+      'Visit the farm',
+      'Wants a proper flock to watch: three resident chickens.',
+      { kind: 'residentCount', species: 'chicken', amount: 3 },
+      'Glides over the fence at night. Still wild, still hungry.',
+    ),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Must eat five chickens on your farm, and needs an oak tree to roost in.',
+      { kind: 'preyEaten', species: 'chicken', amount: 5, and: [{ kind: 'propCount', species: 'oak', amount: 1 }] },
+      'Paints into its own colors and roosts in the oak. A resident of the farm.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Wants a second oak for a mate to roost in, and a flock of three chickens left to hunt.',
+      { kind: 'propCount', species: 'oak', amount: 2, and: [{ kind: 'residentCount', species: 'chicken', amount: 3 }] },
+      'Eyes go to hearts. Ready to court and breed.',
+    ),
+  ]),
 }
 
 /**
@@ -249,6 +331,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       LOVE_THE_FARM('waterArea', 20, 'Wants a proper stretch of water to patrol.', 0.75),
     ]),
   },
+  owl: OWL_CONDITIONS,
   frog: {
     stages: withStageNumbers([
       CARNIVAL,
@@ -258,6 +341,9 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
     ]),
   },
 }
+
+/** Species that only come out after dark. They arrive, visit and hunt at night. */
+export const NIGHT_ONLY_SPECIES: readonly string[] = ['owl']
 
 /** Species that begin the game already turned up at the carnival. */
 export const CARNIVAL_STARTERS: readonly string[] = ['cow', 'sheep', 'chicken', 'duck']
@@ -273,6 +359,7 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
   pig: { kind: 'grassArea', amount: 8, description: 'A patch of grass catches the eye of something rooting around.' },
   goose: { kind: 'waterArea', amount: 5, description: 'Water somewhere on the farm draws the waddlers over.' },
   frog: { kind: 'waterArea', amount: 4, description: 'A little water is sure to bring something green and bouncy.' },
+  owl: { kind: 'residentCount', species: 'chicken', amount: 1, description: 'A resident chicken carries a long way on a still night.' },
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {

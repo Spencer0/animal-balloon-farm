@@ -80,6 +80,11 @@ export interface JournalConditionRow {
    * whole number rather than to one decimal. Defaults to square meters.
    */
   readonly metricUnit?: string
+  /**
+   * Further things this rung needs at the same time, such as the oak an owl
+   * will not settle without. Each is a count with its own live number.
+   */
+  readonly alsoNeeds?: readonly { readonly label: string; readonly current: number; readonly target: number }[]
   /** A species this condition is waiting on, if it is a social one. */
   readonly waitingOn?: { readonly species: string; readonly name: string; readonly resident: boolean }
 }

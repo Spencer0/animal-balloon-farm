@@ -12,10 +12,14 @@ Run from the project root in PowerShell:
 Regeneration command: overwrites `public/assets/props/prop-<id>.png`
 (256x256, transparent) plus `props-review.png`. No .blend is kept: the GLBs
 themselves are the source of truth.
+
+Name props after `--` to re-render only those icons (the contact sheet is always
+rebuilt from every icon on disk), e.g. `... prop_thumbs.py -- oak`.
 """
 
 import math
 import os
+import sys
 
 import bpy
 from mathutils import Vector
@@ -28,6 +32,7 @@ PROPS = [
     ("fountain", "assets/props/fountain.glb"),
     ("fence", "assets/props/fence.glb"),
     ("coop", "assets/props/coop.glb"),
+    ("oak", "assets/props/oak.glb"),
 ]
 
 
@@ -96,7 +101,10 @@ def frame_objects(objects):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
+    only = [name.lower() for name in sys.argv[sys.argv.index("--") + 1:]] if "--" in sys.argv else []
     for prop_id, glb in PROPS:
+        if only and prop_id not in only:
+            continue
         clear_all()
         src = os.path.abspath(os.path.join("public", glb))
         bpy.ops.import_scene.gltf(filepath=src)
@@ -124,7 +132,7 @@ def main():
     clear_all()
     cam_data = bpy.data.cameras.new("PT_SheetCamera")
     cam_data.type = "ORTHO"
-    cam_data.ortho_scale = 6.4
+    cam_data.ortho_scale = 1.3 * len(PROPS)
     cam = bpy.data.objects.new("PT_SheetCamera", cam_data)
     bpy.context.collection.objects.link(cam)
     cam.location = (0, 0, 6)
@@ -145,11 +153,11 @@ def main():
         links.new(emit.outputs["Emission"], out.inputs["Surface"])
         bpy.ops.mesh.primitive_plane_add(size=1.0)
         tile = bpy.context.active_object
-        tile.location = ((i - 1.5) * 1.3, 0, 0)
+        tile.location = ((i - (len(PROPS) - 1) / 2) * 1.3, 0, 0)
         tile.data.materials.clear()
         tile.data.materials.append(img_mat)
     scene = bpy.context.scene
-    scene.render.resolution_x = 1024
+    scene.render.resolution_x = 256 * len(PROPS)
     scene.render.resolution_y = 256
     scene.render.filepath = os.path.abspath(os.path.join(OUT_DIR, "props-review.png"))
     bpy.ops.render.render(write_still=True)

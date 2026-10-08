@@ -1,4 +1,4 @@
-import { CARNIVAL_STARTERS, DISCOVERY, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
+import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
 import { requirementMet, type FarmSnapshot, type RequirementStatus } from './animal-progress'
 import { farmMetric } from './farm-state'
 import type { ProgressAction } from './farm-progression'
@@ -366,16 +366,25 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       queueEligibleGuests(snapshot.farm)
       const residentCapacity = capacity(snapshot.expansionLevel)
       const capacitySlots = Math.max(0, residentCapacity - populationCount())
-      const activeVisitors = [...animals.values()].filter((animal) => animal.stage > 0 && animal.stage < 3).length
-      const pacingSlots = Math.max(0, 1 + Math.floor(snapshot.expansionLevel / 2) - activeVisitors)
+      // Day visitors and the night shift are paced separately: an owl should not
+      // wait behind a cow that is still looking for grass, because they never share a sky.
+      const visitorsOnShift = (nightShift: boolean): number => [...animals.values()]
+        .filter((animal) => animal.stage > 0 && animal.stage < 3 && NIGHT_ONLY_SPECIES.includes(animal.species) === nightShift).length
+      const pacingFor = (species: string): number => {
+        const nightShift = NIGHT_ONLY_SPECIES.includes(species)
+        return Math.max(0, 1 + Math.floor(snapshot.expansionLevel / 2) - visitorsOnShift(nightShift))
+      }
       const interval = config.arrivalIntervalSeconds / Math.max(1, 1 + snapshot.expansionLevel * 0.35)
       if (capacitySlots > 0 && pendingVisitors.length === 0 && arrivalElapsed >= interval) addRepeatGuest(snapshot.farm)
-      if (capacitySlots > 0 && pacingSlots > 0 && pendingVisitors.length > 0 && arrivalElapsed >= interval) {
-        const species = pendingVisitors.shift()!
+      // Night-only species wait in the queue until dark rather than blocking it.
+      const nightNow = snapshot.farm.night ?? true
+      const arrivingIndex = pendingVisitors.findIndex((species) => (nightNow || !NIGHT_ONLY_SPECIES.includes(species)) && pacingFor(species) > 0)
+      if (capacitySlots > 0 && arrivingIndex >= 0 && arrivalElapsed >= interval) {
+        const species = pendingVisitors.splice(arrivingIndex, 1)[0]
         let arrival = [...animals.values()].find((animal) => animal.species === species && animal.stage === 0)
         if (!arrival && hasPopulationSlot()) arrival = newAnimal(species, 0)
         if (!arrival) {
-          pendingVisitors.unshift(species)
+          pendingVisitors.splice(arrivingIndex, 0, species)
         } else {
           eventsFor(arrival, 1, events)
           const arrivalEvent = events[events.length - 1]
@@ -401,7 +410,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           animal.elapsed += stageDt
           const next = getSpeciesConditions(animal.species)[animal.stage]
           const tuning = tuningFor(animal.species)
-          if (animal.stage === 1 && animal.elapsed >= tuning.visitDelaySeconds) eventsFor(animal, 2, events)
+          const darkEnough = nightNow || !NIGHT_ONLY_SPECIES.includes(animal.species)
+          if (animal.stage === 1 && animal.elapsed >= tuning.visitDelaySeconds && darkEnough && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 2, events)
           else if (animal.stage === 2 && animal.elapsed >= tuning.enterFarmSeconds && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 3, events)
           else if (animal.stage === 3 && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 4, events)
         }

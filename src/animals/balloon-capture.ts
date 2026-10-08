@@ -11,6 +11,7 @@ const PAINT_PALETTES: Record<BalloonAnimalId, readonly [string, string]> = {
   duck: ['#45a36c', '#d6a34d'],
   goose: ['#fff2df', '#ed8543'],
   frog: ['#6ab84e', '#f3ecc9'],
+  owl: ['#a9774b', '#fdeecf'],
 }
 
 export interface CapturePose {
@@ -214,6 +215,15 @@ function captureGesture(id: BalloonAnimalId, time: number, duration: number): Ca
         roll: Math.sin(time * 4.6) * 0.075 * active,
         yaw: Math.sin(time * 2.4) * 0.09 * active,
       }
+    case 'owl':
+      // A slow, airy bob: the balloon lifts a little and the head tilts.
+      return {
+        fill,
+        lift: active * (0.08 + Math.sin(time * 2.2) * 0.07),
+        pitch: Math.sin(time * 1.7) * 0.05 * active,
+        roll: Math.sin(time * 1.9 + 0.8) * 0.06 * active,
+        yaw: Math.sin(time * 1.3) * 0.12 * active,
+      }
   }
 }
 
@@ -226,7 +236,7 @@ function buildRigPose(actor: THREE.Object3D | null, id: BalloonAnimalId): RigPos
     if (id === 'pig') {
       if (name.includes('rig') && name.includes('curious head')) kind = 'pig-head'
       else if (name.includes('rig') && name.includes('front') && name.includes('leg')) kind = 'pig-leg'
-    } else if (id === 'chicken' || id === 'duck' || id === 'goose') {
+    } else if (id === 'chicken' || id === 'duck' || id === 'goose' || id === 'owl') {
       if (name.includes('rig') && name.includes('wing')) kind = 'wing'
       else if (id === 'goose' && name.includes('rig') && name.includes('tall swanlike neck')) kind = 'goose-neck'
       else if (id === 'goose' && name.includes('rig') && name.includes('proud little head')) kind = 'goose-head'
@@ -257,8 +267,8 @@ function animateSignaturePose(nodes: readonly RigPoseNode[], id: BalloonAnimalId
         y = Math.max(0, Math.sin(time * 9)) * 0.32 * active
         break
       case 'wing': {
-        const flapSpeed = id === 'chicken' ? 15 : id === 'duck' ? 12 : 9
-        const flapSize = id === 'chicken' ? 0.9 : id === 'duck' ? 0.72 : 0.46
+        const flapSpeed = id === 'chicken' ? 15 : id === 'duck' ? 12 : id === 'owl' ? 5 : 9
+        const flapSize = id === 'chicken' ? 0.9 : id === 'duck' ? 0.72 : id === 'owl' ? 0.55 : 0.46
         x = side * Math.sin(time * flapSpeed) * flapSize * active
         break
       }

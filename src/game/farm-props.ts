@@ -11,7 +11,7 @@
 
 import type { Wallet } from './sales'
 
-export type PropId = 'fence' | 'statue' | 'fountain' | 'coop'
+export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'oak'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -108,10 +108,24 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     blocking: true,
     modelUrl: 'assets/props/coop.glb',
   },
+  oak: {
+    id: 'oak',
+    name: 'Oak Tree',
+    description: 'A broad balloon-leaf oak with a thick branch for roosting.',
+    blurb: 'Shade by day and a perch by night. The owl will not settle without one.',
+    color: '#639f50',
+    price: 140,
+    footprint: { width: 2, depth: 2 },
+    size: 6.4,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/oak.glb',
+  },
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'oak']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -137,7 +151,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, oak: 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0

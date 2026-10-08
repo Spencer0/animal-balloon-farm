@@ -4,7 +4,7 @@ How an animal gets from a Python script to a wandering, catchable creature in th
 add the next one. The end goal is that an agent can go from "add a llama" to a reviewed, playable
 species without hand-holding.
 
-Current catalog: **7 species** (pig, sheep, cow, chicken, duck, goose, frog).
+Current catalog: **8 species** (pig, sheep, cow, chicken, duck, goose, frog, owl).
 
 ## The 5 stages
 
@@ -386,6 +386,80 @@ never mature it. Do not verify a condition by hand-dragging the seeder: it is no
 and every area bug found while building this was found by the harness rather than by looking.
 
 ---
+
+## Fliers, predators and the night shift
+
+The owl is the first species that does not wander, hunts another species, and only comes out after
+dark. None of that is special-cased in the catalog loop; each piece has one home.
+
+| Concern | Where it lives |
+|---------|----------------|
+| `flier: true` on the catalog entry | `src/animals/animal-catalog.ts` (passed through `getAnimalSceneOptions`) |
+| Night-only arrival and visits | `NIGHT_ONLY_SPECIES` in `src/game/animal-conditions.ts`, honoured by `animal-life.ts` |
+| Who eats whom, the prey floor, the eaten tally | `PREY_OF`, `PREY_FLOOR`, `createPredationLedger` in `src/game/predator.ts` |
+| The owl's flight and hunt state machine | `stepOwl` in `src/game/predator.ts` (pure, tested in `tests/predator.test.mjs`) |
+| Applying flight to the model, panicking prey | `src/scene/owl-hunt.ts` |
+| The pop and its clean-up | `src/game/pop-animation.ts` (timeline) and `src/scene/pop-burst.ts` (meshes) |
+| The roost | the `OAK roost` node of `public/assets/props/oak.glb`, read by `GardenProps.roosts()` |
+
+Rules that are easy to get wrong:
+
+- **A flier is positioned from outside.** `createBalloonAnimal` skips the wander for `flier` and waits
+  for `setFlightPose`. Its clips are still just `WALK` and `IDLE`: `WALK` is the wide-winged flight
+  cycle, played well under real time because a balloon barely flaps, and `IDLE` is the folded pose,
+  used for perching and for the dive. Do not add a third clip name; the runtime will not find it.
+- **Ground the pose it will wear.** The static GLB pose is not the clip pose, so a flier is grounded
+  on its `IDLE` frame (see `ensureDetailedModel`). A perched owl has its talons on the `OAK roost`
+  node only because of this.
+- **Fliers are always full models.** The instanced crowd has no low-poly owl, so `refreshAnimalCrowd`
+  keeps a flier out of it. A new flier needs no crowd geometry, but it will not be cheap in a flock.
+- **Prey is a resident, adult, on-farm chicken** that is not mid-capture, courting or waiting to
+  settle. The owl will not take the flock below `PREY_FLOOR` (2), so there is always a pair to breed.
+- **A catch is a removal.** `handleOwlCatch` in `main.ts` forgets the chicken from the sim at once,
+  tallies it in the ledger and hands the model to a pop effect, which disposes it when it is done.
+- **Helium.** An oak is also where a resident owl tops up. Pick the last oak up and the owl cannot
+  roost, so it stays aloft day and night (it only hunts at night), shrinks and sags as `helium` falls
+  over `HELIUM_SECONDS` (120), and pops at zero. Placing an oak again refills it six times faster than
+  it leaked. Extra owls beyond the oak count share an oak a step apart and are not stranded.
+  Debug: `setOwlHelium(0..1)`.
+- **Heading follows movement.** `steer` turns the owl toward the way it actually moved this step, so
+  it never flies sideways while chasing a moving target.
+- **Two requirements on one rung** use `ConditionRequirement.and`. The journal shows the extras as
+  further bars (`alsoNeeds`); the stay rung's headline number is the chickens eaten.
+- **Count conditions.** `residentCount`, `preyEaten` and `propCount` read the `residentCounts`,
+  `preyEaten` and `propCounts` maps on `FarmState`, which `main.ts` fills in `measureFarm()`.
+- **Night and day visitors are paced separately** in `animal-life.ts`, so an owl does not queue behind a
+  cow that is still waiting for grass.
+
+Debug verbs (with `?gardenDebug=1`): `addAnimal(species, stage)`, `feedOwl(n)`, `hurryHunt()`,
+`stepHunt(seconds)` (steps the hunt without rendered frames), `predation()`, and the existing
+`setTimeOfDay`, `buy('oak')` and `placeProp('oak', cellX, cellZ)`. The owl takes the visit and stay
+rungs through `advance(...)` like any other species.
+
+
+## Test scenarios: jump straight into a game state
+
+Waiting out an owl's conditions to test it is slow, so saved states live in `dev/scenarios/<animal>/`.
+Open the game with `?gardenDebug=1&scenario=<id>` and it lands in that state on load:
+
+| Scenario | You land in |
+|----------|-------------|
+| `owl/first-night` | one chicken, night, the owl just turned up at the tents |
+| `owl/hunt-now` | five chickens, night, owl visiting with its hunt ready |
+| `owl/ready-to-settle` | as above plus an oak, four chickens already eaten: the next catch settles it |
+| `owl/resident-roosting` | daytime, a resident owl asleep on the oak (`__gardenDebug.holdTime(false)` releases the clock) |
+| `owl/breed-ready` | night, two oaks, two owls in love |
+| `owl/low-helium` | night, a resident owl with no oak and about 15 s of helium left: it sags, shrinks and pops |
+
+`__gardenDebug.scenarios()` lists them, `runScenario(id)` applies one to a running game (a fresh load
+is cleaner), and scenarios hold the day clock so night stays night. To add one: write a
+`Scenario` in `dev/scenarios/<animal>/`, using only the verbs on `ScenarioHarness`
+(`dev/scenarios/types.ts`), and list it in `dev/scenarios/index.ts`.
+
+Nothing in `dev/` ships. `src/main.ts` imports it only inside the `__GARDEN_DEBUG__` branch that
+production builds fold away, and `scripts/check-no-scenarios.mjs` (part of `npm run check`) fails the
+build if a scenario name appears in the production bundle. Branch previews on Pages keep the
+harness, so scenarios work there too.
 
 ## Checklist
 

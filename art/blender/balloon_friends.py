@@ -1,4 +1,4 @@
-"""Create Animal Balloon Farm sheep, cow, chicken, duck, goose and frog assets.
+"""Create Animal Balloon Farm sheep, cow, chicken, duck, goose, frog and owl assets.
 
 Run from the repository root:
   blender --background --factory-startup --python art/blender/balloon_friends.py
@@ -183,6 +183,20 @@ def materials(animal):
         base["bill"] = mat("DUCK · tangerine bill", "#ed943c", .23, .01, .48)
         base["leg"] = mat("DUCK · orange webbed feet", "#dc713e", .27, .01, .38)
         base["collar"] = mat("DUCK · little brass bell ribbon", "#eabd61", .20, .30, .48)
+    elif animal.lower() == "owl":
+        base["body"] = mat("OWL · toasted-hazelnut balloon plumage", "#a9774b", .24, .02, .58)
+        base["head"] = mat("OWL · warm hazelnut head balloon", "#b4824f", .23, .02, .60)
+        base["wing"] = mat("OWL · dusk-cocoa wing balloons", "#7a5334", .26, .015, .50)
+        base["feather"] = mat("OWL · butterscotch flight feathers", "#d9a766", .25, .01, .48)
+        base["tip"] = mat("OWL · moonlit cream feather tips", "#fff0cf", .24, .01, .50)
+        base["disc"] = mat("OWL · moon-cream facial disc", "#fdeecf", .22, .01, .55)
+        base["rim"] = mat("OWL · caramel disc rim", "#d3a06a", .26, .01, .46)
+        base["belly"] = mat("OWL · buttercream chest balloon", "#f6e2b9", .23, .01, .55)
+        base["fleck"] = mat("OWL · cocoa chest flecks", "#8a5d3a", .30, .01, .30)
+        base["iris"] = mat("OWL · lantern-amber eyes", "#f2b13d", .12, .02, .70)
+        base["beak"] = mat("OWL · pale honey beak", "#e6a453", .24, .01, .50)
+        base["leg"] = mat("OWL · sandy talon latex", "#d9a15e", .28, .01, .34)
+        base["collar"] = mat("OWL · twilight-plum bell ribbon", "#8d5f8e", .24, .04, .46)
     else:
         base["body"] = mat("GOOSE · warm ivory balloon plumage", "#f5eedc", .26, .01, .50)
         base["wing"] = mat("GOOSE · pearl-grey wing balloons", "#ddd7c9", .27, .01, .46)
@@ -368,16 +382,24 @@ def portrait(animal, m):
         lamp.rotation_euler = (Vector((0, 0, 1.1)) - lamp.location).to_track_quat("-Z", "Y").to_euler()
 
 
-def export_asset(root, animal):
+def export_asset(root, animal, review_yaw=0.0, review_frame=7):
+    """Save, render the review portrait, and export the GLB.
+
+    `review_yaw` turns the whole rig for the still only (degrees about Z) and is
+    undone before the GLB is written, so a species with a forward-facing face
+    can be shown three-quarter to the portrait camera without changing the asset.
+    """
     stem = f"balloon-{animal}"
     blend_path = OUTPUT / f"{stem}.blend"
     render_path = OUTPUT / f"{stem}-review.png"
     glb_path = OUTPUT / f"{stem}.glb"
     scene = bpy.context.scene
-    scene.frame_set(7)
+    scene.frame_set(review_frame)
     scene.render.filepath = str(render_path)
     bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
+    root.rotation_euler[2] = math.radians(review_yaw)
     bpy.ops.render.render(write_still=True)
+    root.rotation_euler[2] = 0
     bpy.ops.object.select_all(action="DESELECT")
 
     def select_tree(obj):
@@ -802,6 +824,179 @@ def make_frog():
     export_asset(root, "frog")
 
 
+OWL_FLAP_FRAMES = (1, 4, 7, 10, 13, 16, 19, 22, 25)
+OWL_FLAP_PHASES = tuple(math.tau * index / 8 for index in range(9))
+
+
+def make_owl():
+    """Night-shift balloon owl: a plump hazelnut balloon that barely has to flap.
+
+    Clips: WALK is the *flight* cycle (the runtime only knows WALK/IDLE) and IDLE
+    is the perched pose with a slow head turn and a blink. Wings hang at the
+    sides at rest; the flight clip lifts them out about halfway and rocks them
+    through a lazy arc, because a balloon is already most of the way to flying.
+    """
+    m = materials("OWL")
+    root = pivot("BALLOON OWL · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_owl"
+    root["forward_axis"] = "+X"
+    root["description"] = "Hazelnut balloon owl with a moon-cream face, amber lantern eyes, ear tufts and long drifting wings"
+    body_z = 1.30
+    body = pivot("OWL RIG · plump hazelnut body", (0, 0, body_z), root)
+    neck = pivot("OWL RIG · tucked neck", (.10, 0, .52), body)
+    head = pivot("OWL RIG · swivel head", (.12, 0, .74), body)
+    sphere("OWL · tall egg-shaped hazelnut balloon body", (0, 0, 0), (.70, .62, .86), m["body"], body, 48, 32)
+    sphere("OWL · buttercream chest balloon", (.30, 0, -.14), (.46, .47, .64), m["belly"], body, 42, 28)
+    flecks = ((.60, -.20, .12), (.64, .0, .02), (.60, .20, .12), (.66, -.12, -.20), (.66, .12, -.20), (.58, 0, -.44), (.54, -.24, -.38), (.54, .24, -.38))
+    for index, (x, y, z) in enumerate(flecks):
+        fleck = sphere(f"OWL · chest fleck {index + 1}", (x, y, z), (.05, .075, .035), m["fleck"], body, 16, 10)
+        fleck.rotation_euler[1] = math.radians(-8)
+    sphere("OWL · neck balloon join", (0, 0, 0), (.38, .38, .34), m["body"], neck, 30, 20)
+    sphere("OWL · broad hazelnut head balloon", (0, 0, 0), (.62, .66, .50), m["head"], head, 48, 32)
+
+    # The facial disc: two moon-cream saucers framing big amber eyes, owl-style.
+    for side, label in ((-1, "near"), (1, "far")):
+        rim = sphere(f"OWL · {label} caramel disc rim", (.40, side * .205, -.01), (.115, .325, .35), m["rim"], head, 36, 24)
+        rim.rotation_euler[2] = math.radians(side * -8)
+        disc = sphere(f"OWL · {label} moon-cream facial disc", (.435, side * .205, -.005), (.10, .30, .325), m["disc"], head, 36, 24)
+        disc.rotation_euler[2] = math.radians(side * -8)
+    eyes = []
+    for side, label in ((-1, "near"), (1, "far")):
+        eye = pivot(f"OWL RIG · {label} blinking eye", (.505, side * .205, .015), head)
+        eyes.append(eye)
+        sphere(f"OWL · {label} bright eye", (0, 0, 0), (.075, .19, .205), m["iris"], eye, 36, 24)
+        sphere(f"OWL · {label} dark pupil", (.062, 0, 0), (.04, .105, .115), m["eye"], eye, 28, 18)
+        sphere(f"OWL · {label} starry catchlight", (.092, side * -.03, .06), (.022, .042, .046), m["white"], eye, 16, 12)
+        curve(f"OWL · {label} soft brow", [(.47, side * .07, .27), (.50, side * .21, .31), (.45, side * .33, .25)], .026, m["rim"], head, 2)
+    # A short hooked beak, tucked between the eyes and angled gently down.
+    beak = pivot("OWL RIG · little beak", (.55, 0, -.105), head)
+    bpy.ops.mesh.primitive_cone_add(vertices=14, radius1=.115, radius2=.012, depth=.27, location=(0, 0, 0))
+    upper = bpy.context.object
+    upper.name = "OWL · hooked honey beak"
+    upper.data.name = upper.name + " · mesh"
+    upper.data.materials.append(m["beak"])
+    for face in upper.data.polygons:
+        face.use_smooth = True
+    upper.rotation_euler[1] = math.radians(90 + 18)
+    upper.scale = (1, 1.0, .86)
+    local(upper, beak, (.07, 0, -.02))
+    sphere("OWL · beak base", (0, 0, .02), (.085, .105, .075), m["beak"], beak, 22, 14)
+    for side, label in ((-1, "near"), (1, "far")):
+        cheek = sphere(f"OWL · {label} blush cheek", (.43, side * .34, -.17), (.07, .035, .05), m["inner"], head, 20, 14)
+        cheek.rotation_euler[1] = math.radians(-10)
+
+    # Ear tufts are small cones with soft cream tips; they twitch in IDLE.
+    tufts = []
+    for side, label in ((-1, "near"), (1, "far")):
+        tuft = pivot(f"OWL RIG · {label} ear tuft", (.02, side * .30, .40), head)
+        tufts.append(tuft)
+        bpy.ops.mesh.primitive_cone_add(vertices=16, radius1=.145, radius2=.012, depth=.40, location=(0, 0, 0))
+        horn = bpy.context.object
+        horn.name = f"OWL · {label} tapered ear tuft"
+        horn.data.name = horn.name + " · mesh"
+        horn.data.materials.append(m["wing"])
+        for face in horn.data.polygons:
+            face.use_smooth = True
+        horn.rotation_euler[0] = math.radians(side * -14)
+        local(horn, tuft, (-.01, side * .03, .17))
+        sphere(f"OWL · {label} tuft tip", (-.012, side * .06, .35), (.045, .04, .06), m["tip"], tuft, 16, 10)
+
+    # Wings: shoulder pivots with a long hanging balloon, a cream-tipped feather
+    # fan, and a tip joint that trails the arm so the wave has follow-through.
+    wings, tips = [], []
+    for side, label in ((-1, "near"), (1, "far")):
+        wing = pivot(f"OWL RIG · {label} flapping wing", (-.04, side * .60, .18), body)
+        wings.append(wing)
+        arm = sphere(f"OWL · {label} cocoa wing balloon", (-.03, side * .075, -.42), (.30, .105, .56), m["wing"], wing, 40, 26)
+        arm.rotation_euler[0] = math.radians(side * -3)
+        sphere(f"OWL · {label} shoulder join", (0, side * .02, -.02), (.2, .16, .2), m["wing"], wing, 22, 14)
+        tip = pivot(f"OWL RIG · {label} wing tip", (-.03, side * .09, -.84), wing)
+        tips.append(tip)
+        fan = ((.15, .0, .27), (.05, .01, .31), (-.05, .02, .33), (-.15, .03, .28))
+        for index, (x, offset, length) in enumerate(fan):
+            quill = sphere(f"OWL · {label} butterscotch flight feather {index + 1}", (x, side * offset, -length * .62), (.075, .052, length * .72), m["feather"], tip, 22, 14)
+            quill.rotation_euler[0] = math.radians(side * -2)
+            sphere(f"OWL · {label} cream feather tip {index + 1}", (x, side * offset, -length * 1.28), (.07, .05, .07), m["tip"], tip, 16, 10)
+
+    tail = pivot("OWL RIG · feather tail", (-.46, 0, -.34), body)
+    # A root balloon buried in the body anchors the fan, so the tail reads as grown
+    # from the owl rather than hung beside it.
+    sphere("OWL · tail root balloon", (-.04, 0, -.02), (.22, .24, .26), m["body"], tail, 20, 14)
+    for index, side in enumerate((-2, -1, 0, 1, 2)):
+        feather = sphere(f"OWL · tail feather {index + 1}", (-.10, side * .095, -.17), (.11, .08, .30 - abs(side) * .03), m["feather"], tail, 20, 14)
+        feather.rotation_euler[1] = math.radians(-14)
+        feather.rotation_euler[0] = math.radians(side * 6)
+        sphere(f"OWL · tail tip {index + 1}", (-.14, side * .105, -.43 + abs(side) * .03), (.065, .05, .055), m["tip"], tail, 14, 10)
+    bell = add_collar(body, neck, m, "OWL")
+
+    # Feathered trousers and tucked talons, gripping straight down at the perch.
+    for side, label in ((-1, "near"), (1, "far")):
+        sphere(f"OWL · {label} feather trousers", (.12, side * .22, -.70), (.22, .20, .30), m["belly"], body, 28, 18)
+        leg = pivot(f"OWL RIG · {label} talon leg", (.14, side * .22, -.92), body)
+        curve(f"OWL · {label} sandy shank", [(0, 0, .04), (.01, 0, -.08), (.03, 0, -.16)], .042, m["leg"], leg, 3)
+        foot = pivot(f"OWL RIG · {label} gripping foot", (.03, 0, -.19), leg)
+        sphere(f"OWL · {label} talon pad", (.03, 0, -.01), (.10, .10, .045), m["leg"], foot, 22, 14)
+        for toe, angle in enumerate((-22, 0, 22)):
+            lateral = math.sin(math.radians(angle))
+            curve(f"OWL · {label} talon toe {toe + 1}", [(.03, 0, -.01), (.10, lateral * .05, -.015), (.17, lateral * .10, -.035)], .036, m["leg"], foot, 3)
+            sphere(f"OWL · {label} talon tip {toe + 1}", (.18, lateral * .105, -.04), (.03, .025, .023), m["seam"], foot, 12, 8)
+
+    animate_owl(body, neck, head, tufts, wings, tips, tail, eyes, bell, body_z)
+    portrait("owl", m)
+    # Owls look straight ahead, so turn the rig toward the portrait camera for the still.
+    export_asset(root, "owl", review_yaw=-38, review_frame=1)
+
+
+def animate_owl(body, neck, head, tufts, wings, tips, tail, eyes, bell, body_z):
+    """WALK is the lazy flight cycle; IDLE is the perch with a head turn and a blink."""
+    flight_rig = [body, neck, head, *tufts, *wings, *tips, tail, bell]
+    for obj in flight_rig:
+        begin_action(obj, "BALLOON OWL · WALK")
+    out = math.radians(62)  # wings held out about two-thirds of the way up
+    for frame, phase in zip(OWL_FLAP_FRAMES, OWL_FLAP_PHASES):
+        bpy.context.scene.frame_set(frame)
+        beat = math.sin(phase)
+        key(body, frame, location=(0, 0, body_z + .09 * beat), rotation=(math.radians(1.4 * beat), 0, 0))
+        key(neck, frame, rotation=(0, math.radians(1.5 * math.sin(phase - .6)), 0))
+        key(head, frame, location=(.12, 0, .74 - .04 * beat), rotation=(math.radians(-1.6 * beat), math.radians(2.6 * math.sin(phase * .5)), 0))
+        key(bell, frame, rotation=(math.radians(5 * math.sin(phase + .5)), math.radians(7 * math.sin(phase + .9)), math.radians(3 * beat)))
+        key(tail, frame, rotation=(0, math.radians(7 + 5 * math.sin(phase - .8)), math.radians(3 * math.sin(phase * .5))))
+        for index, tuft in enumerate(tufts):
+            side = -1 if index == 0 else 1
+            key(tuft, frame, rotation=(side * math.radians(-6 + 3 * math.sin(phase - .4)), math.radians(8 + 2 * beat), 0))
+        for index, (wing, tip) in enumerate(zip(wings, tips)):
+            side = -1 if index == 0 else 1
+            key(wing, frame, rotation=(side * (out + math.radians(24) * beat), math.radians(-3 * beat), 0))
+            key(tip, frame, rotation=(side * math.radians(16) * math.sin(phase - .9), 0, 0))
+    finish_action(flight_rig, "WALK", "owl")
+
+    perch = [body, neck, head, *tufts, *wings, *tips, tail, bell, *eyes]
+    for obj in perch:
+        begin_action(obj, "BALLOON OWL · IDLE")
+    for frame, phase in zip(FRAMES, PHASES):
+        bpy.context.scene.frame_set(frame)
+        breath = math.sin(phase)
+        key(body, frame, location=(0, 0, body_z + .012 * breath), rotation=(0, 0, 0), scale=(1 + .006 * breath, 1 + .006 * breath, 1 + .01 * breath))
+        key(neck, frame, rotation=(0, 0, math.radians(8 * math.sin(phase * .5 - .4))))
+        key(head, frame, location=(.12, 0, .74), rotation=(math.radians(1.2 * breath), math.radians(1.4 * math.sin(phase + .3)), math.radians(26 * math.sin(phase * .5))))
+        key(bell, frame, rotation=(math.radians(1.6 * breath), math.radians(2.2 * math.sin(phase + .5)), 0))
+        key(tail, frame, rotation=(0, math.radians(5), math.radians(2.5 * math.sin(phase + .5))))
+        for index, tuft in enumerate(tufts):
+            side = -1 if index == 0 else 1
+            twitch = math.radians(8) if frame == 19 else 0
+            key(tuft, frame, rotation=(side * (math.radians(-5) - twitch), math.radians(6), 0))
+        for index, (wing, tip) in enumerate(zip(wings, tips)):
+            side = -1 if index == 0 else 1
+            key(wing, frame, rotation=(side * math.radians(4 + 1.2 * breath), 0, 0))
+            key(tip, frame, rotation=(side * math.radians(1.5 * breath), 0, 0))
+    # A quick blink between the slow head turns: tight keys on the eye pivots.
+    for eye in eyes:
+        for frame, squash in ((1, 1), (15, 1), (17, .1), (19, 1), (25, 1)):
+            eye.scale = (1, 1, squash)
+            eye.keyframe_insert(data_path="scale", frame=frame, group=eye.name)
+    finish_action(perch, "IDLE", "owl")
+
+
 def reset_scene():
     scene = bpy.context.scene
     scene.world = None
@@ -813,7 +1008,7 @@ def reset_scene():
                 collection.remove(block)
 
 
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog}
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl}
 arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
 invalid = [value for value in requested if value not in MAKERS]

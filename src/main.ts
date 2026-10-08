@@ -12,8 +12,8 @@ import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker, type AccomplishmentDef, type AccomplishmentStage } from './game/accomplishments'
 import { startNextEarnedExpansion } from './game/progression-rewards'
 import { type FarmSnapshot } from './game/animal-progress'
-import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
-import { conditionMetricUnit, stageDefinition } from './game/animal-conditions'
+import { farmMetric, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
+import { conditionMetricLabel, conditionMetricUnit, isCountKind, stageDefinition, type AnimalStage } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
@@ -43,6 +43,9 @@ import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
+import { createPopBurst, type PopBurst } from './scene/pop-burst'
+import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
+import { createPredationLedger, isNightTime } from './game/predator'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -149,6 +152,8 @@ rim.position.set(1, 24, -32)
 scene.add(rim)
 
 const dayNightClock = createDayNightClock()
+/** Debug only: a held clock stays put, so a scenario's night does not slip into morning. */
+let clockHeld = false
 const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, skyDome)
 const clockCalendarHud = createClockCalendarHud(window.innerWidth, window.innerHeight)
 
@@ -226,6 +231,11 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
   for (const animal of animals) {
     const record = progress.animal(animal.instanceId)
     if (!record || record.stage <= 0 || animal.isSold) continue
+    // A flier is away by day and only ever drawn as its full model.
+    if (animal.isFlier && !animal.flightVisible) {
+      animal.setDetailedVisible(false)
+      continue
+    }
     if (mode === 'viewer' && !activeInViewer.has(animal.instanceId)) {
       animal.setDetailedVisible(false)
       continue
@@ -245,7 +255,8 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
       projectedHeight,
       distance: camera.position.distanceTo(animal.currentPosition),
       priority: animal.renderPriority + (animal.instanceId === focusedAnimalId ? 200 : 0),
-      interactive: animal.isCapturing || animal.isRomancing || animal.instanceId === focusedAnimalId,
+      interactive: animal.isCapturing || animal.isRomancing || animal.instanceId === focusedAnimalId
+        || animal.isFlier || owlHunt.huntedIds().has(animal.instanceId),
     })
   }
   const detailedIds = new Set(mode === 'farm'
@@ -262,6 +273,8 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
     animal.setDetailedVisible(desiredDetailed)
     if (!record || record.stage <= 0 || animal.isSold || !visibleAnimalIds.has(animal.instanceId)) continue
     if (detailed) actuallyDetailedIds.add(animal.instanceId)
+    // The crowd has no low-poly owl; a flier waits for its model instead.
+    if (animal.isFlier) continue
     entries.push({
       id: animal.instanceId,
       species: animal.id,
@@ -497,6 +510,16 @@ const animalCrowd = createAnimalCrowdRenderer(fairground.root)
 let focusedAnimalId: string | null = null
 let crowdStats = animalCrowd.stats()
 /**
+ * Predator and prey. The owl's flight is stepped by `owlHunt` (which wraps the
+ * pure sim in game/predator.ts); every chicken it takes is tallied in the ledger,
+ * and a `preyEaten` condition reads that tally. A caught chicken pops, and its
+ * effect holds the animal until the clean-up has finished.
+ */
+const predationLedger = createPredationLedger()
+const owlHunt = createOwlHunt(fairground.root, GARDEN_LAWN_Y)
+interface PopInFlight { readonly burst: PopBurst; readonly animal: BalloonAnimal }
+const popsInFlight: PopInFlight[] = []
+/**
  * Live crowd fixtures for sustained load ramps. Empty in normal play; the
  * debug harness fills it via setCrowd and every reset path drains it, so a
  * fixture can never leak into a shipped session.
@@ -647,7 +670,7 @@ function currentTerrainSample(): TerrainSample | null {
 }
 
 /** The last measured farm, kept so the journal and harness can read it. */
-let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {} }
+let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {}, residentCounts: {}, preyEaten: {}, propCounts: {} }
 
 function currentWaterSample(): WaterSample | null {
   if (!gardenWater) return null
@@ -671,11 +694,26 @@ function maturePlantCounts(): Record<string, number> {
   return counts
 }
 
+/** Adult residents per species, which is what a `residentCount` condition reads. */
+function residentCounts(): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const entry of progress.all()) {
+    if (entry.stage < 3 || entry.baby || animalById.get(entry.id)?.isSold) continue
+    counts[entry.species] = (counts[entry.species] ?? 0) + 1
+  }
+  return counts
+}
+
 function measureFarm(): FarmState {
   const lawn = currentLawnSample()
   const terrain = currentTerrainSample()
   if (!lawn || !terrain) return lastFarmState
-  lastFarmState = measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts())
+  lastFarmState = {
+    ...measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts()),
+    residentCounts: residentCounts(),
+    preyEaten: predationLedger.totals,
+    propCounts: gardenProps?.propCounts() ?? {},
+  }
   return lastFarmState
 }
 
@@ -704,7 +742,7 @@ function currentFarmSnapshot(): FarmSnapshot {
   const residentSpecies = new Set(progress.all()
     .filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold)
     .map((entry) => entry.species))
-  return { state: measureFarm(), residentSpecies }
+  return { state: measureFarm(), residentSpecies, night: isNightTime(dayNightClock.timeOfDay) }
 }
 
 function accomplishmentStageForKind(kind: AnimalLifeEvent['kind']): AccomplishmentStage | null {
@@ -762,7 +800,7 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
     }
     if (event.kind === 'courtship') {
       const partner = event.partnerId ? animalById.get(event.partnerId) : undefined
-      if (animal && partner) {
+      if (animal && partner && !animal.isFlier && !partner.isFlier) {
         const separation = new THREE.Vector3(animal.root.position.x - partner.root.position.x, 0, animal.root.position.z - partner.root.position.z)
         if (separation.lengthSq() < 1e-6) separation.set(1, 0, 0)
         separation.setLength(0.9)
@@ -783,6 +821,107 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
     }
     if (event.kind === 'hatch' && event.eggId !== undefined) removeEggVisual(event.eggId)
     if (event.kind === 'growUp' && animal) animal.setGrowth(1)
+  }
+}
+
+let harnessSpawnCount = 0
+
+/** Ground-plane name for a species in a notice, e.g. "chicken". */
+function preyLabel(species: string): string {
+  return ANIMAL_CATALOG.find((entry) => entry.id === species)?.label ?? species
+}
+
+/**
+ * An owl has caught a chicken: it leaves the farm the way a sale does (the
+ * sim forgets it at once), but instead of a coin burst it swells, pops, and the
+ * effect holds the model until the clean-up is done.
+ */
+function handleOwlCatch(prey: BalloonAnimal): void {
+  const total = predationLedger.record(prey.id)
+  const name = animalNames.get(prey.instanceId) ?? preyLabel(prey.id)
+  popAnimal(prey)
+  notificationPanel.notifyAccomplishment(`The owl caught ${name}`, `${total} ${preyLabel(prey.id)}${total === 1 ? '' : 's'} eaten on your farm`)
+  console.info(`[Animal Balloon Farm] owl caught ${prey.id} (${total} eaten)`)
+}
+
+/** Take an animal out of the farm and play its pop; the effect disposes the model when done. */
+function popAnimal(prey: BalloonAnimal): void {
+  const catalog = ANIMAL_CATALOG.find((entry) => entry.id === prey.id)
+  const at = prey.root.getWorldPosition(new THREE.Vector3())
+  progress.remove(prey.instanceId)
+  animalById.delete(prey.instanceId)
+  const index = animals.indexOf(prey)
+  if (index >= 0) animals.splice(index, 1)
+  if (focusedAnimalId === prey.instanceId) {
+    focusedAnimalId = null
+    animalCard.close()
+    syncFarmChrome()
+  }
+  farmHomes.delete(prey.instanceId)
+  viewerStands.delete(prey.instanceId)
+  prey.setAlarmed(false)
+  const burst = createPopBurst({
+    position: new THREE.Vector3(at.x, at.y, at.z),
+    color: catalog?.color ?? '#f6c94d',
+    accent: prey.id === 'chicken' ? '#e65b69' : '#fff0d0',
+    burstHeight: (catalog?.size ?? 1.8) * 0.42,
+    animal: prey.hasDetailedModel ? prey.root : null,
+  })
+  scene.add(burst.root)
+  popsInFlight.push({ burst, animal: prey })
+  refreshAnimalCrowd(performance.now() / 1000, true)
+}
+
+function updateOwlHunt(deltaSeconds: number): void {
+  for (let index = popsInFlight.length - 1; index >= 0; index -= 1) {
+    const { burst, animal } = popsInFlight[index]
+    if (burst.update(deltaSeconds)) continue
+    burst.dispose()
+    animal.dispose()
+    popsInFlight.splice(index, 1)
+  }
+  if (mode === 'viewer') return
+  const owlAnimals = animals.filter((animal) => animal.isFlier && !animal.isSold)
+  if (owlAnimals.length === 0) return
+  const roosts = gardenProps?.roosts() ?? []
+  // Stranded means no oak on the farm at all; an oak whose model is still loading is not a loss.
+  const oakCount = gardenProps?.propCounts().oak ?? 0
+  let nextRoost = 0
+  const owls: HuntOwl[] = owlAnimals.map((animal) => {
+    const record = progress.animal(animal.instanceId)
+    const stage = record?.stage ?? 0
+    const carnival = carnivalSpawnFor(animal.id)
+    // A resident takes the next oak; owls beyond the oak count share one, a step apart.
+    // A visitor has no perch and leaves at dawn. A resident with no oak at all is stranded.
+    let roost: HuntOwl['roost'] = null
+    if (stage >= 3 && roosts.length > 0) {
+      const base = roosts[nextRoost % roosts.length]
+      const sharers = Math.floor(nextRoost / roosts.length)
+      roost = { ...base, x: base.x + sharers * 0.9 }
+      nextRoost += 1
+    }
+    return { animal, carnivalSpawn: carnival, stage, roost, stranded: stage >= 3 && oakCount === 0 }
+  })
+  const flock = animals
+    .filter((animal) => animal.id === 'chicken' && !animal.isSold && animal.isAtFarm)
+    .filter((animal) => {
+      const record = progress.animal(animal.instanceId)
+      return Boolean(record && record.stage >= 3 && !record.baby)
+    })
+    .map((animal) => ({ animal, targetable: !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending }))
+  const bounds = activeGardenBounds()
+  const result = owlHunt.update(deltaSeconds, {
+    night: isNightTime(dayNightClock.timeOfDay),
+    owls,
+    prey: flock,
+    farm: { halfWidth: bounds.halfWidth, halfDepth: bounds.halfDepth },
+  })
+  for (const caught of result.catches) handleOwlCatch(caught.prey)
+  for (const owl of result.deflated) {
+    const name = animalNames.get(owl.instanceId) ?? preyLabel(owl.id)
+    popAnimal(owl)
+    notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'Without an oak to roost on, an owl slowly deflates.')
+    console.info(`[Animal Balloon Farm] ${owl.id} popped: out of helium`)
   }
 }
 
@@ -1192,14 +1331,13 @@ const journalConditionsSource: JournalConditionSource = {
       ...definition,
       revealed: index <= (progress.animal(animal.instanceId)?.stage ?? 0),
       current: definition.requirement && definition.requirement.kind !== 'residentSpecies'
-        ? definition.requirement.kind === 'grassArea' ? measureFarm().tallGrassArea
-          : definition.requirement.kind === 'waterArea' ? measureFarm().waterArea
-            : definition.requirement.kind === 'flatArea' ? measureFarm().flatGrassArea
-              : measureFarm().plantCounts[definition.requirement.species ?? ''] ?? 0
+        ? farmMetric(measureFarm(), definition.requirement.kind, definition.requirement.species)
         : null,
       target: definition.requirement?.amount ?? null,
       met: index < (progress.animal(animal.instanceId)?.stage ?? 0),
-      metricLabel: definition.requirement?.kind === 'plantCount' ? 'Plants in the ground' : null,
+      // Area rows keep their old unlabeled look; plant and predator rows name what they count.
+      metricLabel: definition.requirement?.kind === 'plantCount' ? 'Plants in the ground'
+        : isCountKind(definition.requirement?.kind) ? definition.metricLabel : null,
     }))
     if (!rows.length) return null
     return {
@@ -1219,6 +1357,13 @@ const journalConditionsSource: JournalConditionSource = {
           hint: definition?.hint ?? '',
           ...(row.metricLabel ? { metricLabel: row.metricLabel } : {}),
           ...(row.metricLabel ? { metricUnit: conditionMetricUnit(definition?.requirement ?? null) } : {}),
+          ...(row.revealed && definition?.requirement?.and?.length ? {
+            alsoNeeds: definition.requirement.and.map((also) => ({
+              label: conditionMetricLabel(also) ?? 'Also needed',
+              current: farmMetric(measureFarm(), also.kind, also.species),
+              target: also.amount ?? 1,
+            })),
+          } : {}),
           ...(wantsSpecies ? {
             waitingOn: {
               species: wantsSpecies,
@@ -2256,6 +2401,24 @@ interface GardenDebugHarness {
   carnivalReport(): unknown
   /** The arcade store's build: null before the model loads, else started/finished. */
   shopBuild(): ShopBuildReport | null
+  /** Predator and prey: what the owls are doing, and how many chickens have been eaten. */
+  predation(): { readonly eaten: Readonly<Record<string, number>>; readonly owls: ReturnType<typeof owlHunt.report>['owls']; readonly oaks: number; readonly flock: number }
+  /** Freeze or release the day clock. */
+  holdTime(hold: boolean): void
+  /** The test scenarios you can jump into, by id. Nothing here ships. */
+  scenarios(): Record<string, string>
+  /** Apply a scenario to the running game, e.g. `runScenario('owl/hunt-now')`. */
+  runScenario(name: string): Promise<string>
+  /** Set every owl's helium, 0..1, to test the deflate-and-pop without a two-minute wait. */
+  setOwlHelium(level: number): void
+  /** Make the owls hunt as soon as they can, instead of waiting out the cooldown. */
+  hurryHunt(): void
+  /** Step the owl hunt and any pops forward without waiting on rendered frames. */
+  stepHunt(seconds: number, secondsPerStep?: number): ReturnType<typeof owlHunt.report>['owls']
+  /** Add a tracked animal at a rung of the ladder, standing at its farm spawn; returns its id. */
+  addAnimal(species: string, stage?: number): string | null
+  /** Credit chickens as already eaten, to reach the stay condition without a long night. */
+  feedOwl(count: number): Readonly<Record<string, number>>
   /** What the topmost visible surfaces at a garden point are, for finding stray planes. */
   probeGround(x: number, z: number): readonly { readonly name: string; readonly y: number; readonly color: string | null }[]
   /**
@@ -2551,6 +2714,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       subject: cameraTour?.subjectId ?? null,
     },
   })
+  let scenarioList: Record<string, string> = {}
+  void import('../dev/scenarios/index').then((module) => { scenarioList = module.listScenarios() })
   const debugHarness: GardenDebugHarness = {
     enabled: true,
     state: () => ({
@@ -2683,6 +2848,13 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       knownMaturePlants.clear()
       for (const animal of animals) animal.dispose()
       animals.length = 0
+      for (const pop of popsInFlight) {
+        pop.burst.dispose()
+        pop.animal.dispose()
+      }
+      popsInFlight.length = 0
+      predationLedger.clear()
+      owlHunt.reset()
       for (const eggId of [...eggVisuals.keys()]) removeEggVisual(eggId)
       animalById.clear()
       for (const burst of sellBursts) {
@@ -2821,6 +2993,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       'grantCoins / shop / buy / placeProp / placeFence / propCounts': 'Wallet + prop placement without UI clicks.',
       crowdStressTest: 'crowdStressTest(n) — one render of n fixtures; returns calls/tris. Restores after.',
       'setCrowd / clearCrowd': 'setCrowd(n) keeps n fixtures live for sustained ramps; clearCrowd restores.',
+      'scenarios / runScenario / holdTime': 'scenarios() lists saved test states; runScenario(id) jumps into one; ?scenario=id does it on load; holdTime(bool) freezes the clock.',
       performanceSamples: 'Per-frame work/interval splits. Basis for every perf scenario; see TESTING.md.',
     }),
     simulate: (seconds, steps = Math.max(1, Math.ceil(seconds * 4))) => {
@@ -2844,6 +3017,37 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     expandOnce: () => fairground.farmExpansion?.expand() ?? null,
     carnivalReport: () => fairground.carnivalReport?.() ?? [],
     shopBuild: () => gardenProps?.shopBuildState() ?? null,
+    predation: () => ({
+      eaten: predationLedger.totals,
+      owls: owlHunt.report().owls,
+      oaks: gardenProps?.propCounts().oak ?? 0,
+      flock: animals.filter((animal) => animal.id === 'chicken' && !animal.isSold && (progress.animal(animal.instanceId)?.stage ?? 0) >= 3).length,
+    }),
+    hurryHunt: () => owlHunt.hurry(),
+    setOwlHelium: (level) => owlHunt.setHelium(level),
+    holdTime: (hold) => { clockHeld = hold },
+    scenarios: () => scenarioList,
+    runScenario: async (name) => (await import('../dev/scenarios/index')).runScenario(name, debugHarness),
+    stepHunt: (seconds, secondsPerStep = 1 / 30) => {
+      const steps = Math.max(0, Math.round(seconds / secondsPerStep))
+      for (let step = 0; step < steps; step += 1) {
+        animals.forEach((animal) => animal.update(secondsPerStep))
+        updateOwlHunt(secondsPerStep)
+      }
+      return owlHunt.report().owls
+    },
+    addAnimal: (species, stage = 3) => {
+      const record = progress.add(species, Math.max(0, Math.min(4, Math.floor(stage))) as AnimalStage)
+      if (!record) return null
+      // Well inside the fence, so a settled animal is actually at the farm and not queued at the gate.
+      const slot = harnessSpawnCount++ % 8
+      void createAnimalInstance(record, { x: -3.5 + (slot % 4) * 1.6, z: 2.6 + Math.floor(slot / 4) * 1.5 })
+      return record.id
+    },
+    feedOwl: (count) => {
+      for (let index = 0; index < Math.max(0, Math.floor(count)); index += 1) predationLedger.record('chicken')
+      return predationLedger.totals
+    },
     expandFarm: (level) => {
       const expansion = fairground.farmExpansion
       if (!expansion) return 0
@@ -3001,6 +3205,14 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
   }
   Object.defineProperty(window, '__gardenDebug', { value: debugHarness, configurable: true })
   window.dispatchEvent(new CustomEvent('garden-debug-ready'))
+  // ?scenario=owl/hunt-now jumps straight into a saved test state on load.
+  const requestedScenario = pageParams.get('scenario')
+  if (requestedScenario) {
+    void debugHarness.runScenario(requestedScenario).then(
+      (id) => console.info(`[Animal Balloon Farm] scenario ready: ${id}`),
+      (error) => console.error('[Animal Balloon Farm] scenario failed', error),
+    )
+  }
 }
 
 /**
@@ -3052,7 +3264,7 @@ function frame(now: number): void {
   previousTime = now
   let stageStartedAt = workStartedAt
   removePreviousCameraShake()
-  advanceClock(dayNightClock, delta)
+  if (!clockHeld) advanceClock(dayNightClock, delta)
   dayNightRig.update(dayNightClock.timeOfDay)
   clockCalendarHud.setState({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: calendarOf(dayNightClock.elapsedDays), weekday: weekdayName(dayNightClock.elapsedDays) })
   fairground.update(delta, dayNightClock.elapsedDays)
@@ -3075,6 +3287,7 @@ function frame(now: number): void {
   updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
+  if (!menu.isOpen && !salePanel.isOpen) updateOwlHunt(delta)
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
   for (let burstIndex = sellBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {

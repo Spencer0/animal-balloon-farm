@@ -32,6 +32,7 @@ const PIP_QUOTES = [
   "That fountain? A classic. The ducks approve.",
   "Statues watch the garden while you sleep. Mostly.",
   "Fences love straight lines. Just saying.",
+  "An oak? Lovely. Mind the night shift; something hoots in those branches.",
 ];
 
 function escapeHtml(text: string): string {
