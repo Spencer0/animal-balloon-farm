@@ -28,7 +28,7 @@ import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
-import { createGardenProps, type GardenProps } from './scene/garden-props'
+import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
 import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
 import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
 import { animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
@@ -50,6 +50,7 @@ import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
+import { createPropCard } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
@@ -1105,6 +1106,7 @@ const viewer = createViewerPanel({
  * The card pins to the right of the balloon (flipping left at the edge).
  */
 function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }): void {
+  propCard.close()
   focusedAnimalId = animal.instanceId
   refreshAnimalCrowd(performance.now() / 1000, true)
   gardenPlants?.clearSelection()
@@ -1216,6 +1218,62 @@ const animalCard = createAnimalCard({
     refreshCursor()
   },
 }, window.innerWidth, window.innerHeight)
+
+/**
+ * The prop info card. `selectedProp` outlives the card closing on purpose: a
+ * button press closes the card first and then runs its action.
+ */
+let selectedProp: PropSelection | null = null
+const propCard = createPropCard({
+  onMove: () => {
+    if (!selectedProp || !gardenProps?.beginMove(selectedProp)) return
+    gardenPlants?.cancelPlacement()
+    gardenTools?.setPlantingMode(false)
+    shed.setPlacementActive(true)
+    syncFarmChrome()
+  },
+  onStore: () => {
+    if (!selectedProp || !gardenProps?.store(selectedProp)) return
+    shedDom.refresh()
+    syncFarmChrome()
+  },
+  onSell: () => {
+    const sold = selectedProp
+    const coins = sold && gardenProps ? gardenProps.sell(sold) : null
+    if (!sold || coins === null) return false
+    salePanel.setWallet(wallet.credit(coins))
+    const burst = createSellBurst(new THREE.Vector3(sold.anchor.x, sold.anchor.y, sold.anchor.z), coins)
+    scene.add(burst.root)
+    sellBursts.push(burst)
+    shedDom.refresh()
+    syncFarmChrome()
+    return true
+  },
+  onToggle: (isOpen) => {
+    if (!isOpen) gardenProps?.select(null)
+    refreshCursor()
+  },
+}, window.innerWidth, window.innerHeight)
+
+/** Pin the prop card beside a placed prop and highlight it on the lawn. */
+function openPropCardFor(selection: PropSelection): void {
+  animalCard.close()
+  salePanel.close()
+  gardenPlants?.clearSelection()
+  selectedProp = selection
+  gardenProps?.select(selection)
+  const ndc = new THREE.Vector3(selection.anchor.x, selection.anchor.y, selection.anchor.z).project(camera)
+  propCard.open({
+    id: selection.id,
+    name: selection.name,
+    blurb: selection.blurb,
+    sections: selection.sections,
+    salePrice: selection.salePrice,
+    movable: selection.movable,
+    rotatable: selection.rotatable,
+  }, { x: ndc.x * ui.viewport.width / 2, y: ndc.y * ui.viewport.height / 2 })
+  syncFarmChrome()
+}
 
 const shed = createShedPanel(window.innerWidth, window.innerHeight, (isShedOpen) => {
   shedDom.setOpen(isShedOpen)
@@ -1384,7 +1442,7 @@ function balloonInboxAnchor(): { x: number; y: number } {
   }
 }
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, clockCalendarHud]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, propCard, clockCalendarHud]
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -1496,6 +1554,7 @@ function setMode(next: GameMode): void {
   if (next !== 'farm') {
     salePanel.close()
     animalCard.close()
+    propCard.close()
     shed.close()
     shed.setPlacementActive(false)
     shop.setOpen(false)
@@ -1849,6 +1908,7 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
     || shed.contains(point)
     || salePanel.hitTest?.(point)
     || animalCard.hitTest?.(point)
+    || propCard.hitTest?.(point)
   ))
 }
 
@@ -1976,6 +2036,7 @@ function orbitPointerDown(event: PointerEvent): void {
       gardenProps.pointerMove(event)
       gardenProps.pointerDown(event)
       gardenProps.update(0)
+      if (!gardenProps.placingId) shed.setPlacementActive(false)
       shedDom.refresh()
       syncFarmChrome()
       return
@@ -1997,16 +2058,16 @@ function orbitPointerDown(event: PointerEvent): void {
         }
         return
       }
-      // Hand-tool pick-up first, then the shop door. Both are the same grab the
-      // sale panel already trained the player to make.
-      if (gardenProps?.pickUpAt(event.clientX, event.clientY)) {
-        shedDom.refresh()
-        syncFarmChrome()
+      // A placed prop opens its info card (move, store or sell); then the shop door.
+      const propHit = gardenProps?.inspectAt(event.clientX, event.clientY)
+      if (propHit) {
+        openPropCardFor(propHit)
         return
       }
       if (gardenProps?.pickShop(event.clientX, event.clientY)) {
         salePanel.close()
         animalCard.close()
+        propCard.close()
         gardenProps?.cancelPlacement()
         gardenPlants?.cancelPlacement()
         gardenTools?.setPlantingMode(false)
@@ -2030,6 +2091,7 @@ function orbitPointerDown(event: PointerEvent): void {
     }
     const plant = gardenPlants?.selectAt(event.clientX, event.clientY)
     if (plant) {
+      propCard.close()
       const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
       salePanel.open({
         id: String(plant.instanceId),
@@ -2134,6 +2196,7 @@ function orbitPointerUp(event: PointerEvent): void {
   uiPointerUp(event)
   if (gardenProps?.placingId) {
     gardenProps.pointerUp()
+    if (!gardenProps.placingId) shed.setPlacementActive(false)
     shedDom.refresh()
     syncFarmChrome()
   }
@@ -2202,7 +2265,7 @@ function handleKeyDown(event: KeyboardEvent): void {
   if (gardenProps?.placingId && !menu.isOpen && !journal.isOpen) {
     if (event.key.toLowerCase() === 'r' && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault()
-      gardenProps.rotate()
+      gardenProps.rotate(event.shiftKey ? -1 : 1)
       return
     }
     if (event.key === 'Escape') {
@@ -2358,12 +2421,14 @@ gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
 shed.resize(window.innerWidth, window.innerHeight)
 salePanel.resize(window.innerWidth, window.innerHeight)
 animalCard.resize(window.innerWidth, window.innerHeight)
+propCard.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
   shed.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
   animalCard.resize(window.innerWidth, window.innerHeight)
+  propCard.resize(window.innerWidth, window.innerHeight)
   balloon.resize(window.innerWidth, window.innerHeight)
 })
 
