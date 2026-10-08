@@ -48,6 +48,7 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   duck: { rarity: "Common", traits: ["Herbivore", "Paddler", "Loves a Swim"] },
   goose: { rarity: "Uncommon", traits: ["Herbivore", "Proud Stride", "Takes Flight"] },
   frog: { rarity: "Uncommon", traits: ["Carnivore", "Hopper", "Springs Skyward"] },
+  owl: { rarity: "Rare", traits: ["Predator", "Night Shift", "Barely Flaps"] },
 };
 
 const DEFAULT_META: SpeciesMeta = { rarity: "Common", traits: [] };
@@ -92,6 +93,18 @@ function rowVisual(metricLabel: string | undefined, hint: string, title: string)
   }
   if (metricLabel) return { icon: "sprout", label: metricLabel, isCount: true };
   return { icon: "sprout", label: "Habitat", isCount: false };
+}
+
+/** Extra requirements that must hold alongside a rung's main one, each with its own bar. */
+function alsoNeeds(extras: readonly { readonly label: string; readonly current: number; readonly target: number }[] | undefined): string {
+  if (!extras?.length) return "";
+  return extras.map((extra) => {
+    const pct = Math.max(0, Math.min(1, extra.target > 0 ? extra.current / extra.target : 0));
+    return `<div class="fj-req"><img src="${ICON_BASE}/journal-icon-sprout.png" alt="" draggable="false">
+        <span class="fj-req-label">${escapeHtml(extra.label)}</span>
+        <span class="fj-bar" role="progressbar" aria-valuenow="${extra.current}" aria-valuemax="${extra.target}" aria-label="${escapeHtml(extra.label)}"><i style="width:${(pct * 100).toFixed(1)}%"></i></span>
+        <span class="fj-numbers">${formatMetric(extra.current, true)} / ${formatMetric(extra.target, true)}</span></div>`;
+  }).join("");
 }
 
 export function createJournalDomPanel(options: { onClose: () => void }): JournalDomPanel {
@@ -269,7 +282,7 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
         <div class="fj-req"><img src="${ICON_BASE}/journal-icon-${visual.icon}.png" alt="" draggable="false">
         <span class="fj-req-label">${escapeHtml(visual.label)}</span>
         <span class="fj-bar" role="progressbar" aria-valuenow="${row.current}" aria-valuemax="${row.target}" aria-label="${escapeHtml(visual.label)}"><i style="width:${(pct * 100).toFixed(1)}%"></i></span>
-        <span class="fj-numbers">${formatMetric(row.current, visual.isCount)} / ${formatMetric(row.target, visual.isCount)}${unit}</span></div></div>`;
+        <span class="fj-numbers">${formatMetric(row.current, visual.isCount)} / ${formatMetric(row.target, visual.isCount)}${unit}</span></div>${alsoNeeds(row.alsoNeeds)}</div>`;
     }).join("");
     detail.innerHTML = `<div class="fj-hero">
       <div class="fj-portrait"><img src="${escapeHtml(entry.spriteUrl)}" alt="Balloon ${escapeHtml(entry.name)}"></div>

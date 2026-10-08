@@ -70,6 +70,8 @@ export interface SpeciesProgress {
 }
 
 export interface FarmSnapshot {
+  /** True while it is dark enough for night-only species to be about. */
+  readonly night?: boolean
   readonly state: FarmState
   /** Species ids currently at stage >= 3. */
   readonly residentSpecies: ReadonlySet<string>
@@ -108,7 +110,8 @@ export function requirementMet(requirement: ConditionRequirement | null, farm: F
     return farm.residentSpecies.has(requirement.species ?? '')
   }
   const target = requirement.amount ?? 0
-  return farmMetric(farm.state, requirement.kind, requirement.species) >= target
+  if (farmMetric(farm.state, requirement.kind, requirement.species) < target) return false
+  return (requirement.and ?? []).every((also) => requirementMet(also, farm))
 }
 
 function statusFor(definition: StageDefinition, currentStage: AnimalStage, farm: FarmSnapshot | null): RequirementStatus {

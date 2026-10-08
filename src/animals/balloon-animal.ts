@@ -61,6 +61,29 @@ export interface BalloonAnimalOptions {
   readonly carnivalBounds?: { readonly x: number; readonly z: number }
   /** Terrain height at garden (x, z); enables walking over deformed ground. */
   readonly groundSampler?: (x: number, z: number) => number
+  /**
+   * A flier does not wander. The predator sim places it every frame through
+   * `setFlightPose`, and it is only ever drawn as its full model.
+   */
+  readonly flier?: boolean
+}
+
+/** One frame of flight, as decided by `src/game/predator.ts`. */
+export interface FlightPose {
+  readonly visible: boolean
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  /** Yaw about +Y for a +X-forward model. */
+  readonly heading: number
+  /** Nose-down angle in radians. */
+  readonly pitch: number
+  /** IDLE is the folded, perched pose; WALK is the wide-winged flight cycle. */
+  readonly clip: AnimalClip
+  /** Animation speed. A balloon barely flaps, so a patrol runs well under 1. */
+  readonly rate: number
+  /** How full of helium the balloon is, 0..1. A slack owl is visibly smaller. */
+  readonly puff?: number
 }
 
 export interface BalloonAnimal {
@@ -74,6 +97,15 @@ export interface BalloonAnimal {
   readonly currentScale: number
   readonly renderPriority: number
   readonly isRomancing: boolean
+  /** True for a species that is positioned by the predator sim instead of wandering. */
+  readonly isFlier: boolean
+  /** Whether the flier is currently in the world at all (it is away by day). */
+  readonly flightVisible: boolean
+  /** Place a flier for this frame. No-op for ground animals. */
+  setFlightPose(pose: FlightPose): void
+  /** Prey in a panic: runs faster in short dashes and beats its wings harder. */
+  setAlarmed(alarmed: boolean): void
+  readonly isAlarmed: boolean
   readonly isLoose: boolean
   /** The look currently worn; residency is gated on actually walking inside. */
   readonly appearance: AnimalAppearance
@@ -124,6 +156,7 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   duck: new THREE.MeshStandardMaterial({ color: '#a95c3a', roughness: 0.3, metalness: 0.01 }),
   goose: new THREE.MeshStandardMaterial({ color: '#fff0d0', roughness: 0.38 }),
   frog: new THREE.MeshStandardMaterial({ color: '#6ab84e', roughness: 0.3, metalness: 0.01 }),
+  owl: new THREE.MeshStandardMaterial({ color: '#a9774b', roughness: 0.28, metalness: 0.01 }),
 }
 const HOOF_MATERIAL = new THREE.MeshStandardMaterial({ color: '#76505d', roughness: 0.31 })
 const WILD_BALLOON_COLOR = new THREE.Color('#e53649')
@@ -388,6 +421,10 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let sold = false
   let romancing = false
   let focused = false
+  let alarmed = false
+  let flightRate = 1
+  let flightVisible = !options.flier
+  const alarmScale = (): number => (alarmed ? 2.2 : 1)
   let detailActive = false
   let pendingCapture = false
   const stableAnimationPhase = seededRandom(options.seed ^ 0x51f15e)() * Math.PI * 2
@@ -445,6 +482,19 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         wrapper.updateMatrixWorld(true)
         const groundedBounds = getLocalBounds(wrapper, modelRoot)
         posePivot.position.y -= groundedBounds.min.y
+        if (options.flier) {
+          // A flier has to sit exactly on its perch, so ground the pose it will
+          // actually wear: the clips lift the rig to its standing height, which the
+          // static model does not show.
+          const perched = actions.get('IDLE')
+          if (perched) {
+            perched.reset().play()
+            mixer.update(0)
+            wrapper.updateMatrixWorld(true)
+            posePivot.position.y -= getLocalBounds(wrapper, modelRoot).min.y
+            perched.stop()
+          }
+        }
         pivotBasePosition.copy(posePivot.position)
         pivotBaseRotation.copy(posePivot.rotation)
         modelRoot.traverse((object) => {
@@ -511,6 +561,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   }
 
   function beginTravel(direction: 'enter' | 'leave'): void {
+    // Fliers cross the fence by air; there is no gate route for them.
+    if (options.flier) {
+      travelSide = direction === 'enter' ? 'farm' : 'carnival'
+      return
+    }
     const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
     if (direction === 'enter' && containsFarmPoint(wrapper.position.x, wrapper.position.z, bounds)) {
       // A carnival wanderer may already have crossed the open ground before
@@ -563,7 +618,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
 
   const chooseTarget = (): void => {
     const angle = random() * Math.PI * 2
-    const radius = 2.4 + random() * 5.8
+    const radius = (alarmed ? 4.2 : 2.4) + random() * 5.8
     const limits = leash()
     let nextX = THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -limits.x, limits.x)
     let nextZ = THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -limits.z, limits.z)
@@ -583,7 +638,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       nextZ = clamped.z
     }
     target.set(nextX, 0, nextZ)
-    nextDecision = 2 + random() * 2.4
+    nextDecision = alarmed ? 0.7 + random() * 0.9 : 2 + random() * 2.4
   }
 
   const setAnimation = (name: AnimalClip, fadeSeconds = 0.22): void => {
@@ -749,6 +804,29 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       return (focused ? 100 : 0) + (capture ? 90 : 0) + (romancing ? 80 : 0) + (stage >= 3 ? 10 : 0)
     },
     get isRomancing(): boolean { return romancing },
+    get isFlier(): boolean { return Boolean(options.flier) },
+    get flightVisible(): boolean { return flightVisible },
+    get isAlarmed(): boolean { return alarmed },
+    setAlarmed(next: boolean): void {
+      if (options.flier || alarmed === next) return
+      alarmed = next
+      if (next) {
+        paused = 0
+        nextDecision = 0
+      }
+      if (loaded) loaded.mixer.timeScale = next ? 2.2 : 1
+    },
+    setFlightPose(pose: FlightPose): void {
+      if (!options.flier || sold) return
+      flightVisible = pose.visible
+      wrapper.position.set(pose.x, pose.y, pose.z)
+      wrapper.rotation.set(0, pose.heading, 0)
+      if (!capture) posePivot.rotation.z = pivotBaseRotation.z - pose.pitch
+      flightRate = pose.rate
+      if (!capture) posePivot.scale.setScalar(Math.max(0.35, pose.puff ?? 1))
+      if (loaded) loaded.mixer.timeScale = flightRate
+      setAnimation(pose.clip, 0.3)
+    },
     get isLoose(): boolean { return Boolean(options.isLoose?.()) },
     get animationPhase(): number { return stableAnimationPhase },
     setDetailedVisible(visible: boolean): void {
@@ -858,6 +936,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         return
       }
 
+      if (options.flier) {
+        // The predator sim owns the position; all that is left is the wing cycle.
+        if (loaded) loaded.mixer.timeScale = flightRate
+        if (detailActive) loaded?.mixer.update(delta)
+        return
+      }
+
       if (romancing) {
         romanceSeconds += delta
         romanceDirection.set(romanceTarget.x - wrapper.position.x, 0, romanceTarget.z - wrapper.position.z)
@@ -897,7 +982,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const step = advanceAnimalTravel(
           { x: wrapper.position.x, z: wrapper.position.z },
           travelRoute,
-          options.speed * delta,
+          options.speed * alarmScale() * delta,
         )
         wrapper.position.set(step.position.x, wrapper.position.y, step.position.z)
         direction.set(step.position.x - previousPosition.x, 0, step.position.z - previousPosition.z)
@@ -948,7 +1033,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const distance = direction.length()
         if (paused <= 0) {
           if (distance < 0.48 || nextDecision <= 0) {
-            if (active !== 'IDLE') {
+            if (active !== 'IDLE' && !alarmed) {
               setAnimation('IDLE', 0.28)
               paused = pauseDurations.min + random() * (pauseDurations.max - pauseDurations.min)
               nextDecision = 0
@@ -959,7 +1044,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
             direction.normalize()
             const targetFacing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
             wrapper.quaternion.slerp(targetFacing, 1 - Math.exp(-4.5 * delta))
-            wrapper.position.addScaledVector(direction, Math.min(options.speed * delta, distance))
+            wrapper.position.addScaledVector(direction, Math.min(options.speed * alarmScale() * delta, distance))
             setAnimation('WALK', 0.24)
           }
         }

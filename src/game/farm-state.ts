@@ -41,6 +41,12 @@ export interface FarmState {
    * scenery.
    */
   readonly plantCounts: Readonly<Record<string, number>>
+  /** Adult residents per species, for `residentCount` conditions. */
+  readonly residentCounts?: Readonly<Record<string, number>>
+  /** Prey eaten on this farm per species, for `preyEaten` conditions. */
+  readonly preyEaten?: Readonly<Record<string, number>>
+  /** Placed shop props per prop id, for `propCount` conditions. */
+  readonly propCounts?: Readonly<Record<string, number>>
 }
 
 export interface LawnSample {
@@ -200,6 +206,9 @@ export function farmMetric(state: FarmState, kind: string, species?: string): nu
     case 'waterArea': return state.waterArea
     case 'flatArea': return state.flatGrassArea
     case 'plantCount': return species ? state.plantCounts[species] ?? 0 : 0
+    case 'residentCount': return species ? state.residentCounts?.[species] ?? 0 : 0
+    case 'preyEaten': return species ? state.preyEaten?.[species] ?? 0 : 0
+    case 'propCount': return species ? state.propCounts?.[species] ?? 0 : 0
     default: return 0
   }
 }

@@ -191,3 +191,17 @@ test('the same purchase-and-place sequence is deterministic twice over', () => {
   }
   assert.deepEqual(run(), run())
 })
+
+test('the oak is a two-cell blocking tree in the shop, and counts as owned stock', () => {
+  const oak = props.PROP_CATALOG.oak
+  assert.equal(oak.modelUrl, 'assets/props/oak.glb')
+  assert.deepEqual(oak.footprint, { width: 2, depth: 2 })
+  assert.equal(oak.blocking, true)
+  assert.ok(props.PROP_ORDER.includes('oak'))
+  const inventory = props.createPropInventory({ oak: 2 })
+  assert.equal(inventory.count('oak'), 2)
+  assert.equal(inventory.total(), 2)
+  const wallet = createWallet(oak.price)
+  assert.equal(props.purchaseProp(wallet, inventory, 'oak').ok, true)
+  assert.equal(inventory.count('oak'), 3)
+})

@@ -85,6 +85,14 @@ export interface GardenPropsOptions {
   readonly onChange?: () => void
 }
 
+export interface RoostPoint {
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  /** Yaw of the prop, so a perched owl can face along or across its branch. */
+  readonly rotationY: number
+}
+
 export interface GardenProps {
   readonly root: THREE.Group
   readonly occupancy: PropOccupancy
@@ -95,6 +103,10 @@ export interface GardenProps {
   shopBuildState(): ShopBuildReport | null
   /** True when the click landed on the shop building. */
   pickShop(clientX: number, clientY: number): boolean
+  /** Where an owl can perch: the `OAK roost` node of every placed oak whose model has loaded. */
+  roosts(): readonly RoostPoint[]
+  /** Placed props per id (fences excluded), which is what a `propCount` condition reads. */
+  propCounts(): Readonly<Record<string, number>>
   readonly placingId: PropId | null
   readonly rotation: number
   beginPlacement(id: PropId): void
@@ -802,6 +814,32 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     }
   }
 
+  /** GLTFLoader turns the Blender node `OAK roost` into `OAK_roost`. */
+  const ROOST_NODE = 'OAK_roost'
+  const roostWorld = new THREE.Vector3()
+
+  function roosts(): readonly RoostPoint[] {
+    const points: RoostPoint[] = []
+    for (const visual of visualByProp.values()) {
+      if (visual.prop.id !== 'oak') continue
+      const node = visual.object.getObjectByName(ROOST_NODE)
+      if (!node) continue
+      visual.object.updateWorldMatrix(true, true)
+      node.getWorldPosition(roostWorld)
+      points.push({ x: roostWorld.x, y: roostWorld.y, z: roostWorld.z, rotationY: normalizeRotation(visual.prop.rotation) * Math.PI / 2 })
+    }
+    return points
+  }
+
+  function propCounts(): Readonly<Record<string, number>> {
+    const counts: Record<string, number> = {}
+    for (const prop of occupancy.placed) {
+      if (prop.id === 'fence') continue
+      counts[prop.id] = (counts[prop.id] ?? 0) + 1
+    }
+    return counts
+  }
+
   /** Free a cached source's geometry and materials; clones share them. */
   function disposeSource(object: THREE.Object3D): void {
     object.traverse((child) => {
@@ -823,6 +861,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       return shopBuild ? shopBuild.report() : null
     },
     pickShop,
+    roosts,
+    propCounts,
     get placingId() { return placingId },
     get rotation() { return rotation },
     beginPlacement,
