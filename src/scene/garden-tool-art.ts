@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 
-export type GardenToolId = 'hand' | 'grass' | 'shovel' | 'water' | 'camera'
+export type GardenToolId = 'hand' | 'grass' | 'shovel' | 'water'
 
 export interface GardenToolDefinition {
   readonly id: GardenToolId
@@ -38,19 +38,12 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
     note: 'Hold left-click to pour. Hold right-click to drain.',
     tint: '#77c9d5', accent: '#b3edf0',
   },
-  {
-    id: 'camera', hotkey: 'space', label: 'Camera', subtitle: 'Compose the farm',
-    description: 'A little field camera for framing the farm and the friends in it.',
-    note: 'Drag to orbit the view. Right-click for a gentle cinematic tour. Middle-click to return to the opening shot.',
-    tint: '#a9b8d6', accent: '#f0e2b8',
-  },
 ]
 
 export function createGardenToolModel(id: GardenToolId): THREE.Group {
   if (id === 'hand') return createHandModel()
   if (id === 'shovel') return createShovelModel()
   if (id === 'water') return createWaterBucketModel()
-  if (id === 'camera') return createCameraModel()
   return createGrassSeederModel()
 }
 
@@ -206,80 +199,6 @@ function createWaterBucketModel(): THREE.Group {
   bail.position.set(-0.05, 0.3, 0)
   bail.rotation.set(Math.PI / 2, 0, 0)
   model.add(bail)
-
-  model.traverse((object) => {
-    if (object instanceof THREE.Mesh) {
-      object.castShadow = true
-      object.receiveShadow = true
-    }
-  })
-  return model
-}
-
-/**
- * A little field camera: leather body, brass lens barrel, glass eye. Built as
- * a relief in the XY plane like the other tools, because the tool bar tips
- * every model toward the camera rather than showing its back.
- */
-function createCameraModel(): THREE.Group {
-  const model = new THREE.Group()
-  model.name = 'Handmade field camera'
-
-  const leather = new THREE.MeshStandardMaterial({ color: '#5d4736', roughness: 0.68 })
-  const leatherLight = new THREE.MeshStandardMaterial({ color: '#7c6047', roughness: 0.6 })
-  const brass = new THREE.MeshStandardMaterial({ color: '#d7b765', roughness: 0.3, metalness: 0.48 })
-  const dark = new THREE.MeshStandardMaterial({ color: '#2f2a26', roughness: 0.44, metalness: 0.35 })
-  const glass = new THREE.MeshStandardMaterial({
-    color: '#8fd0dc', roughness: 0.16, metalness: 0.12,
-    emissive: '#1d4b52', emissiveIntensity: 0.35,
-  })
-
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.56, 0.26), leather)
-  body.position.set(0, 0.34, 0)
-  body.castShadow = true
-  body.receiveShadow = true
-  model.add(body)
-
-  const topPlate = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.09, 0.28), leatherLight)
-  topPlate.position.set(0, 0.66, 0)
-  model.add(topPlate)
-
-  const lensHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.21, 0.14, 24), dark)
-  lensHousing.rotation.x = Math.PI / 2
-  lensHousing.position.set(-0.16, 0.33, 0.19)
-  model.add(lensHousing)
-
-  const lensBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.16, 24), brass)
-  lensBarrel.rotation.x = Math.PI / 2
-  lensBarrel.position.set(-0.16, 0.33, 0.3)
-  model.add(lensBarrel)
-
-  const lensGlass = new THREE.Mesh(new THREE.CircleGeometry(0.13, 24), glass)
-  lensGlass.position.set(-0.16, 0.33, 0.385)
-  model.add(lensGlass)
-
-  const viewfinder = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.18), dark)
-  viewfinder.position.set(0.24, 0.74, 0)
-  model.add(viewfinder)
-
-  const finderGlass = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.08), glass)
-  finderGlass.position.set(0.24, 0.74, 0.1)
-  model.add(finderGlass)
-
-  const winder = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.06, 18), brass)
-  winder.rotation.x = Math.PI / 2
-  winder.position.set(0.34, 0.52, 0.18)
-  model.add(winder)
-
-  const shutter = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 14), brass)
-  shutter.position.set(0.34, 0.72, 0)
-  model.add(shutter)
-
-  for (const side of [-1, 1] as const) {
-    const lug = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.016, 8, 14), brass)
-    lug.position.set(side * 0.45, 0.62, 0)
-    model.add(lug)
-  }
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {

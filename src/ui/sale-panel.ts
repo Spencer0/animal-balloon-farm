@@ -215,9 +215,9 @@ export function createSalePanel(
     pointerMove(point): boolean { return (walletVisible && rectContains(this.walletRect, point)) || Boolean(target && visible && containsCard(point)) },
     pointerUp(point): boolean { return (walletVisible && rectContains(this.walletRect, point)) || Boolean(target && visible && containsCard(point)) },
     cursor(point): UiCursorKind | undefined {
-      if (walletVisible && rectContains(this.walletRect, point)) return 'hand'
+      if (walletVisible && rectContains(this.walletRect, point)) return 'idle'
       if (!target || !visible || !containsCard(point)) return undefined
-      return rectContains(SELL_BUTTON, toLocal(point)) && !sold && target.sellable !== false ? 'point' : 'hand'
+      return rectContains(SELL_BUTTON, toLocal(point)) && !sold && target.sellable !== false ? 'point' : 'idle'
     },
     hitTest(point): boolean { return Boolean(target && visible && containsCard(point)) || (walletVisible && rectContains(this.walletRect, point)) },
     update(): void {},

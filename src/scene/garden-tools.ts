@@ -310,7 +310,6 @@ export function createGardenTools(
     grass: createGardenToolModel('grass'),
     shovel: createGardenToolModel('shovel'),
     water: createGardenToolModel('water'),
-    camera: createGardenToolModel('camera'),
   }
   let selectedTool: GardenToolId = 'hand'
   const brushLevels = new Map<GardenToolId, number>()
@@ -983,7 +982,6 @@ export function createGardenTools(
       hoverTint = id === 'water' ? '#77c9d5'
         : id === 'shovel' ? '#d9a06b'
           : id === 'grass' ? '#b7d97a'
-            : id === 'camera' ? '#a9b8d6'
               : '#efc894'
       for (const [key, model] of Object.entries(toolModels)) model.visible = key === id
     },
@@ -1009,8 +1007,7 @@ export function createGardenTools(
       }
     },
     pointerMove(event): void {
-      // The camera tool frames the farm, it never edits it, so no brush ring.
-      if (plantingMode || selectedTool === 'hand' || selectedTool === 'camera') {
+      if (plantingMode || selectedTool === 'hand') {
         cursor.visible = false
         cursorVisible = false
         actionGlow.visible = false
@@ -1069,7 +1066,7 @@ export function createGardenTools(
     pointerDown(event): boolean {
       if (plantingMode) return false
       if (event.button !== 0 && event.button !== 1 && event.button !== 2) return false
-      if (selectedTool === 'hand' || selectedTool === 'camera') return false
+      if (selectedTool === 'hand') return false
       const position = updateCursorPosition(event)
       if (!position) return false
       if (selectedTool === 'shovel') {
