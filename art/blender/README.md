@@ -77,8 +77,9 @@ turn is undone before the GLB is written.
 blender --background --factory-startup --python art/blender/balloon_friends.py -- raccoon
 ```
 
-It is a plain quadruped with the standard `WALK` and `IDLE` clips. There is no sleep clip: the game
-crouches the `IDLE` pose at runtime (see `ANIMAL_PIPELINE.md`, *Nocturnal ground animals, and sleeping*).
+It is a plain quadruped with `WALK` and `IDLE` plus a third, optional `SLEEP` clip (`animate_sleep()`):
+belly on the ground, legs folded, chin on its paws, eyes shut via eyelid pivots. See
+`ANIMAL_PIPELINE.md`, *Nocturnal ground animals, and sleeping*.
 
 - Props: [`trash_props.py`](trash_props.py) builds both `garbage-can` and `dumpster` (`.blend`, `-review.png`, `.glb` under `public/assets/props/`), apart from the approved prop scripts.
 - Icons: `blender ... prop_thumbs.py -- garbage-can dumpster` writes only those two `prop-<id>.png` files and rebuilds the contact sheet.

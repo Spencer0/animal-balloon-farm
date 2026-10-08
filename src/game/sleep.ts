@@ -19,7 +19,7 @@ export interface Bed extends BedPoint {
 }
 
 /** How far from a can's centre a sleeper lies: its own half-length plus the can's radius, so it lies beside the can, not on it. */
-export const BED_RADIUS = 2.0
+export const BED_RADIUS = 2.3
 /** Angle between neighbouring sleepers around one can, in radians. */
 const BED_STEP = 2.2
 

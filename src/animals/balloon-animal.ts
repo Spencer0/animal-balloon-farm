@@ -16,7 +16,7 @@ import { advanceAnimalTravel, canAnimalLeaveFarm, clearOfFarmBounds, createAnima
  */
 const CARNIVAL_RING_OFFSET = { x: 16, z: 20.5 } as const
 
-export type AnimalClip = 'IDLE' | 'WALK'
+export type AnimalClip = 'IDLE' | 'WALK' | 'SLEEP'
 export type AnimalAppearance = 'standard' | 'wild'
 export type { BalloonAnimalId } from './animal-catalog'
 
@@ -446,10 +446,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const sleepYaw = new THREE.Vector3(0, 1, 0)
   let flightVisible = !options.flier
   const alarmScale = (): number => (alarmed ? 2.2 : 1)
+  const hasSleepClip = (): boolean => Boolean(loaded?.actions.has('SLEEP'))
   /** Ease the crouch in or out and breathe; only the pivot is touched, never the wrapper. */
   const applySleepPose = (delta: number): void => {
     sleepBlend = THREE.MathUtils.clamp(sleepBlend + (asleep ? delta : -delta * 1.5) / 1.4, 0, 1)
     const eased = sleepBlend * sleepBlend * (3 - 2 * sleepBlend)
+    // A species with a SLEEP clip lies down by itself; only the others are crouched in code.
+    if (hasSleepClip()) return
     const breath = Math.sin(elapsed * 1.7) * 0.018 * eased
     const squash = 1 - 0.26 * eased + breath
     posePivot.scale.set(1 + 0.07 * eased, squash, 1 + 0.07 * eased)
@@ -500,7 +503,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const actions = new Map<AnimalClip, THREE.AnimationAction>()
         for (const clip of asset.animations) {
           const normalizedName = clip.name.toUpperCase()
-          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : null
+          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : normalizedName.includes('SLEEP') ? 'SLEEP' : null
           if (kind) actions.set(kind, mixer.clipAction(clip))
         }
         loaded = { gltf: asset, root: modelRoot, mixer, actions, activeAnimation: null }
@@ -1017,9 +1020,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           asleep = true
           sleepFacing.setFromAxisAngle(sleepYaw, sleepSpot.heading)
           wrapper.quaternion.slerp(sleepFacing, 1 - Math.exp(-3 * delta))
-          setAnimation('IDLE', 0.5)
+          setAnimation(hasSleepClip() ? 'SLEEP' : 'IDLE', 0.6)
         }
-        if (loaded) loaded.mixer.timeScale = asleep ? 0.3 : 1
+        if (loaded) loaded.mixer.timeScale = asleep ? (hasSleepClip() ? 0.5 : 0.3) : 1
         applySleepPose(delta)
         if (detailActive) loaded?.mixer.update(delta)
         if (options.groundSampler) {

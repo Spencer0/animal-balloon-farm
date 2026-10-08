@@ -270,12 +270,14 @@ def add_collar(body, neck, m, animal):
     return bell
 
 
-def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, forward_gait=False, body_z=1.25, leg_anchor=None):
-    walk = [body, head, neck, *ears, tail, *legs, *hooves, bell]
+def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, forward_gait=False, body_z=1.25, leg_anchor=None, held=()):
+    walk = [body, head, neck, *ears, tail, *legs, *hooves, bell, *held]
     for obj in walk:
         begin_action(obj, f"BALLOON {animal.upper()} · WALK")
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
+        for obj in held:
+            key(obj, frame, scale=(1, 1, .001))
         bob = .025 + .045 * (.5 - .5 * math.cos(2 * phase))
         key(body, frame, location=(0, 0, body_z + bob), rotation=(math.radians(1.5 * math.sin(phase)), 0, math.radians(.8 * math.sin(phase + .4))), scale=(1 + .008 * math.sin(phase), 1, 1 + .012 * math.cos(2 * phase)))
         key(head, frame, rotation=(math.radians(1.7 * math.sin(phase - .3)), math.radians(1.4 * math.sin(phase + .4)), math.radians(1.1 * math.sin(phase + .2))))
@@ -308,11 +310,13 @@ def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positi
             key(hoof, frame, rotation=(0, math.radians((-8 if not forward_gait else 8) * max(0, -math.sin(stride) if forward_gait else math.sin(stride))), math.radians(-1.5 * swing)))
     finish_action(walk, "WALK", animal)
 
-    idle = [body, head, neck, *ears, tail, *legs, *hooves, bell]
+    idle = [body, head, neck, *ears, tail, *legs, *hooves, bell, *held]
     for obj in idle:
         begin_action(obj, f"BALLOON {animal.upper()} · IDLE")
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
+        for obj in held:
+            key(obj, frame, scale=(1, 1, .001))
         idle_bob = .017 * math.sin(phase)
         key(body, frame, location=(0, 0, body_z + idle_bob), rotation=(0, math.radians(.5 * math.sin(phase)), math.radians(.35 * math.sin(phase))))
         key(head, frame, rotation=(math.radians(.5 * math.sin(phase)), math.radians(.9 * math.sin(phase + .3)), math.radians(.8 * math.sin(phase + .8))))
@@ -1008,6 +1012,38 @@ def animate_owl(body, neck, head, tufts, wings, tips, tail, eyes, bell, body_z):
     finish_action(perch, "IDLE", "owl")
 
 
+def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, lids, body_z=1.2):
+    """A third clip, SLEEP: belly on the ground, legs folded flat, chin on the paws, eyes shut.
+
+    The runtime picks it up by name (any clip containing SLEEP) and only for a species that
+    ships one; everything else falls back to a crouched IDLE. Call this BEFORE `animate()` so
+    its NLA track sits underneath WALK and IDLE and never wins the review portrait.
+    """
+    everything = [body, head, neck, *ears, tail, *legs, *hooves, bell, *lids]
+    for obj in everything:
+        begin_action(obj, f"BALLOON {animal.upper()} · SLEEP")
+    lying_z = .70  # belly (body-local -.68) rests on the lawn
+    for frame, phase in zip(FRAMES, PHASES):
+        bpy.context.scene.frame_set(frame)
+        breath = math.sin(phase)
+        key(body, frame, location=(0, 0, lying_z + .012 * breath), rotation=(0, 0, 0), scale=(1 + .012 * breath, 1 + .02 * breath, 1 + .03 * breath))
+        key(head, frame, location=(.78, 0, -.20), rotation=(0, math.radians(24), math.radians(5)))
+        key(neck, frame, rotation=(0, math.radians(8), 0))
+        key(bell, frame, rotation=(0, math.radians(2) * breath, 0))
+        for index, ear in enumerate(ears):
+            side = -1 if index == 0 else 1
+            key(ear, frame, rotation=(math.radians(side * 34), math.radians(-6), math.radians(side * -14)))
+        key(tail, frame, location=(-.80, 0, -.50), rotation=(0, math.radians(-18), math.radians(68 + 2 * breath)))
+        for index, (leg, hoof, (x, y, _)) in enumerate(zip(legs, hooves, leg_positions)):
+            front = index < 2
+            # Front paws stretch ahead under the chin; hind legs fold back along the flank.
+            key(leg, frame, location=(x + (.12 if front else -.05), y, -.60), rotation=(0, math.radians(-76 if front else 66), math.radians(0)))
+            key(hoof, frame, rotation=(0, 0, 0))
+        for lid in lids:
+            key(lid, frame, scale=(1, 1, 1))
+    finish_action(everything, "SLEEP", animal)
+
+
 def make_raccoon():
     m = materials("RACCOON")
     root = pivot("BALLOON RACCOON · export root · forward +X", (0, 0, 0))
@@ -1050,7 +1086,15 @@ def make_raccoon():
         sphere(f"RACCOON · tail ring {index + 1}", (x, y, z), (radius * 1.15, radius, radius), tone, tail, 28, 18)
     sphere("RACCOON · tail tip", (-.97, 0, .40), (.13, .115, .12), m["ring"], tail, 24, 16)
     positions, legs, hooves = make_legs(root, body, m, "RACCOON", connected=True)
-    animate("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45)
+    # Eyelids: flat slivers on the mask while awake, swelling shut in the SLEEP clip.
+    lids = []
+    for side, label in ((-1, "near"), (1, "far")):
+        lid = pivot(f"RACCOON RIG · {label} eyelid", (.15, side * .43, .19), head)
+        lids.append(lid)
+        sphere(f"RACCOON · {label} sleepy eyelid", (0, side * .02, 0), (.17, .10, .18), m["mask"], lid, 24, 16)
+        curve(f"RACCOON · {label} closed-eye line", [(-.08, side * .10, .0), (.02, side * .105, -.045), (.13, side * .10, .0)], .012, m["white"], lid, 2)
+    animate_sleep("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, lids)
+    animate("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45, held=lids)
     portrait("raccoon", m)
     export_asset(root, "raccoon")
 

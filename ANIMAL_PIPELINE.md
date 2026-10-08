@@ -88,6 +88,14 @@ The runtime only looks for two clips, matched by **substring on the uppercased c
 (`src/animals/balloon-animal.ts`): a name containing `WALK`, and one containing `IDLE`. The exporter
 emits exactly `WALK` and `IDLE` because the NLA tracks are named that way.
 
+- A third clip, **`SLEEP`**, is optional (any clip name containing `SLEEP`). A night animal that has it
+  lies down by day; one without it is crouched in code from its `IDLE` pose. The raccoon's
+  `animate_sleep()` shows the recipe: belly on the lawn (body lowered so its underside is at z = 0),
+  legs folded flat, chin on the front paws, ears drooped, tail curled, plus eyelid pivots that are
+  flat slivers in `WALK`/`IDLE` (`animate(..., held=lids)`) and swell shut in `SLEEP`. Call
+  `animate_sleep` **before** `animate` so its NLA track sits under the others and the review portrait
+  still shows the standing pose. To see the lying pose, open the saved `.blend` in Blender, mute the
+  `WALK`/`IDLE` tracks and render frame 7.
 - `FRAMES = (1, 7, 13, 19, 25)` / `PHASES = (0, π/2, π, 3π/2, 2π)` — five keyframes per full cycle.
   First and last must match for a clean loop.
 - `animate()` writes a **real gait**, not a mesh bob: body bob and roll, head counter-motion, tail
@@ -256,6 +264,7 @@ These fail silently:
   keyed by plain strings. Forget `DISCOVERY` and the species sits at stage 0 forever; forget
   `SPECIES_CONDITIONS` and it gets an invented default ladder; forget `NIGHT_ONLY_SPECIES` and a night
   animal turns up at noon. None of these warns, so cover each in `tests/animal-conditions.test.mjs`.
+- **`SPECIES_META` in `src/ui/journal-dom.ts`** gives the journal page its rarity and trait pills.
 - **`PROP_PLURALS`** (same file) words a prop for the journal bar. A missing entry falls back to
   `<id>s`, so a "garbage can" reads "garbage cans" correctly but an irregular noun will not.
 - **The `species` field of a `plantCount` requirement** — it is a `string`, not a `PlantId`, so a
@@ -283,7 +292,12 @@ permanently poisons the agent thread with a 30MB upload error.
 
 ## Stage 5 · Journal entry
 
-**Nothing to do.** The journal is a Three.js book rendered in-scene (`src/ui/journal-ui.ts`); its
+**One thing to do, and it fails silently:** add the species to `SPECIES_META` in `src/ui/journal-dom.ts`
+(rarity plus three trait pills). It is a plain string-keyed table, so a missing species still gets a
+page but with "Common" and no trait pills. Everything else is derived. Verified on the raccoon with
+`?gardenDebug=1`: `setStage('raccoon', 3)`, `openJournal()`, then pick the species card.
+
+Otherwise nothing to do. The journal is a Three.js book rendered in-scene (`src/ui/journal-ui.ts`); its
 animal chapter maps `ANIMAL_CATALOG` directly. Filling in `subtitle`, `description`, `note`,
 `color`, `gesture`, and `spriteUrl` in the catalog entry *is* the journal entry.
 
@@ -522,15 +536,15 @@ none of the owl's code. A ground night animal also sleeps through the day:
 | Who sleeps when | `shouldSleep(species, night)` in `src/game/sleep.ts` (pure, tested in `tests/raccoon.test.mjs`) |
 | Which can, which spot | `pickAnchor` (least crowded, then nearest) and `bedBeside` (a point `BED_RADIUS` from the can, facing it) in the same file |
 | Choosing and keeping a bed | `updateSleepers()` in `src/main.ts`: a resident (stage 3+) beds down beside a placed garbage can, anything else where it stands; beds are chosen once per sleep and dropped at dusk |
-| The sleeping pose | `setSleepSpot(spot)` / `isSleeping` on `BalloonAnimal`. No new clip: the model plays `IDLE` at 0.3x, squashed into a crouch with a slow breath (`applySleepPose`) |
+| The sleeping pose | `setSleepSpot(spot)` / `isSleeping` on `BalloonAnimal`. A model with a `SLEEP` clip plays it (lying down, eyes shut); one without it plays `IDLE` at 0.3x squashed into a crouch (`applySleepPose`) |
 | Where `placements()` comes from | `GardenProps.placements(id)`: the world centre of every placed prop of one id |
 
 Rules that are easy to get wrong:
 
-- **There is no sleep clip and there must not be one.** The runtime only finds `WALK` and `IDLE`. The
-  crouch is a transform on the model's pose pivot, so a new species needs no extra animation.
-- **A sleeper's paws must stay on the grass.** Scaling the pivot would float the model, so
-  `applySleepPose` also scales the pivot's height. If you change the crouch, keep that coupling.
+- **The crouch alone does not read as sleep.** The first raccoon only squashed its standing pose and
+  looked like a standing animal that had shrunk. Author a real `SLEEP` clip; the crouch is only a fallback.
+- **A sleeper's paws must stay on the grass.** In the fallback, scaling the pivot would float the model, so
+  `applySleepPose` also scales the pivot's height. In a `SLEEP` clip, lower the body so the belly is at z = 0.
 - **`BED_RADIUS` is the animal's half-length plus the can's radius.** A bigger animal or can needs a
   bigger radius, or it sleeps on top of the prop.
 - **Only animals at the farm sleep.** A raccoon still at the carnival by day keeps wandering; a
@@ -589,6 +603,7 @@ Stage 3, code:
 - [ ] `PAINT_PALETTES` entry (two paint colors)
 - [ ] `captureGesture` `case` added
 - [ ] `carnivalSpawn` set, and `ANIMAL_SALE_PRICES` entry added
+- [ ] `SPECIES_META` entry in `src/ui/journal-dom.ts` (rarity + traits), then open the journal page and look at it
 - [ ] `SPECIES_CONDITIONS` ladder and `DISCOVERY` trigger added (and `NIGHT_ONLY_SPECIES` if it is a night animal), each covered by a test
 - [ ] If it needs a new shop prop: see *Shop props an animal can ask for*
 - [ ] If it deserves a quick way in: a scenario under `dev/scenarios/<animal>/`
