@@ -53,17 +53,17 @@ export function createProgressionHud(width: number, height: number): Progression
     context.font = 'bold 12px Georgia, "Times New Roman", serif'
     context.textAlign = 'left'
     context.textBaseline = 'alphabetic'
-    context.fillText('GARDEN GROWTH', 20, 25)
+    context.fillText('FARMER PROGRESS', 20, 25)
     context.fillStyle = UI_THEME.meadowDeep
     context.font = 'bold 25px Georgia, "Times New Roman", serif'
     context.fillText(`${state.points} points`, 20, 55)
     context.textAlign = 'right'
     context.fillStyle = UI_THEME.inkSoft
     context.font = 'bold 13px Georgia, "Times New Roman", serif'
-    context.fillText(`PARCEL ${state.level + 1}`, CARD_WIDTH - 22, 25)
+    context.fillText(`FARMER LEVEL ${state.level + 1}`, CARD_WIDTH - 22, 25)
     context.fillStyle = UI_THEME.ink
     context.font = '16px Georgia, "Times New Roman", serif'
-    context.fillText(`${state.pointsToNextLevel} pts to next expansion`, CARD_WIDTH - 22, 49)
+    context.fillText(`${state.pointsToNextLevel} pts to next level`, CARD_WIDTH - 22, 49)
     fillRoundRect(context, 20, 66, CARD_WIDTH - 42, 11, 6, '#d7c49b')
     fillRoundRect(context, 20, 66, (CARD_WIDTH - 42) * progress, 11, 6, UI_THEME.meadow)
     context.textAlign = 'left'

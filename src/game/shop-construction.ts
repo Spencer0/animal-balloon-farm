@@ -1,5 +1,5 @@
 /**
- * The balloon arcade store unlocks with garden expansion #3 and is built on its
+ * Pip's balloon arcade store unlocks with farmer level 2 (index 1) and is built on its
  * treeline site over one short sequence: the site goes up, the slab is poured,
  * the walls drop in, the marquee lights, the roof settles, the balloons inflate,
  * and the site packs away.
@@ -9,8 +9,11 @@
  * `tests/shop-construction.test.mjs` checks the timeline.
  */
 
-/** Garden expansion level that unlocks the shop. */
-export const SHOP_UNLOCK_LEVEL = 3
+/**
+ * Farmer level (zero-based, shown as level 2) that unlocks the shop. It is the
+ * first place upgrades are sold, so it cannot wait on land the player has to buy.
+ */
+export const SHOP_UNLOCK_LEVEL = 1
 
 /** Real seconds for the whole build, from the site going up to the last balloon. */
 export const SHOP_BUILD_SECONDS = 12
@@ -76,8 +79,8 @@ function windowProgress(time: number, window: readonly [number, number]): number
   return clamp01((time - window[0]) / (window[1] - window[0]))
 }
 
-export function shopUnlocked(expansionLevel: number): boolean {
-  return Number.isFinite(expansionLevel) && expansionLevel >= SHOP_UNLOCK_LEVEL
+export function shopUnlocked(farmerLevel: number): boolean {
+  return Number.isFinite(farmerLevel) && farmerLevel >= SHOP_UNLOCK_LEVEL
 }
 
 /** Build progress, 0..1, for the seconds elapsed since the build started. */

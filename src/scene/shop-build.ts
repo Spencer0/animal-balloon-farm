@@ -13,8 +13,8 @@ export interface ShopBuildReport {
 }
 
 export interface ShopBuild {
-  /** Starts the build the first frame the expansion level reaches the unlock level. */
-  update(deltaSeconds: number, expansionLevel: number): void
+  /** Starts the build the first frame the farmer level reaches the unlock level. */
+  update(deltaSeconds: number, farmerLevel: number): void
   /** True once the build has begun. */
   readonly started: boolean
   /** True once every piece has settled and the construction site is packed away. */
@@ -63,12 +63,12 @@ export function createShopBuild(building: THREE.Object3D): ShopBuild {
     }
   }
 
-  // Nothing shows until the expansion reaches the unlock level.
+  // Nothing shows until the farmer reaches the unlock level.
   for (const piece of pieces) piece.node.visible = false
 
   return {
-    update(deltaSeconds: number, expansionLevel: number): void {
-      if (!started && shopUnlocked(expansionLevel)) started = true
+    update(deltaSeconds: number, farmerLevel: number): void {
+      if (!started && shopUnlocked(farmerLevel)) started = true
       if (!started || finished) return
       if (Number.isFinite(deltaSeconds) && deltaSeconds > 0) elapsed = Math.min(SHOP_BUILD_SECONDS, elapsed + deltaSeconds)
       apply(shopBuildProgress(elapsed))

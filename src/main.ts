@@ -10,7 +10,15 @@ import { FARM_EXPANSION_CONFIG } from './game/farm-expansion'
 import { clearOfFarmBounds } from './game/animal-travel'
 import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker, type AccomplishmentDef, type AccomplishmentStage } from './game/accomplishments'
-import { startNextEarnedExpansion } from './game/progression-rewards'
+import {
+  createUpgradeLedger,
+  purchasePropAtLevel,
+  purchaseUpgrade,
+  upgradeQuote,
+  propUnlockLevel,
+  UPGRADE_CATALOG,
+  type UpgradeId,
+} from './game/tool-unlocks'
 import { type FarmSnapshot } from './game/animal-progress'
 import { farmMetric, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
 import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind, type AnimalStage } from './game/animal-conditions'
@@ -21,7 +29,7 @@ import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps } from './scene/garden-props'
-import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
+import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
 import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
 import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
@@ -398,9 +406,14 @@ function plantSurfaceAt(x: number, z: number) {
     substrate,
     waterDepth,
     coverage,
+    // Ground cover (clover, dandelions) wants short, peaceable lawn; the tall
+    // meadow pack grows past the cap and crowds it out.
+    tallGrass: gardenTools?.grassKindAt(x, z, GROUND_COVER_GRASS_RADIUS) === 'tall',
     inBounds: containsGardenPoint(x, z, currentGardenBounds),
   }
 }
+/** How far around a patch the lawn is checked for tall grass, in metres. */
+const GROUND_COVER_GRASS_RADIUS = 0.9
 if (fairground.gardenSurface && gardenTerrain && gardenWater) {
   const coverageCellSize = 0.58
   const coverageCells = new Map<string, number[]>()
@@ -451,7 +464,7 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
 
 /**
  * The arcade store stands at the treeline, past the fully expanded farm, so no
- * amount of growth can reach it. It unlocks with garden expansion #3 and is built
+ * amount of growth can reach it. It unlocks at farmer level 2 and is built
  * on site. The site and facing come from shop-site.ts, which the grove reads too.
  */
 let gardenProps: GardenProps | null = null
@@ -611,6 +624,8 @@ async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; 
 }
 await Promise.all(progress.all().map((record) => createAnimalInstance(record)))
   const wallet = createWallet(STARTING_COINS)
+/** Tools and land the shop has sold. Farmer level decides what it will sell next. */
+const upgrades = createUpgradeLedger()
 
 // Individual residents and visitors are spawned from the pure animal-life records below.
 
@@ -959,14 +974,8 @@ function updateAnimalProgress(deltaSeconds: number): void {
   // already routes the promotion through the model's residency gate, which keeps
   // a settle that arrives out at the tents waiting until the walk-in is done.
   refreshAnimalCrowd(performance.now() / 1000)
-  const targetLevel = progression.level
-  if (fairground.farmExpansion && startNextEarnedExpansion({
-    get level() { return fairground.farmExpansion!.state.level },
-    get isAnimating() { return fairground.farmExpansion!.state.isAnimating },
-    expand: () => fairground.farmExpansion!.expand(),
-  }, targetLevel)) {
-    console.info(`[Animal Balloon Farm] earned expansion parcel ${fairground.farmExpansion.state.level}`)
-  }
+  // Land is no longer handed out for points: farmer level only opens the next
+  // Land Deed at the shop (see game/tool-unlocks.ts), and buying it expands.
 }
 
 // ---------------------------------------------------------------- game modes --
@@ -1039,6 +1048,37 @@ const toolsHud = createToolsHud(
   window.innerWidth,
   window.innerHeight,
 )
+
+/** Put the seeder's pack in the tool bar, and show the E chip once there is a second one. */
+function syncGrassPack(): void {
+  toolsHud.setGrassPack(gardenTools?.grassPack ?? 'short', upgrades.owns('tall-grass'))
+}
+
+/** E with the seed bag out swaps the blue lawn pack and the green meadow pack. */
+function swapGrassPack(): boolean {
+  if (!gardenTools || gardenTools.selectedTool !== 'grass' || !upgrades.owns('tall-grass')) return false
+  gardenTools.setGrassPack(gardenTools.grassPack === 'short' ? 'tall' : 'short')
+  syncGrassPack()
+  return true
+}
+
+// The meadow pack leaves ground cover alone. Plant positions change rarely and
+// the seeder asks per blade, so the patch list is cached for a moment.
+let coverPatches: { x: number; z: number }[] = []
+let coverPatchesAt = -Infinity
+gardenTools?.setTallGrassBlocker((x, z) => {
+  const now = performance.now()
+  if (now - coverPatchesAt > 250) {
+    coverPatchesAt = now
+    coverPatches = (gardenPlants?.simulation.plants ?? [])
+      .filter((plant) => plantSpecies(plant.species).groundCover)
+      .map((plant) => ({ x: plant.x, z: plant.z }))
+  }
+  return coverPatches.some((patch) => (patch.x - x) ** 2 + (patch.z - z) ** 2 < GROUND_COVER_GRASS_RADIUS ** 2)
+})
+
+syncGrassPack()
+
 const menu = createMenuPanel(handleMenuChoice, window.innerWidth, window.innerHeight, () => {
   syncFarmChrome()
 })
@@ -1222,6 +1262,30 @@ function refreshShopUi(): void {
   shop.refresh()
 }
 
+function buyUpgrade(id: UpgradeId): { ok: boolean; text: string } {
+  const definition = UPGRADE_CATALOG[id]
+  const expansion = fairground.farmExpansion
+  if (id === 'land-deed' && (!expansion || expansion.state.isAnimating)) {
+    return { ok: false, text: 'The surveyors are still marking out the last parcel. Give them a moment.' }
+  }
+  const quote = upgradeQuote(id, upgrades, progression.level)
+  const result = purchaseUpgrade(wallet, upgrades, id, progression.level)
+  if (!result.ok) {
+    if (result.failure === 'maxed') return { ok: false, text: `You already own every ${definition.name}.` }
+    if (result.failure === 'locked') return { ok: false, text: `Pip will sell you this at farmer level ${quote.requiredLevel + 1}.` }
+    return { ok: false, text: `Not enough coins for the ${definition.name} -- it costs ${quote.price}.` }
+  }
+  salePanel.setWallet(wallet.balance)
+  if (id === 'land-deed') {
+    expansion?.expand()
+    refreshShopUi()
+    return { ok: true, text: 'Deed signed -- a new strip of land opens up.' }
+  }
+  syncGrassPack()
+  refreshShopUi()
+  return { ok: true, text: 'The green pack is yours. Press E with the seed bag out to swap packs.' }
+}
+
 const shop: ShopDomPanel = createShopDomPanel({
   onClose: () => {
     shop.setOpen(false)
@@ -1230,7 +1294,7 @@ const shop: ShopDomPanel = createShopDomPanel({
   },
   onBuy: (id: PropId) => {
     if (!gardenProps) return { ok: false, text: 'The shopkeeper is still unpacking.' }
-    const result = purchaseProp(wallet, gardenProps.inventory, id)
+    const result = purchasePropAtLevel(wallet, gardenProps.inventory, id, progression.level)
     if (result.ok) {
       salePanel.setWallet(wallet.balance)
       shedDom.refresh()
@@ -1240,7 +1304,9 @@ const shop: ShopDomPanel = createShopDomPanel({
       ok: result.ok,
       text: result.ok
         ? 'Shed stock updated -- Pip slides it across the counter.'
-        : `Not enough coins for the ${PROP_CATALOG[id].name} -- it costs ${PROP_CATALOG[id].price}.`,
+        : result.locked
+          ? `Pip does not stock the ${PROP_CATALOG[id].name} for you yet -- reach farmer level ${result.requiredLevel + 1}.`
+          : `Not enough coins for the ${PROP_CATALOG[id].name} -- it costs ${PROP_CATALOG[id].price}.`,
     }
   },
   onBuySeed: (species: PlantId) => {
@@ -1255,6 +1321,9 @@ const shop: ShopDomPanel = createShopDomPanel({
     shop.refresh()
     return { ok: true, text: `One ${name} seed tucked into the shed.` }
   },
+  farmerLevel: () => progression.level,
+  quoteUpgrade: (id: UpgradeId) => upgradeQuote(id, upgrades, progression.level),
+  onBuyUpgrade: (id: UpgradeId) => buyUpgrade(id),
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
   seedsFor: (species) => gardenPlants?.simulation.seedsFor(species) ?? 0,
   balance: () => wallet.balance,
@@ -2208,6 +2277,10 @@ function handleKeyDown(event: KeyboardEvent): void {
     return
   }
   const key = event.key.toLowerCase()
+  if (key === 'e' && !event.repeat && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && swapGrassPack()) {
+    event.preventDefault()
+    return
+  }
   if (key === '1') {
     event.preventDefault()
     selectGardenTool('hand')
@@ -2411,7 +2484,7 @@ interface GardenDebugHarness {
    */
   setStage(species: string, stage: number): AnimalConditionReport
   /** Sow a disc of grass, in the same units the cow's 15 m2 is measured in. */
-  sowGrass(x: number, z: number, radius: number): FarmState
+  sowGrass(x: number, z: number, radius: number, pack?: 'short' | 'tall'): FarmState
   /** Dig a pond of the given radius, which is what the water conditions want. */
   digPond(x: number, z: number, radius: number): FarmState
   /**
@@ -2519,8 +2592,18 @@ interface GardenDebugHarness {
   balloon(): unknown
   /** Open the player panel without clicking the balloon. */
   player(): unknown
-  /** Buy one prop from the shared wallet, exactly as the Buy button does. */
+  /** Buy one prop from the shared wallet. Skips the farmer-level gate, like grantCoins skips earning. */
   buy(id: string): unknown
+  /** Buy a shop upgrade ('tall-grass' | 'land-deed') through the same rules as the Upgrades tab. */
+  buyUpgrade(id: string): { readonly ok: boolean; readonly text: string }
+  /** Upgrades owned, farmer level, and what the shop would charge for each next one. */
+  upgrades(): Record<string, unknown>
+  /** Hand out progression points without playing for them, to reach a farmer level. */
+  awardPoints(points: number): { readonly points: number; readonly level: number }
+  /** Step the brush forward without waiting on rendered frames, for holding the seeder in a headless check. */
+  stepTools(seconds: number, secondsPerStep?: number): void
+  /** Press E: swap the seeder between the blue short pack and the green tall pack. */
+  swapPack(): string
   propCounts(): Record<string, number>
   placeProp(id: string, cellX: number, cellZ: number, rotation?: number): unknown
   placeFence(fromX: number, fromZ: number, toX: number, toZ: number): unknown
@@ -2867,8 +2950,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       refreshAnimalCrowd(performance.now() / 1000, true)
       return reportConditions()
     },
-    sowGrass: (x, z, radius) => {
-      gardenTools?.sowGrassDisc(x, z, radius)
+    sowGrass: (x, z, radius, pack) => {
+      gardenTools?.sowGrassDisc(x, z, radius, pack ?? gardenTools.grassPack)
       return measureFarm()
     },
     digPond: (x, z, radius) => {
@@ -2907,6 +2990,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     resetConditions: () => {
       gardenTools?.clearGrass()
+      upgrades.reset()
+      gardenTools?.setGrassPack('short')
+      syncGrassPack()
       progress.reset()
       progression.reset()
       accomplishments.reset()
@@ -3044,7 +3130,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       conditions: 'Every species ladder rung + live numbers.',
       setStage: 'setStage(species, 0-4) — force a rung and play its transition.',
       'advance / simulate': 'Tick progression without waiting (advance) or without browser time (simulate).',
-      resetConditions: 'Forget everything: clears garden, herd, fixtures, progression.',
+      resetConditions: 'Forget everything: clears garden, herd, fixtures, progression, upgrades.',
+      'upgrades / buyUpgrade / awardPoints / swapPack / stepTools': 'Farmer level, shop upgrades (tall grass pack, land deeds), and the E pack swap.',
       'sowGrass / digPond / digAt / pourAt / clearGarden': 'Terrain + water fixtures in garden meters.',
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
@@ -3124,6 +3211,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
         for (let step = 0; step < 160; step += 1) fairground.update(.5, dayNightClock.elapsedDays)
         guard += 1
       }
+      upgrades.set('land-deed', expansion.state.level)
       currentGardenBounds = expansion.state.bounds
       gardenTerrain?.syncBounds()
       gardenTerrain?.applyToMeshes()
@@ -3251,6 +3339,30 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       notificationDom.setOpen(true, balloonInboxAnchor())
       syncFarmChrome()
       return { open: notificationDom.isOpen }
+    },
+    buyUpgrade: (id) => {
+      if (!(id in UPGRADE_CATALOG)) return { ok: false, text: `Unknown upgrade ${id}.` }
+      return buyUpgrade(id as UpgradeId)
+    },
+    upgrades: () => ({
+      farmerLevel: progression.level,
+      pack: gardenTools?.grassPack ?? 'short',
+      parcels: fairground.farmExpansion?.state.level ?? 0,
+      quotes: Object.fromEntries((Object.keys(UPGRADE_CATALOG) as UpgradeId[]).map((id) => [id, upgradeQuote(id, upgrades, progression.level)])),
+      propLevels: Object.fromEntries((Object.keys(PROP_CATALOG) as PropId[]).map((id) => [id, propUnlockLevel(id)])),
+    }),
+    awardPoints: (points) => {
+      progression.awardPoints(`debug-${progression.points}-${points}`, Math.max(0, Math.floor(points)))
+      refreshShopUi()
+      return { points: progression.points, level: progression.level }
+    },
+    stepTools: (seconds, secondsPerStep = 0.05) => {
+      const steps = Math.max(0, Math.min(2400, Math.round(seconds / secondsPerStep)))
+      for (let index = 0; index < steps; index += 1) gardenTools?.update(secondsPerStep)
+    },
+    swapPack: () => {
+      swapGrassPack()
+      return gardenTools?.grassPack ?? 'short'
     },
     buy: (id) => {
       if (!gardenProps) return null
@@ -3417,7 +3529,7 @@ function frame(now: number): void {
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
   syncPlantCard(delta)
-  gardenProps?.update(delta, fairground.farmExpansion?.level ?? 0)
+  gardenProps?.update(delta, progression.level)
   const matureIds = new Set<number>()
   for (const plant of gardenPlants?.simulation.plants ?? []) {
     if (!plant.mature) continue

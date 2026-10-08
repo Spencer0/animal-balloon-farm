@@ -13,6 +13,7 @@ export interface ProgressionConfig {
   readonly expansionInterval: number
 }
 
+/** Points make a farmer level: the first at `firstExpansionAt`, then one every `expansionInterval`. Land itself is bought at the shop (tool-unlocks.ts). */
 export const PROGRESSION_CONFIG: ProgressionConfig = {
   points: {
     visitSpecies: 10,

@@ -10,7 +10,7 @@ const { outputFiles } = await build({
   write: false,
 })
 const plants = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
-const { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, STARTING_SEEDS_PER_PLANT, SEED_PRICES } = plants
+const { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, STARTING_SEEDS_PER_PLANT, STARTING_SEED_GIFT, SEED_PRICES } = plants
 const stockedSimulation = () => {
   const simulation = createPlantSimulation()
   for (const species of PLANT_CATALOG) simulation.addSeeds(species.id, 5)
@@ -21,8 +21,11 @@ const surface = (substrate, waterDepth = 0, inBounds = true) => ({ substrate, wa
 test('catalog starts with four useful plants and an empty seed shed', () => {
   assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily'])
   const simulation = createPlantSimulation()
-  for (const species of PLANT_CATALOG) assert.equal(simulation.seedsFor(species.id), STARTING_SEEDS_PER_PLANT)
+  for (const species of PLANT_CATALOG) {
+    assert.equal(simulation.seedsFor(species.id), species.id === STARTING_SEED_GIFT.species ? 1 : STARTING_SEEDS_PER_PLANT)
+  }
   assert.equal(STARTING_SEEDS_PER_PLANT, 0)
+  assert.equal(STARTING_SEED_GIFT.species, 'dandelion')
   assert.equal(simulation.placementResult('clover', 0, 0, surface('grass')).failure, 'out-of-seeds')
 })
 
