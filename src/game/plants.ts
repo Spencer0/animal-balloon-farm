@@ -1,7 +1,7 @@
 export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily'
 export type PlantCare = 'water' | 'prune'
 export type PlantSubstrate = 'grass' | 'soil' | 'water' | 'unknown'
-export type PlantPlacementFailure = 'out-of-bounds' | 'wrong-substrate' | 'needs-visible-water' | 'too-close' | 'out-of-seeds'
+export type PlantPlacementFailure = 'out-of-bounds' | 'wrong-substrate' | 'needs-visible-water' | 'too-close' | 'out-of-seeds' | 'tall-grass'
 
 export interface PlantSpecies {
   readonly id: PlantId
@@ -33,7 +33,7 @@ export interface PlantCareStop {
 export const PLANT_CATALOG: readonly PlantSpecies[] = [
   {
     id: 'clover', name: 'Clover', subtitle: 'Meadow groundcover',
-    description: 'A round patch of clover sown into the lawn. Water it twice while it spreads; it stays for good. Sheep come for it.',
+    description: 'A round patch of clover sown into short lawn grass. Water it twice while it spreads; it stays for good. Sheep come for it.',
     color: '#79ad58', substrate: 'grass', spacingRadius: 1.05,
     growthSeconds: 80,
     care: [{ at: 0.2, kind: 'water' }, { at: 0.6, kind: 'water' }],
@@ -41,7 +41,7 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
   },
   {
     id: 'dandelion', name: 'Dandelion', subtitle: 'Sunny lawn weed',
-    description: 'A round patch of dandelions sown into the lawn. Water it twice while it blooms; it stays for good. Chickens come for it.',
+    description: 'A round patch of dandelions sown into short lawn grass. Water it twice while it blooms; it stays for good. Chickens come for it.',
     color: '#e9c545', substrate: 'grass', spacingRadius: 1.05,
     growthSeconds: 90,
     care: [{ at: 0.25, kind: 'water' }, { at: 0.65, kind: 'water' }],
@@ -83,6 +83,11 @@ export interface PlantSurface {
   readonly inBounds: boolean
   /** How thickly grassed the ground is, 0..1. Unset counts as thick enough. */
   readonly coverage?: number
+  /**
+   * True when the meadow pack has grown the ground past lawn height. Ground
+   * cover belongs on short, peaceable grass, so it refuses a meadow.
+   */
+  readonly tallGrass?: boolean
 }
 
 export interface GardenPlant {
@@ -159,6 +164,8 @@ export function createPlantSimulation(): PlantSimulation {
       return { valid: false, failure: 'wrong-substrate' }
     } else if (definition.groundCover && (surface.coverage ?? 1) < definition.groundCover.minCoverage) {
       return { valid: false, failure: 'wrong-substrate' }
+    } else if (definition.groundCover && surface.tallGrass) {
+      return { valid: false, failure: 'tall-grass' }
     }
     const tooClose = plants.some((other) => {
       const otherRadius = plantSpecies(other.species).spacingRadius

@@ -122,8 +122,8 @@ export interface GardenProps {
   placeFence(fromX: number, fromZ: number, toX: number, toZ: number): PropPlacementOutcome
   /** Hand tool: return a placed prop to the inventory. */
   pickUpAt(clientX: number, clientY: number): PropId | null
-  /** `expansionLevel` drives the shop's build, which starts once expansion #3 is reached. */
-  update(deltaSeconds: number, expansionLevel?: number): void
+  /** `farmerLevel` drives the shop's build, which starts once the farmer reaches level 2. */
+  update(deltaSeconds: number, farmerLevel?: number): void
   report(): PropReport
   dispose(): void
 }
@@ -875,11 +875,11 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     placeProp,
     placeFence,
     pickUpAt,
-    update(deltaSeconds: number, expansionLevel = 0): void {
+    update(deltaSeconds: number, farmerLevel = 0): void {
       if (fencesDirty) rebuildFences()
       syncVisuals()
       updateShopPlacement()
-      shopBuild?.update(deltaSeconds, expansionLevel)
+      shopBuild?.update(deltaSeconds, farmerLevel)
     },
     report,
     dispose(): void {

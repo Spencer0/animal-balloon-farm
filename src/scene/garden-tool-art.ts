@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { GRASS_PACKS, type GrassPack } from '../game/tool-unlocks'
 
 export type GardenToolId = 'hand' | 'grass' | 'shovel' | 'water' | 'camera'
 
@@ -21,9 +22,9 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
     tint: '#e9c58e', accent: '#f3dfb0',
   },
   {
-    id: 'grass', hotkey: '2', label: 'Grass Seeder', subtitle: 'A little green goes a long way',
+    id: 'grass', hotkey: '2', label: 'Grass Seeder', subtitle: 'Blue for a lawn, green for a meadow',
     description: 'A burlap sack of seed for turning bare soil into a soft patch of meadow.',
-    note: 'Hold and drag to sow grass. Right-click to gently trim it back.',
+    note: 'Hold and drag to sow grass. Right-click to gently trim it back. Press E to swap packs once Pip sells you the tall one.',
     tint: '#b7d97a', accent: '#f3d78a',
   },
   {
@@ -46,12 +47,12 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
   },
 ]
 
-export function createGardenToolModel(id: GardenToolId): THREE.Group {
+export function createGardenToolModel(id: GardenToolId, pack: GrassPack = 'short'): THREE.Group {
   if (id === 'hand') return createHandModel()
   if (id === 'shovel') return createShovelModel()
   if (id === 'water') return createWaterBucketModel()
   if (id === 'camera') return createCameraModel()
-  return createGrassSeederModel()
+  return createGrassSeederModel(pack)
 }
 
 function createHandModel(): THREE.Group {
@@ -91,13 +92,29 @@ function createHandModel(): THREE.Group {
   return model
 }
 
-function createGrassSeederModel(): THREE.Group {
+/**
+ * Recolour a seeder model's sack for the pack in hand: blue for short grass,
+ * green for tall. Only the sack changes; the twine, sprout and spilled seed
+ * keep their colours so the two packs read as one tool.
+ */
+export function tintSeedPack(model: THREE.Object3D, pack: GrassPack): void {
+  const sack = model.userData.packMaterials as { body: THREE.MeshStandardMaterial; shade: THREE.MeshStandardMaterial; light: THREE.MeshStandardMaterial } | undefined
+  if (!sack) return
+  const definition = GRASS_PACKS[pack]
+  sack.body.color.set(definition.sack)
+  sack.shade.color.set(definition.sackShade)
+  sack.light.color.set(definition.sackLight)
+  model.userData.pack = pack
+}
+
+function createGrassSeederModel(pack: GrassPack): THREE.Group {
   const model = new THREE.Group()
   model.name = 'Grass seed bag'
 
   const burlap = new THREE.MeshStandardMaterial({ color: '#c9a06b', roughness: 0.92 })
   const burlapDark = new THREE.MeshStandardMaterial({ color: '#b58e5c', roughness: 0.94 })
   const burlapLight = new THREE.MeshStandardMaterial({ color: '#d4af75', roughness: 0.9 })
+  model.userData.packMaterials = { body: burlap, shade: burlapDark, light: burlapLight }
   const twine = new THREE.MeshStandardMaterial({ color: '#8a6f3f', roughness: 0.85 })
   const sprout = new THREE.MeshStandardMaterial({ color: '#6fa055', roughness: 0.62 })
   const seedTan = new THREE.MeshStandardMaterial({ color: '#a5804e', roughness: 0.7 })
@@ -174,6 +191,7 @@ function createGrassSeederModel(): THREE.Group {
       object.receiveShadow = true
     }
   })
+  tintSeedPack(model, pack)
   return model
 }
 
