@@ -11,7 +11,7 @@
 
 import type { Wallet } from './sales'
 
-export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak'
+export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak' | 'garbage-can' | 'dumpster'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -136,10 +136,38 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     blocking: true,
     modelUrl: 'assets/props/oak.glb',
   },
+  'garbage-can': {
+    id: 'garbage-can',
+    name: 'Garbage Can',
+    description: 'A dented tin can with a lid that never quite closes.',
+    blurb: 'Smells like dinner after dark. A raccoon will not settle without one nearby.',
+    color: '#9aa4a8',
+    price: 45,
+    footprint: { width: 1, depth: 1 },
+    size: 1.5,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/garbage-can.glb',
+  },
+  dumpster: {
+    id: 'dumpster',
+    name: 'Dumpster',
+    description: 'A battered steel dumpster, lids thrown open and heaped with bags.',
+    blurb: 'A raccoon\'s home. It will not raise a family without one.',
+    color: '#868b8e',
+    price: 120,
+    footprint: { width: 2, depth: 1 },
+    size: 4.5,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/dumpster.glb',
+  },
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'oak']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'oak', 'garbage-can', 'dumpster']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -147,6 +175,37 @@ export function propDefinition(id: PropId): PropDefinition {
 
 export function propPrice(id: PropId): number {
   return PROP_CATALOG[id].price
+}
+
+/** A placed prop sells back for this share of its shop price. */
+export const PROP_SELL_RATIO = 0.5
+
+/**
+ * Coins for selling a placed prop. `sections` is the number of fence sections
+ * in a run; every other prop is a single piece. Always at least 1 coin per
+ * piece so a sale never rounds down to nothing.
+ */
+export function propSaleValue(id: PropId, sections = 1): number {
+  const pieces = Number.isFinite(sections) ? Math.max(1, Math.floor(sections)) : 1
+  return Math.max(1, Math.floor(PROP_CATALOG[id].price * PROP_SELL_RATIO)) * pieces
+}
+
+const PROP_CATEGORY: Readonly<Record<PropId, string>> = {
+  fence: 'Fence',
+  statue: 'Decoration',
+  fountain: 'Decoration',
+  coop: 'Shelter',
+  barn: 'Shelter',
+  oak: 'Tree',
+  'garbage-can': 'Utility',
+  dumpster: 'Shelter',
+}
+
+/** Chip copy for the info card, e.g. "Shelter" or "Fence run - 4 sections". */
+export function propCardChip(id: PropId, sections = 1): string {
+  if (id !== 'fence') return PROP_CATEGORY[id]
+  const count = Number.isFinite(sections) ? Math.max(1, Math.floor(sections)) : 1
+  return `Fence run · ${count} section${count === 1 ? '' : 's'}`
 }
 
 // ----------------------------------------------------------------- inventory --
@@ -165,7 +224,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0
