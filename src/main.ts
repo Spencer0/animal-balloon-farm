@@ -2437,6 +2437,10 @@ interface GardenDebugHarness {
   resetCamera(): void
   /** Put coins in the wallet without farming for them, so the shop can be driven. */
   grantCoins(amount: number): number
+  /** Award progression points outright, e.g. 500 reaches farmer level 10. */
+  grantPoints(points: number): { points: number; level: number }
+  /** Put `count` seeds of every plant in the shed. */
+  grantSeeds(count: number): void
   /** Open the storefront screen without walking up to the building. */
   shop(): void
   /** Open the shed inventory without clicking the 3D shed. */
@@ -2983,6 +2987,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       'selectTool / projectGardenPoint': 'Arm a tool; project garden meters to canvas pixels for pointer tests.',
       'animalReport / rendering': 'Herd list; live counts + crowd stats.',
       hatch: 'Hatch a ready egg by id.',
+      'grantPoints / grantSeeds': 'Jump progression level / stock the seed shed without playing.',
       'grantCoins / shop / buy / placeProp / placeFence / propCounts': 'Wallet + prop placement without UI clicks.',
       crowdStressTest: 'crowdStressTest(n) — one render of n fixtures; returns calls/tris. Restores after.',
       'setCrowd / clearCrowd': 'setCrowd(n) keeps n fixtures live for sustained ramps; clearCrowd restores.',
@@ -3128,6 +3133,15 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     startTour: (seed) => beginCameraTour(seed),
     endTour: (restore = true) => { endCameraTour(restore) },
     resetCamera: () => { resetCameraToStart() },
+    grantPoints: (points) => {
+      progression.awardPoints(`debug-grant-${progression.points}-${Math.floor(points)}`, points)
+      return { points: progression.points, level: progression.level }
+    },
+    grantSeeds: (count) => {
+      for (const plant of PLANT_CATALOG) gardenPlants?.simulation.addSeeds(plant.id, count)
+      shedDom.refresh()
+      shop.refresh()
+    },
     grantCoins: (amount) => {
       const balance = wallet.credit(amount)
       salePanel.setWallet(balance)
