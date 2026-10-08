@@ -11,8 +11,8 @@
 - Plants: with a tool selected, choosing a plant in the shed causes a glitch where it can't be placed. Covers plant logic in general: watering, pruning, placing. For this - All the icons suck (Watering, Pruning, Fully grown). The Plant Info on click needs to be changed to be just like the Animal Info. 
 - Visitors don't wander in and quickly out; they should stay for a shorter time, not linger. See viva pinata logic. 
 - Carnival spawning in is extremely glitchy - it just "pops" up with no warning... it should come out slowly, each peice, as if being set up. Same with tear down. 
-- The "pointer tool" and "default cursor" need an overview. Their behavior is unclear and should be reviewed as a whole
-- Camera tool can be removed
+- The "pointer tool" and "default cursor" need an overview. Their behavior is unclear and should be reviewed as a whole. I think cursor should stay on (1) But it should be a pointer, we don't need another in game cursor. (We have some weird default icon). Just make it the theme of a balloon mouse. 
+- Camera tool can be removed. 
 - After the first cow came and got sold, no new cows entered the farm
 - Chicken coop looks very ugly; needs a visual pass
 - Shop icons are a bit wonky, and the text next to them is too
