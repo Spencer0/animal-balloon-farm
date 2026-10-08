@@ -5,6 +5,7 @@ import { clampToFarm, containsFarmPoint } from '../game/farm-footprint'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
+import { lowestClipPoseY } from './animal-grounding'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
 import { advanceAnimalTravel, canAnimalLeaveFarm, clearOfFarmBounds, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
@@ -480,8 +481,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         posePivot.position.copy(center)
         modelRoot.position.sub(center)
         wrapper.updateMatrixWorld(true)
-        const groundedBounds = getLocalBounds(wrapper, modelRoot)
-        posePivot.position.y -= groundedBounds.min.y
+        // Ground on the lowest point the clips reach, not the bind pose (see lowestClipPoseY).
+        const detailRoot: THREE.Group = modelRoot
+        posePivot.position.y -= lowestClipPoseY(detailRoot, mixer, asset.animations, () => getLocalBounds(wrapper, detailRoot).min.y)
         if (options.flier) {
           // A flier has to sit exactly on its perch, so ground the pose it will
           // actually wear: the clips lift the rig to its standing height, which the
