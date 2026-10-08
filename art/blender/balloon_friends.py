@@ -270,14 +270,18 @@ def add_collar(body, neck, m, animal):
     return bell
 
 
-def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, forward_gait=False, body_z=1.25, leg_anchor=None, held=()):
+def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, forward_gait=False, body_z=1.25, leg_anchor=None, held=(), pinned=()):
     walk = [body, head, neck, *ears, tail, *legs, *hooves, bell, *held]
     for obj in walk:
         begin_action(obj, f"BALLOON {animal.upper()} · WALK")
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
         for obj in held:
-            key(obj, frame, scale=(1, 1, .001))
+            # Flat while awake, but not constant: a constant channel is dropped on export and the
+            # node falls back to its rest scale, which would leave the eyes shut.
+            key(obj, frame, scale=(1, 1, .001 + .004 * (1 + math.sin(phase))))
+        for obj, base in pinned:
+            key(obj, frame, location=(base[0], base[1], base[2] + .0015 * math.sin(phase)))
         bob = .025 + .045 * (.5 - .5 * math.cos(2 * phase))
         key(body, frame, location=(0, 0, body_z + bob), rotation=(math.radians(1.5 * math.sin(phase)), 0, math.radians(.8 * math.sin(phase + .4))), scale=(1 + .008 * math.sin(phase), 1, 1 + .012 * math.cos(2 * phase)))
         key(head, frame, rotation=(math.radians(1.7 * math.sin(phase - .3)), math.radians(1.4 * math.sin(phase + .4)), math.radians(1.1 * math.sin(phase + .2))))
@@ -316,7 +320,11 @@ def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positi
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
         for obj in held:
-            key(obj, frame, scale=(1, 1, .001))
+            # Flat while awake, but not constant: a constant channel is dropped on export and the
+            # node falls back to its rest scale, which would leave the eyes shut.
+            key(obj, frame, scale=(1, 1, .001 + .004 * (1 + math.sin(phase))))
+        for obj, base in pinned:
+            key(obj, frame, location=(base[0], base[1], base[2] + .0015 * math.sin(phase)))
         idle_bob = .017 * math.sin(phase)
         key(body, frame, location=(0, 0, body_z + idle_bob), rotation=(0, math.radians(.5 * math.sin(phase)), math.radians(.35 * math.sin(phase))))
         key(head, frame, rotation=(math.radians(.5 * math.sin(phase)), math.radians(.9 * math.sin(phase + .3)), math.radians(.8 * math.sin(phase + .8))))
@@ -1098,8 +1106,12 @@ def make_raccoon():
         lids.append(lid)
         sphere(f"RACCOON · {label} sleepy eyelid", (0, side * .02, 0), (.17, .10, .18), m["mask"], lid, 24, 16)
         curve(f"RACCOON · {label} closed-eye line", [(-.08, side * .10, .0), (.02, side * .105, -.045), (.13, side * .10, .0)], .012, m["white"], lid, 2)
+    # SLEEP moves the head and tail *position*, which WALK and IDLE never key. Without pinning
+    # their standing position in those clips, the exported rest pose is the lying one and the
+    # awake raccoon walks around with its head sunk inside its body.
+    pinned = [(head, tuple(head.location)), (tail, tuple(tail.location))]
     animate_sleep("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, lids)
-    animate("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45, held=lids)
+    animate("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45, held=lids, pinned=pinned)
     portrait("raccoon", m)
     export_asset(root, "raccoon")
 

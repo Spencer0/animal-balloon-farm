@@ -96,6 +96,14 @@ emits exactly `WALK` and `IDLE` because the NLA tracks are named that way.
   `animate_sleep` **before** `animate` so its NLA track sits under the others and the review portrait
   still shows the standing pose. To see the lying pose, open the saved `.blend` in Blender, mute the
   `WALK`/`IDLE` tracks and render frame 7.
+- **A property that one clip animates must be animated, with variation, by every clip.** Two traps, both
+  hit by the raccoon and both silent: (1) the glTF exporter drops any channel that never changes, so a
+  pose held constant never reaches the game and that node stays at its rest pose; (2) when `SLEEP` keys a
+  property (the head's and tail's *position*, the eyelids' scale) that `WALK`/`IDLE` do not, the exported
+  rest pose is the lying one and the awake animal walks around with its head sunk into its body.
+  `animate(..., held=lids, pinned=[(head, rest_location), ...])` re-keys those in `WALK`/`IDLE` with a
+  hair of motion. After every export, count channels per clip in the GLB JSON (`SLEEP`, `WALK` and `IDLE`
+  should each list every animated node) and look at the animal **awake and asleep** in the game.
 - `FRAMES = (1, 7, 13, 19, 25)` / `PHASES = (0, π/2, π, 3π/2, 2π)` — five keyframes per full cycle.
   First and last must match for a clean loop.
 - `animate()` writes a **real gait**, not a mesh bob: body bob and roll, head counter-motion, tail
@@ -283,6 +291,20 @@ npm run dev     # http://127.0.0.1:8000/
 - **VIEWER** from the main menu (or `window.__gardenDebug.openViewer()` under `?gardenDebug=1`) — the capture viewer. It stages only `VIEWER_CAST` (`src/animals/animal-catalog.ts`): the review booth for new models. While tuning a species, list just its id there and it stands alone on the stage, framed close, with a single tray card; click the card (or **Play all**) to replay its reveal.
 - Click the journal book in the world → **Animals** chapter. Your species should appear with its
   portrait, subtitle, and note, derived straight from the catalog entry.
+
+**Judge a model from the side, not from the game camera.** The game looks down at about 40 degrees,
+which hides a lying pose and the face of anything walking away. Use the angle sheet: one animal circled
+at a low angle on a single small JPEG (six 480x270 frames), and the perf overlay hidden with `&nohud=1`:
+
+```sh
+node scripts/angle-sheet.mjs "http://127.0.0.1:8000/?gardenDebug=1&nohud=1&scenario=raccoon/sleeping-by-can" \
+  C:/Users/Spencer/.codex/agent-shots/raccoon-asleep.jpg --species raccoon --min-stage 3 --sleeping --wait 120000
+```
+
+`--eval "<js>" --after-eval <ms>` runs setup in the page first (for example nightfall, to wake it), and
+`--angles`, `--elevation` and `--height` change the framing. It uses `__gardenDebug.frameAngle(x, z, height,
+azimuthDeg, elevationDeg)`. Headless software rendering runs at a few FPS and the simulation clamps each
+frame, so give a scenario a minute or two of wall time before the animal has walked anywhere.
 
 **Screenshots (project rule, non-negotiable):** resize the viewport to ~1280x720 first, take **one**
 screenshot per state change, and **never** `fullPage` a game canvas. A single oversized image

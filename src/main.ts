@@ -1051,7 +1051,7 @@ let expansionFeedbackStrength = 0
 // ------------------------------------------------------------------- UI layer --
 
 const ui = createUILayer()
-const performanceOverlay = __GARDEN_DEBUG__ && gardenDebugMode ? createPerformanceOverlay() : null
+const performanceOverlay = __GARDEN_DEBUG__ && gardenDebugMode && !pageParams.has('nohud') ? createPerformanceOverlay() : null
 ui.resize(window.innerWidth, window.innerHeight)
 
 const journal = createJournalPanel(window.innerWidth, window.innerHeight, (isJournalOpen) => {
@@ -2482,6 +2482,12 @@ interface GardenDebugHarness {
    * — a pond and the lily pads planted in it, say.
    */
   focusPoint(x: number, z: number, height?: number): void
+  /**
+   * Frame a point from any side, for model review. `azimuthDegrees` walks round the
+   * target (0 looks along -z), `elevationDegrees` is the angle above the ground
+   * (the game's own view is steep; 15-20 reads a pose from the side).
+   */
+  frameAngle(x: number, z: number, height: number, azimuthDegrees: number, elevationDegrees: number): void
   /** Camera pose and tour state, for verifying framing without screenshots. */
   camera(): CameraDebugReport
   /** Advance the cinematic tour by `seconds` of simulated time, no waiting. */
@@ -2956,6 +2962,25 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     focusPoint: (x, z, height = 14) => {
       frameAt(new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z), height)
     },
+    frameAngle: (x, z, height, azimuthDegrees, elevationDegrees) => {
+      const target = new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z)
+      const azimuth = THREE.MathUtils.degToRad(azimuthDegrees)
+      const elevation = THREE.MathUtils.degToRad(elevationDegrees)
+      const distance = initialOffset.length()
+      const offset = new THREE.Vector3(
+        Math.sin(azimuth) * Math.cos(elevation),
+        Math.sin(elevation),
+        Math.cos(azimuth) * Math.cos(elevation),
+      ).multiplyScalar(distance)
+      cameraTarget.copy(target)
+      viewHalfHeight = height / 2
+      camera.position.copy(cameraTarget).add(offset)
+      viewDirection.copy(offset).normalize()
+      cameraDistance = distance
+      camera.lookAt(cameraTarget)
+      camera.updateMatrixWorld()
+      updateCameraProjection()
+    },
     progression: () => ({ points: progression.points, level: progression.level, pointsToNextLevel: progression.pointsToNextLevel }),
     rendering: () => ({ animalCount: animals.filter((animal) => !animal.isSold).length, populationLimit: animalPopulationLimit, crowd: { ...crowdStats } }),
     crowdStressTest: (requestedCount = animalPopulationLimit) => {
@@ -3022,6 +3047,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       focusGarden: 'Frame the whole garden. Run before pointer scenarios.',
       focusPoint: 'focusPoint(x, z, height?) — frame a habitat, e.g. a pond.',
       focusSpecies: 'focusSpecies(species, height?) — close-up for model review.',
+      frameAngle: 'frameAngle(x, z, height, azimuthDeg, elevationDeg) — low side-on view; scripts/angle-sheet.mjs uses it.',
       resetCamera: 'Back to the opening shot.',
       'openMenu / closeMenu / openJournal / openViewer': 'Drive the menu without clicks.',
       layout: 'Every UI panel rect — use instead of screenshots for layout checks.',
