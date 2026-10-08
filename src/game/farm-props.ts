@@ -149,6 +149,35 @@ export function propPrice(id: PropId): number {
   return PROP_CATALOG[id].price
 }
 
+/** A placed prop sells back for this share of its shop price. */
+export const PROP_SELL_RATIO = 0.5
+
+/**
+ * Coins for selling a placed prop. `sections` is the number of fence sections
+ * in a run; every other prop is a single piece. Always at least 1 coin per
+ * piece so a sale never rounds down to nothing.
+ */
+export function propSaleValue(id: PropId, sections = 1): number {
+  const pieces = Number.isFinite(sections) ? Math.max(1, Math.floor(sections)) : 1
+  return Math.max(1, Math.floor(PROP_CATALOG[id].price * PROP_SELL_RATIO)) * pieces
+}
+
+const PROP_CATEGORY: Readonly<Record<PropId, string>> = {
+  fence: 'Fence',
+  statue: 'Decoration',
+  fountain: 'Decoration',
+  coop: 'Shelter',
+  barn: 'Shelter',
+  oak: 'Tree',
+}
+
+/** Chip copy for the info card, e.g. "Shelter" or "Fence run - 4 sections". */
+export function propCardChip(id: PropId, sections = 1): string {
+  if (id !== 'fence') return PROP_CATEGORY[id]
+  const count = Number.isFinite(sections) ? Math.max(1, Math.floor(sections)) : 1
+  return `Fence run · ${count} section${count === 1 ? '' : 's'}`
+}
+
 // ----------------------------------------------------------------- inventory --
 
 export interface PropInventory {
