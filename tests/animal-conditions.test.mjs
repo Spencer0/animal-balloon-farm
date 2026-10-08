@@ -25,6 +25,7 @@ const progressModule = await bundle('animal-progress')
 const {
   SPECIES_CONDITIONS,
   CARNIVAL_STARTERS,
+  DISCOVERY,
   getSpeciesConditions,
   stageAppearance,
   stageHasHeartEyes,
@@ -93,11 +94,17 @@ test('every species defines the same four conditions in the same order', () => {
   }
 })
 
-test('the first two conditions ask nothing of the player; the last two do', () => {
+test('the carnival asks nothing; a visit asks nothing unless the animal is lured by plants; the last two do', () => {
+  const lured = { sheep: 'clover', chicken: 'dandelion' }
   for (const species of SPECIES) {
     const stages = getSpeciesConditions(species)
     assert.equal(stages[0].requirement, null, `${species} carnival needs nothing`)
-    assert.equal(stages[1].requirement, null, `${species} visiting needs nothing`)
+    if (lured[species]) {
+      assert.equal(stages[1].requirement.kind, 'plantCount', `${species} visiting needs its plant`)
+      assert.equal(stages[1].requirement.species, lured[species])
+    } else {
+      assert.equal(stages[1].requirement, null, `${species} visiting needs nothing`)
+    }
     assert.ok(stages[2].requirement, `${species} calling home needs something`)
     assert.ok(stages[3].requirement, `${species} loving the farm needs something`)
   }
@@ -171,9 +178,12 @@ test('a plant condition counts the plant it asked for and no other', () => {
   )
 })
 
-test('four species start the game at the carnival', () => {
-  assert.deepEqual([...startingCarnivalSpecies(SPECIES)], ['sheep', 'cow', 'chicken', 'duck'])
-  assert.equal(CARNIVAL_STARTERS.length, 4)
+test('only the cow and the duck start the game at the carnival; sheep and chickens must be lured', () => {
+  assert.deepEqual([...startingCarnivalSpecies(SPECIES)], ['cow', 'duck'])
+  assert.equal(CARNIVAL_STARTERS.length, 2)
+  assert.equal(DISCOVERY.sheep.kind, 'plantCount')
+  assert.equal(DISCOVERY.sheep.species, 'clover')
+  assert.equal(DISCOVERY.chicken.species, 'dandelion')
 })
 
 // --------------------------------------------------------- farm measurement --
@@ -358,7 +368,11 @@ test('the cow settles once 15 m2 of tall grass exists, and loves the farm at 30'
   assert.equal(progress.progressOf('cow').appearance, 'standard')
   assert.equal(progress.progressOf('cow').heartEyes, false)
 
-  const love = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 31 }), 1/30).filter((event) => event.species === 'cow')
+  // A bigger meadow is not enough on its own: calves need a small barn.
+  const noBarn = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 31 }), 1/30).filter((event) => event.species === 'cow')
+  assert.deepEqual(noBarn, [])
+  assert.equal(progress.progressOf('cow').stage, 3)
+  const love = progress.tick(snapshot({ ...EMPTY_FARM, tallGrassArea: 31, propCounts: { barn: 1 } }), 1/30).filter((event) => event.species === 'cow')
   assert.deepEqual(love.map((event) => event.kind), ['fallInLove'])
   assert.equal(progress.progressOf('cow').stage, 4)
   assert.equal(progress.progressOf('cow').heartEyes, true)
@@ -512,7 +526,12 @@ test('a naive, direct progression run reaches the full four-step arc', () => {
       tallGrassArea: Math.min(40, step * 0.5),
       waterArea: Math.min(25, step * 0.5),
       flatGrassArea: Math.min(40, step * 0.5),
-      plantCounts: { 'water-lily': Math.min(4, Math.floor(step / 40)) },
+      plantCounts: {
+        'water-lily': Math.min(4, Math.floor(step / 40)),
+        clover: Math.min(4, Math.floor(step / 40)),
+        dandelion: Math.min(4, Math.floor(step / 40)),
+      },
+      propCounts: { barn: step > 100 ? 1 : 0, coop: step > 100 ? 2 : 0 },
     }
     farm = makeFarmSnapshot(state, progress)
     seen.push(...progress.tick(farm, step).map((event) => `${event.species}:${event.kind}`))

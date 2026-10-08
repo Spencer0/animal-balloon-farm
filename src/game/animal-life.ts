@@ -1,4 +1,4 @@
-import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
+import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, isNightOnly, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
 import { requirementMet, type FarmSnapshot, type RequirementStatus } from './animal-progress'
 import { farmMetric } from './farm-state'
 import type { ProgressAction } from './farm-progression'
@@ -368,17 +368,23 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       const capacitySlots = Math.max(0, residentCapacity - populationCount())
       // Day visitors and the night shift are paced separately: an owl should not
       // wait behind a cow that is still looking for grass, because they never share a sky.
+      // Only a visitor that is about to step inside holds the queue; one still waiting on
+      // its plants or its pond is not in anyone's way, so the next species can arrive.
       const visitorsOnShift = (nightShift: boolean): number => [...animals.values()]
-        .filter((animal) => animal.stage > 0 && animal.stage < 3 && NIGHT_ONLY_SPECIES.includes(animal.species) === nightShift).length
+        .filter((animal) => animal.stage === 1 && NIGHT_ONLY_SPECIES.includes(animal.species) === nightShift
+          && requirementMet(getSpeciesConditions(animal.species)[1]?.requirement ?? null, snapshot.farm)).length
       const pacingFor = (species: string): number => {
         const nightShift = NIGHT_ONLY_SPECIES.includes(species)
         return Math.max(0, 1 + Math.floor(snapshot.expansionLevel / 2) - visitorsOnShift(nightShift))
       }
       const interval = config.arrivalIntervalSeconds / Math.max(1, 1 + snapshot.expansionLevel * 0.35)
       if (capacitySlots > 0 && pendingVisitors.length === 0 && arrivalElapsed >= interval) addRepeatGuest(snapshot.farm)
-      // Night-only species wait in the queue until dark rather than blocking it.
-      const nightNow = snapshot.farm.night ?? true
-      const arrivingIndex = pendingVisitors.findIndex((species) => (nightNow || !NIGHT_ONLY_SPECIES.includes(species)) && pacingFor(species) > 0)
+      // Every species keeps to its own shift: owls turn up after dark, everything
+      // else by day. A species whose shift is not on waits in the queue rather
+      // than blocking it. A snapshot that does not say (older tests) allows both.
+      const darkNow = snapshot.farm.night
+      const onShift = (species: string): boolean => darkNow === undefined || isNightOnly(species) === darkNow
+      const arrivingIndex = pendingVisitors.findIndex((species) => onShift(species) && pacingFor(species) > 0)
       if (capacitySlots > 0 && arrivingIndex >= 0 && arrivalElapsed >= interval) {
         const species = pendingVisitors.splice(arrivingIndex, 1)[0]
         let arrival = [...animals.values()].find((animal) => animal.species === species && animal.stage === 0)
@@ -410,8 +416,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           animal.elapsed += stageDt
           const next = getSpeciesConditions(animal.species)[animal.stage]
           const tuning = tuningFor(animal.species)
-          const darkEnough = nightNow || !NIGHT_ONLY_SPECIES.includes(animal.species)
-          if (animal.stage === 1 && animal.elapsed >= tuning.visitDelaySeconds && darkEnough && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 2, events)
+          const onTheirShift = onShift(animal.species)
+          if (animal.stage === 1 && animal.elapsed >= tuning.visitDelaySeconds && onTheirShift && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 2, events)
           else if (animal.stage === 2 && animal.elapsed >= tuning.enterFarmSeconds && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 3, events)
           else if (animal.stage === 3 && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 4, events)
         }

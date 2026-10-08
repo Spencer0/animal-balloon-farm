@@ -183,11 +183,164 @@ function careTexture(care: PlantCare): THREE.CanvasTexture {
   return texture
 }
 
+/** Radius of a fully grown ground-cover patch, in metres. */
+const PATCH_RADIUS = 0.95
+let patchEdgeTexture: THREE.CanvasTexture | null = null
+
+/** A soft round mat that fades into the lawn at its rim, so a patch has no hard edge. */
+function patchTexture(): THREE.CanvasTexture {
+  if (patchEdgeTexture) return patchEdgeTexture
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('2D canvas context unavailable for plant patch')
+  const gradient = context.createRadialGradient(64, 64, 6, 64, 64, 62)
+  gradient.addColorStop(0, 'rgba(255,255,255,0.95)')
+  gradient.addColorStop(0.62, 'rgba(255,255,255,0.78)')
+  gradient.addColorStop(1, 'rgba(255,255,255,0)')
+  context.fillStyle = gradient
+  context.fillRect(0, 0, 128, 128)
+  patchEdgeTexture = new THREE.CanvasTexture(canvas)
+  patchEdgeTexture.colorSpace = THREE.SRGBColorSpace
+  return patchEdgeTexture
+}
+
+const CLOVER_GREENS = ['#4f9a45', '#5ca84c', '#448c40', '#68b255']
+const DANDELION_GREENS = ['#5a9a40', '#4c8a3a', '#68a64a']
+
+/** A cheap repeatable 0..1 sequence, so a species always grows the same patch. */
+function patchRandom(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+/**
+ * Clover and dandelions are lawn alternatives, not garden beds: a round mat that
+ * melts into the grass, thick with small leaves, with blooms standing just above
+ * it. Everything is instanced, so a patch costs a handful of draws however
+ * lush it looks.
+ */
+function makeGroundCover(species: PlantId): THREE.Group {
+  const root = new THREE.Group()
+  root.name = `Plant · ${species} patch`
+  const clover = species === 'clover'
+  const random = patchRandom(clover ? 311 : 523)
+  const matMaterial = new THREE.MeshStandardMaterial({
+    color: clover ? '#6fae55' : '#7ab356', roughness: 0.92,
+    map: patchTexture(), transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  })
+  const mat = new THREE.Mesh(new THREE.CircleGeometry(PATCH_RADIUS, 40), matMaterial)
+  mat.rotation.x = -Math.PI / 2
+  mat.position.y = 0.03
+  mat.receiveShadow = true
+  mat.renderOrder = 1
+  root.add(mat)
+
+  const leafMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.8 })
+  const bloomMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.6 })
+  const stemMaterial = new THREE.MeshStandardMaterial({ color: '#5a9150', roughness: 0.85 })
+  const leafGeometry = new THREE.SphereGeometry(1, 7, 5)
+  const stemGeometry = new THREE.CylinderGeometry(0.012, 0.016, 1, 5)
+  const dummy = new THREE.Object3D()
+  const tint = new THREE.Color()
+
+  const scatter = (count: number, minRadius = 0): Array<{ x: number; z: number; angle: number }> => Array.from({ length: count }, (_, index) => {
+    const radius = Math.max(minRadius, PATCH_RADIUS * 0.94 * Math.sqrt((index + 0.5) / count))
+    const angle = index * 2.399 + random() * 0.6
+    return { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius, angle }
+  })
+
+  const instanced = (geometry: THREE.BufferGeometry, material: THREE.Material, count: number, name: string): THREE.InstancedMesh => {
+    const mesh = new THREE.InstancedMesh(geometry, material, count)
+    mesh.name = name
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    root.add(mesh)
+    return mesh
+  }
+
+  if (clover) {
+    const spots = scatter(56)
+    const leaves = instanced(leafGeometry, leafMaterial, spots.length * 3, 'Clover leaflets')
+    spots.forEach((spot, index) => {
+      const lift = 0.05 + random() * 0.05
+      for (let lobe = 0; lobe < 3; lobe += 1) {
+        const direction = spot.angle + lobe * Math.PI * 2 / 3
+        dummy.position.set(spot.x + Math.cos(direction) * 0.06, lift, spot.z + Math.sin(direction) * 0.06)
+        dummy.rotation.set(0, -direction, 0)
+        dummy.scale.set(0.095, 0.018, 0.078)
+        dummy.updateMatrix()
+        leaves.setMatrixAt(index * 3 + lobe, dummy.matrix)
+        leaves.setColorAt(index * 3 + lobe, tint.set(CLOVER_GREENS[Math.floor(random() * CLOVER_GREENS.length)]))
+      }
+    })
+    const blooms = scatter(9, 0.18)
+    const heads = instanced(leafGeometry, bloomMaterial, blooms.length, 'Clover blooms')
+    blooms.forEach((spot, index) => {
+      dummy.position.set(spot.x, 0.17 + random() * 0.05, spot.z)
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.setScalar(0.05)
+      dummy.updateMatrix()
+      heads.setMatrixAt(index, dummy.matrix)
+      heads.setColorAt(index, tint.set(index % 3 === 0 ? '#f0c6d4' : '#f6f1e2'))
+    })
+    const stems = instanced(stemGeometry, stemMaterial, blooms.length, 'Clover bloom stems')
+    blooms.forEach((spot, index) => {
+      heads.getMatrixAt(index, dummy.matrix)
+      const top = new THREE.Vector3().setFromMatrixPosition(dummy.matrix).y
+      dummy.position.set(spot.x, top / 2, spot.z)
+      dummy.scale.set(1, top, 1)
+      dummy.updateMatrix()
+      stems.setMatrixAt(index, dummy.matrix)
+    })
+  } else {
+    const rosettes = scatter(26)
+    const leaves = instanced(leafGeometry, leafMaterial, rosettes.length, 'Dandelion leaves')
+    rosettes.forEach((spot, index) => {
+      dummy.position.set(spot.x, 0.045 + random() * 0.03, spot.z)
+      dummy.rotation.set(0, -spot.angle + random() * 1.2, 0)
+      dummy.scale.set(0.15, 0.018, 0.04)
+      dummy.updateMatrix()
+      leaves.setMatrixAt(index, dummy.matrix)
+      leaves.setColorAt(index, tint.set(DANDELION_GREENS[Math.floor(random() * DANDELION_GREENS.length)]))
+    })
+    const flowers = scatter(14, 0.12)
+    const heads = instanced(leafGeometry, bloomMaterial, flowers.length, 'Dandelion blooms')
+    const stems = instanced(stemGeometry, stemMaterial, flowers.length, 'Dandelion stems')
+    flowers.forEach((spot, index) => {
+      const puff = index % 5 === 4
+      const height = 0.2 + random() * 0.14
+      dummy.position.set(spot.x, height, spot.z)
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.set(puff ? 0.062 : 0.074, puff ? 0.062 : 0.04, puff ? 0.062 : 0.074)
+      dummy.updateMatrix()
+      heads.setMatrixAt(index, dummy.matrix)
+      heads.setColorAt(index, tint.set(puff ? '#eeeee6' : index % 2 ? '#f3c82f' : '#f8d848'))
+      dummy.position.set(spot.x, height / 2, spot.z)
+      dummy.scale.set(1, height, 1)
+      dummy.updateMatrix()
+      stems.setMatrixAt(index, dummy.matrix)
+    })
+  }
+  root.userData.disposeMaterials = [matMaterial, leafMaterial, bloomMaterial, stemMaterial]
+  root.userData.leafGeometry = leafGeometry
+  root.userData.stemGeometry = stemGeometry
+  root.userData.groundCover = true
+  root.scale.setScalar(0.0001)
+  return root
+}
+
 function makePlantModel(species: PlantId): THREE.Group {
+  if (species === 'clover' || species === 'dandelion') return makeGroundCover(species)
   const root = new THREE.Group()
   root.name = `Plant · ${species}`
   const stemMaterial = new THREE.MeshStandardMaterial({ color: '#4f8750', roughness: 0.82 })
-  const leafMaterial = new THREE.MeshStandardMaterial({ color: species === 'clover' ? '#7db75d' : '#609a55', roughness: 0.78 })
+  const leafMaterial = new THREE.MeshStandardMaterial({ color: '#609a55', roughness: 0.78 })
   const flowerMaterial = new THREE.MeshStandardMaterial({ color: species === 'water-lily' ? '#df9bcf' : '#e87965', roughness: 0.65 })
   const centerMaterial = new THREE.MeshStandardMaterial({ color: '#efc55d', roughness: 0.68 })
   const leafGeometry = new THREE.SphereGeometry(1, 10, 7)
@@ -208,20 +361,7 @@ function makePlantModel(species: PlantId): THREE.Group {
     stem.castShadow = true
     root.add(stem)
   }
-  if (species === 'clover') {
-    for (let index = 0; index < 9; index += 1) {
-      const angle = index * 2.399
-      const radius = 0.12 + (index % 3) * 0.1
-      const height = 0.2 + (index % 4) * 0.055
-      const x = Math.cos(angle) * radius
-      const z = Math.sin(angle) * radius
-      addStem(x * 0.35, height, z * 0.35)
-      for (let lobe = 0; lobe < 3; lobe += 1) {
-        const direction = angle + lobe * Math.PI * 2 / 3
-        addLeaf(x + Math.cos(direction) * 0.075, height, z + Math.sin(direction) * 0.075, 0.09, 0.025, 0.065, -direction)
-      }
-    }
-  } else {
+  {
     const height = species === 'water-lily' ? 0.5 : 0.62
     addStem(0, height, 0)
     if (species === 'water-lily') {
@@ -509,10 +649,15 @@ export function createGardenPlants(
       const floating = plant.species === 'water-lily' && surface.waterDepth >= PLANT_WATER_MIN_DEPTH
       const y = floating ? water.surfaceAt(plant.x, plant.z) : groundY
       visual.group.position.set(plant.x, GARDEN_LAWN_Y + y + (floating ? 0.012 : 0.008), plant.z)
-      const scale = Math.max(0.16, plant.growth)
+      const groundCover = visual.group.userData.groundCover === true
+      // A patch grows from a small round seedling mat to the full circle; it
+      // sits on the lawn and does not sway or bob the way a flower does.
+      const scale = groundCover ? 0.3 + 0.7 * plant.growth : Math.max(0.16, plant.growth)
       visual.group.scale.setScalar(scale)
-      visual.group.rotation.y = Math.sin(elapsed * 1.3 + plant.instanceId) * 0.08
-      visual.group.position.y += Math.sin(elapsed * 2 + plant.instanceId) * 0.018 * scale
+      if (!groundCover) {
+        visual.group.rotation.y = Math.sin(elapsed * 1.3 + plant.instanceId) * 0.08
+        visual.group.position.y += Math.sin(elapsed * 2 + plant.instanceId) * 0.018 * scale
+      }
       visual.group.visible = true
       visual.group.userData.saleSelected = selectedPlantIds.has(plant.instanceId)
       visual.group.children.forEach((child) => {
@@ -566,7 +711,7 @@ export function createGardenPlants(
         visual.marker.visible = false
         continue
       }
-      const markerY = visual.group.position.y + (plant.species === 'clover' ? 0.72 : 1) * scale + 0.44
+      const markerY = visual.group.position.y + (groundCover ? 0.3 : 1) * scale + 0.44
       visual.marker.position.set(plant.x, markerY, plant.z)
       visual.markerPosition.set(plant.x, markerY, plant.z)
       const material = visual.marker.material as THREE.SpriteMaterial

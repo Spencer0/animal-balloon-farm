@@ -26,6 +26,7 @@ SIZE = 256
 # id, display name, badge colour (matches PLANT_CATALOG color).
 SPECIES = [
     ("clover", "Clover", (0.47, 0.68, 0.35, 1.0)),
+    ("dandelion", "Dandelion", (0.91, 0.77, 0.27, 1.0)),
     ("poppy", "Poppy", (0.91, 0.48, 0.38, 1.0)),
     ("water-lily", "Water lily", (0.85, 0.58, 0.79, 1.0)),
 ]
@@ -169,8 +170,8 @@ def main():
         links.new(emit.outputs["Emission"], out.inputs["Surface"])
         bpy.ops.mesh.primitive_plane_add(size=1.0)
         tile = bpy.context.active_object
-        put(tile, location=((i - 1.0) * 1.4, 0, 0), scale=(1.2, 1.2, 1.2), material=img_mat)
-    setup_render(os.path.abspath(os.path.join(OUT_DIR, "seeds-review.png")), 768, 256)
+        put(tile, location=((i - (len(SPECIES) - 1) / 2.0) * 1.4, 0, 0), scale=(1.2, 1.2, 1.2), material=img_mat)
+    setup_render(os.path.abspath(os.path.join(OUT_DIR, "seeds-review.png")), 1024, 256)
     bpy.ops.render.render(write_still=True)
     print("wrote review sheet")
     bpy.ops.wm.save_as_mainfile(

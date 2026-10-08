@@ -3,6 +3,7 @@ import type { PlantId } from './plants'
 
 export const PLANT_SALE_PRICES: Readonly<Record<PlantId, number>> = {
   clover: 5,
+  dandelion: 5,
   poppy: 7,
   'water-lily': 9,
 }
