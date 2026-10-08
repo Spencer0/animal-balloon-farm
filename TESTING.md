@@ -55,8 +55,10 @@ override it.
   software rendering a frame can take about 0.7 s. Run with `--fps 60` on a
   machine with a real GPU to check it.
 - **Sample counts are frame-driven.** A scenario keeps sampling past its
-  time window until it has the frames it needs (capped at 60 s), so a slow
-  machine gives a noisy result, not a false pass.
+  time window until it has the frames it needs (capped at 60 s). On a slow
+  runner (CI renders at about 0.7 FPS) the cap is reached first, so the
+  minimum is 30 samples, not 60. A slow machine gives a noisier p95, not a
+  false pass.
 
 ### Scenarios
 
