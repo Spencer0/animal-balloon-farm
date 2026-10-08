@@ -63,7 +63,19 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
   },
 ] as const
 
-export const STARTING_SEEDS_PER_PLANT = 5
+/** The shed starts empty: seeds are bought at the shop, never handed out. */
+export const STARTING_SEEDS_PER_PLANT = 0
+
+/** The one exception: a single dandelion seed, so the first plant is free. */
+export const STARTING_SEED_GIFT: { readonly species: PlantId; readonly count: number } = { species: 'dandelion', count: 1 }
+
+/** Coins for one seed. Each is a little under what its plant sells for grown. */
+export const SEED_PRICES: Readonly<Record<PlantId, number>> = {
+  clover: 3,
+  dandelion: 3,
+  poppy: 5,
+  'water-lily': 7,
+}
 export const PLANT_WATER_MIN_DEPTH = 0.04
 const PLANT_SPACING_GAP = 0.12
 
@@ -108,6 +120,8 @@ export interface PlantPlacementResult {
 export interface PlantSimulation {
   readonly plants: readonly GardenPlant[]
   seedsFor(species: PlantId): number
+  /** Put bought seeds in the shed; returns the new count. */
+  addSeeds(species: PlantId, count?: number): number
   countPlants(species?: PlantId): number
   placementResult(species: PlantId, x: number, z: number, surface: PlantSurface): PlantPlacementResult
   plant(species: PlantId, x: number, z: number, surface: PlantSurface): GardenPlant | null
@@ -137,7 +151,7 @@ export function plantSpecies(species: PlantId): PlantSpecies {
 
 export function createPlantSimulation(): PlantSimulation {
   const plants: MutablePlant[] = []
-  const seedCounts = new Map<PlantId, number>(PLANT_CATALOG.map(({ id }) => [id, STARTING_SEEDS_PER_PLANT]))
+  const seedCounts = new Map<PlantId, number>(PLANT_CATALOG.map(({ id }) => [id, id === STARTING_SEED_GIFT.species ? STARTING_SEED_GIFT.count : STARTING_SEEDS_PER_PLANT]))
   let nextInstanceId = 1
 
   function snapshot(plant: MutablePlant): GardenPlant {
@@ -182,6 +196,11 @@ export function createPlantSimulation(): PlantSimulation {
     },
     seedsFor(species): number {
       return seedCounts.get(species) ?? 0
+    },
+    addSeeds(species, count = 1): number {
+      const next = (seedCounts.get(species) ?? 0) + Math.max(0, Math.floor(count))
+      seedCounts.set(species, next)
+      return next
     },
     countPlants(species): number {
       return species === undefined ? plants.length : plants.filter((plant) => plant.species === species).length

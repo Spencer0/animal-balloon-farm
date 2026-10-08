@@ -402,7 +402,7 @@ export function createAnimalCard(actions: AnimalCardActions, cssWidth: number, c
     cursor(point: DesignPoint): UiCursorKind | undefined {
       if (!target || !containsCard(point)) return undefined
       const region = regionAt(point)
-      return region === 'close' || region === 'pencil' || region === 'sell' || region === 'journal' || region === 'confirm' || region === 'keep' ? 'point' : 'hand'
+      return region === 'close' || region === 'pencil' || region === 'sell' || region === 'journal' || region === 'confirm' || region === 'keep' ? 'point' : 'idle'
     },
     keyDown(event: KeyboardEvent): boolean {
       if (!target) return false

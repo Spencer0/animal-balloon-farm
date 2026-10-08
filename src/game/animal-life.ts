@@ -337,6 +337,13 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         inFlightAnimalIds.delete(animal.courtshipPartnerId)
       }
       animals.delete(id)
+      // Selling (or losing) the last of a species must not end its visits for
+      // good. Discovery is a one-time unlock, and repeat guests only come for a
+      // species that already has a resident, so without this the farm would
+      // never see another cow after the first one left.
+      const speciesLeft = [...animals.values()].some((other) => other.species === animal.species && other.stage > 0)
+        || [...eggs.values()].some((egg) => egg.species === animal.species)
+      if (animal.stage > 0 && !speciesLeft && !pendingVisitors.includes(animal.species)) pendingVisitors.push(animal.species)
       return view(animal)
     },
     reset() {

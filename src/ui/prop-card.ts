@@ -317,7 +317,7 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
     },
     cursor(point: DesignPoint): UiCursorKind | undefined {
       if (!target || !containsCard(point)) return undefined
-      return regionAt(point) ? 'point' : 'hand'
+      return regionAt(point) ? 'point' : 'idle'
     },
     keyDown(event: KeyboardEvent): boolean {
       if (!target || event.ctrlKey || event.metaKey || event.altKey) return false

@@ -95,8 +95,12 @@ def frame_objects(objects):
             corner_max = Vector(map(max, corner_max, world))
     center = (corner_min + corner_max) * 0.5
     size = corner_max - corner_min
+    # Only move the roots: children ride along with their parent, and moving
+    # both used to shove every imported prop down and out of its icon.
     for obj in objects:
-        obj.location -= center
+        if obj.parent is None:
+            obj.location -= center
+    bpy.context.view_layer.update()
     return max(size.x, size.y, size.z * 1.15)
 
 
@@ -122,8 +126,8 @@ def main():
         cam_data.ortho_scale = max(0.5, biggest * 1.45)
         cam = bpy.data.objects.new("PT_Camera", cam_data)
         bpy.context.collection.objects.link(cam)
-        cam.location = (0, -6, biggest * 0.32)
-        cam.rotation_euler = (Vector((0, 0, biggest * 0.1)) - cam.location).to_track_quat("-Z", "Y").to_euler()
+        cam.location = (biggest * 0.9, -biggest * 1.5, biggest * 0.95)
+        cam.rotation_euler = (Vector((0, 0, 0)) - cam.location).to_track_quat("-Z", "Y").to_euler()
         bpy.context.scene.camera = cam
         path = os.path.join(OUT_DIR, "prop-%s.png" % prop_id)
         setup_render(os.path.abspath(path))

@@ -109,3 +109,14 @@ test('same-species partners cannot immediately court a second time', () => {
   runFor(life, snapshot(lushFarm), 3, events)
   assert.equal(events.filter((event) => event.kind === 'courtship').length, 1)
 })
+
+test('selling the only cow queues a new cow instead of ending its visits', () => {
+  const life = createAnimalLife(['cow'], { config: { ...quickConfig, arrivalIntervalSeconds: 1, romanceChance: 0 }, random: () => 0.99 })
+  runFor(life, snapshot(lushFarm), 6)
+  const sold = life.all().filter((animal) => animal.species === 'cow' && animal.stage > 0)
+  assert.ok(sold.length > 0)
+  for (const cow of sold) life.remove(cow.id)
+  assert.equal(life.all().filter((animal) => animal.species === 'cow' && animal.stage > 0).length, 0)
+  runFor(life, snapshot(lushFarm), 6)
+  assert.ok(life.all().some((animal) => animal.species === 'cow' && animal.stage > 0 && !sold.some((old) => old.id === animal.id)))
+})

@@ -1150,7 +1150,10 @@ export function createFairground(initialElapsedDays = 0): Fairground {
       backdrop.distantCarnival.visible = inTown
       dressing.midway.visible = inTown
       backdrop.update(delta, state.bounds)
-      dressing.update(delta, state.bounds)
+      // Everything that is not a tracked prop (far tents, midway paths, visitors)
+      // follows the same sweep, so the town fills in rather than popping on.
+      backdrop.distantCarnival.scale.y = Math.max(0.001, THREE.MathUtils.smoothstep(schedule!.amount, 0.05, 0.9))
+      dressing.update(delta, state.bounds, schedule!.amount)
       updateGroundCutouts(state.bounds)
       updateLandReveal(state.bounds)
       borderMaterial.emissiveIntensity=.14+(state.isAnimating?Math.sin(state.progress*Math.PI)*.58:0)

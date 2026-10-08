@@ -1,4 +1,5 @@
 import type { Scenario, ScenarioHarness } from './types'
+import { farmer10 } from './sandbox/farmer-10'
 import { breedReady } from './owl/breed-ready'
 import { firstNight } from './owl/first-night'
 import { huntNow } from './owl/hunt-now'
@@ -7,7 +8,7 @@ import { lowHelium } from './owl/low-helium'
 import { residentRoosting } from './owl/resident-roosting'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
-export const SCENARIOS: readonly Scenario[] = [firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium]
+export const SCENARIOS: readonly Scenario[] = [farmer10, firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium]
 
 /** Accepts `owl/hunt-now` or the bare `hunt-now`, as long as the bare name is unambiguous. */
 export function findScenario(name: string): Scenario | null {

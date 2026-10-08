@@ -90,9 +90,20 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
     return `${tab}|${selected}|${callbacks.balance()}|${seeds}|${props}|${[...favs].sort().join(",")}`;
   }
 
+  /** Keys of what the shed actually holds on this tab: an empty slot is not shown at all. */
+  function stockedKeys(): string[] {
+    if (tab === "seeds") return PLANT_CATALOG.filter((plant) => callbacks.seedsFor(plant.id) > 0).map((plant) => `seed:${plant.id}`);
+    return PROP_ORDER.filter((id) => callbacks.countsFor(id) > 0).map((id) => `prop:${id}`);
+  }
+
+  function emptyHtml(): string {
+    return `<div class="sh-locked">Nothing here yet. Pip's shop sells ${tab === "seeds" ? "seeds" : "props"}.</div>`;
+  }
+
   function cardsHtml(): string {
+    if (stockedKeys().length === 0) return emptyHtml();
     if (tab === "seeds") {
-      return PLANT_CATALOG.map((plant) => {
+      return PLANT_CATALOG.filter((plant) => callbacks.seedsFor(plant.id) > 0).map((plant) => {
         const count = Math.max(0, callbacks.seedsFor(plant.id));
         const key = `seed:${plant.id}`;
         const star = favs.has(key) ? `<span class="sh-fav" aria-hidden="true">&#9733;</span>` : "";
@@ -104,7 +115,7 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
         );
       }).join("");
     }
-    return PROP_ORDER.map((id) => {
+    return PROP_ORDER.filter((id) => callbacks.countsFor(id) > 0).map((id) => {
       const def = PROP_CATALOG[id];
       const count = Math.max(0, callbacks.countsFor(id));
       const key = `prop:${id}`;
@@ -119,6 +130,7 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
   }
 
   function previewHtml(): string {
+    if (stockedKeys().length === 0) return `<div class="sh-locked">Empty shelves.</div>`;
     if (selected.startsWith("seed:")) {
       const id = selected.slice("seed:".length) as PlantId;
       const plant = PLANT_CATALOG.find((entry) => entry.id === id) ?? PLANT_CATALOG[0];
@@ -158,6 +170,9 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
   }
 
   function render(): void {
+    // A shelf that ran out cannot stay selected; fall to the first thing still stocked.
+    const stocked = stockedKeys();
+    if (!stocked.includes(selected)) selected = stocked[0] ?? selected;
     const next = signature();
     if (next === lastSignature && shed.isConnected) return;
     lastSignature = next;
@@ -190,7 +205,6 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
     const nextTab = target.dataset["tab"] as ShedDomTab | undefined;
     if (nextTab) {
       tab = nextTab;
-      selected = nextTab === "seeds" ? "seed:clover" : `prop:${PROP_ORDER[0]}`;
       lastSignature = "";
       render();
       return;
