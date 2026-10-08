@@ -17,7 +17,7 @@ Current catalog: **8 species** (pig, sheep, cow, chicken, duck, goose, frog, owl
 | 5 | Journal | *derived from the catalog* | discoverable species record |
 
 Stages 1–2 are art. Stage 3 is wiring — and since the catalog refactor it is **one array entry plus
-three compiler-enforced records**. Stages 4–5 need no new code at all: the showcase, the capture
+four compiler-enforced records**, then the conditions (below). Stages 4–5 need no new code at all: the showcase, the capture
 card, the journal page, and the species count string all derive from the catalog.
 
 ---
@@ -170,11 +170,13 @@ journal page, and a correct species count — for free.
   gesture: 'Stands tall',                         // shown on the capture card
   assetUrl: 'assets/animals/balloon-llama.glb',   // document-relative, NOT /assets/...
   spawn: [2, -4],                                 // garden [x, z]
+  carnivalSpawn: [-20, 8],                        // where it first stands among the tents; REQUIRED
   showcaseSpawn: [-4, 3.2],                       // plinth position in ?showcase=1
   seed: 777,                                      // any int; fixes the wander pattern
   size: 2.4,                                      // LONGEST SIDE in world units
   speed: 0.9,                                     // garden units/second
   bounds: { x: 10.5, z: 6.1 },                    // wander rectangle, roughly the lawn
+  // flier: true,                                 // only for birds the sim places itself (the owl)
 }
 ```
 
@@ -189,28 +191,37 @@ Per-field notes:
   slightly so animals do not clip the fence. `getAnimalSceneOptions` supplies `groundY:
   GARDEN_LAWN_Y` (0.03) for you — do not add it to the entry.
 - `speed` is what makes a species read as a species — a chicken should visibly outpace a cow.
-- `showcaseSpawn` must not collide with another species' plinth. The six current ones use a 3x2 ring
-  at roughly `[-7, 0, 7] x [-3.2, 3.2]`; a 7th animal needs a new free spot.
+- `carnivalSpawn` is required by the entry type. Pick a spot among the carnival tents (existing
+  entries sit at |x| 18-26); `main.ts` reads it in `carnivalSpawnFor`.
+- `showcaseSpawn` must not collide with another species' plinth. The first six use a 3x2 ring at
+  roughly `[-7, 0, 7] x [-3.2, 3.2]`; frog `[-11, 0]` and owl `[11, 0]` took the two ends. The next
+  animal needs a new free spot, e.g. `[-11, 3.2]` or `[11, 3.2]`.
 
-### Three compiler-enforced records
+### Compiler-enforced records
 
-These are keyed `Record<BalloonAnimalId, …>` or exhaustive switches, so adding the catalog entry
-produces **exactly three errors** — confirmed by experiment on the merged tree (adding a `llama`
-entry yields 3 errors and nothing else):
+These are keyed `Record<BalloonAnimalId, …>`, a required catalog field, or an exhaustive switch, so
+adding the catalog entry produces **a fixed set of errors** — re-confirmed by experiment on the tree
+that carries the owl (adding a `raccoon` entry yields exactly these). The owl PR is what grew the
+list from three to four records, via `ANIMAL_SALE_PRICES` and the required `carnivalSpawn`:
 
 ```
-src/animals/balloon-animal.ts(55,7): error TS2741: Property 'llama' is missing … Record<…, MeshStandardMaterial>
-src/animals/balloon-capture.ts(6,7):  error TS2741: Property 'llama' is missing … Record<…, readonly [string, string]>
-src/animals/balloon-capture.ts(164,79): error TS2366: Function lacks ending return statement …
+animal-catalog.ts  TS2322  … Property 'carnivalSpawn' is missing in type …
+balloon-animal.ts  TS2741  Property 'raccoon' is missing … Record<…, MeshStandardMaterial>
+balloon-capture.ts TS2741  Property 'raccoon' is missing … Record<…, readonly [string, string]>
+balloon-capture.ts TS2366  Function lacks ending return statement …
+sales.ts           TS2741  Property 'raccoon' is missing … Record<…, number>
 ```
 
-That is the whole checklist:
+(`main.ts` also reports "`carnivalSpawn` does not exist on type"; it is the same missing field seen
+from the other side and clears with it.) That is the whole checklist:
 
 | File | Symbol | What it is |
 |------|--------|-----------|
-| `src/animals/balloon-animal.ts:55` | `BODY_MATERIALS` | placeholder color, used **only** if the GLB fails to load |
+| `src/animals/animal-catalog.ts` | `carnivalSpawn` | where the animal first stands among the carnival tents |
+| `src/animals/balloon-animal.ts:151` | `BODY_MATERIALS` | placeholder color, used **only** if the GLB fails to load |
 | `src/animals/balloon-capture.ts:6` | `PAINT_PALETTES` | `[primary, secondary]` paint colors for the capture pour |
-| `src/animals/balloon-capture.ts:164` | `captureGesture` | exhaustive `switch` with no `default` — TS reports "function lacks ending return statement" |
+| `src/animals/balloon-capture.ts:166` | `captureGesture` | exhaustive `switch` with no `default` — TS reports "function lacks ending return statement" |
+| `src/game/sales.ts:11` | `ANIMAL_SALE_PRICES` | what it sells for (owl 30; common ground animals 12–16) |
 
 `captureGesture` returns a `CapturePose`:
 
@@ -234,6 +245,12 @@ These fail silently:
 - **`VIEWER_CAST` in `src/animals/animal-catalog.ts`** — the viewer stages only the species listed
   there (it is the review booth for new models). A new catalog entry does not appear in the viewer
   until its id joins the cast; that is deliberate, so a model being tuned can stand alone.
+- **`SPECIES_CONDITIONS`, `DISCOVERY` and `NIGHT_ONLY_SPECIES`** in `src/game/animal-conditions.ts` are
+  keyed by plain strings. Forget `DISCOVERY` and the species sits at stage 0 forever; forget
+  `SPECIES_CONDITIONS` and it gets an invented default ladder; forget `NIGHT_ONLY_SPECIES` and a night
+  animal turns up at noon. None of these warns, so cover each in `tests/animal-conditions.test.mjs`.
+- **`PROP_PLURALS`** (same file) words a prop for the journal bar. A missing entry falls back to
+  `<id>s`, so a "garbage can" reads "garbage cans" correctly but an irregular noun will not.
 - **The `species` field of a `plantCount` requirement** — it is a `string`, not a `PlantId`, so a
   typo reads as zero plants and the animal simply never settles. Assert the id in a test, the way
   `tests/animal-conditions.test.mjs` does for the frog.
@@ -460,6 +477,30 @@ Debug verbs (with `?gardenDebug=1`): `addAnimal(species, stage)`, `feedOwl(n)`, 
 rungs through `advance(...)` like any other species.
 
 
+## Shop props an animal can ask for
+
+Barn, coop and oak are all the same thing: a prop the shop sells and a `propCount` requirement reads.
+A new one touches these places; the first two are compiler-enforced, the rest are not.
+
+| Where | What | Enforced? |
+|-------|------|-----------|
+| `src/game/farm-props.ts` | add the id to `PropId`, an entry in `PROP_CATALOG`, and the id to `PROP_ORDER` | yes (`Record<PropId, …>`) |
+| `src/game/farm-props.ts` `createPropInventory` | the literal `counts` object starts every id at 0 | yes |
+| `art/blender/<prop>.py` | the model, exported to `public/assets/props/<id>.glb` (+ `.blend`, review PNG) | no |
+| `art/blender/prop_thumbs.py` | add `("<id>", "assets/props/<id>.glb")` to `PROPS`, then run it with `-- <id>` for `prop-<id>.png`, the shop icon | no |
+| `src/game/animal-conditions.ts` `PROP_PLURALS` | only if the plural is irregular | no |
+| `src/ui/shop-dom.ts` `PIP_QUOTES` | optional shop-keeper line | no |
+| `tests/farm-props.test.mjs` | footprint, blocking, in `PROP_ORDER`, buy and own it (copy the oak test) | no |
+
+The animal then asks for it with `{ kind: 'propCount', species: '<id>', amount: 1 }` (the field is
+called `species` for historical reasons; it holds the prop id). `GardenProps.propCounts()` counts what
+is **placed**, not owned: a can sitting in the inventory satisfies nothing. A prop is loaded from
+`modelUrl` and placed on the lattice by the generic code in `garden-props.ts`; only a prop that the
+game needs to look inside (the oak's `OAK roost` node) needs special code, and a prop that is just
+scenery or a requirement needs none.
+
+Prices so far: coop 90, barn 110, oak 140.
+
 ## Test scenarios: jump straight into a game state
 
 Waiting out an owl's conditions to test it is slow, so saved states live in `dev/scenarios/<animal>/`.
@@ -505,6 +546,10 @@ Stage 3, code:
 - [ ] `BODY_MATERIALS` entry (placeholder color)
 - [ ] `PAINT_PALETTES` entry (two paint colors)
 - [ ] `captureGesture` `case` added
+- [ ] `carnivalSpawn` set, and `ANIMAL_SALE_PRICES` entry added
+- [ ] `SPECIES_CONDITIONS` ladder and `DISCOVERY` trigger added (and `NIGHT_ONLY_SPECIES` if it is a night animal), each covered by a test
+- [ ] If it needs a new shop prop: see *Shop props an animal can ask for*
+- [ ] If it deserves a quick way in: a scenario under `dev/scenarios/<animal>/`
 - [ ] `npm run check` green
 - [ ] Added the species to `VIEWER_CAST` (or reviewed it there solo) if it should stand in the booth
 - [ ] `buildRigPose` branch added **only if** you want head/wing secondary motion
