@@ -46,7 +46,7 @@ import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
 import { createPredationLedger, isNightTime } from './game/predator'
-import { BED_RADIUS, DUMPSTER_BED_RADIUS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
+import { SLEEP_PROPS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -939,19 +939,23 @@ const sleepBeds = new Map<string, Bed>()
 function updateSleepers(): void {
   if (mode === 'viewer') return
   const night = isNightTime(dayNightClock.timeOfDay)
-  // A dumpster is its house, so a raccoon sleeps by one when there is one; failing that, by a can.
-  const dumpsters = gardenProps?.placements('dumpster') ?? []
-  const cans = gardenProps?.placements('garbage-can') ?? []
-  const homes = dumpsters.length > 0
-    ? dumpsters.map((spot) => ({ ...spot, radius: DUMPSTER_BED_RADIUS }))
-    : cans.map((spot) => ({ ...spot, radius: BED_RADIUS }))
-  const occupancy = homes.map(() => 0)
-  const nearHome = (bed: Bed, home: { x: number; z: number; radius: number }): boolean => Math.hypot(bed.x - home.x, bed.z - home.z) < home.radius + 0.5
+  // Each night species sleeps by the first prop on its SLEEP_PROPS list that is placed (a house
+  // before a can); with none, or no entry, it sleeps where it stands.
+  type Home = { x: number; z: number; radius: number; key: string }
+  const homesFor = (species: string): Home[] => {
+    for (const { prop, radius } of SLEEP_PROPS[species] ?? []) {
+      const spots = gardenProps?.placements(prop as PropId) ?? []
+      if (spots.length > 0) return spots.map((spot, index) => ({ ...spot, radius, key: `${prop}:${index}` }))
+    }
+    return []
+  }
+  const occupancy = new Map<string, number>()
+  const nearHome = (bed: Bed, home: Home): boolean => Math.hypot(bed.x - home.x, bed.z - home.z) < home.radius + 0.5
   for (const animal of animals) {
     const bed = sleepBeds.get(animal.instanceId)
     if (!bed || !shouldSleep(animal.id, night)) continue
-    const index = homes.findIndex((home) => nearHome(bed, home))
-    if (index >= 0) occupancy[index] += 1
+    const home = homesFor(animal.id).find((candidate) => nearHome(bed, candidate))
+    if (home) occupancy.set(home.key, (occupancy.get(home.key) ?? 0) + 1)
   }
   for (const animal of animals) {
     if (animal.isFlier) continue
@@ -969,12 +973,18 @@ function updateSleepers(): void {
     let bed = sleepBeds.get(animal.instanceId)
     // A resident prefers a home; if one is placed after it lay down, it moves over.
     const resident = (record?.stage ?? 0) >= 3
-    if (!bed || (resident && homes.length > 0 && !homes.some((home) => nearHome(bed!, home)))) {
+    const homes = resident ? homesFor(animal.id) : []
+    if (!bed || (homes.length > 0 && !homes.some((home) => nearHome(bed!, home)))) {
       const from = { x: animal.currentPosition.x, z: animal.currentPosition.z }
-      const index = resident ? pickAnchor(homes, occupancy, from) : -1
-      bed = index >= 0
-        ? bedBeside(homes[index], occupancy[index]++, homes[index].radius)
-        : { x: from.x, z: from.z, heading: animal.currentHeading }
+      const index = pickAnchor(homes, homes.map((home) => occupancy.get(home.key) ?? 0), from)
+      if (index >= 0) {
+        const home = homes[index]
+        const slot = occupancy.get(home.key) ?? 0
+        occupancy.set(home.key, slot + 1)
+        bed = bedBeside(home, slot, home.radius)
+      } else {
+        bed = { x: from.x, z: from.z, heading: animal.currentHeading }
+      }
       sleepBeds.set(animal.instanceId, bed)
     }
     animal.setSleepSpot(bed)

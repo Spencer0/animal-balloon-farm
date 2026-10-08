@@ -115,6 +115,13 @@ test('a sleeper picks the emptiest can, then the nearest', () => {
   assert.equal(sleep.pickAnchor([], [], { x: 0, z: 0 }), -1)
 })
 
+test('the raccoon sleeps by its dumpster first, then by a garbage can', () => {
+  const list = sleep.SLEEP_PROPS.raccoon
+  assert.deepEqual(list.map((entry) => entry.prop), ['dumpster', 'garbage-can'])
+  assert.equal(list[0].radius, sleep.DUMPSTER_BED_RADIUS)
+  assert.equal(sleep.SLEEP_PROPS.cow, undefined)
+})
+
 test('a dumpster bed sits further out than a can bed, and still faces its anchor', () => {
   assert.ok(sleep.DUMPSTER_BED_RADIUS > sleep.BED_RADIUS)
   const home = { x: 1, z: 1 }

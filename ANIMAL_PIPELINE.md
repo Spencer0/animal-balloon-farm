@@ -1,35 +1,86 @@
 # Animal pipeline
 
-How an animal gets from a Python script to a wandering, catchable creature in the garden — and how to
-add the next one. The end goal is that an agent can go from "add a llama" to a reviewed, playable
-species without hand-holding.
+How a new animal gets from "add an X" to a reviewed, playable species. The goal: you say
+**"Add a new animal X, use the animal pipeline"** and the agent can do the whole thing without
+hand-holding, including any plant, prop or house the animal needs.
 
 Current catalog: **9 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon).
 
-**Start with the raccoon.** It is the most basic complete species: a ground walker, a night shift, two
-shop props and no special behaviour beyond sleeping. The owl is the complex case (flight, a hunt, prey).
-For a plain animal, follow the checklist at the bottom and copy the raccoon; reach for the owl section
-only if the new animal hunts, flies or eats another species. The raccoon's whole diff touched: the
-Blender maker, the catalog entry and four records, one conditions ladder, two props, `sleep.ts`, a
-sleep state in `balloon-animal.ts`, three scenarios and one test file.
+**Reference animals.** Copy the closest one instead of starting cold.
 
-## The 5 stages
-
-| # | Stage | Lives in | Produces |
-|---|-------|----------|----------|
-| 1 | Author + rig + animate | `art/blender/balloon_friends.py` | scene in memory |
-| 2 | Export | same script | `public/assets/animals/balloon-<id>.{blend,glb}` + `balloon-<id>-review.png` |
-| 3 | Register | `src/animals/animal-catalog.ts` + 3 records | new member of `BalloonAnimalId` |
-| 4 | Verify | browser | animal wandering the garden, in the showcase, and in the journal |
-| 5 | Journal | *derived from the catalog* | discoverable species record |
-
-Stages 1–2 are art. Stage 3 is wiring — and since the catalog refactor it is **one array entry plus
-four compiler-enforced records**, then the conditions (below). Stages 4–5 need no new code at all: the showcase, the capture
-card, the journal page, and the species count string all derive from the catalog.
+| Animal | Copy it for |
+|--------|-------------|
+| **raccoon** | The default template: a ground walker, a night shift, two shop props (a garbage can and a house), a lying-down sleep animation, curled-ball sleeping by its house. Start here. |
+| **frog** | A species lured and settled by *plants* (water lilies). |
+| **pig / sheep / cow / chicken / duck / goose** | Plain day animals settled by terrain (grass, water, flat ground), a resident friend, or a barn / coop. |
+| **owl** | Only if the animal flies, hunts, or eats another species. The complex case; see *Predators and fliers*. |
 
 ---
 
-## Stage 1–2 · Blender authoring
+## 0 · The brief: decide before you build
+
+Write these down in the PR description first. Most of them are one line, and every later step follows
+from them.
+
+1. **Identity.** `id` (lowercase, one word), display name, a one-line personality, the colours of its
+   balloon.
+2. **Body plan.** Quadruped (copy `make_raccoon` / `make_sheep`), biped bird (`make_chicken`,
+   `make_duck`), or something new. A truly new body plan costs the most; say so.
+3. **Shift.** Day animal (default) or **night-only** (raccoon, owl). A night animal also *sleeps by
+   day*.
+4. **Lure.** What the farm must look like before it wanders up to the carnival tents
+   (`DISCOVERY`). Without one it never appears.
+5. **The four rungs** (below). Each of the two player-facing rungs needs a requirement chosen from the
+   menu. **Pick what makes sense for the animal, and build whatever is missing:**
+
+   | Requirement | Use it when the animal... | Exists today | If it does not exist, add it |
+   |-------------|---------------------------|--------------|------------------------------|
+   | **Plants** (`plantCount`) | eats or nests in something the player *grows* | clover, dandelion, poppy, water-lily | a plant: see *Adding a plant* |
+   | **Animals it likes** (`residentSpecies` / `residentCount`) | is social, or lives off another species | cow, chicken, ... | nothing: any catalog species works |
+   | **A prop** (`propCount`) | needs furniture: a roost, a feeder, something to raid | barn, coop, oak, garbage can | a prop: see *Adding a shop prop* |
+   | **A house** (`propCount` of a house prop) | has somewhere to live; the natural **breeding** gate | barn, coop, oak, dumpster | a house is a prop, plus a `SLEEP_PROPS` entry so it beds down beside it |
+   | **Terrain** (`grassArea` / `waterArea` / `flatArea`) | needs land, not objects | all | nothing |
+   | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl | see *Predators and fliers* |
+
+   A good ladder asks for **something different at each rung** and ends on a house for breeding. The
+   raccoon: appears when a cow lives on the farm, settles for a garbage can, breeds at a dumpster.
+   Never ask for more than the player can have: a plant requirement above 5 is unreachable (the
+   seed supply), and a prop that is not in the shop is unbuyable.
+6. **Anything special.** Flight, hunting, a signature animation. If there is none, it is a plain
+   animal and this document covers all of it.
+
+---
+
+## 1 · The whole job, in order
+
+Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
+
+1. **Brief** (above).
+2. **Art.** The animal's `make_<id>()` in `art/blender/balloon_friends.py`, three clips (`WALK`,
+   `IDLE`, plus `SLEEP` for a night animal), exported. New props: a Blender script and a thumbnail.
+3. **Register.** Catalog entry, then fix the compiler errors (four records).
+4. **Register what the compiler cannot see** (the silent list, below).
+5. **Conditions.** `SPECIES_CONDITIONS`, `DISCOVERY`, and `NIGHT_ONLY_SPECIES` if it is nocturnal.
+6. **Build the ingredients** the ladder asks for (plant / prop / house) and, for a night animal, the
+   `SLEEP_PROPS` entry.
+7. **Scenarios + tests.**
+8. **Verify** in the browser from several angles, awake and asleep, plus its journal page.
+9. **Ship** (`npm run check`, PR, merge) when Spencer says so.
+
+### Definition of done
+
+- [ ] `npm run check` is green (tests, asset budget, typecheck, build, scenario leak guard)
+- [ ] Art: review PNG looks right; GLB lists every clip with every animated node; **awake and asleep
+      both look right in the game from the side** (angle sheet)
+- [ ] Every compiler-enforced record and every silent registration below is filled
+- [ ] The ladder's ingredients exist, are buyable or growable, and are covered by tests
+- [ ] Journal page opened and looked at
+- [ ] At least one scenario that jumps straight to the interesting state
+- [ ] This document still true: update it if the work taught you something
+
+---
+
+## 2 · Art: Blender
 
 ### One-time environment check
 
@@ -37,105 +88,78 @@ card, the journal page, and the species count string all derive from the catalog
 blender --version   # 4.2.3 LTS is the known-good version
 ```
 
-If `blender` is not on `PATH`, the historical executable is
-`C:\Users\Spencer\Documents\Playground\tools\blender\blender-4.2.3-windows-x64\blender.exe`
-(check it still exists before using it).
-
-Scripts run under Blender's **embedded** Python. Do not try to `import bpy` from system Python.
+If `blender` is not on `PATH`, use
+`C:\Users\Spencer\Documents\Playground\tools\blender\blender-4.2.3-windows-x64\blender.exe` (check it
+exists). Scripts run under Blender's **embedded** Python; do not `import bpy` from system Python. All
+assets are authored by script and rendered headless; never hand-edit binaries.
 
 ### Adding a species to `balloon_friends.py`
 
-Follow the existing `make_duck()` shape. Five edits:
+Copy the closest `make_<id>()` (the raccoon for a quadruped). Five edits:
 
-1. **`materials(name)`** — add an `elif` branch overriding the base palette. Each species needs a
-   distinct body/head/material set; this is what makes the capture reveal worth watching.
-2. **`make_<id>()`** — build the animal. The shared helpers do the heavy lifting:
-   - `sphere(name, position, size, material, parent)` — UV sphere, parented, smooth-shaded
-   - `curve(name, points, width, material, parent)` — bevelled Bezier; use for legs, tails, seams, rings
-   - `pivot(name, position, parent)` — an Empty that acts as a rig joint
-   - `add_face_details(head, m, animal)` — eyes, pupils, catchlights, brows, cheeks. Faces point **+X**
-   - `make_legs(...)` / `add_waterfowl_legs(...)` — quadruped or biped leg sets
-   - `add_collar(body, neck, m, animal)` — the signature brass bell, returns a pivot
-3. **Root custom properties** — `root["asset_id"] = "animal_balloon_<id>"` and a `root["description"]`.
-   These are metadata only, but keep them consistent.
-4. **`animate(...)`** — pass every pivoted object. See *Animation contract* below.
-5. **`portrait(name, m)`** then **`export_asset(root, name)`** as the last two lines.
-
-Then register the maker:
-
-```python
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken,
-          "duck": make_duck, "goose": make_goose, "llama": make_llama}
-```
-
-### Run it
+1. **`materials(name)`**: an `elif` branch with a distinct palette; this is what makes the capture
+   reveal worth watching.
+2. **`make_<id>()`**: build the animal with the shared helpers:
+   - `sphere(name, position, size, material, parent)`: UV sphere, parented, smooth-shaded
+   - `curve(name, points, width, material, parent)`: bevelled Bezier (legs, tails, seams, rings)
+   - `pivot(name, position, parent)`: an Empty that acts as a rig joint
+   - `add_face_details(head, m, animal)`: eyes, pupils, catchlights, brows, cheeks. Faces point **+X**
+   - `make_legs(...)` / `add_waterfowl_legs(...)`: quadruped or biped leg sets
+   - `add_collar(body, neck, m, animal)`: the signature bell, returns a pivot
+3. **Root custom properties**: `root["asset_id"] = "animal_balloon_<id>"` and a `root["description"]`.
+4. **Animation**: `animate(...)` (WALK + IDLE) and, for a night animal, `animate_sleep(...)`; see below.
+5. **`portrait(name, m)`** then **`export_asset(root, name)`** as the last two lines, and add the maker to
+   `MAKERS`.
 
 ```sh
-# Regenerate only the animals you name (safe — approved assets are preserved)
-blender --background --factory-startup --python art/blender/balloon_friends.py -- llama
-
-# Bare invocation regenerates only duck + goose, deliberately
-blender --background --factory-startup --python art/blender/balloon_friends.py
+# Regenerate only the animals you name (approved assets are preserved)
+blender --background --factory-startup --python art/blender/balloon_friends.py -- raccoon
 ```
 
-**This is a destructive, file-writing command.** It overwrites the `.blend`, `.glb`, and review PNG
-for each named animal. Check `git status` first and never run it on animals you did not intend to
-rebuild. The script clears only temporary in-memory scenes, but it writes to `public/assets/animals/`.
+This is a destructive, file-writing command: it overwrites the `.blend`, `.glb` and review PNG of each
+named animal. Check `git status` first. The bare invocation regenerates only duck + goose.
 
-### Animation contract
+### The clips (the runtime contract)
 
-The runtime only looks for two clips, matched by **substring on the uppercased clip name**
-(`src/animals/balloon-animal.ts`): a name containing `WALK`, and one containing `IDLE`. The exporter
-emits exactly `WALK` and `IDLE` because the NLA tracks are named that way.
+The runtime finds clips by **substring on the uppercased clip name** (`balloon-animal.ts`): `WALK`,
+`IDLE`, and optionally `SLEEP`. Any other name is ignored, and a flier uses `WALK` for flight and
+`IDLE` for perched. `finish_action()` pushes each action into an NLA track named after the clip; the
+exporter uses `NLA_TRACKS`, so **an action that never reaches an NLA track is not exported.**
 
-- A third clip, **`SLEEP`**, is optional (any clip name containing `SLEEP`). A night animal that has it
-  lies down by day; one without it is crouched in code from its `IDLE` pose. The raccoon's
-  `animate_sleep()` shows the recipe: belly on the lawn (body lowered so its underside is at z = 0),
-  legs folded under it, the head tucked round onto one flank, the tail wrapped along that flank to meet the nose (a curled ball), ears drooped, plus eyelid pivots that are
-  flat slivers in `WALK`/`IDLE` (`animate(..., held=lids)`) and swell shut in `SLEEP`. Call
-  `animate_sleep` **before** `animate` so its NLA track sits under the others and the review portrait
-  still shows the standing pose. To see the lying pose, open the saved `.blend` in Blender, mute the
-  `WALK`/`IDLE` tracks and render frame 7.
-- **A property that one clip animates must be animated, with variation, by every clip.** Two traps, both
-  hit by the raccoon and both silent: (1) the glTF exporter drops any channel that never changes, so a
-  pose held constant never reaches the game and that node stays at its rest pose; (2) when `SLEEP` keys a
-  property (the head's and tail's *position*, the eyelids' scale) that `WALK`/`IDLE` do not, the exported
-  rest pose is the lying one and the awake animal walks around with its head sunk into its body.
-  `animate(..., held=lids, pinned=[(head, rest_location), ...])` re-keys those in `WALK`/`IDLE` with a
-  hair of motion. After every export, count channels per clip in the GLB JSON (`SLEEP`, `WALK` and `IDLE`
-  should each list every animated node) and look at the animal **awake and asleep** in the game.
-- `FRAMES = (1, 7, 13, 19, 25)` / `PHASES = (0, π/2, π, 3π/2, 2π)` — five keyframes per full cycle.
-  First and last must match for a clean loop.
-- `animate()` writes a **real gait**, not a mesh bob: body bob and roll, head counter-motion, tail
-  follow-through, bell swing, diagonal leg pairs offset by π, hoof-hinge lift.
-- Birds use `forward_gait=True` (foot plants forward, rolls back, lifts, swings forward).
-  Quadrupeds use the default rearward-first cycle.
-- Wings/ears are the `ears` argument — for birds these become flapping wing pivots.
-- `finish_action()` pushes each action into an NLA track named after the clip, then clears
-  `data.action`. The exporter is configured for `NLA_TRACKS`, so **an action that never reaches an
-  NLA track will not be exported.**
+- `FRAMES = (1, 7, 13, 19, 25)` / `PHASES`: five keys per loop; first and last must match.
+- `animate()` writes a real gait (body bob/roll, head counter-motion, tail follow-through, bell swing,
+  diagonal leg pairs, hoof hinge), not a mesh bob. Birds pass `forward_gait=True`.
+- **`SLEEP` (optional).** A night animal that has it lies down by day; without it the game crouches
+  the `IDLE` pose, which reads as a shrunken standing animal and is only a fallback. The raccoon's
+  `animate_sleep()` is the recipe: a **curled ball**. The body is rounder and sits low (underside at
+  z = 0), the head tucks round onto one flank, the tail wraps along that flank to meet the nose, the
+  legs fold under, the ears droop, and eyelid pivots swell shut. Call it **before** `animate()` so its
+  NLA track sits underneath and the review portrait still shows the standing pose.
 
-### Naming contract (do not break this)
+### Two silent exporter traps (both hit by the raccoon)
 
-The capture flourish finds rig joints by **matching object-name substrings**
-(`buildRigPose` in `src/animals/balloon-capture.ts`):
+1. **The glTF exporter drops any channel that never changes.** A pose you hold constant never reaches
+   the game, and that node stays in its rest pose. Give every channel in every clip a hair of motion
+   (a breath, a tremor of 0.5 degrees).
+2. **If one clip animates a property that the others do not, the exported rest pose is that clip's
+   pose.** `SLEEP` moved the head and tail *position*, which `WALK`/`IDLE` never keyed, so the awake
+   raccoon walked around with its head sunk into its body. Anything `SLEEP` animates must also be keyed
+   in `WALK` and `IDLE`: `animate(..., held=lids, pinned=[(head, rest_location), (tail, rest_location)])`.
 
-```
-DUCK RIG · bright emerald head   → matches 'rig' + 'bright emerald head'
-CHICKEN RIG · near flapping wing  → matches 'rig' + 'wing', side from 'near'/'far'
-```
+After every export count the channels per clip in the GLB JSON (all three clips should list every
+animated node) and look at the animal **awake and asleep, from the side, in the game**.
 
-So:
-- Rig joints must contain `RIG` and the descriptive phrase the TS side looks for.
-- Laterals must be labelled `near` / `far` — that is how `side` is derived.
-- **Renaming a rig pivot silently breaks the capture animation.** It is not a compile error and
-  there is no warning. Keep the phrase, or update `buildRigPose` in the same commit.
-- A species with **no** `buildRigPose` branch still works — it simply gets no secondary head/wing
-  motion during capture. It is an enhancement, not a registration requirement.
+### The rig naming contract
 
-### Stage 2 outputs
+The capture flourish finds joints by **object-name substrings** (`buildRigPose` in `balloon-capture.ts`),
+for example `DUCK RIG · bright emerald head` and `CHICKEN RIG · near flapping wing`.
 
-Three files, always regenerated together:
+- Joints contain `RIG` plus the descriptive phrase the TS side looks for.
+- Laterals are labelled `near` / `far`; that is how the side is derived.
+- **Renaming a rig pivot silently breaks the capture animation.** A species with no `buildRigPose`
+  branch still works; it just gets no secondary head/wing motion. It is an enhancement.
+
+### Outputs
 
 ```
 public/assets/animals/balloon-<id>.blend          editable source (keep in git)
@@ -143,42 +167,26 @@ public/assets/animals/balloon-<id>-review.png     1200x1000 art-review portrait
 public/assets/animals/balloon-<id>.glb            runtime asset (no cameras, no lights)
 ```
 
-Blender also drops a `balloon-<id>.blend1` backup next to the `.blend`. Several are already committed; that is expected, not stray output.
+Blender also drops `balloon-<id>.blend1` backups; they are ignored.
 
 ### Review gate
 
 Inspect the **exported GLB**, not the Blender viewport:
 
 - `[Animal Balloon Farm] <name> asset` in the browser console logs dimensions and
-  `clips: [{name, duration}]` — both must be present and sane (~1–2s per clip).
-- `[Animal Balloon Farm] <name> ground clearance` logs `finalBounds.min.y`; it should be `0.0000`.
-- Open the review PNG for silhouette, expression, leg/ear/tail attachment, balloon sheen, hoof
-  separation.
-- Watch it walk in the garden at real camera distance. Blender's render is a reference, not a claim
-  about the runtime — Three.js is authoritative.
+  `clips: [{name, duration}]`; both must be present and sane (~1-2 s per clip).
+- `<name> ground clearance` logs `finalBounds.min.y`; it should be `0.0000`.
+- Open the review PNG for silhouette, expression, attachment, balloon sheen.
+- Watch it in the game from the side (angle sheet, below). Three.js is authoritative.
 
 ---
 
-## Stage 3 · Register the species in TypeScript
+## 3 · Register the species in TypeScript
 
 ### One file declares an animal
 
-`src/animals/animal-catalog.ts` holds `ANIMAL_CATALOG`, an array of species objects. It is the
-single source of truth, and almost everything else is derived from it:
-
-| Derived from the catalog | Where |
-|--------------------------|-------|
-| `BalloonAnimalId` (`typeof ANIMAL_CATALOG[number]['id']`) | `animal-catalog.ts` |
-| `SHOWCASE_ANIMALS` (plinth spawn + ring/accent color) | `balloon-catalog.ts` |
-| scene options for garden **and** viewer | `getAnimalSceneOptions()` |
-| the viewer's card list | `viewer-panel.ts` — filtered by `VIEWER_CAST` (the review-booth cast) |
-| the journal's animal chapter | `journal-panel.ts` — `ANIMAL_CATALOG.map(...)` |
-| the "N personalities" copy string | `viewer-panel.ts` — derived from the cast count |
-
-Append one object to the array and the animal gets a type id, a showcase plinth, a capture card, a
-journal page, and a correct species count — for free.
-
-### The catalog entry
+`src/animals/animal-catalog.ts` holds `ANIMAL_CATALOG`. Append one object and the animal gets a type
+id, a showcase plinth, a capture card, a journal page and a species count for free.
 
 ```ts
 {
@@ -193,7 +201,7 @@ journal page, and a correct species count — for free.
   gesture: 'Stands tall',                         // shown on the capture card
   assetUrl: 'assets/animals/balloon-llama.glb',   // document-relative, NOT /assets/...
   spawn: [2, -4],                                 // garden [x, z]
-  carnivalSpawn: [-20, 8],                        // where it first stands among the tents; REQUIRED
+  carnivalSpawn: [-20, 8],                        // first stands among the tents; REQUIRED
   showcaseSpawn: [-4, 3.2],                       // plinth position in ?showcase=1
   seed: 777,                                      // any int; fixes the wander pattern
   size: 2.4,                                      // LONGEST SIDE in world units
@@ -203,136 +211,53 @@ journal page, and a correct species count — for free.
 }
 ```
 
-Per-field notes:
+Field notes:
 
-- `size` is **not** the raw Blender scale. `createBalloonAnimal` measures the GLB, scales the longest
-  side to `size`, centers it on X/Z, and grounds it so `min.y` is exactly 0. Author the model at any
-  comfortable scale; just keep proportions sane.
-- `assetUrl` and `spriteUrl` must stay document-relative. Root-absolute `/assets/...` breaks the
-  GitHub Pages subpath.
-- `bounds` is per-animal and roughly the lawn half-extents (`GARDEN_BOUNDS` is 14 x 9.5). Shrink it
-  slightly so animals do not clip the fence. `getAnimalSceneOptions` supplies `groundY:
-  GARDEN_LAWN_Y` (0.03) for you — do not add it to the entry.
-- `speed` is what makes a species read as a species — a chicken should visibly outpace a cow.
-- `carnivalSpawn` is required by the entry type. Pick a spot among the carnival tents (existing
-  entries sit at |x| 18-26); `main.ts` reads it in `carnivalSpawnFor`.
-- `showcaseSpawn` must not collide with another species' plinth. The first six use a 3x2 ring at
-  roughly `[-7, 0, 7] x [-3.2, 3.2]`; frog `[-11, 0]` and owl `[11, 0]` took the two ends. The next
-  animal needs a new free spot, e.g. `[-11, 3.2]` or `[11, 3.2]`.
+- `size` is not the raw Blender scale: the runtime measures the GLB, scales the longest side to `size`
+  and grounds it at `min.y = 0`. Author at any comfortable scale.
+- `assetUrl` / `spriteUrl` must stay document-relative (`assets/...`, not `/assets/...`) or the GitHub
+  Pages subpath breaks.
+- `bounds` is roughly the lawn half-extents; shrink slightly so animals do not clip the fence.
+- `speed` is what makes a species read as a species.
+- `carnivalSpawn`: pick a spot among the tents (existing entries sit at |x| 18-26).
+- `showcaseSpawn` must not collide with another plinth. Taken: a 3x2 ring at `[-7, 0, 7] x [-3.2, 3.2]`,
+  frog `[-11, 0]`, owl `[11, 0]`, raccoon `[-11, 3.2]`. Free next: `[11, 3.2]`.
 
 ### Compiler-enforced records
 
-These are keyed `Record<BalloonAnimalId, …>`, a required catalog field, or an exhaustive switch, so
-adding the catalog entry produces **a fixed set of errors** — re-confirmed by experiment on the tree
-that carries the owl (adding a `raccoon` entry yields exactly these). The owl PR is what grew the
-list from three to four records, via `ANIMAL_SALE_PRICES` and the required `carnivalSpawn`:
-
-```
-animal-catalog.ts  TS2322  … Property 'carnivalSpawn' is missing in type …
-balloon-animal.ts  TS2741  Property 'raccoon' is missing … Record<…, MeshStandardMaterial>
-balloon-capture.ts TS2741  Property 'raccoon' is missing … Record<…, readonly [string, string]>
-balloon-capture.ts TS2366  Function lacks ending return statement …
-sales.ts           TS2741  Property 'raccoon' is missing … Record<…, number>
-```
-
-(`main.ts` also reports "`carnivalSpawn` does not exist on type"; it is the same missing field seen
-from the other side and clears with it.) That is the whole checklist:
+Adding the entry produces **exactly these errors** (verified by adding a throwaway species):
 
 | File | Symbol | What it is |
 |------|--------|-----------|
-| `src/animals/animal-catalog.ts` | `carnivalSpawn` | where the animal first stands among the carnival tents |
-| `src/animals/balloon-animal.ts:151` | `BODY_MATERIALS` | placeholder color, used **only** if the GLB fails to load |
-| `src/animals/balloon-capture.ts:6` | `PAINT_PALETTES` | `[primary, secondary]` paint colors for the capture pour |
-| `src/animals/balloon-capture.ts:166` | `captureGesture` | exhaustive `switch` with no `default` — TS reports "function lacks ending return statement" |
-| `src/game/sales.ts:11` | `ANIMAL_SALE_PRICES` | what it sells for (owl 30; common ground animals 12–16) |
+| `animal-catalog.ts` | `carnivalSpawn` | required field |
+| `balloon-animal.ts` | `BODY_MATERIALS` | placeholder colour, used only if the GLB fails to load |
+| `balloon-capture.ts` | `PAINT_PALETTES` | `[primary, secondary]` paint colours for the capture pour |
+| `balloon-capture.ts` | `captureGesture` | exhaustive `switch` with no `default`; add a `case` returning a `CapturePose` (copy a neighbour) |
+| `src/game/sales.ts` | `ANIMAL_SALE_PRICES` | what it sells for (12-16 common, 22 raccoon, 30 owl) |
+| `tests/sales.test.mjs` | the expected-prices object | **a test, not the compiler**: it fails `npm test` until you add the price |
 
-`captureGesture` returns a `CapturePose`:
+`main.ts` also reports "carnivalSpawn does not exist"; it is the same missing field.
 
-```ts
-case 'llama':
-  return { fill, lift: active * 0.04, pitch: Math.sin(time * 2.2) * 0.06 * active, roll: 0, yaw: 0 }
-```
+### Registrations the compiler cannot see (they fail silently)
 
-where `fill` is the pre-computed paint-progress term and `active` the in-animation envelope — both
-already in scope at the top of the function.
+| Where | What | Symptom if forgotten |
+|-------|------|----------------------|
+| `animal-conditions.ts` `DISCOVERY` | the lure | the species sits at stage 0 forever |
+| `animal-conditions.ts` `SPECIES_CONDITIONS` | the ladder | an invented default four-rung ladder with made-up numbers |
+| `animal-conditions.ts` `NIGHT_ONLY_SPECIES` | the shift | a night animal turns up at noon |
+| `src/game/sleep.ts` `SLEEP_PROPS` | what a night animal sleeps beside | it sleeps wherever it stands |
+| `src/ui/journal-dom.ts` `SPECIES_META` | journal rarity + trait pills | "Common" and no trait pills |
+| `animal-conditions.ts` `PROP_PLURALS` | prop wording in the journal | falls back to `<id>s` (fine for regular plurals) |
+| `animal-catalog.ts` `VIEWER_CAST` | which models the viewer stages | not in the review booth (deliberate: list only what you are tuning) |
+| `balloon-capture.ts` `buildRigPose` | head/wing motion in the capture | no flourish, nothing breaks |
+| the `species` of a `plantCount` | a plant id, but typed `string` | a typo reads as zero plants and it never settles |
 
-Then `npm run typecheck` until green. Every error mentioning a missing property for your new id is a
-registration point you have not filled in yet.
-
-### Registration points that are NOT compiler-enforced
-
-These fail silently:
-
-- **`src/animals/balloon-capture.ts`** — `buildRigPose` name matching (see the naming contract).
-  Missing it costs you flourish, not function.
-- **`VIEWER_CAST` in `src/animals/animal-catalog.ts`** — the viewer stages only the species listed
-  there (it is the review booth for new models). A new catalog entry does not appear in the viewer
-  until its id joins the cast; that is deliberate, so a model being tuned can stand alone.
-- **`SPECIES_CONDITIONS`, `DISCOVERY` and `NIGHT_ONLY_SPECIES`** in `src/game/animal-conditions.ts` are
-  keyed by plain strings. Forget `DISCOVERY` and the species sits at stage 0 forever; forget
-  `SPECIES_CONDITIONS` and it gets an invented default ladder; forget `NIGHT_ONLY_SPECIES` and a night
-  animal turns up at noon. None of these warns, so cover each in `tests/animal-conditions.test.mjs`.
-- **`SPECIES_META` in `src/ui/journal-dom.ts`** gives the journal page its rarity and trait pills.
-- **`PROP_PLURALS`** (same file) words a prop for the journal bar. A missing entry falls back to
-  `<id>s`, so a "garbage can" reads "garbage cans" correctly but an irregular noun will not.
-- **The `species` field of a `plantCount` requirement** — it is a `string`, not a `PlantId`, so a
-  typo reads as zero plants and the animal simply never settles. Assert the id in a test, the way
-  `tests/animal-conditions.test.mjs` does for the frog.
+Cover `DISCOVERY`, `SPECIES_CONDITIONS` and `NIGHT_ONLY_SPECIES` in a test (see
+`tests/raccoon.test.mjs`).
 
 ---
 
-## Stage 4 · Verify in the browser
-
-```sh
-npm run dev     # http://127.0.0.1:8000/
-```
-
-- `http://127.0.0.1:8000/` — normal garden (main menu → **ENTER**). The animal wanders; the condition ladder decides when it settles.
-- **VIEWER** from the main menu (or `window.__gardenDebug.openViewer()` under `?gardenDebug=1`) — the capture viewer. It stages only `VIEWER_CAST` (`src/animals/animal-catalog.ts`): the review booth for new models. While tuning a species, list just its id there and it stands alone on the stage, framed close, with a single tray card; click the card (or **Play all**) to replay its reveal.
-- Click the journal book in the world → **Animals** chapter. Your species should appear with its
-  portrait, subtitle, and note, derived straight from the catalog entry.
-
-**Judge a model from the side, not from the game camera.** The game looks down at about 40 degrees,
-which hides a lying pose and the face of anything walking away. Use the angle sheet: one animal circled
-at a low angle on a single small JPEG (six 480x270 frames), and the perf overlay hidden with `&nohud=1`:
-
-```sh
-node scripts/angle-sheet.mjs "http://127.0.0.1:8000/?gardenDebug=1&nohud=1&scenario=raccoon/sleeping-by-can" \
-  C:/Users/Spencer/.codex/agent-shots/raccoon-asleep.jpg --species raccoon --min-stage 3 --sleeping --wait 120000
-```
-
-`--eval "<js>" --after-eval <ms>` runs setup in the page first (for example nightfall, to wake it), and
-`--angles`, `--elevation` and `--height` change the framing. It uses `__gardenDebug.frameAngle(x, z, height,
-azimuthDeg, elevationDeg)`. Headless software rendering runs at a few FPS and the simulation clamps each
-frame, so give a scenario a minute or two of wall time before the animal has walked anywhere.
-
-**Screenshots (project rule, non-negotiable):** resize the viewport to ~1280x720 first, take **one**
-screenshot per state change, and **never** `fullPage` a game canvas. A single oversized image
-permanently poisons the agent thread with a 30MB upload error.
-
----
-
-## Stage 5 · Journal entry
-
-**One thing to do, and it fails silently:** add the species to `SPECIES_META` in `src/ui/journal-dom.ts`
-(rarity plus three trait pills). It is a plain string-keyed table, so a missing species still gets a
-page but with "Common" and no trait pills. Everything else is derived. Verified on the raccoon with
-`?gardenDebug=1`: `setStage('raccoon', 3)`, `openJournal()`, then pick the species card.
-
-Otherwise nothing to do. The journal is a Three.js book rendered in-scene (`src/ui/journal-ui.ts`); its
-animal chapter maps `ANIMAL_CATALOG` directly. Filling in `subtitle`, `description`, `note`,
-`color`, `gesture`, and `spriteUrl` in the catalog entry *is* the journal entry.
-
-The one caveat: the journal is **no longer a static record book**, but the part it draws is not
-derived from the catalog. It reads the condition model described below, so filling in `subtitle` and
-friends still writes the field notes, while the checklist under them comes from
-`src/game/animal-conditions.ts`. A species with no entry in `SPECIES_CONDITIONS` falls back to a
-default four-step ladder, so the page still renders — but the numbers on it will be invented rather
-than designed. Put the species in `SPECIES_CONDITIONS` as part of stage 3.
-
----
-
-## Animal conditions
+## 4 · Conditions: the four rungs
 
 Every species climbs four rungs before it belongs to the farm:
 
@@ -342,330 +267,285 @@ Every species climbs four rungs before it belongs to the farm:
 | 1 | visit the carnival | wild balloon red |
 | 2 | visit the farm | wild balloon red |
 | 3 | call the farm home | its own colours |
-| 4 | love the farm | own colours + heart eyes |
+| 4 | love the farm | own colours + heart eyes (ready to breed) |
 
-Three pure modules own this, and none of them import Three.js — which is why the whole loop is
-covered by `tests/animal-conditions.test.mjs` rather than only by eye in a browser.
+Three pure modules own this (no Three.js, no DOM), so the loop is covered by tests:
+`animal-conditions.ts` (ladder, `SPECIES_CONDITIONS`, `DISCOVERY`), `farm-state.ts` (m² of grass,
+water, pasture; counts), `animal-progress.ts` (the state machine and what the journal may reveal).
+`main.ts` owns the seam: `measureFarm()` reads the renderer's arrays into plain ones.
 
-| File | Owns |
-|------|------|
-| `src/game/animal-conditions.ts` | the ladder, `SPECIES_CONDITIONS`, `DISCOVERY` |
-| `src/game/farm-state.ts` | lawn coverage + heights → m² of grass, water, pasture |
-| `src/game/animal-progress.ts` | the state machine and what the journal may reveal |
+### Writing a ladder
 
-`main.ts` owns the seam: `measureFarm()` reads the renderer's arrays into plain ones, ticks the
-model, and applies whatever stage each animal reaches. `balloon-animal.ts` knows nothing about
-conditions beyond its own `stage` property.
-
-Three things that are easy to get wrong here:
-
-- **A requirement below the current stage reports a null target.** That is the disclosure rule, and
-  it lives in the model so the UI cannot leak a number by accident.
-- **Pasture means grassy flat ground.** Measuring flatness on bare dirt is satisfied by a plot the
-  moment the game starts, and the sheep settles onto an empty field for free.
-- **The grid pitch must be the *most common* vertex step.** The lawn is a rounded rectangle, so its
-  first row is a corner bevel; reading the pitch off vertices 0 and 1 under-reports every area ~4x.
-
-### Adding a species to `SPECIES_CONDITIONS`
-
-One entry, four `StageDefinition`s. Stages 1 and 2 have `requirement: null` — they ask nothing of the
-player. Stage 3 and 4 each need one, and both are re-checked every frame, so keep them honest:
+`stages[0]` is the carnival rung (nothing asked), `stages[1]` is "visit the farm" (its requirement is
+what makes the animal step inside), `stages[2]` is "call the farm home" (**stage 3**), `stages[3]` is
+"love the farm" (**stage 4**, breeding). Helpers: `CARNIVAL`, `ENTER_FARM(hint)`, `CALL_HOME`, `LOVE_THE_FARM`
+(terrain), `PLANT_HOME` / `PLANT_LOVE` (plants), `REQUIRE_RESIDENT` / `SHARE_LIFE` (a friend),
+`COUNT_STAGE(title, hint, requirement, result)` (anything with a count or two requirements).
 
 ```ts
-duck: {
+raccoon: {
   stages: withStageNumbers([
-    CARNIVAL,
-    ENTER_FARM('Heads straight for the low ground and paddles in.'),
-    CALL_HOME('waterArea', 8, 'Wants a proper pool to swim in, not just damp soil.', 0.75),
-    LOVE_THE_FARM('waterArea', 16, 'Wants a bigger pond and plenty of grass at the waterline.', 0.75),
+    { title: 'Appear at the carnival', hint: '...', requirement: null, result: '...' },
+    ENTER_FARM('Slips under the fence at night to sniff around.'),
+    COUNT_STAGE('Call the farm home', 'Wants a garbage can to raid.',
+      { kind: 'propCount', species: 'garbage-can', amount: 1 }, '...'),
+    COUNT_STAGE('Love the farm', 'Wants a dumpster to call home, with the can kept close.',
+      { kind: 'propCount', species: 'dumpster', amount: 1, and: [{ kind: 'propCount', species: 'garbage-can', amount: 1 }] }, '...'),
   ]),
 },
 ```
 
-A social condition uses `REQUIRE_RESIDENT('cow', 'Cow')` instead, which is how the pig is made to
-wait on a resident cow. To let a species that is *not* a `CARNIVAL_STARTER` ever appear, give it a
-`DISCOVERY` entry — otherwise it sits at stage 0 forever and its conditions are unsatisfiable.
+`and: [...]` puts two requirements on one rung; the journal shows the extras as further bars.
 
-### Conditions answered by plants
+### The condition kinds
 
-The fifth condition kind, `plantCount`, counts **plants of a named species** rather than square
-meters. It is what the frog uses, and it is the general answer for any animal whose habitat is
-something the player *builds* one plant at a time:
+| Kind | Reads | `species` holds |
+|------|-------|-----------------|
+| `grassArea`, `flatArea`, `waterArea` | m² of mature grass / flat grassy ground / water | n/a |
+| `plantCount` | **mature** plants of one kind | a plant id |
+| `residentSpecies` | is any adult of this species a resident | an animal id |
+| `residentCount` | how many adult residents | an animal id |
+| `preyEaten` | tally of a prey species eaten | an animal id |
+| `propCount` | how many of a shop prop are **placed** (owned in the inventory does not count) | a prop id (the field name is historical) |
 
-```ts
-frog: {
-  stages: withStageNumbers([
-    CARNIVAL,
-    ENTER_FARM('Springs over the fence and sits in the mud to listen.'),
-    PLANT_HOME('water-lily', 2, 'Wants lily pads to sit on — a couple of grown ones in the pond.'),
-    PLANT_LOVE('water-lily', 4, 'Wants a proper lily pond: twice the pads, and grass along the banks.'),
-  ]),
-},
-```
+Rules that are easy to get wrong:
 
-Three rules that are easy to get wrong:
+- **A requirement below the current stage reports a null target.** That is the disclosure rule; it
+  lives in the model so the UI cannot leak a number.
+- **Pasture means grassy flat ground.** Flatness on bare dirt is satisfied the moment the game starts.
+- **The grid pitch must be the most common vertex step**, or areas read ~4x small.
+- **Only mature plants count.** Watering and pruning matter because of this.
+- **A plant condition implies its substrate.** Lily pads imply a pond; do not also ask for `waterArea`.
+- **Keep plant counts inside the seed supply** (`STARTING_SEEDS_PER_PLANT`, 5).
+- **`DISCOVERY` is a requirement too.** It takes a species from stage 0 to the carnival. Use a
+  cheap, early thing: a resident friend, a plant, some water.
+- `conditionMetricLabel` words requirements for the journal; plants fall back to the catalog's name.
 
-- **Only *mature* plants count.** A seed dropped in the water is not a lily pad yet, exactly as a
-  newly sown patch is not tall grass. The maturity gate is what makes watering and pruning matter to
-  an animal condition instead of being decoration. `main.ts` builds the tally in `maturePlantCounts()`
-  and the sim owns the truth about growth.
-- **A plant condition implies its substrate.** A water lily can only be planted in visible pond
-  water, so asking for lily pads quietly asks for a pond first. Do not also add a `waterArea`
-  requirement to say the same thing twice.
-- **Keep the count inside the seed supply.** A species starts with `STARTING_SEEDS_PER_PLANT` (5)
-  seeds, so a stage-4 requirement above 5 is unreachable and the animal silently stops at stage 3.
+### Adding a plant
 
-`conditionMetricLabel` words these for the journal, falling back to the plant catalog's own name, so
-a new plant gets a readable label without anyone remembering to update the map beside it.
+A plant is a growable ingredient (frog: lilies; sheep: clover). In `src/game/plants.ts` add the id to
+`PlantId` and an entry to `PLANT_CATALOG` (substrate `grass` | `soil` | `water`, `spacingRadius`,
+`growthSeconds`, a short `care` list of waters and prunes, `groundCover` for lawn patches). Then:
 
-### Verifying conditions in the browser
+- `src/game/sales.ts` `PLANT_SALE_PRICES` (compiler-enforced; the only error adding one produced)
+- `src/game/animal-conditions.ts` `PLANT_METRIC_LABELS` (optional wording)
+- `src/scene/garden-plants.ts`: plants are procedural, not Blender. A new id falls back to the generic
+  flower using its `color`; special-case the id only if it needs its own shape (clover, dandelion and
+  water-lily do).
+- a test that the id exists, so a typo in a `plantCount` cannot slip through
 
-With `?gardenDebug=1`, `window.__gardenDebug` grows a few verbs aimed at this system:
+### Adding a shop prop (and a house)
 
-```js
-const d = window.__gardenDebug
-d.closeMenu()
-d.sowGrass(0, 0, 3.4)      // a disc of tall grass, straight to full height
-d.digPond(-6, 4, 3)        // a basin, for the water conditions
-d.pourAt(-6, 4, 3, 40)     // fill it, so there is actual pond water
-d.plant('water-lily', -6, 4)   // one seed, through the seedbox's own rules
-d.growPlants(90, 1)        // grow them, answering every care marker on the way
-d.advance(400, 1 / 30)     // run the clock; returns the new stages
-d.conditions()            // every rung, revealed or not, with live numbers
-d.setStage('duck', 4)      // force a species up the ladder, transition and all
-d.resetConditions()        // back to a bare plot and the carnival
-d.focusSpecies('sheep', 6) // frame one closely, to check the heart eyes
-```
+A prop is something the shop sells and a `propCount` reads. A **house** is just a prop that a night
+animal sleeps beside (and that gates breeding); the raccoon's dumpster is the template.
 
-`sowGrass` and `digPond` go through the real tool code, so the harness grows genuine geometry
-instead of writing a coverage array behind the renderer's back. `plant` goes through the same
-`plantSurfaceAt` rule the seedbox uses and reports the placement failure rather than doing nothing,
-because a rejected seed is the hardest possible thing to debug through a screenshot. `growPlants`
-answers care markers for you, because a lily pauses for a drink and a pinch and time alone will
-never mature it. Do not verify a condition by hand-dragging the seeder: it is not a repeatable loop,
-and every area bug found while building this was found by the harness rather than by looking.
+| Where | What | Enforced? |
+|-------|------|-----------|
+| `src/game/farm-props.ts` | add to `PropId`, `PROP_CATALOG`, `PROP_ORDER`, and the literal `counts` in `createPropInventory` | yes |
+| `art/blender/<prop>.py` (copy `trash_props.py`) | the model to `public/assets/props/<id>.glb` (+ `.blend`, review PNG) | no |
+| `art/blender/prop_thumbs.py` `PROPS` | add `("<id>", "assets/props/<id>.glb")`, run with `-- <id>` for the shop icon `prop-<id>.png` | no |
+| `animal-conditions.ts` `PROP_PLURALS` | only for an irregular plural | no |
+| `src/ui/shop-dom.ts` `PIP_QUOTES` | optional shop-keeper line | no |
+| `src/game/sleep.ts` `SLEEP_PROPS` | **for a house:** add it, first in the species' list, with a bed radius | no |
+| `tests/farm-props.test.mjs` or the animal's test | footprint, blocking, in `PROP_ORDER`, buyable | no |
+| `scripts/check-no-scenarios.mjs` | add a marker only when you add a scenario folder | no |
+
+`PropDefinition.size` is the target **longest side** of the loaded model, so a prop with overflow
+(the dumpster's spilled bags) needs a size that keeps its body about the footprint. A non-square
+`footprint` is fine and rotates (`footprintExtent`). `GardenProps.placements(id)` returns the world
+centre of every placed prop of one id, which is what sleeping uses.
+
+Prices so far: garbage can 45, coop 90, barn 110, dumpster 120, oak 140.
+
+Model tips from the raccoon's props: author on `z = 0`, centred in X/Y; do not leave a doorway the
+game cannot use (the dumpster has none: the raccoon climbs in over the rim, and a later feature will
+let it sleep *inside*); keep triangle counts low (`npm run assets:budget`).
 
 ---
 
-## Pacing: who arrives when
+## 5 · Night animals and sleeping
+
+Add the species to `NIGHT_ONLY_SPECIES` and it arrives, visits and wanders in the dark. Night and day
+visitors are paced separately (`animal-life.ts`), and residents are never sent away at dawn. By day it
+**sleeps**:
+
+| Concern | Where it lives |
+|---------|----------------|
+| Who sleeps when | `shouldSleep(species, night)` in `src/game/sleep.ts` (pure, tested) |
+| What it sleeps beside | `SLEEP_PROPS[species]`: preferred prop first, with a bed radius; none placed = where it stands |
+| Choosing and keeping a bed | `updateSleepers()` in `src/main.ts`: a resident (stage 3+) beds down beside its prop, anything else where it stands; beds are chosen once per sleep and dropped at dusk |
+| Bed geometry | `bedBeside(anchor, slot, radius)`: a point `radius` from the prop, facing it; `pickAnchor` takes the least crowded prop, then the nearest |
+| The sleeping pose | `setSleepSpot(spot)` / `isSleeping` on `BalloonAnimal`: plays the `SLEEP` clip (or the crouch fallback) |
+
+Rules that are easy to get wrong:
+
+- **Author a real `SLEEP` clip.** The crouch fallback looks like a shrunken standing animal.
+- **A bed radius is the animal's half-length plus the prop's reach**, or it sleeps on top of the prop. A
+  curled raccoon needs about 1.8 from a can and 2.6 from the centre of the 3.6 m dumpster.
+- **Only animals at the farm sleep.** A raccoon still at the carnival by day keeps wandering.
+- **Debug:** `animalReport()` carries `sleeping` and `bed`.
+
+---
+
+## 6 · Pacing: who arrives when
 
 The farm fills one animal at a time, and each arrival is earned.
 
-- **Cow and duck** are the only carnival starters (`CARNIVAL_STARTERS`). A cow
-  needs nothing but grass, so it is the first win.
-- **Sheep** are lured by clover (`DISCOVERY.sheep`: 2 grown patches) and visit at
-  3. **Chickens** are lured by dandelions the same way. `DISCOVERY` is the trigger
-  that takes a species from stage 0 to the carnival, so a lure is one entry there.
-- **Staying and breeding** lean on props: sheep need a small barn to settle, cows
-  need one to breed, chickens need a coop to settle and a second to breed. Use
-  `COUNT_STAGE` with `and: [{ kind: 'propCount', species: 'barn', amount: 1 }]`.
-- **Shifts.** Owls turn up and visit only after dark; every other species turns up
-  and steps inside the fence only in daylight (`isNightOnly`). Residents are never
-  sent away at night: chickens have to be there for the owl to hunt.
-- Only a visitor that is *ready to walk in* holds the arrival queue, so a sheep
-  still waiting for its third clover patch does not stop the chickens arriving.
+- **Cow and duck** are the only carnival starters (`CARNIVAL_STARTERS`). A cow needs only grass, so it
+  is the first win.
+- **Sheep** are lured by clover (`DISCOVERY.sheep`) and **chickens** by dandelions. **Raccoons** by a
+  resident cow. `DISCOVERY` is the trigger that takes a species from stage 0 to the carnival.
+- **Staying and breeding** lean on props: sheep need a barn to settle, cows one to breed, chickens a
+  coop to settle and a second to breed, raccoons a can to settle and a dumpster to breed.
+- **Shifts.** Night species arrive and visit only after dark; everyone else only in daylight
+  (`isNightOnly`). Residents are never sent away at night: chickens have to be there for the owl.
+- Only a visitor that is **ready to walk in** holds the arrival queue.
 
-Ground-cover plants (clover, dandelion) set `groundCover` in `PLANT_CATALOG`: they
-need real turf under them and are drawn as a round patch that melts into the lawn.
-Care is a short list of `care` stops along the growth curve (two waterings for a
-patch), so a plant that is waiting for you just waits. It never withers.
+Ground-cover plants set `groundCover` in `PLANT_CATALOG` and are drawn as a round patch that melts into
+the lawn. Care is a short list of stops along the growth curve; a plant that is waiting for you just
+waits. It never withers.
 
-## Fliers, predators and the night shift
+---
+
+## 7 · Predators and fliers (only if the animal needs them)
 
 The owl is the first species that does not wander, hunts another species, and only comes out after
 dark. None of that is special-cased in the catalog loop; each piece has one home.
 
 | Concern | Where it lives |
 |---------|----------------|
-| `flier: true` on the catalog entry | `src/animals/animal-catalog.ts` (passed through `getAnimalSceneOptions`) |
-| Night-only arrival and visits | `NIGHT_ONLY_SPECIES` in `src/game/animal-conditions.ts`, honoured by `animal-life.ts` |
+| `flier: true` on the catalog entry | `animal-catalog.ts` (passed through `getAnimalSceneOptions`) |
 | Who eats whom, the prey floor, the eaten tally | `PREY_OF`, `PREY_FLOOR`, `createPredationLedger` in `src/game/predator.ts` |
-| The owl's flight and hunt state machine | `stepOwl` in `src/game/predator.ts` (pure, tested in `tests/predator.test.mjs`) |
-| Applying flight to the model, panicking prey | `src/scene/owl-hunt.ts` |
-| The pop and its clean-up | `src/game/pop-animation.ts` (timeline) and `src/scene/pop-burst.ts` (meshes) |
+| The owl's flight and hunt state machine | `stepOwl` in `predator.ts` (pure, tested in `tests/predator.test.mjs`) |
+| Applying flight, panicking prey | `src/scene/owl-hunt.ts` |
+| The pop and its clean-up | `src/game/pop-animation.ts` (timeline), `src/scene/pop-burst.ts` (meshes) |
 | The roost | the `OAK roost` node of `public/assets/props/oak.glb`, read by `GardenProps.roosts()` |
 
-Rules that are easy to get wrong:
+- **A flier is positioned from outside.** `createBalloonAnimal` skips the wander and waits for
+  `setFlightPose`. Its clips are still `WALK` (flight) and `IDLE` (perched/dive); do not add others.
+- **Ground the pose it will wear.** A flier is grounded on its `IDLE` frame.
+- **Fliers are always full models**; the instanced crowd has no low-poly flier.
+- **Prey** is a resident, adult, on-farm animal that is not mid-capture, courting or waiting to settle.
+  The predator will not take the flock below `PREY_FLOOR` (2).
+- **A catch is a removal.** `handleOwlCatch` forgets the prey from the sim and hands the model to a pop.
+- **Helium.** An oak is where a resident owl tops up. Remove the last oak and it sags and pops.
+- **Count conditions.** `residentCount`, `preyEaten` and `propCount` read maps on `FarmState`, filled
+  in `measureFarm()`.
 
-- **A flier is positioned from outside.** `createBalloonAnimal` skips the wander for `flier` and waits
-  for `setFlightPose`. Its clips are still just `WALK` and `IDLE`: `WALK` is the wide-winged flight
-  cycle, played well under real time because a balloon barely flaps, and `IDLE` is the folded pose,
-  used for perching and for the dive. Do not add a third clip name; the runtime will not find it.
-- **Ground the pose it will wear.** The static GLB pose is not the clip pose, so a flier is grounded
-  on its `IDLE` frame (see `ensureDetailedModel`). A perched owl has its talons on the `OAK roost`
-  node only because of this.
-- **Fliers are always full models.** The instanced crowd has no low-poly owl, so `refreshAnimalCrowd`
-  keeps a flier out of it. A new flier needs no crowd geometry, but it will not be cheap in a flock.
-- **Prey is a resident, adult, on-farm chicken** that is not mid-capture, courting or waiting to
-  settle. The owl will not take the flock below `PREY_FLOOR` (2), so there is always a pair to breed.
-- **A catch is a removal.** `handleOwlCatch` in `main.ts` forgets the chicken from the sim at once,
-  tallies it in the ledger and hands the model to a pop effect, which disposes it when it is done.
-- **Helium.** An oak is also where a resident owl tops up. Pick the last oak up and the owl cannot
-  roost, so it stays aloft day and night (it only hunts at night), shrinks and sags as `helium` falls
-  over `HELIUM_SECONDS` (120), and pops at zero. Placing an oak again refills it six times faster than
-  it leaked. Extra owls beyond the oak count share an oak a step apart and are not stranded.
-  Debug: `setOwlHelium(0..1)`.
-- **Heading follows movement.** `steer` turns the owl toward the way it actually moved this step, so
-  it never flies sideways while chasing a moving target.
-- **Two requirements on one rung** use `ConditionRequirement.and`. The journal shows the extras as
-  further bars (`alsoNeeds`); the stay rung's headline number is the chickens eaten.
-- **Count conditions.** `residentCount`, `preyEaten` and `propCount` read the `residentCounts`,
-  `preyEaten` and `propCounts` maps on `FarmState`, which `main.ts` fills in `measureFarm()`.
-- **Night and day visitors are paced separately** in `animal-life.ts`, so an owl does not queue behind a
-  cow that is still waiting for grass.
+---
 
-Debug verbs (with `?gardenDebug=1`): `addAnimal(species, stage)`, `feedOwl(n)`, `hurryHunt()`,
-`stepHunt(seconds)` (steps the hunt without rendered frames), `predation()`, and the existing
-`setTimeOfDay`, `buy('oak')` and `placeProp('oak', cellX, cellZ)`. The owl takes the visit and stay
-rungs through `advance(...)` like any other species.
+## 8 · Scenarios and tests
 
-
-## Shop props an animal can ask for
-
-Barn, coop and oak are all the same thing: a prop the shop sells and a `propCount` requirement reads.
-A new one touches these places; the first two are compiler-enforced, the rest are not.
-
-| Where | What | Enforced? |
-|-------|------|-----------|
-| `src/game/farm-props.ts` | add the id to `PropId`, an entry in `PROP_CATALOG`, and the id to `PROP_ORDER` | yes (`Record<PropId, …>`) |
-| `src/game/farm-props.ts` `createPropInventory` | the literal `counts` object starts every id at 0 | yes |
-| `art/blender/<prop>.py` | the model, exported to `public/assets/props/<id>.glb` (+ `.blend`, review PNG) | no |
-| `art/blender/prop_thumbs.py` | add `("<id>", "assets/props/<id>.glb")` to `PROPS`, then run it with `-- <id>` for `prop-<id>.png`, the shop icon | no |
-| `src/game/animal-conditions.ts` `PROP_PLURALS` | only if the plural is irregular | no |
-| `src/ui/shop-dom.ts` `PIP_QUOTES` | optional shop-keeper line | no |
-| `tests/farm-props.test.mjs` | footprint, blocking, in `PROP_ORDER`, buy and own it (copy the oak test) | no |
-
-The animal then asks for it with `{ kind: 'propCount', species: '<id>', amount: 1 }` (the field is
-called `species` for historical reasons; it holds the prop id). `GardenProps.propCounts()` counts what
-is **placed**, not owned: a can sitting in the inventory satisfies nothing. A prop is loaded from
-`modelUrl` and placed on the lattice by the generic code in `garden-props.ts`; only a prop that the
-game needs to look inside (the oak's `OAK roost` node) needs special code, and a prop that is just
-scenery or a requirement needs none.
-
-Prices so far: coop 90, barn 110, oak 140.
-
-The raccoon's two props show the range: the **garbage can** (`garbage-can`, 1 cell, 45) settles it, and
-the **dumpster** (`dumpster`, 2x1 cells, 120) is its house, the condition for it to breed. Neither
-model carries a node the game reads; the sleeping spot is found from the prop's placement.
-
-## Nocturnal ground animals, and sleeping
-
-Add the species to `NIGHT_ONLY_SPECIES` and it arrives, visits and wanders in the dark like the owl, with
-none of the owl's code. A ground night animal also sleeps through the day:
-
-| Concern | Where it lives |
-|---------|----------------|
-| Who sleeps when | `shouldSleep(species, night)` in `src/game/sleep.ts` (pure, tested in `tests/raccoon.test.mjs`) |
-| Which can, which spot | `pickAnchor` (least crowded, then nearest) and `bedBeside` (a point `BED_RADIUS` from the can, facing it) in the same file |
-| Choosing and keeping a bed | `updateSleepers()` in `src/main.ts`: a resident (stage 3+) beds down beside its home: a placed dumpster if there is one, else a garbage can (a bed is `BED_RADIUS` or `DUMPSTER_BED_RADIUS` from the prop's centre; a later feature will move sleepers *inside* homes), anything else where it stands; beds are chosen once per sleep and dropped at dusk |
-| The sleeping pose | `setSleepSpot(spot)` / `isSleeping` on `BalloonAnimal`. A model with a `SLEEP` clip plays it (lying down, eyes shut); one without it plays `IDLE` at 0.3x squashed into a crouch (`applySleepPose`) |
-| Where `placements()` comes from | `GardenProps.placements(id)`: the world centre of every placed prop of one id |
-
-Rules that are easy to get wrong:
-
-- **The crouch alone does not read as sleep.** The first raccoon only squashed its standing pose and
-  looked like a standing animal that had shrunk. Author a real `SLEEP` clip; the crouch is only a fallback.
-- **A sleeper's paws must stay on the grass.** In the fallback, scaling the pivot would float the model, so
-  `applySleepPose` also scales the pivot's height. In a `SLEEP` clip, lower the body so the belly is at z = 0.
-- **`BED_RADIUS` is the animal's half-length plus the can's radius.** A bigger animal or can needs a
-  bigger radius, or it sleeps on top of the prop.
-- **Only animals at the farm sleep.** A raccoon still at the carnival by day keeps wandering; a
-  half-finished travel route does not mix with a bed.
-- **Debug:** `animalReport()` carries `sleeping` and `bed`. The headless software renderer runs at 1-4 FPS
-  and the simulation clamps each frame, so a sleep scenario needs a minute or two of wall time before the
-  raccoon has walked to its can.
-
-## Test scenarios: jump straight into a game state
-
-Waiting out an owl's conditions to test it is slow, so saved states live in `dev/scenarios/<animal>/`.
-Open the game with `?gardenDebug=1&scenario=<id>` and it lands in that state on load:
+Waiting out a ladder is slow, so saved states live in `dev/scenarios/<animal>/`. Open the game with
+`?gardenDebug=1&scenario=<animal>/<name>` and it lands in that state. Use the full id: bare names are
+shared between animals and no longer resolve.
 
 | Scenario | You land in |
 |----------|-------------|
-| `owl/first-night` | one chicken, night, the owl just turned up at the tents |
+| `owl/first-night` | one chicken, night, the owl just turned up |
 | `owl/hunt-now` | five chickens, night, owl visiting with its hunt ready |
-| `owl/ready-to-settle` | as above plus an oak, four chickens already eaten: the next catch settles it |
-| `owl/resident-roosting` | daytime, a resident owl asleep on the oak (`__gardenDebug.holdTime(false)` releases the clock) |
+| `owl/ready-to-settle` | as above plus an oak, four chickens eaten: the next catch settles it |
+| `owl/resident-roosting` | daytime, a resident owl asleep on the oak |
 | `owl/breed-ready` | night, two oaks, two owls in love |
-| `owl/low-helium` | night, a resident owl with no oak and about 15 s of helium left: it sags, shrinks and pops |
-| `raccoon/first-night` | night, a resident cow, a wild raccoon visiting, no garbage can yet |
-| `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its garbage can and curls up beside it |
-| `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: the raccoon curls up by the dumpster, its house |
-| `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (an egg is laid shortly) |
+| `owl/low-helium` | night, a resident owl with no oak and ~15 s of helium |
+| `raccoon/first-night` | night, a resident cow, a wild raccoon visiting, no garbage can |
+| `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its can and curls up |
+| `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: it curls up by the dumpster |
+| `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (an egg is laid) |
 
-Use the full id (`owl/first-night`): bare names such as `first-night` are now shared by two animals and
-no longer resolve. `__gardenDebug.scenarios()` lists them, `runScenario(id)` applies one to a running game (a fresh load
-is cleaner), and scenarios hold the day clock so night stays night. To add one: write a
-`Scenario` in `dev/scenarios/<animal>/`, using only the verbs on `ScenarioHarness`
-(`dev/scenarios/types.ts`), and list it in `dev/scenarios/index.ts`.
+To add one: write a `Scenario` in `dev/scenarios/<animal>/` using only the verbs on `ScenarioHarness`
+(`dev/scenarios/types.ts`), and list it in `dev/scenarios/index.ts`. Nothing in `dev/` ships: `main.ts`
+imports it only inside the `__GARDEN_DEBUG__` branch production builds fold away, and
+`scripts/check-no-scenarios.mjs` (part of `npm run check`) fails the build if a scenario name leaks.
+Add a marker there for a new animal's scenario.
 
-Nothing in `dev/` ships. `src/main.ts` imports it only inside the `__GARDEN_DEBUG__` branch that
-production builds fold away, and `scripts/check-no-scenarios.mjs` (part of `npm run check`) fails the
-build if a scenario name appears in the production bundle. Branch previews on Pages keep the
-harness, so scenarios work there too.
+**Tests** go in `tests/<animal>.test.mjs` and must be added to the `test` script in `package.json`.
+Bundle the pure TS with esbuild as the other suites do. Cover: the ladder (`getSpeciesConditions`,
+`DISCOVERY`, `NIGHT_ONLY_SPECIES`), each requirement being met by exactly the right farm, the props, and
+the sleep rules. `tests/raccoon.test.mjs` is the template.
 
-## Checklist
+### Debug verbs (with `?gardenDebug=1`)
 
-Stages 1–2, art:
+```js
+const d = window.__gardenDebug
+d.closeMenu()
+d.grantCoins(2000); d.buy('dumpster'); d.placeProp('dumpster', 2, -3, 0)
+d.addAnimal('raccoon', 3)       // a species straight to a rung
+d.setStage('duck', 4)           // force a rung, transition and all
+d.setTimeOfDay(0.8); d.holdTime(true)   // night is 0.78-0.22; day 0.3-0.7
+d.advance(400, 1 / 30)          // run the clock; returns the new stages
+d.conditions()                  // every rung with live numbers
+d.animalReport()                // species, stage, x, z, sleeping, bed
+d.sowGrass(0, 0, 3.4); d.digPond(-6, 4, 3); d.pourAt(-6, 4, 3, 40)
+d.plant('water-lily', -6, 4); d.growPlants(90, 1)
+d.focusPoint(x, z, height); d.frameAngle(x, z, height, azimuthDeg, elevationDeg)
+d.openJournal(); d.openViewer(); d.resetConditions()
+```
 
-- [ ] `materials()` branch with a distinct, readable palette
-- [ ] `make_<id>()` uses the shared helpers; root has `asset_id` + `description`
-- [ ] Rig joints named `... RIG · <phrase>` with `near` / `far` laterals
-- [ ] `animate()` called with every pivot; WALK is a real gait, first/last poses match
-- [ ] `portrait()` + `export_asset()` called
-- [ ] Registered in `MAKERS`
-- [ ] Ran with `-- <id>` only; `git status` shows only that animal's three files changed
-- [ ] Review PNG inspected; GLB console log shows both clips and `0.0000` ground clearance
+Predator verbs: `feedOwl(n)`, `hurryHunt()`, `stepHunt(seconds)`, `predation()`, `setOwlHelium(0..1)`.
+`sowGrass`, `digPond` and `plant` go through the real tool code; do not verify a condition by
+hand-dragging the seeder.
 
-Stage 3, code:
+---
 
-- [ ] One object appended to `ANIMAL_CATALOG` in `src/animals/animal-catalog.ts`
-- [ ] `assetUrl` / `spriteUrl` are document-relative, not `/assets/...`
-- [ ] `showcaseSpawn` does not collide with an existing plinth
-- [ ] `BODY_MATERIALS` entry (placeholder color)
-- [ ] `PAINT_PALETTES` entry (two paint colors)
-- [ ] `captureGesture` `case` added
-- [ ] `carnivalSpawn` set, and `ANIMAL_SALE_PRICES` entry added
-- [ ] `SPECIES_META` entry in `src/ui/journal-dom.ts` (rarity + traits), then open the journal page and look at it
-- [ ] `SPECIES_CONDITIONS` ladder and `DISCOVERY` trigger added (and `NIGHT_ONLY_SPECIES` if it is a night animal), each covered by a test
-- [ ] If it needs a new shop prop: see *Shop props an animal can ask for*
-- [ ] If it deserves a quick way in: a scenario under `dev/scenarios/<animal>/`
-- [ ] `npm run check` green
-- [ ] Added the species to `VIEWER_CAST` (or reviewed it there solo) if it should stand in the booth
-- [ ] `buildRigPose` branch added **only if** you want head/wing secondary motion
+## 9 · Verify in the browser
 
-Stages 4–5, verify:
+```sh
+PORT=8771 npm run dev     # pick a port no other worktree uses; AGENTS.md has the rule
+```
 
-- [ ] Watched walking in `?showcase=1` and clicked to capture in the garden
-- [ ] Species appears in the journal's Animals chapter with its portrait and note
+- The normal garden (main menu, **ENTER**): the animal wanders and the ladder decides when it settles.
+- **VIEWER** (main menu, or `openViewer()`): stages only `VIEWER_CAST`, the review booth for new models.
+- The journal book, **Animals** chapter: portrait, subtitle, note, traits and the ladder. Verify with
+  `setStage('<id>', 3)`, `openJournal()`, then pick the species card.
+
+**Judge a model from the side, not from the game camera.** The game looks down at about 40 degrees,
+which hides a lying pose and the face of anything walking away. Use the angle sheet: one animal circled
+at a low angle on a single small JPEG (six 480x270 frames), with the perf overlay hidden by `&nohud=1`:
+
+```sh
+node scripts/angle-sheet.mjs "http://127.0.0.1:8771/?gardenDebug=1&nohud=1&scenario=raccoon/sleeping-by-dumpster" \
+  C:/Users/Spencer/.codex/agent-shots/raccoon-asleep.jpg --species raccoon --min-stage 3 --sleeping --wait 120000
+```
+
+`--eval "<js>" --after-eval <ms>` runs setup first (for example nightfall, to wake it); `--angles`,
+`--elevation` and `--height` change the framing. Check **awake and asleep**. It needs `playwright-core`
+(`NODE_PATH` to a scratch install; see `scripts/screenshot.mjs`). Headless software rendering runs at a
+few FPS and the simulation clamps each frame, so give a scenario a minute or two of wall time before an
+animal has walked anywhere.
+
+**Screenshots (project rule):** 1280x720 or smaller, one per state change, never `fullPage` on the game
+canvas; an oversized image poisons the thread.
+
+**Do not run `npm run check` while a dev server is up on the same branch.** Both write
+`dist-<branch>/`, and the production build replaces the dev bundle: the preview then loads an empty
+world with no `?gardenDebug`. Run it as `OUTDIR=dist-check PAGES_OUTDIR=dist-check npm run check`.
+
+---
+
+## 10 · Ship
+
+Only when Spencer says it is good (`AGENTS.md`): merge the latest `main` into the branch, run
+`npm run check`, commit with a message that explains why, push, open and merge the PR with `gh`, stage
+only the paths you changed.
 
 ---
 
 ## Known friction for a large catalog
 
-These are the things that will bite at 20+ species, recorded now so they are not rediscovered.
-Items 1 and 3 are **partly fixed** by the catalog refactor; the rest still stand.
-
-1. ~~**The showcase card grid is still hardcoded to 6.**~~ **Fixed.** The viewer tray is
-   canvas-drawn and lays out whatever the cast contains; the stage and tray both follow
-   `VIEWER_CAST`, so the review booth shows one model without the rest crowding in.
-2. **Rig matching is by string.** `buildRigPose` couples Blender object names to TypeScript literals.
-   Every new species either reuses an existing phrase (`wing`, `leg`) or gets a new branch. There is
-   no registry and no validation that a signature pose actually found its joints — a typo is silent.
-   A manifest field like `rigParts: ['head', 'wing']` would remove the coupling entirely.
-3. **No asset manifest.** Registration is now one array, but it does not reach the Python side:
-   `MAKERS` in `balloon_friends.py` is still a hand-maintained dict that can drift from
-   `ANIMAL_CATALOG`. A shared `animals/manifest.json` read by both would close the loop, per the
-   `AGENTS.md` rule about data-driving species conditions.
-4. **No asset validation script.** Nothing checks that every `assetUrl`/`spriteUrl` exists on disk,
-   that every GLB has both clips, or that every `BalloonAnimalId` has a Blender maker. A
-   `npm run animals:check` that does all three is the highest-value addition.
-5. **Each `.blend` + `.glb` + PNG is ~1.5–2.2 MB.** Twenty species is ~40 MB of committed binaries and
-   a slow `?showcase=1` cold load. Worth a decimation pass or Draco compression before scaling up.
-6. **Capture is 6.8s per animal** and starts on click. With a large catalog, "Play all" is a 6.8s
-   parade, not a test.
-7. ~~**The journal has no progression.**~~ **Fixed.** Every species now climbs four conditions with
-   progressive disclosure, so a big catalog reads as a collection rather than a spoiler. The
-   remaining version of this problem is that `SPECIES_CONDITIONS` is still hand-written per species
-   — the `ANIMAL_CATALOG` entry does not carry its own requirements, so a new species silently falls
-   back to a default ladder and gets invented numbers on its journal page.
+1. **Rig matching is by string.** `buildRigPose` couples Blender object names to TypeScript literals,
+   with no validation that a pose found its joints. A manifest field like `rigParts: ['head', 'wing']`
+   would remove the coupling.
+2. **No asset manifest.** `MAKERS` in `balloon_friends.py` is hand-maintained and can drift from
+   `ANIMAL_CATALOG`. A shared `animals/manifest.json` would close the loop.
+3. **No asset validation script.** Nothing checks that every `assetUrl`/`spriteUrl` exists, that every GLB
+   has its clips (a missing channel is exactly how the raccoon broke), or that every id has a maker. A
+   `npm run animals:check` is the highest-value addition.
+4. **Several registrations are string-keyed tables** (the silent list in section 3). Moving `DISCOVERY`,
+   `NIGHT_ONLY_SPECIES`, `SLEEP_PROPS` and `SPECIES_META` onto the catalog entry would make a missing
+   one a compile error.
+5. **Each `.blend` + `.glb` + PNG is about 1.5-2.2 MB.** Twenty species is ~40 MB of binaries; consider
+   decimation or Draco before scaling up.
+6. **Capture is 6.8 s per animal** and starts on click, so "Play all" is a parade, not a test.
+7. **A night animal's house cannot be entered yet.** Sleepers lie beside their house; a planned
+   feature will have animals sleep inside, with an inside-the-home viewer.
