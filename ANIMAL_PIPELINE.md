@@ -4,7 +4,14 @@ How an animal gets from a Python script to a wandering, catchable creature in th
 add the next one. The end goal is that an agent can go from "add a llama" to a reviewed, playable
 species without hand-holding.
 
-Current catalog: **8 species** (pig, sheep, cow, chicken, duck, goose, frog, owl).
+Current catalog: **9 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon).
+
+**Start with the raccoon.** It is the most basic complete species: a ground walker, a night shift, two
+shop props and no special behaviour beyond sleeping. The owl is the complex case (flight, a hunt, prey).
+For a plain animal, follow the checklist at the bottom and copy the raccoon; reach for the owl section
+only if the new animal hunts, flies or eats another species. The raccoon's whole diff touched: the
+Blender maker, the catalog entry and four records, one conditions ladder, two props, `sleep.ts`, a
+sleep state in `balloon-animal.ts`, three scenarios and one test file.
 
 ## The 5 stages
 
@@ -501,6 +508,37 @@ scenery or a requirement needs none.
 
 Prices so far: coop 90, barn 110, oak 140.
 
+The raccoon's two props show the range: the **garbage can** (`garbage-can`, 1 cell, 45) settles it, and
+the **dumpster** (`dumpster`, 2x1 cells, 120) is its house, the condition for it to breed. Neither
+model carries a node the game reads; the sleeping spot is found from the prop's placement.
+
+## Nocturnal ground animals, and sleeping
+
+Add the species to `NIGHT_ONLY_SPECIES` and it arrives, visits and wanders in the dark like the owl, with
+none of the owl's code. A ground night animal also sleeps through the day:
+
+| Concern | Where it lives |
+|---------|----------------|
+| Who sleeps when | `shouldSleep(species, night)` in `src/game/sleep.ts` (pure, tested in `tests/raccoon.test.mjs`) |
+| Which can, which spot | `pickAnchor` (least crowded, then nearest) and `bedBeside` (a point `BED_RADIUS` from the can, facing it) in the same file |
+| Choosing and keeping a bed | `updateSleepers()` in `src/main.ts`: a resident (stage 3+) beds down beside a placed garbage can, anything else where it stands; beds are chosen once per sleep and dropped at dusk |
+| The sleeping pose | `setSleepSpot(spot)` / `isSleeping` on `BalloonAnimal`. No new clip: the model plays `IDLE` at 0.3x, squashed into a crouch with a slow breath (`applySleepPose`) |
+| Where `placements()` comes from | `GardenProps.placements(id)`: the world centre of every placed prop of one id |
+
+Rules that are easy to get wrong:
+
+- **There is no sleep clip and there must not be one.** The runtime only finds `WALK` and `IDLE`. The
+  crouch is a transform on the model's pose pivot, so a new species needs no extra animation.
+- **A sleeper's paws must stay on the grass.** Scaling the pivot would float the model, so
+  `applySleepPose` also scales the pivot's height. If you change the crouch, keep that coupling.
+- **`BED_RADIUS` is the animal's half-length plus the can's radius.** A bigger animal or can needs a
+  bigger radius, or it sleeps on top of the prop.
+- **Only animals at the farm sleep.** A raccoon still at the carnival by day keeps wandering; a
+  half-finished travel route does not mix with a bed.
+- **Debug:** `animalReport()` carries `sleeping` and `bed`. The headless software renderer runs at 1-4 FPS
+  and the simulation clamps each frame, so a sleep scenario needs a minute or two of wall time before the
+  raccoon has walked to its can.
+
 ## Test scenarios: jump straight into a game state
 
 Waiting out an owl's conditions to test it is slow, so saved states live in `dev/scenarios/<animal>/`.
@@ -514,8 +552,12 @@ Open the game with `?gardenDebug=1&scenario=<id>` and it lands in that state on 
 | `owl/resident-roosting` | daytime, a resident owl asleep on the oak (`__gardenDebug.holdTime(false)` releases the clock) |
 | `owl/breed-ready` | night, two oaks, two owls in love |
 | `owl/low-helium` | night, a resident owl with no oak and about 15 s of helium left: it sags, shrinks and pops |
+| `raccoon/first-night` | night, a resident cow, a wild raccoon visiting, no garbage can yet |
+| `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its garbage can and curls up beside it |
+| `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (an egg is laid shortly) |
 
-`__gardenDebug.scenarios()` lists them, `runScenario(id)` applies one to a running game (a fresh load
+Use the full id (`owl/first-night`): bare names such as `first-night` are now shared by two animals and
+no longer resolve. `__gardenDebug.scenarios()` lists them, `runScenario(id)` applies one to a running game (a fresh load
 is cleaner), and scenarios hold the day clock so night stays night. To add one: write a
 `Scenario` in `dev/scenarios/<animal>/`, using only the verbs on `ScenarioHarness`
 (`dev/scenarios/types.ts`), and list it in `dev/scenarios/index.ts`.

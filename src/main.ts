@@ -46,6 +46,7 @@ import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
 import { createPredationLedger, isNightTime } from './game/predator'
+import { BED_RADIUS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -256,7 +257,7 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
       distance: camera.position.distanceTo(animal.currentPosition),
       priority: animal.renderPriority + (animal.instanceId === focusedAnimalId ? 200 : 0),
       interactive: animal.isCapturing || animal.isRomancing || animal.instanceId === focusedAnimalId
-        || animal.isFlier || owlHunt.huntedIds().has(animal.instanceId),
+        || animal.isFlier || animal.isSleeping || owlHunt.huntedIds().has(animal.instanceId),
     })
   }
   const detailedIds = new Set(mode === 'farm'
@@ -924,6 +925,54 @@ function updateOwlHunt(deltaSeconds: number): void {
     popAnimal(owl)
     notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'Without an oak to roost on, an owl slowly deflates.')
     console.info(`[Animal Balloon Farm] ${owl.id} popped: out of helium`)
+  }
+}
+
+/** Where each sleeping night animal lay down, so it keeps its bed all day instead of chasing the nearest can. */
+const sleepBeds = new Map<string, Bed>()
+
+/**
+ * Night animals sleep by day: a resident curls up beside a garbage can, anything else
+ * where it stands. Everyone wakes at dusk. Beds are chosen once per sleep so the
+ * animal is not shuffled about as other animals settle.
+ */
+function updateSleepers(): void {
+  if (mode === 'viewer') return
+  const night = isNightTime(dayNightClock.timeOfDay)
+  const cans = gardenProps?.placements('garbage-can') ?? []
+  const occupancy = cans.map(() => 0)
+  const nearCan = (bed: Bed, can: { x: number; z: number }): boolean => Math.hypot(bed.x - can.x, bed.z - can.z) < BED_RADIUS + 0.5
+  for (const animal of animals) {
+    const bed = sleepBeds.get(animal.instanceId)
+    if (!bed || !shouldSleep(animal.id, night)) continue
+    const index = cans.findIndex((can) => nearCan(bed, can))
+    if (index >= 0) occupancy[index] += 1
+  }
+  for (const animal of animals) {
+    if (animal.isFlier) continue
+    if (animal.isSold) {
+      sleepBeds.delete(animal.instanceId)
+      continue
+    }
+    const record = progress.animal(animal.instanceId)
+    const wantsSleep = shouldSleep(animal.id, night) && animal.isAtFarm && !animal.isCapturing && !animal.isRomancing
+      && Boolean(record && record.stage >= 2 && !record.baby)
+    if (!wantsSleep) {
+      if (sleepBeds.delete(animal.instanceId)) animal.setSleepSpot(null)
+      continue
+    }
+    let bed = sleepBeds.get(animal.instanceId)
+    // A resident prefers a can; if one is placed after it lay down, it moves over.
+    const resident = (record?.stage ?? 0) >= 3
+    if (!bed || (resident && cans.length > 0 && !cans.some((can) => nearCan(bed!, can)))) {
+      const from = { x: animal.currentPosition.x, z: animal.currentPosition.z }
+      const index = resident ? pickAnchor(cans, occupancy, from) : -1
+      bed = index >= 0
+        ? bedBeside(cans[index], occupancy[index]++)
+        : { x: from.x, z: from.z, heading: animal.currentHeading }
+      sleepBeds.set(animal.instanceId, bed)
+    }
+    animal.setSleepSpot(bed)
   }
 }
 
@@ -2896,6 +2945,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       loose: isLoose(animal.instanceId),
       atFarm: animal.isAtFarm,
       residencyPending: animal.isResidencyPending,
+      sleeping: animal.isSleeping,
+      bed: sleepBeds.get(animal.instanceId) ?? null,
     })),
     focusSpecies: (species, height = 4.5) => {
       const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
@@ -3289,6 +3340,7 @@ function frame(now: number): void {
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
   if (!menu.isOpen && !salePanel.isOpen) updateOwlHunt(delta)
+  updateSleepers()
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
   for (let burstIndex = sellBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {

@@ -107,6 +107,8 @@ export interface GardenProps {
   roosts(): readonly RoostPoint[]
   /** Placed props per id (fences excluded), which is what a `propCount` condition reads. */
   propCounts(): Readonly<Record<string, number>>
+  /** World centres of every placed prop of one id, e.g. the garbage cans a raccoon sleeps beside. */
+  placements(id: PropId): readonly { readonly x: number; readonly z: number }[]
   readonly placingId: PropId | null
   readonly rotation: number
   beginPlacement(id: PropId): void
@@ -840,6 +842,13 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     return counts
   }
 
+  function placements(id: PropId): readonly { readonly x: number; readonly z: number }[] {
+    return occupancy.placed.filter((prop) => prop.id === id).map((prop) => {
+      const centre = footprintCenterWorld(prop.id, prop.cell, prop.rotation)
+      return { x: centre.x, z: centre.z }
+    })
+  }
+
   /** Free a cached source's geometry and materials; clones share them. */
   function disposeSource(object: THREE.Object3D): void {
     object.traverse((child) => {
@@ -863,6 +872,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     pickShop,
     roosts,
     propCounts,
+    placements,
     get placingId() { return placingId },
     get rotation() { return rotation },
     beginPlacement,

@@ -197,6 +197,17 @@ def materials(animal):
         base["beak"] = mat("OWL · pale honey beak", "#e6a453", .24, .01, .50)
         base["leg"] = mat("OWL · sandy talon latex", "#d9a15e", .28, .01, .34)
         base["collar"] = mat("OWL · twilight-plum bell ribbon", "#8d5f8e", .24, .04, .46)
+    elif animal.lower() == "raccoon":
+        base["body"] = mat("RACCOON · moonlit-grey balloon fur", "#8f949b", .27, .02, .52)
+        base["wool"] = mat("RACCOON · slate-grey leg balloons", "#767b84", .28, .015, .48)
+        base["face"] = mat("RACCOON · silver-grey face balloon", "#a4a9af", .25, .02, .54)
+        base["belly"] = mat("RACCOON · pale smoke belly", "#d9d8d2", .26, .01, .50)
+        base["mask"] = mat("RACCOON · bandit-mask charcoal", "#2f3038", .22, .01, .55)
+        base["ring"] = mat("RACCOON · tail-ring charcoal", "#3a3b44", .26, .01, .48)
+        base["muzzle"] = mat("RACCOON · cream snout balloon", "#efe6d4", .24, .01, .50)
+        base["inner"] = mat("RACCOON · dusky-pink ear lining", "#c98f9a", .25, .01, .44)
+        base["hoof"] = mat("RACCOON · charcoal paws", "#33343c", .26, .01, .38)
+        base["collar"] = mat("RACCOON · midnight-teal bell ribbon", "#4a8f94", .24, .04, .46)
     else:
         base["body"] = mat("GOOSE · warm ivory balloon plumage", "#f5eedc", .26, .01, .50)
         base["wing"] = mat("GOOSE · pearl-grey wing balloons", "#ddd7c9", .27, .01, .46)
@@ -997,6 +1008,53 @@ def animate_owl(body, neck, head, tufts, wings, tips, tail, eyes, bell, body_z):
     finish_action(perch, "IDLE", "owl")
 
 
+def make_raccoon():
+    m = materials("RACCOON")
+    root = pivot("BALLOON RACCOON · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_raccoon"
+    root["description"] = "Moonlit-grey balloon raccoon with a charcoal bandit mask and a ringed tail"
+    body = pivot("RACCOON RIG · round grey body", (0, 0, 1.2), root)
+    head = pivot("RACCOON RIG · bandit head", (.74, 0, .34), body)
+    neck = pivot("RACCOON RIG · soft neck", (.47, 0, .10), body)
+    sphere("RACCOON · plump grey balloon body", (0, 0, 0), (.98, .66, .62), m["body"], body, 48, 32)
+    sphere("RACCOON · pale smoke belly", (.05, 0, -.32), (.72, .50, .36), m["belly"], body, 36, 24)
+    # Lighter frosted back streak so the grey is not one flat colour.
+    sphere("RACCOON · frosted back sheen", (-.05, 0, .42), (.62, .30, .20), m["face"], body, 28, 18)
+    sphere("RACCOON · neck ruff", (0, 0, 0), (.50, .50, .50), m["body"], neck)
+    sphere("RACCOON · silver-grey face balloon", (.03, 0, .04), (.54, .50, .50), m["face"], head, 44, 30)
+    sphere("RACCOON · cream snout balloon", (.42, 0, -.12), (.30, .30, .21), m["muzzle"], head)
+    sphere("RACCOON · button nose", (.69, 0, -.045), (.075, .105, .07), m["mask"], head, 24, 16)
+    curve("RACCOON · tiny smile", [(.50, -.22, -.24), (.60, -.20, -.27), (.68, -.15, -.24)], .013, m["seam"], head, 2)
+    # The bandit mask: a charcoal band across the eyes, tapering toward the temples.
+    for side, label in ((-1, "near"), (1, "far")):
+        patch = sphere(f"RACCOON · {label} mask patch", (.13, side * .36, .17), (.25, .085, .20), m["mask"], head, 32, 22)
+        patch.rotation_euler[0] = math.radians(side * -10)
+        sphere(f"RACCOON · {label} mask temple", (-.02, side * .43, .22), (.17, .07, .09), m["mask"], head, 24, 16)
+    sphere("RACCOON · brow bridge", (.22, 0, .34), (.16, .30, .06), m["mask"], head, 24, 16)
+    # Eyes sit on the mask; reuse the shared face but it adds cheeks and brows too.
+    add_face_details(head, m, "RACCOON")
+    ears = []
+    for side, label in ((-1, "near"), (1, "far")):
+        ear = pivot(f"RACCOON RIG · {label} round ear", (-.10, side * .30, .40), head)
+        ears.append(ear)
+        ear.rotation_euler = (math.radians(side * 14), math.radians(-6), math.radians(side * -8))
+        sphere(f"RACCOON · {label} grey ear balloon", (-.02, side * .12, .06), (.17, .15, .21), m["body"], ear, 28, 18)
+        sphere(f"RACCOON · {label} dusky ear lining", (.02, side * .17, .06), (.11, .06, .14), m["inner"], ear, 24, 16)
+    bell = add_collar(body, neck, m, "RACCOON")
+    # The ringed tail: charcoal and grey balloons strung along a curve.
+    tail = pivot("RACCOON RIG · ringed tail", (-.88, 0, .02), body)
+    stops = [(-.05, 0, .0), (-.28, 0, .0), (-.50, 0, .08), (-.70, 0, .20), (-.86, 0, .34)]
+    for index, (x, y, z) in enumerate(stops):
+        radius = .19 - index * .012
+        tone = m["ring"] if index % 2 else m["body"]
+        sphere(f"RACCOON · tail ring {index + 1}", (x, y, z), (radius * 1.15, radius, radius), tone, tail, 28, 18)
+    sphere("RACCOON · tail tip", (-.97, 0, .40), (.13, .115, .12), m["ring"], tail, 24, 16)
+    positions, legs, hooves = make_legs(root, body, m, "RACCOON", connected=True)
+    animate("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45)
+    portrait("raccoon", m)
+    export_asset(root, "raccoon")
+
+
 def reset_scene():
     scene = bpy.context.scene
     scene.world = None
@@ -1008,7 +1066,7 @@ def reset_scene():
                 collection.remove(block)
 
 
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl}
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon}
 arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
 invalid = [value for value in requested if value not in MAKERS]

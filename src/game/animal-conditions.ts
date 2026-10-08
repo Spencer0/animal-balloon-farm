@@ -102,6 +102,7 @@ const PROP_PLURALS: Readonly<Record<string, string>> = {
   oak: 'oak trees',
   coop: 'chicken coops',
   barn: 'small barns',
+  'garbage-can': 'garbage cans',
 }
 
 function propPlural(prop: string): string {
@@ -290,6 +291,38 @@ const OWL_CONDITIONS: SpeciesConditions = {
 }
 
 /**
+ * The raccoon is the simplest night animal: a ground walker with no hunt, only props.
+ *
+ *  - Appears (DISCOVERY): a resident cow means spilt feed and scraps.
+ *  - Visits the farm: nothing asked, it just sniffs around after dark.
+ *  - Stays: a garbage can to raid. It sleeps beside it through the day.
+ *  - Breeds: a dumpster, which is its house, with the can still in place.
+ */
+const RACCOON_CONDITIONS: SpeciesConditions = {
+  stages: withStageNumbers([
+    {
+      title: 'Appear at the carnival',
+      hint: 'Creeps out after dark, drawn by the smell of a working farm.',
+      requirement: null,
+      result: 'Turns up at the carnival in wild balloon red, but only after dark.',
+    },
+    ENTER_FARM('Slips under the fence at night to sniff around.'),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Wants a garbage can to raid. It sleeps beside it all day.',
+      { kind: 'propCount', species: 'garbage-can', amount: 1 },
+      'Paints into its own colors and curls up beside the can by day. A resident of the farm.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Wants a dumpster to call home, and the garbage can kept close.',
+      { kind: 'propCount', species: 'dumpster', amount: 1, and: [{ kind: 'propCount', species: 'garbage-can', amount: 1 }] },
+      'Eyes go to hearts. Ready to court and breed.',
+    ),
+  ]),
+}
+
+/**
  * The test configuration the user asked for, and the shape the rest of the
  * catalog will grow into.
  *
@@ -373,6 +406,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
     ]),
   },
   owl: OWL_CONDITIONS,
+  raccoon: RACCOON_CONDITIONS,
   frog: {
     stages: withStageNumbers([
       CARNIVAL,
@@ -384,7 +418,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
 }
 
 /** Species that only come out after dark. They arrive, visit and hunt at night. */
-export const NIGHT_ONLY_SPECIES: readonly string[] = ['owl']
+export const NIGHT_ONLY_SPECIES: readonly string[] = ['owl', 'raccoon']
 
 /**
  * Species that begin the game already turned up at the carnival.
@@ -413,6 +447,7 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
   pig: { kind: 'grassArea', amount: 8, description: 'A patch of grass catches the eye of something rooting around.' },
   goose: { kind: 'waterArea', amount: 5, description: 'Water somewhere on the farm draws the waddlers over.' },
   frog: { kind: 'waterArea', amount: 4, description: 'A little water is sure to bring something green and bouncy.' },
+  raccoon: { kind: 'residentCount', species: 'cow', amount: 1, description: 'Spilt feed and scraps from a working farm smell like dinner.' },
   owl: { kind: 'residentCount', species: 'chicken', amount: 1, description: 'A resident chicken carries a long way on a still night.' },
 }
 

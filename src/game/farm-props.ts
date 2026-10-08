@@ -11,7 +11,7 @@
 
 import type { Wallet } from './sales'
 
-export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak'
+export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak' | 'garbage-can' | 'dumpster'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -136,10 +136,38 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     blocking: true,
     modelUrl: 'assets/props/oak.glb',
   },
+  'garbage-can': {
+    id: 'garbage-can',
+    name: 'Garbage Can',
+    description: 'A dented tin can with a lid that never quite closes.',
+    blurb: 'Smells like dinner after dark. A raccoon will not settle without one nearby.',
+    color: '#9aa4a8',
+    price: 45,
+    footprint: { width: 1, depth: 1 },
+    size: 1.5,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/garbage-can.glb',
+  },
+  dumpster: {
+    id: 'dumpster',
+    name: 'Dumpster',
+    description: 'A bottle-green dumpster with a round door just raccoon-sized.',
+    blurb: 'A raccoon\'s home. It will not raise a family without one.',
+    color: '#3f8a5e',
+    price: 120,
+    footprint: { width: 2, depth: 1 },
+    size: 3.6,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/dumpster.glb',
+  },
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'oak']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'oak', 'garbage-can', 'dumpster']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -165,7 +193,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0
