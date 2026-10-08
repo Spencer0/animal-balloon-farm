@@ -1,0 +1,10 @@
+{
+  "calibratedOn": "Windows 10, Chrome headless with SwiftShader, 2026-10-08 (runs: shovel 24/14ms, dig 26/15ms, plant 16/10ms, expand 72/13ms, crowd 14/13ms p95 work)",
+  "scenarios": {
+    "shovel": { "minSamples": 60, "maxP95WorkMs": 40 },
+    "dig": { "minSamples": 60, "maxP95WorkMs": 40 },
+    "plant": { "minSamples": 60, "maxP95WorkMs": 30 },
+    "expand": { "minSamples": 30, "maxP95WorkMs": 60 },
+    "crowd-ramp": { "minSamples": 30, "maxP95WorkMs": 30 }
+  }
+}
