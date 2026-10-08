@@ -80,6 +80,12 @@ export const ANIMAL_CATALOG = [
     assetUrl: 'assets/animals/balloon-owl.glb', spawn: [-6, 3], carnivalSpawn: [-24, 6], showcaseSpawn: [11, 0], seed: 7312, size: 2.5, speed: 3, bounds: { x: 10.5, z: 6.1 },
     flier: true,
   },
+  {
+    id: 'raccoon', name: 'Raccoon', label: 'raccoon', spriteUrl: 'assets/animals/balloon-raccoon-review.png',
+    subtitle: 'The midnight bandit', description: 'A moon-grey balloon in a charcoal mask that sleeps all day beside a garbage can and raids it after dark.',
+    note: 'Quiet on its feet, thorough with a lid. A dumpster is the nearest thing it has to a front door.', color: '#8f949b', gesture: 'Sniffs about',
+    assetUrl: 'assets/animals/balloon-raccoon.glb', spawn: [5.4, -4.8], carnivalSpawn: [-26, -4], showcaseSpawn: [-11, 3.2], seed: 8221, size: 2.1, speed: 1.1, bounds: { x: 10.5, z: 6.1 },
+  },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']

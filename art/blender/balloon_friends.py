@@ -197,6 +197,17 @@ def materials(animal):
         base["beak"] = mat("OWL · pale honey beak", "#e6a453", .24, .01, .50)
         base["leg"] = mat("OWL · sandy talon latex", "#d9a15e", .28, .01, .34)
         base["collar"] = mat("OWL · twilight-plum bell ribbon", "#8d5f8e", .24, .04, .46)
+    elif animal.lower() == "raccoon":
+        base["body"] = mat("RACCOON · moonlit-grey balloon fur", "#8f949b", .27, .02, .52)
+        base["wool"] = mat("RACCOON · slate-grey leg balloons", "#767b84", .28, .015, .48)
+        base["face"] = mat("RACCOON · silver-grey face balloon", "#a4a9af", .25, .02, .54)
+        base["belly"] = mat("RACCOON · pale smoke belly", "#d9d8d2", .26, .01, .50)
+        base["mask"] = mat("RACCOON · bandit-mask charcoal", "#2f3038", .22, .01, .55)
+        base["ring"] = mat("RACCOON · tail-ring charcoal", "#3a3b44", .26, .01, .48)
+        base["muzzle"] = mat("RACCOON · cream snout balloon", "#efe6d4", .24, .01, .50)
+        base["inner"] = mat("RACCOON · dusky-pink ear lining", "#c98f9a", .25, .01, .44)
+        base["hoof"] = mat("RACCOON · charcoal paws", "#33343c", .26, .01, .38)
+        base["collar"] = mat("RACCOON · midnight-teal bell ribbon", "#4a8f94", .24, .04, .46)
     else:
         base["body"] = mat("GOOSE · warm ivory balloon plumage", "#f5eedc", .26, .01, .50)
         base["wing"] = mat("GOOSE · pearl-grey wing balloons", "#ddd7c9", .27, .01, .46)
@@ -259,12 +270,18 @@ def add_collar(body, neck, m, animal):
     return bell
 
 
-def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, forward_gait=False, body_z=1.25, leg_anchor=None):
-    walk = [body, head, neck, *ears, tail, *legs, *hooves, bell]
+def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, forward_gait=False, body_z=1.25, leg_anchor=None, held=(), pinned=()):
+    walk = [body, head, neck, *ears, tail, *legs, *hooves, bell, *held]
     for obj in walk:
         begin_action(obj, f"BALLOON {animal.upper()} · WALK")
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
+        for obj in held:
+            # Flat while awake, but not constant: a constant channel is dropped on export and the
+            # node falls back to its rest scale, which would leave the eyes shut.
+            key(obj, frame, scale=(1, 1, .001 + .004 * (1 + math.sin(phase))))
+        for obj, base in pinned:
+            key(obj, frame, location=(base[0], base[1], base[2] + .0015 * math.sin(phase)))
         bob = .025 + .045 * (.5 - .5 * math.cos(2 * phase))
         key(body, frame, location=(0, 0, body_z + bob), rotation=(math.radians(1.5 * math.sin(phase)), 0, math.radians(.8 * math.sin(phase + .4))), scale=(1 + .008 * math.sin(phase), 1, 1 + .012 * math.cos(2 * phase)))
         key(head, frame, rotation=(math.radians(1.7 * math.sin(phase - .3)), math.radians(1.4 * math.sin(phase + .4)), math.radians(1.1 * math.sin(phase + .2))))
@@ -297,11 +314,17 @@ def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positi
             key(hoof, frame, rotation=(0, math.radians((-8 if not forward_gait else 8) * max(0, -math.sin(stride) if forward_gait else math.sin(stride))), math.radians(-1.5 * swing)))
     finish_action(walk, "WALK", animal)
 
-    idle = [body, head, neck, *ears, tail, *legs, *hooves, bell]
+    idle = [body, head, neck, *ears, tail, *legs, *hooves, bell, *held]
     for obj in idle:
         begin_action(obj, f"BALLOON {animal.upper()} · IDLE")
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
+        for obj in held:
+            # Flat while awake, but not constant: a constant channel is dropped on export and the
+            # node falls back to its rest scale, which would leave the eyes shut.
+            key(obj, frame, scale=(1, 1, .001 + .004 * (1 + math.sin(phase))))
+        for obj, base in pinned:
+            key(obj, frame, location=(base[0], base[1], base[2] + .0015 * math.sin(phase)))
         idle_bob = .017 * math.sin(phase)
         key(body, frame, location=(0, 0, body_z + idle_bob), rotation=(0, math.radians(.5 * math.sin(phase)), math.radians(.35 * math.sin(phase))))
         key(head, frame, rotation=(math.radians(.5 * math.sin(phase)), math.radians(.9 * math.sin(phase + .3)), math.radians(.8 * math.sin(phase + .8))))
@@ -997,6 +1020,105 @@ def animate_owl(body, neck, head, tufts, wings, tips, tail, eyes, bell, body_z):
     finish_action(perch, "IDLE", "owl")
 
 
+def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, lids, body_z=1.2):
+    """A third clip, SLEEP: a curled-up ball, head tucked onto the flank, tail wrapped round, eyes shut.
+
+    The runtime picks it up by name (any clip containing SLEEP) and only for a species that
+    ships one; everything else falls back to a crouched IDLE. Call this BEFORE `animate()` so
+    its NLA track sits underneath WALK and IDLE and never wins the review portrait.
+    """
+    everything = [body, head, neck, *ears, tail, *legs, *hooves, bell, *lids]
+    for obj in everything:
+        begin_action(obj, f"BALLOON {animal.upper()} · SLEEP")
+    lying_z = .70  # belly (body-local -.68) rests on the lawn
+    for frame, phase in zip(FRAMES, PHASES):
+        bpy.context.scene.frame_set(frame)
+        breath = math.sin(phase)
+        # Every channel breathes a hair. The glTF exporter DROPS any channel that never changes,
+        # and a dropped channel leaves that node in its standing rest pose: the first SLEEP export
+        # lowered only the body and left the legs, head and eyes standing. Keep this variation.
+        tremor = math.radians(.6) * breath
+        wob = .004 * breath
+        # A curled ball, as a real raccoon sleeps: the body puffs rounder and sits low, the head is
+        # tucked round onto the near flank, and the tail wraps along that flank so its tip meets the
+        # nose. The legs fold underneath and only the paws show. "Near" is the -Y side.
+        key(body, frame, location=(0, 0, lying_z + .012 * breath), rotation=(0, 0, 0), scale=(.96 + .012 * breath, 1.08 + .02 * breath, 1.1 + .03 * breath))
+        key(head, frame, location=(.56, -.40 + wob, -.24), rotation=(0, math.radians(30) + tremor, math.radians(-64)))
+        key(neck, frame, rotation=(0, math.radians(8) + tremor, math.radians(-20)))
+        key(bell, frame, rotation=(0, math.radians(2) * breath, 0))
+        for index, ear in enumerate(ears):
+            side = -1 if index == 0 else 1
+            key(ear, frame, rotation=(math.radians(side * 38) + tremor, math.radians(-6), math.radians(side * -16)))
+        key(tail, frame, location=(-.62, -.66 + wob, -.34), rotation=(0, math.radians(-24) + tremor, math.radians(168)))
+        for index, (leg, hoof, (x, y, _)) in enumerate(zip(legs, hooves, leg_positions)):
+            front = index < 2
+            # Front paws tuck under the chin; hind legs fold forward under the belly.
+            key(leg, frame, location=(x - (.05 if front else -.18), y * .55, -.62 + wob), rotation=(0, math.radians(-58 if front else -62) + tremor, math.radians(0)))
+            key(hoof, frame, rotation=(0, tremor, 0))
+        for lid in lids:
+            key(lid, frame, scale=(1 + .01 * breath, 1, 1 + .01 * breath))
+    finish_action(everything, "SLEEP", animal)
+
+
+def make_raccoon():
+    m = materials("RACCOON")
+    root = pivot("BALLOON RACCOON · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_raccoon"
+    root["description"] = "Moonlit-grey balloon raccoon with a charcoal bandit mask and a ringed tail"
+    body = pivot("RACCOON RIG · round grey body", (0, 0, 1.2), root)
+    head = pivot("RACCOON RIG · bandit head", (.74, 0, .34), body)
+    neck = pivot("RACCOON RIG · soft neck", (.47, 0, .10), body)
+    sphere("RACCOON · plump grey balloon body", (0, 0, 0), (.98, .66, .62), m["body"], body, 48, 32)
+    sphere("RACCOON · pale smoke belly", (.05, 0, -.32), (.72, .50, .36), m["belly"], body, 36, 24)
+    # Lighter frosted back streak so the grey is not one flat colour.
+    sphere("RACCOON · frosted back sheen", (-.05, 0, .42), (.62, .30, .20), m["face"], body, 28, 18)
+    sphere("RACCOON · neck ruff", (0, 0, 0), (.50, .50, .50), m["body"], neck)
+    sphere("RACCOON · silver-grey face balloon", (.03, 0, .04), (.54, .50, .50), m["face"], head, 44, 30)
+    sphere("RACCOON · cream snout balloon", (.42, 0, -.12), (.30, .30, .21), m["muzzle"], head)
+    sphere("RACCOON · button nose", (.69, 0, -.045), (.075, .105, .07), m["mask"], head, 24, 16)
+    curve("RACCOON · tiny smile", [(.50, -.22, -.24), (.60, -.20, -.27), (.68, -.15, -.24)], .013, m["seam"], head, 2)
+    # The bandit mask: a charcoal band across the eyes, tapering toward the temples.
+    for side, label in ((-1, "near"), (1, "far")):
+        patch = sphere(f"RACCOON · {label} mask patch", (.13, side * .36, .17), (.25, .085, .20), m["mask"], head, 32, 22)
+        patch.rotation_euler[0] = math.radians(side * -10)
+        sphere(f"RACCOON · {label} mask temple", (-.02, side * .43, .22), (.17, .07, .09), m["mask"], head, 24, 16)
+    sphere("RACCOON · brow bridge", (.22, 0, .34), (.16, .30, .06), m["mask"], head, 24, 16)
+    # Eyes sit on the mask; reuse the shared face but it adds cheeks and brows too.
+    add_face_details(head, m, "RACCOON")
+    ears = []
+    for side, label in ((-1, "near"), (1, "far")):
+        ear = pivot(f"RACCOON RIG · {label} round ear", (-.10, side * .30, .40), head)
+        ears.append(ear)
+        ear.rotation_euler = (math.radians(side * 14), math.radians(-6), math.radians(side * -8))
+        sphere(f"RACCOON · {label} grey ear balloon", (-.02, side * .12, .06), (.17, .15, .21), m["body"], ear, 28, 18)
+        sphere(f"RACCOON · {label} dusky ear lining", (.02, side * .17, .06), (.11, .06, .14), m["inner"], ear, 24, 16)
+    bell = add_collar(body, neck, m, "RACCOON")
+    # The ringed tail: charcoal and grey balloons strung along a curve.
+    tail = pivot("RACCOON RIG · ringed tail", (-.88, 0, .02), body)
+    stops = [(-.05, 0, .0), (-.28, 0, .0), (-.50, 0, .08), (-.70, 0, .20), (-.86, 0, .34)]
+    for index, (x, y, z) in enumerate(stops):
+        radius = .19 - index * .012
+        tone = m["ring"] if index % 2 else m["body"]
+        sphere(f"RACCOON · tail ring {index + 1}", (x, y, z), (radius * 1.15, radius, radius), tone, tail, 28, 18)
+    sphere("RACCOON · tail tip", (-.97, 0, .40), (.13, .115, .12), m["ring"], tail, 24, 16)
+    positions, legs, hooves = make_legs(root, body, m, "RACCOON", connected=True)
+    # Eyelids: flat slivers on the mask while awake, swelling shut in the SLEEP clip.
+    lids = []
+    for side, label in ((-1, "near"), (1, "far")):
+        lid = pivot(f"RACCOON RIG · {label} eyelid", (.15, side * .43, .19), head)
+        lids.append(lid)
+        sphere(f"RACCOON · {label} sleepy eyelid", (0, side * .02, 0), (.17, .10, .18), m["mask"], lid, 24, 16)
+        curve(f"RACCOON · {label} closed-eye line", [(-.08, side * .10, .0), (.02, side * .105, -.045), (.13, side * .10, .0)], .012, m["white"], lid, 2)
+    # SLEEP moves the head and tail *position*, which WALK and IDLE never key. Without pinning
+    # their standing position in those clips, the exported rest pose is the lying one and the
+    # awake raccoon walks around with its head sunk inside its body.
+    pinned = [(head, tuple(head.location)), (tail, tuple(tail.location))]
+    animate_sleep("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, lids)
+    animate("raccoon", body, head, neck, ears, tail, legs, hooves, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45, held=lids, pinned=pinned)
+    portrait("raccoon", m)
+    export_asset(root, "raccoon")
+
+
 def reset_scene():
     scene = bpy.context.scene
     scene.world = None
@@ -1008,7 +1130,7 @@ def reset_scene():
                 collection.remove(block)
 
 
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl}
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon}
 arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
 invalid = [value for value in requested if value not in MAKERS]

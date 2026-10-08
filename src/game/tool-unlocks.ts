@@ -185,6 +185,8 @@ export const PROP_UNLOCK_LEVEL: Readonly<Record<PropId, number>> = {
   statue: 2,
   fountain: 2,
   oak: 3,
+  'garbage-can': 2,
+  dumpster: 3,
 }
 
 export function propUnlockLevel(id: PropId): number {

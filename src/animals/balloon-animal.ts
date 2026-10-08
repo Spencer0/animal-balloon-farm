@@ -17,7 +17,7 @@ import { advanceAnimalTravel, canAnimalLeaveFarm, clearOfFarmBounds, createAnima
  */
 const CARNIVAL_RING_OFFSET = { x: 16, z: 20.5 } as const
 
-export type AnimalClip = 'IDLE' | 'WALK'
+export type AnimalClip = 'IDLE' | 'WALK' | 'SLEEP'
 export type AnimalAppearance = 'standard' | 'wild'
 export type { BalloonAnimalId } from './animal-catalog'
 
@@ -87,6 +87,13 @@ export interface FlightPose {
   readonly puff?: number
 }
 
+/** Where a night animal curls up for the day, and which way it faces (yaw about +Y, +X-forward model). */
+export interface SleepSpot {
+  readonly x: number
+  readonly z: number
+  readonly heading: number
+}
+
 export interface BalloonAnimal {
   readonly id: BalloonAnimalId
   readonly instanceId: string
@@ -107,6 +114,14 @@ export interface BalloonAnimal {
   /** Prey in a panic: runs faster in short dashes and beats its wings harder. */
   setAlarmed(alarmed: boolean): void
   readonly isAlarmed: boolean
+  /**
+   * Walk to `spot` and curl up there, or wake and wander again when null. There is no
+   * sleep clip: the model keeps its `IDLE` pose, slowed, and is squashed into a crouch
+   * with a slow breath, so a new species needs no extra animation.
+   */
+  setSleepSpot(spot: SleepSpot | null): void
+  /** True once it has reached its spot and is curled up (not merely on its way there). */
+  readonly isSleeping: boolean
   readonly isLoose: boolean
   /** The look currently worn; residency is gated on actually walking inside. */
   readonly appearance: AnimalAppearance
@@ -158,6 +173,7 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   goose: new THREE.MeshStandardMaterial({ color: '#fff0d0', roughness: 0.38 }),
   frog: new THREE.MeshStandardMaterial({ color: '#6ab84e', roughness: 0.3, metalness: 0.01 }),
   owl: new THREE.MeshStandardMaterial({ color: '#a9774b', roughness: 0.28, metalness: 0.01 }),
+  raccoon: new THREE.MeshStandardMaterial({ color: '#8f949b', roughness: 0.3, metalness: 0.01 }),
 }
 const HOOF_MATERIAL = new THREE.MeshStandardMaterial({ color: '#76505d', roughness: 0.31 })
 const WILD_BALLOON_COLOR = new THREE.Color('#e53649')
@@ -424,8 +440,26 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let focused = false
   let alarmed = false
   let flightRate = 1
+  let sleepSpot: SleepSpot | null = null
+  let sleepBlend = 0
+  let asleep = false
+  const sleepFacing = new THREE.Quaternion()
+  const sleepYaw = new THREE.Vector3(0, 1, 0)
   let flightVisible = !options.flier
   const alarmScale = (): number => (alarmed ? 2.2 : 1)
+  const hasSleepClip = (): boolean => Boolean(loaded?.actions.has('SLEEP'))
+  /** Ease the crouch in or out and breathe; only the pivot is touched, never the wrapper. */
+  const applySleepPose = (delta: number): void => {
+    sleepBlend = THREE.MathUtils.clamp(sleepBlend + (asleep ? delta : -delta * 1.5) / 1.4, 0, 1)
+    const eased = sleepBlend * sleepBlend * (3 - 2 * sleepBlend)
+    // A species with a SLEEP clip lies down by itself; only the others are crouched in code.
+    if (hasSleepClip()) return
+    const breath = Math.sin(elapsed * 1.7) * 0.018 * eased
+    const squash = 1 - 0.26 * eased + breath
+    posePivot.scale.set(1 + 0.07 * eased, squash, 1 + 0.07 * eased)
+    // Keep the paws on the grass: scaling about the pivot would otherwise lift the model.
+    posePivot.position.set(pivotBasePosition.x, pivotBasePosition.y * squash, pivotBasePosition.z)
+  }
   let detailActive = false
   let pendingCapture = false
   const stableAnimationPhase = seededRandom(options.seed ^ 0x51f15e)() * Math.PI * 2
@@ -470,7 +504,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const actions = new Map<AnimalClip, THREE.AnimationAction>()
         for (const clip of asset.animations) {
           const normalizedName = clip.name.toUpperCase()
-          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : null
+          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : normalizedName.includes('SLEEP') ? 'SLEEP' : null
           if (kind) actions.set(kind, mixer.clipAction(clip))
         }
         loaded = { gltf: asset, root: modelRoot, mixer, actions, activeAnimation: null }
@@ -819,6 +853,12 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isFlier(): boolean { return Boolean(options.flier) },
     get flightVisible(): boolean { return flightVisible },
     get isAlarmed(): boolean { return alarmed },
+    get isSleeping(): boolean { return asleep },
+    setSleepSpot(spot: SleepSpot | null): void {
+      if (options.flier) return
+      sleepSpot = spot
+      if (!spot) asleep = false
+    },
     setAlarmed(next: boolean): void {
       if (options.flier || alarmed === next) return
       alarmed = next
@@ -977,6 +1017,40 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         if (detailActive) loaded?.mixer.update(delta)
         return
       }
+      if (sleepSpot) {
+        direction.set(sleepSpot.x - wrapper.position.x, 0, sleepSpot.z - wrapper.position.z)
+        const distance = direction.length()
+        if (distance > 0.12) {
+          // Walk to the bed. A sleeper that was nudged away gets up and goes back.
+          asleep = false
+          direction.normalize()
+          sleepFacing.setFromUnitVectors(modelForward, direction)
+          wrapper.quaternion.slerp(sleepFacing, 1 - Math.exp(-4.5 * delta))
+          wrapper.position.addScaledVector(direction, Math.min(options.speed * 0.8 * delta, distance))
+          setAnimation('WALK', 0.24)
+        } else {
+          asleep = true
+          sleepFacing.setFromAxisAngle(sleepYaw, sleepSpot.heading)
+          wrapper.quaternion.slerp(sleepFacing, 1 - Math.exp(-3 * delta))
+          setAnimation(hasSleepClip() ? 'SLEEP' : 'IDLE', 0.6)
+        }
+        if (loaded) loaded.mixer.timeScale = asleep ? (hasSleepClip() ? 0.5 : 0.3) : 1
+        applySleepPose(delta)
+        if (detailActive) loaded?.mixer.update(delta)
+        if (options.groundSampler) {
+          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
+          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
+          wrapper.position.y = groundYCurrent
+        }
+        wrapper.updateMatrixWorld(true)
+        return
+      }
+      if (sleepBlend > 0) {
+        // Waking: stand back up before wandering off.
+        if (loaded) loaded.mixer.timeScale = alarmed ? 2.2 : 1
+        applySleepPose(delta)
+      }
+
       if (options.wandering === false) {
         if (detailActive) loaded?.mixer.update(delta)
         return
