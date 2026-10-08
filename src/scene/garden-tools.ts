@@ -1344,6 +1344,9 @@ export function createGardenTools(
       cursor.scale.setScalar(brushRadius() * (1 + pulseAmount) * popScale)
       outerMaterial.emissiveIntensity = isPointerDown ? 0.32 + pulse * 0.72 : 0.11 + pulse * 0.12
       innerMaterial.emissiveIntensity = isPointerDown ? 0.22 + pulse * 0.58 : 0.12 + pulse * 0.12
+      // Pour cursor reads green when a pour here would be kept, red when it would be refused.
+      const pourReady = activeAction !== 'pour' || !water || !cursorVisible
+        || water.canPour(cursor.position.x, cursor.position.z, brushRadius())
       const glowMaterial = actionGlow.material as THREE.MeshBasicMaterial
       actionGlow.visible = cursorVisible && (isPointerDown || popGlow > 0)
       actionGlow.scale.setScalar(1 + pulse * 0.18 + popGlow * 0.12)
@@ -1353,14 +1356,14 @@ export function createGardenTools(
         : activeAction === 'dig' ? '#e0b080'
         : activeAction === 'level' ? '#cfe4ee'
         : activeAction === 'fill' ? '#e8c78f'
-        : activeAction === 'pour' ? '#8ce7ef'
+        : activeAction === 'pour' ? (pourReady ? '#8ce7ef' : '#e0806f')
         : activeAction === 'drain' ? '#5798d3'
         : '#fff3d7')
       const isWaterAction = activeAction === 'pour' || activeAction === 'drain'
       waterRipples.forEach((ripple, index) => {
         ripple.visible = cursorVisible && isWaterAction
         const material = ripple.material as THREE.MeshBasicMaterial
-        material.color.set(activeAction === 'drain' ? '#5798d3' : '#9beef2')
+        material.color.set(activeAction === 'drain' ? '#5798d3' : pourReady ? '#9beef2' : '#e0806f')
         const phase = (time * 2.8 + index * (Math.PI * 2 / waterRipples.length)) % (Math.PI * 2)
         material.opacity = ripple.visible ? 0.08 + Math.max(0, Math.sin(phase)) * 0.42 : 0
         ripple.scale.setScalar(0.72 + (0.5 + 0.5 * Math.sin(phase)) * 0.48)
@@ -1368,7 +1371,7 @@ export function createGardenTools(
       ;(cursorShadow.material as THREE.MeshBasicMaterial).opacity = isPointerDown && activeAction === 'grow' ? 0.19 + pulse * 0.1 : 0.14
       // hoverTint is refreshed by pointerMove; re-applying it here keeps a stale
       // hover tint from leaking into later frames.
-      outerMaterial.color.set(activeAction === 'pour' ? '#77c9d5'
+      outerMaterial.color.set(activeAction === 'pour' ? (pourReady ? '#77e08a' : '#e0604f')
         : activeAction === 'drain' ? '#5798d3'
         : isPointerDown && activeAction === 'trim' ? '#f3b287'
         : hoverTint ?? '#b7d97a')
