@@ -89,13 +89,13 @@ test('the full plot edge stays level at grade until the player sculpts it', () =
     'the ground outside the parcel must not be editable')
 })
 
-test('ordinary edge and center pours drain on flat, unsculpted ground', () => {
+test('ordinary edge and center pours on flat, unsculpted ground take nothing', () => {
   const garden = makeGarden()
-  garden.water.pour(START.halfWidth - 0.3, 0, 0.65, 0.5)
-  garden.water.pour(0, 0, 0.65, 0.5)
+  const added = garden.water.pour(START.halfWidth - 0.3, 0, 0.65, 0.5) + garden.water.pour(0, 0, 0.65, 0.5)
   garden.settle()
+  assert.equal(added, 0, 'flat ground should refuse the pour')
   assert.equal(garden.water.summary().wetCells, 0, 'flat ground should not retain a water film')
-  assert.ok(garden.water.summary().runoff > 0, 'flat-ground water should escape')
+  assert.equal(garden.water.summary().runoff, 0, 'refused water is not runoff')
 })
 
 test('a deliberately dug corner basin contains water below the flat grade edge', () => {

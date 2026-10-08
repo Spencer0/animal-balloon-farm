@@ -48,6 +48,9 @@ const LEVEL_SOLVE_STEPS = 24
 const LEVEL_SOLVE_HEADROOM = 0.75
 /** A cell must sit at least this far below its fill height to hold water at all. */
 const BASIN_MIN_DEPTH = 1e-4
+/** `sinkOf` markers: not yet followed, and a route that ends off any basin. */
+const UNRESOLVED_SINK = -2
+const NO_SINK = -1
 /** Pools leveled per settle; the rest continue on the next frame. */
 const MAX_COMPONENTS_PER_SETTLE = 32
 /** Fixed-point rounds allowed when a pool grows across its rim. */
@@ -159,8 +162,18 @@ export interface GardenWaterField {
   depthAt(x: number, z: number): number
   /** Water surface height (ground + depth) at the grid cell containing a world point. */
   surfaceAt(x: number, z: number): number
-  /** Add water to a disc; returns the volume added, in cubic metres. */
+  /**
+   * Add water to a disc; returns the volume added, in cubic metres. Only cells
+   * whose water would reach a basin with room left take water, so ground that
+   * drains off the parcel accepts nothing: a big bucket over flat grass adds
+   * nothing rather than running water off the edge.
+   */
   pour(x: number, z: number, radius: number, metres: number): number
+  /**
+   * True when a pour at this disc would add any water right now. The bucket
+   * cursor reads this to show whether the spot can be poured on.
+   */
+  canPour(x: number, z: number, radius: number): boolean
   /** Remove water from a disc; returns the volume removed, in cubic metres. */
   drain(x: number, z: number, radius: number, metres: number): number
   /** Flow water downhill and level every pool. Cheap when the field is clean. */
@@ -217,6 +230,31 @@ export function createGardenWaterField(
   /** Generation stamp, so membership tests never clear the whole grid. */
   let memberStamp = new Int32Array(cellCount)
   let generation = 0
+  /**
+   * Where water poured on each cell ends up: the basin cell it routes into, or
+   * -1 when it would drain off the parcel or sit stuck on a flat. Rebuilt lazily
+   * whenever the ground snapshot changes.
+   */
+  let sinkOf = new Int32Array(cellCount)
+  let sinkStale = true
+  const sinkPath: number[] = []
+  /** Pour volume each sink basin is asked to take this call, and the share it can take. */
+  let sinkDemand = new Float32Array(cellCount)
+  let sinkScale = new Float32Array(cellCount)
+  /**
+   * Pool budgets (see `poolOf`). Every basin cell points at the representative
+   * cell of the pool it joins; the representative holds that pool's room. A
+   * stamp older than `capacityGeneration` means the budget is stale.
+   */
+  let poolOfCell = new Int32Array(cellCount)
+  let poolCellStamp = new Int32Array(cellCount)
+  let poolRoom = new Float32Array(cellCount)
+  /** Pass stamp: cells a settle pass has already levelled, so no pool is solved twice. */
+  let settledStamp = new Int32Array(cellCount)
+  let settlePass = 0
+  let capacityGeneration = 1
+  /** Set when terrain moved, so the ground snapshot is re-read before queries. */
+  let groundStale = true
 
   let heap = new MinHeap(cellCount + 1)
   // Scratch reused across every pool in a settle. `component` is the wet run
@@ -242,6 +280,20 @@ export function createGardenWaterField(
         ground[gz * gridCols + gx] = cellHeight(gx, gz)
       }
     }
+    sinkStale = true
+    groundStale = false
+    capacityGeneration += 1
+  }
+
+  /**
+   * Bring the ground snapshot, escape heights and sinks up to date with the
+   * terrain. Queries call this, because a cursor can be read between a terrain
+   * edit and the next settle.
+   */
+  function ensureGround(): void {
+    if (!groundStale) return
+    readGround()
+    computeFilledHeights()
   }
 
   function refreshSurfaces(): void {
@@ -329,6 +381,115 @@ export function createGardenWaterField(
     return filled[index] - ground[index] > BASIN_MIN_DEPTH
   }
 
+  /**
+   * The neighbour water on `index` runs to, using exactly the rule routeDownhill
+   * applies: the lowest neighbour strictly below the cell, first match wins.
+   * Returns -1 when no neighbour is lower.
+   */
+  function lowerNeighbour(index: number): number {
+    const gx = index % gridCols
+    const gz = (index - gx) / gridCols
+    let lowestIndex = -1
+    let lowestHeight = ground[index]
+    for (const [dx, dz] of NEIGHBOURS) {
+      const nx = gx + dx
+      const nz = gz + dz
+      if (nx < 0 || nz < 0 || nx >= gridCols || nz >= gridRows) continue
+      const neighbour = nz * gridCols + nx
+      if (ground[neighbour] >= lowestHeight) continue
+      lowestHeight = ground[neighbour]
+      lowestIndex = neighbour
+    }
+    return lowestIndex
+  }
+
+  /**
+   * Fill `sinkOf` for every cell by following each cell's downhill route to the
+   * first basin it reaches. Each step strictly lowers the ground, so every walk
+   * ends; a cell whose route ends at a flat (no lower neighbour) has no sink.
+   */
+  function computeSinks(): void {
+    sinkOf.fill(UNRESOLVED_SINK)
+    for (let start = 0; start < cellCount; start += 1) {
+      if (sinkOf[start] !== UNRESOLVED_SINK) continue
+      let current = start
+      let result = NO_SINK
+      sinkPath.length = 0
+      for (;;) {
+        if (sinkOf[current] !== UNRESOLVED_SINK) {
+          result = sinkOf[current]
+          break
+        }
+        if (isBasinCell(current)) {
+          result = current
+          break
+        }
+        const next = lowerNeighbour(current)
+        if (next < 0) break
+        sinkPath.push(current)
+        current = next
+      }
+      sinkOf[current] = result
+      for (const index of sinkPath) sinkOf[index] = result
+    }
+  }
+
+  function ensureSinks(): void {
+    if (!sinkStale) return
+    computeSinks()
+    sinkStale = false
+  }
+
+  /**
+   * The representative cell of the pool a basin cell belongs to. The first
+   * basin cell of a pool to be asked does the work: it floods the pool below
+   * its spill height and records the room left (volume in depth units, the
+   * spill volume less the water already there). Every cell it reaches shares
+   * that budget, so several sinks feeding one bowl cannot each claim the whole
+   * room. The budget is kept current by `pour` and reset by any water or ground
+   * change, which bumps `capacityGeneration`.
+   */
+  function poolOf(seed: number): number {
+    if (poolCellStamp[seed] === capacityGeneration) return poolOfCell[seed]
+    const level = filled[seed]
+    let room = 0
+    generation += 1
+    memberStamp[seed] = generation
+    stack.length = 0
+    stack.push(seed)
+    let visited = 0
+    while (stack.length > 0 && visited < MAX_BASIN_CELLS) {
+      const index = stack.pop() as number
+      visited += 1
+      room += level - ground[index] - depth[index]
+      poolCellStamp[index] = capacityGeneration
+      poolOfCell[index] = seed
+      const gx = index % gridCols
+      const gz = (index - gx) / gridCols
+      for (const [dx, dz] of NEIGHBOURS) {
+        const nx = gx + dx
+        const nz = gz + dz
+        if (nx < 0 || nz < 0 || nx >= gridCols || nz >= gridRows) continue
+        const neighbour = nz * gridCols + nx
+        if (memberStamp[neighbour] === generation) continue
+        // A cell already claimed by another pool keeps that pool's budget.
+        if (poolCellStamp[neighbour] === capacityGeneration) continue
+        if (ground[neighbour] >= level || !isBasinCell(neighbour)) continue
+        memberStamp[neighbour] = generation
+        stack.push(neighbour)
+      }
+    }
+    poolRoom[seed] = Math.max(0, room)
+    return seed
+  }
+
+  /** Weight of a grid cell in a brush disc: 0 outside, easing to 0 at the rim. */
+  function discWeight(x: number, z: number, radius: number, gx: number, gz: number): number {
+    const distance = Math.hypot(cellCentreX(gx) - x, cellCentreZ(gz) - z)
+    if (distance > radius) return 0
+    return 1 - smoothstep(RIM_EASE_START, 1, distance / radius)
+  }
+
   /** The 4-connected run of wet cells containing `seed`, left in `component`. */
   function collectWetComponent(seed: number): number {
     component.length = 0
@@ -347,7 +508,10 @@ export function createGardenWaterField(
         if (nx < 0 || nz < 0 || nx >= gridCols || nz >= gridRows) continue
         const neighbour = nz * gridCols + nx
         if (memberStamp[neighbour] === generation) continue
-        if (depth[neighbour] <= WATER_MIN_VISIBLE_DEPTH) continue
+        // A run is one pool: it spreads through basin cells, wet or dry, so two
+        // wet patches in the same bowl are levelled together rather than one
+        // overwriting the other. Dry ground ends the run.
+        if (depth[neighbour] <= 0 && !isBasinCell(neighbour)) continue
         memberStamp[neighbour] = generation
         stack.push(neighbour)
       }
@@ -356,16 +520,26 @@ export function createGardenWaterField(
   }
 
   /**
-   * Grow the set of cells a pool at `level` would occupy, starting from `seed`:
-   * 4-connected, below the level, and able to hold water. Returns the count.
+   * Grow the set of cells a pool at `level` would occupy. Every cell of the wet
+   * run seeds it, not one anchor: water that landed above the pool's surface
+   * still belongs to the pool and flows down into it. The region then spreads
+   * 4-connected through basin cells below the level. Returns the count.
    */
-  function growPoolRegion(seed: number, level: number): number {
+  function growPoolRegion(level: number, floor: number): number {
     basin.length = 0
     stack.length = 0
-    if (ground[seed] >= level || !isBasinCell(seed)) return 0
     generation += 1
-    memberStamp[seed] = generation
-    stack.push(seed)
+    for (const index of component) {
+      memberStamp[index] = generation
+      stack.push(index)
+    }
+    // The floor is the pool's lowest reachable point. Water settles there and
+    // spreads back up, so the region must reach it even when the wet run sits
+    // on a slope above the final surface.
+    if (memberStamp[floor] !== generation) {
+      memberStamp[floor] = generation
+      stack.push(floor)
+    }
     while (stack.length > 0 && basin.length < MAX_BASIN_CELLS) {
       const index = stack.pop() as number
       basin.push(index)
@@ -400,8 +574,11 @@ export function createGardenWaterField(
       if (height > high) high = height
     }
     if (!Number.isFinite(low)) return 0
+    // The search must reach the spill height: a flat-floored pit can only be
+    // full at its rim, which may sit more than the headroom above its floor.
     let lo = low
-    let hi = high + LEVEL_SOLVE_HEADROOM
+    const spill = lowestSpill()
+    let hi = Math.max(high + LEVEL_SOLVE_HEADROOM, Number.isFinite(spill) ? spill : low)
     for (let step = 0; step < LEVEL_SOLVE_STEPS; step += 1) {
       const mid = (lo + hi) / 2
       let held = 0
@@ -499,37 +676,62 @@ export function createGardenWaterField(
    * pool into whatever lies beyond. Returns false when the pool could not be
    * fully resolved and the field should settle again next frame.
    */
-  function settleComponent(seed: number, volumeDepth: number): boolean {
-    // Anchor the pool on the LOWEST cell of the wet run, not on whichever cell
-    // the scan happened to reach first. Water flows to the low point, so if the
-    // shovel digs a pit in the middle of a pond, the surface must be free to
-    // fall below the surrounding shallows — anchoring on a shallow seed would
-    // make that look like the pond had drained.
-    let anchor = seed
+  /**
+   * The lowest cell the wet run can reach through basin cells. Water on a slope
+   * flows down to this cell before it spreads, so it is the pool's true floor.
+   */
+  function findPoolFloor(): number {
+    let floor = component[0]
+    stack.length = 0
+    generation += 1
     for (const index of component) {
-      if (ground[index] < ground[anchor]) anchor = index
+      memberStamp[index] = generation
+      stack.push(index)
     }
+    let visited = 0
+    while (stack.length > 0 && visited < MAX_BASIN_CELLS) {
+      const index = stack.pop() as number
+      visited += 1
+      if (ground[index] < ground[floor]) floor = index
+      const gx = index % gridCols
+      const gz = (index - gx) / gridCols
+      for (const [dx, dz] of NEIGHBOURS) {
+        const nx = gx + dx
+        const nz = gz + dz
+        if (nx < 0 || nz < 0 || nx >= gridCols || nz >= gridRows) continue
+        const neighbour = nz * gridCols + nx
+        if (memberStamp[neighbour] === generation) continue
+        if (!isBasinCell(neighbour)) continue
+        memberStamp[neighbour] = generation
+        stack.push(neighbour)
+      }
+    }
+    return floor
+  }
 
-    // No basin cell reachable: this water drains straight off the parcel, so
-    // the whole component is emptied, not just the anchor.
-    if (growPoolRegion(anchor, ground[anchor] + volumeDepth) === 0) {
+  function settleComponent(volumeDepth: number): boolean {
+    // A wet run with no basin cell has nowhere to hold water: it drains off.
+    let anyBasin = false
+    for (const index of component) {
+      if (isBasinCell(index)) anyBasin = true
+    }
+    if (!anyBasin) {
       for (const index of component) depth[index] = 0
       totalRunoff += volumeDepth * cellArea
       return true
     }
+
+    // Start from the level the volume would reach on the lowest cell of the
+    // run, then iterate: the region depends on the level and the level depends
+    // on the region. Widening the pool lowers the level it can support, so the
+    // spill cap is recomputed on each round until the two agree.
+    const floor = findPoolFloor()
+    growPoolRegion(ground[floor] + volumeDepth, floor)
     let level = Math.min(solveLevel(volumeDepth), lowestSpill())
     let settled = false
     for (let round = 0; round < MAX_GROWTH_ROUNDS; round += 1) {
-      // Widening the pool lowers the level it can support, so the cap has to
-      // be recomputed on the new region; iterate until the two agree.
-      if (growPoolRegion(anchor, level) === 0) {
-        for (const index of component) depth[index] = 0
-        totalRunoff += volumeDepth * cellArea
-        return true
-      }
-      const spill = lowestSpill()
-      const solved = solveLevel(volumeDepth)
-      const next = Math.min(solved, spill)
+      growPoolRegion(level, floor)
+      const next = Math.min(solveLevel(volumeDepth), lowestSpill())
       if (Math.abs(next - level) < 1e-6) {
         level = next
         settled = true
@@ -538,50 +740,107 @@ export function createGardenWaterField(
       level = next
     }
 
-    // Materialise the pool, then dry everything the level left behind. A cell
-    // that drained out of the wet run into a lower part of the pool is no
-    // longer part of the surface, so its old depth has to go.
-    generation += 1
-    for (const index of basin) {
-      const next = level - ground[index]
-      depth[index] = next >= WATER_MIN_VISIBLE_DEPTH ? next : 0
-      memberStamp[index] = generation
-    }
+    // Materialise the pool over the region the final level describes. Every
+    // wet cell of the run is a seed, so none is left behind to be counted twice.
+    growPoolRegion(level, floor)
     let held = 0
-    for (const index of basin) held += depth[index]
-    for (const index of component) {
-      if (memberStamp[index] === generation) continue
+    for (const index of basin) {
+      // Keep sub-visible amounts too: zeroing them would count rounding as
+      // overflow on every settle and quietly lose water from a full pool.
+      const next = level - ground[index]
+      depth[index] = next > 0 ? next : 0
       held += depth[index]
-      depth[index] = 0
     }
     const surplus = volumeDepth - held
     if (surplus > WATER_MIN_VISIBLE_DEPTH) totalRunoff += surplus * cellArea
     return settled
   }
 
+  /** Grid bounds of the square that contains a brush disc, clamped to the grid. */
+  function discBounds(x: number, z: number, radius: number): [number, number, number, number] {
+    return [
+      clampGx(Math.floor((x - radius - cellOriginX) / cellSize)),
+      clampGx(Math.floor((x + radius - cellOriginX) / cellSize)),
+      clampGz(Math.floor((z - radius - cellOriginZ) / cellSize)),
+      clampGz(Math.floor((z + radius - cellOriginZ) / cellSize)),
+    ]
+  }
+
+  /**
+   * Only water that can be kept takes the pour. Each cell's share goes to the
+   * basin it drains into, and a basin takes at most the room it has left, so a
+   * big bucket never sends water off the parcel. When a basin is short of room,
+   * every cell feeding it is scaled down by the same factor.
+   */
   function pour(x: number, z: number, radius: number, metres: number): number {
     if (!(metres > 0) || !(radius > 0)) return 0
-    const minGx = clampGx(Math.floor((x - radius - cellOriginX) / cellSize))
-    const maxGx = clampGx(Math.floor((x + radius - cellOriginX) / cellSize))
-    const minGz = clampGz(Math.floor((z - radius - cellOriginZ) / cellSize))
-    const maxGz = clampGz(Math.floor((z + radius - cellOriginZ) / cellSize))
+    ensureGround()
+    ensureSinks()
+    const [minGx, maxGx, minGz, maxGz] = discBounds(x, z, radius)
+    // Demand is totalled per pool, not per sink: every route into one bowl
+    // competes for the same room.
+    const touched: number[] = []
+    for (let gz = minGz; gz <= maxGz; gz += 1) {
+      for (let gx = minGx; gx <= maxGx; gx += 1) {
+        const weight = discWeight(x, z, radius, gx, gz)
+        const sink = sinkOf[gz * gridCols + gx]
+        if (weight <= 0 || sink < 0) continue
+        const pool = poolOf(sink)
+        if (sinkDemand[pool] === 0) touched.push(pool)
+        sinkDemand[pool] += metres * weight
+      }
+    }
+    for (const pool of touched) {
+      const room = poolRoom[pool]
+      const demand = sinkDemand[pool]
+      // Same room threshold canPour uses, so the cursor and the pour agree.
+      sinkScale[pool] = room <= BASIN_MIN_DEPTH ? 0 : room < demand ? room / demand : 1
+    }
     let added = 0
     for (let gz = minGz; gz <= maxGz; gz += 1) {
       for (let gx = minGx; gx <= maxGx; gx += 1) {
-        const distance = Math.hypot(cellCentreX(gx) - x, cellCentreZ(gz) - z)
-        if (distance > radius) continue
-        const weight = 1 - smoothstep(RIM_EASE_START, 1, distance / radius)
-        if (weight <= 0) continue
-        const add = metres * weight
-        depth[gz * gridCols + gx] += add
+        const weight = discWeight(x, z, radius, gx, gz)
+        const index = gz * gridCols + gx
+        const sink = sinkOf[index]
+        if (weight <= 0 || sink < 0) continue
+        const pool = poolOf(sink)
+        const share = sinkScale[pool]
+        if (share <= 0) continue
+        const add = metres * weight * share
+        depth[index] += add
         added += add
+        // The next call must see the room this one used.
+        poolRoom[pool] -= add
       }
+    }
+    for (const pool of touched) {
+      sinkDemand[pool] = 0
+      sinkScale[pool] = 1
     }
     if (added > 0) {
       hasWater = true
       dirty = true
     }
     return added * cellArea
+  }
+
+  /**
+   * Whether a pour on this disc would add any water right now. It is the same
+   * test pour applies, so the cursor colour and the pour never disagree.
+   */
+  function canPour(x: number, z: number, radius: number): boolean {
+    if (!(radius > 0)) return false
+    ensureGround()
+    ensureSinks()
+    const [minGx, maxGx, minGz, maxGz] = discBounds(x, z, radius)
+    for (let gz = minGz; gz <= maxGz; gz += 1) {
+      for (let gx = minGx; gx <= maxGx; gx += 1) {
+        if (discWeight(x, z, radius, gx, gz) <= 0) continue
+        const sink = sinkOf[gz * gridCols + gx]
+        if (sink >= 0 && poolRoom[poolOf(sink)] > BASIN_MIN_DEPTH) return true
+      }
+    }
+    return false
   }
 
   function drain(x: number, z: number, radius: number, metres: number): number {
@@ -607,6 +866,7 @@ export function createGardenWaterField(
     if (removed > 0) {
       hasWater = true
       dirty = true
+      capacityGeneration += 1
     }
     return removed * cellArea
   }
@@ -628,8 +888,9 @@ export function createGardenWaterField(
     routeDownhill()
     const seeds: number[] = []
     for (let index = 0; index < cellCount; index += 1) {
-      if (depth[index] > WATER_MIN_VISIBLE_DEPTH) seeds.push(index)
+      if (depth[index] > 0) seeds.push(index)
     }
+    settlePass += 1
     let components = 0
     let deferred = false
     for (const seed of seeds) {
@@ -637,21 +898,25 @@ export function createGardenWaterField(
         deferred = true
         break
       }
-      if (depth[seed] <= WATER_MIN_VISIBLE_DEPTH) continue
+      if (depth[seed] <= 0 || settledStamp[seed] === settlePass) continue
       // The whole wet run belongs to one pool, so its whole volume is levelled
       // together — otherwise a pond draining from one end would tear in half.
       const componentSize = collectWetComponent(seed)
       if (componentSize === 0) continue
       let volumeDepth = 0
       for (let i = 0; i < componentSize; i += 1) volumeDepth += depth[component[i]]
-      if (volumeDepth <= WATER_MIN_VISIBLE_DEPTH) {
+      if (volumeDepth <= 0) {
         for (let i = 0; i < componentSize; i += 1) depth[component[i]] = 0
         continue
       }
       components += 1
-      if (!settleComponent(seed, volumeDepth)) deferred = true
+      // Stamp the run before solving, so the seeds loop never revisits it.
+      for (const index of component) settledStamp[index] = settlePass
+      if (!settleComponent(volumeDepth)) deferred = true
     }
     refreshSurfaces()
+    // The water moved, so every cached basin room is out of date.
+    capacityGeneration += 1
     if (!deferred) dirty = false
   }
 
@@ -752,10 +1017,12 @@ export function createGardenWaterField(
     let highestSurface = -Infinity
     for (let index = 0; index < cellCount; index += 1) {
       const value = depth[index]
+      // Volume counts every drop, including films too thin to read as water, so
+      // the total always matches what the bucket put in.
+      if (value > 0) volume += value * cellArea
       if (value <= WATER_MIN_VISIBLE_DEPTH) continue
       wet += 1
       if (value >= WATER_MIN_RENDER_DEPTH) visibleWet += 1
-      volume += value * cellArea
       if (value > maxDepth) maxDepth = value
       if (surface[index] > highestSurface) highestSurface = surface[index]
     }
@@ -776,6 +1043,7 @@ export function createGardenWaterField(
     hasRenderableWater = false
     totalRunoff = 0
     dirty = true
+    capacityGeneration += 1
   }
 
   function resize(nextCols: number, nextRows: number): void {
@@ -798,6 +1066,15 @@ export function createGardenWaterField(
     surface = new Float32Array(cellCount)
     filled = new Float32Array(cellCount)
     memberStamp = new Int32Array(cellCount)
+    sinkOf = new Int32Array(cellCount)
+    sinkDemand = new Float32Array(cellCount)
+    sinkScale = new Float32Array(cellCount)
+    poolOfCell = new Int32Array(cellCount)
+    poolCellStamp = new Int32Array(cellCount)
+    poolRoom = new Float32Array(cellCount)
+    settledStamp = new Int32Array(cellCount)
+    settlePass = 0
+    capacityGeneration += 1
     heap = new MinHeap(cellCount + 1)
     shoreDistance = new Float32Array(cellCount)
     shoreSource = new Int32Array(cellCount)
@@ -849,10 +1126,14 @@ export function createGardenWaterField(
     drain,
     settle,
     markTerrainChanged() {
+      // The ground snapshot is stale whether or not there is water, so a cursor
+      // query or a pour re-reads it before answering.
+      groundStale = true
       // No water means there is nothing to resettle; a later pour takes a fresh
-      // ground snapshot in settle() before solving the new pool.
+      // ground snapshot before solving the new pool.
       if (hasWater) dirty = true
     },
+    canPour,
     isDamp,
     wetCells,
     shoreField,

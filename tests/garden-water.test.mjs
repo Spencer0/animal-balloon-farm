@@ -73,14 +73,15 @@ function slope(range) {
   return (x) => -range * (x / 10)
 }
 
-test('flat ground holds nothing: poured water runs off the simulation border', () => {
+test('flat ground takes no water: a pour it cannot keep adds nothing and runs nothing off', () => {
   const field = makeField(() => 0)
-  // The plate is the whole grid, and the grid border is an open outlet, so a
-  // film of water poured on flat ground has nowhere to sit.
-  field.pour(0, 0, 1, 0.4)
+  // Flat ground drains to the open border, so nothing poured there can be
+  // kept. The bucket refuses it rather than wasting it off the parcel edge.
+  assert.equal(field.canPour(0, 0, 2), false, 'the cursor should read red on bare flat ground')
+  assert.equal(field.pour(0, 0, 2, 0.4), 0, 'a refused pour reports no volume added')
   settleFully(field)
   assert.equal(field.summary().wetCells, 0, 'no water should remain on a flat plate')
-  assert.ok(field.summary().runoff > 0, 'the water should be recorded as runoff')
+  assert.equal(field.summary().runoff, 0, 'a refused pour must not appear as runoff')
 })
 
 test('a bowl pins its level at the rim and refuses to rise above it', () => {
@@ -97,8 +98,9 @@ test('a bowl pins its level at the rim and refuses to rise above it', () => {
     `level should sit at the rim (${rim}), got ${first.highestSurface}`,
   )
   // Over-pour hard. The level must NOT climb above the rim.
+  let refused = 0
   for (let i = 0; i < 60; i += 1) {
-    field.pour(0, 0, 1, 0.5)
+    refused += field.pour(0, 0, 1, 0.5)
     settleFully(field)
   }
   const flooded = field.summary()
@@ -106,7 +108,11 @@ test('a bowl pins its level at the rim and refuses to rise above it', () => {
     flooded.highestSurface <= rim + 1e-3,
     `level must not exceed the rim, got ${flooded.highestSurface}`,
   )
-  assert.ok(flooded.runoff > 0, 'the surplus over the rim should have run off')
+  // A full bowl refuses the surplus instead of spilling it: no runoff, and the
+  // cursor reads red once there is no room left.
+  assert.equal(flooded.runoff, 0, 'a full bowl should refuse water, not spill it')
+  assert.equal(field.canPour(0, 0, 1), false, 'a full bowl should read as not pourable')
+  assert.ok(Math.abs(flooded.volume - first.volume) < 1e-3, 'a full bowl keeps the same volume')
 })
 
 test('a basin above grade still holds water (the h<0 shortcut is disallowed)', () => {
@@ -316,13 +322,13 @@ test('shore field carries the nearest pool level through transparent vertices', 
   assert.ok(Number.isFinite(farPoint[0]))
 })
 
-test('a thick pour onto a slope drains entirely rather than sheeting uphill', () => {
+test('a thick pour onto a basinless slope is refused rather than run off', () => {
   const field = makeField(slope(0.6))
-  field.pour(-4, 0, 1.5, 3)
+  assert.equal(field.canPour(-4, 0, 1.5), false, 'a basinless slope cannot take water')
+  assert.equal(field.pour(-4, 0, 1.5, 3), 0, 'the slope accepts nothing')
   settleFully(field)
-  // A pure slope has no basin, so everything runs off the downhill border.
   assert.equal(field.summary().wetCells, 0, 'a basinless slope should not hold water')
-  assert.ok(field.summary().runoff > 0, 'the water should have run off')
+  assert.equal(field.summary().runoff, 0, 'and nothing should be recorded as runoff')
 })
 
 test('the field reports damp ground at the shoreline and dry ground inland', () => {
@@ -335,7 +341,9 @@ test('the field reports damp ground at the shoreline and dry ground inland', () 
 
 test('thin films read as damp, not as water', () => {
   const field = makeField(bowl(2.5, -1))
-  field.pour(0, 0, 1, WATER_MIN_VISIBLE_DEPTH * 0.5)
+  // A single-cell click below the visible depth. A wider disc would pool its
+  // water into the pit floor and cross the threshold, which is correct.
+  field.pour(0, 0, 0.1, WATER_MIN_VISIBLE_DEPTH * 0.5)
   settleFully(field)
   assert.equal(field.summary().wetCells, 0, 'a sub-visible film should not register as water')
   assert.equal(field.summary().visibleWetCells, 0, 'a sub-render-threshold film has no pond surface')
@@ -411,3 +419,112 @@ function cellCentre(index) {
 function countWetAbove(field, predicate) {
   return field.wetCells().filter((index) => predicate(cellCentre(index)[0])).length
 }
+
+/**
+ * One frame of the bucket: pour a tick's worth, then settle as the 30 Hz loop
+ * would. Returns the volume the pour accepted, so tests can account for it.
+ */
+function bucketTick(field, x, z, radius, metres) {
+  const added = field.pour(x, z, radius, metres)
+  if (field.dirty) field.settle()
+  return added
+}
+
+/** A pit with its rim at grade and open flat ground beyond it. */
+function pit() {
+  return makeField(bowl(2.5, -1))
+}
+
+test('a pour onto the slope above a bowl flows down and fills it', () => {
+  // Regression: a pour that landed on the bowl's slope, not its floor, used to
+  // be written off as runoff because the pool was anchored above its own level.
+  const field = pit()
+  let poured = 0
+  for (let tick = 0; tick < 60; tick += 1) poured += bucketTick(field, 1.2, 0, 0.6, 0.0336)
+  const summary = field.summary()
+  assert.ok(summary.wetCells > 0, 'the bowl should be holding water')
+  assert.equal(summary.runoff, 0, 'a bowl that can take the water should not spill it')
+  assert.ok(Math.abs(summary.volume - poured) < 1e-3, `held ${summary.volume} should match poured ${poured}`)
+  const floorDepth = field.depthAt(0, 0)
+  assert.ok(floorDepth > 0, 'the water should reach the lowest point of the bowl')
+})
+
+test('a cursor grazing a bowl edge fills only the part it covers', () => {
+  const field = pit()
+  for (let tick = 0; tick < 60; tick += 1) bucketTick(field, 2.1, 0, 0.6, 0.0336)
+  const outside = countWetAbove(field, () => true)
+  const wet = field.wetCells()
+  assert.ok(wet.length > 0, 'the grazed part of the bowl should hold water')
+  for (const index of wet) {
+    const [x, z] = cellCentre(index)
+    assert.ok(Math.hypot(x, z) < 2.5, `water must stay inside the bowl, found one at (${x.toFixed(2)}, ${z.toFixed(2)})`)
+  }
+  assert.equal(field.summary().runoff, 0, 'grazing water should not run off the flat ground')
+  assert.ok(outside >= wet.length, 'sanity: the wet count is a subset of the field')
+})
+
+test('a big cursor over a bowl and the flat ground around it takes only what the bowl holds', () => {
+  const field = pit()
+  let poured = 0
+  for (let tick = 0; tick < 200; tick += 1) poured += bucketTick(field, 0, 0, 4, 0.0336)
+  const summary = field.summary()
+  assert.equal(summary.runoff, 0, 'a big bucket must not send water off the flat ground')
+  assert.ok(summary.highestSurface <= 1e-3, `level must stay at the rim, got ${summary.highestSurface}`)
+  // Water only ever lands in the bowl, so nothing sits on the flat ring.
+  assert.equal(countWetAbove(field, () => true) - field.wetCells().filter((i) => Math.hypot(...cellCentre(i)) < 2.5).length, 0,
+    'no water should sit on the flat ground outside the bowl')
+  assert.ok(Math.abs(summary.volume - poured) < 1e-3, `held ${summary.volume} should match what the bowl accepted ${poured}`)
+})
+
+test('canPour agrees with pour: a pour is accepted exactly where the cursor reads green', () => {
+  const spots = [[0, 0], [1.2, 0], [2.1, 0], [3.5, 0], [-3.5, 0], [0, 3.5]]
+  for (const [x, z] of spots) {
+    const field = pit()
+    // Fill the bowl part way, so the answer depends on what is already held.
+    for (let tick = 0; tick < 25; tick += 1) bucketTick(field, 0, 0, 1.4, 0.0336)
+    const green = field.canPour(x, z, 0.6)
+    const accepted = field.pour(x, z, 0.6, 0.0336)
+    assert.equal(accepted > 0, green, `at (${x}, ${z}) canPour said ${green} but pour accepted ${accepted}`)
+  }
+})
+
+test('canPour turns red once a bowl is full, and the spill is refused rather than run off', () => {
+  const field = pit()
+  for (let tick = 0; tick < 400; tick += 1) bucketTick(field, 0, 0, 2, 0.0336)
+  assert.equal(field.canPour(0, 0, 2), false, 'a full bowl should not read as pourable')
+  assert.equal(field.summary().runoff, 0, 'refusing a full bowl must not create runoff')
+})
+
+test('volume is conserved across random pours and drains in random basins', () => {
+  // Deterministic LCG so a failure reproduces exactly.
+  let seed = 12345
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0
+    return seed / 4294967296
+  }
+  for (let trial = 0; trial < 6; trial += 1) {
+    const floor = -0.4 - random() * 1.2
+    const radius = 1.2 + random() * 1.8
+    const field = makeField(bowl(radius + 0.5, floor))
+    let poured = 0
+    let drained = 0
+    const startRunoff = field.summary().runoff
+    for (let step = 0; step < 150; step += 1) {
+      const x = (random() - 0.5) * 5
+      const z = (random() - 0.5) * 5
+      const cursor = 0.3 + random() * 1.5
+      if (random() < 0.8) poured += bucketTick(field, x, z, cursor, 0.02 + random() * 0.05)
+      else {
+        drained += field.drain(x, z, cursor, 0.02 + random() * 0.05)
+        if (field.dirty) field.settle()
+      }
+    }
+    settleFully(field)
+    const summary = field.summary()
+    const accounted = summary.volume + (summary.runoff - startRunoff) + drained
+    assert.ok(
+      Math.abs(accounted - poured) < 1e-3 * Math.max(1, poured),
+      `trial ${trial}: poured ${poured.toFixed(5)}, held+runoff+drained ${accounted.toFixed(5)}`,
+    )
+  }
+})
