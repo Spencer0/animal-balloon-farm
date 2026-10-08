@@ -1026,21 +1026,26 @@ def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
         breath = math.sin(phase)
+        # Every channel breathes a hair. The glTF exporter DROPS any channel that never changes,
+        # and a dropped channel leaves that node in its standing rest pose: the first SLEEP export
+        # lowered only the body and left the legs, head and eyes standing. Keep this variation.
+        tremor = math.radians(.6) * breath
+        wob = .004 * breath
         key(body, frame, location=(0, 0, lying_z + .012 * breath), rotation=(0, 0, 0), scale=(1 + .012 * breath, 1 + .02 * breath, 1 + .03 * breath))
-        key(head, frame, location=(.78, 0, -.20), rotation=(0, math.radians(24), math.radians(5)))
-        key(neck, frame, rotation=(0, math.radians(8), 0))
+        key(head, frame, location=(.78, 0, -.20 + wob), rotation=(0, math.radians(24) + tremor, math.radians(5)))
+        key(neck, frame, rotation=(0, math.radians(8) + tremor, 0))
         key(bell, frame, rotation=(0, math.radians(2) * breath, 0))
         for index, ear in enumerate(ears):
             side = -1 if index == 0 else 1
-            key(ear, frame, rotation=(math.radians(side * 34), math.radians(-6), math.radians(side * -14)))
+            key(ear, frame, rotation=(math.radians(side * 34) + tremor, math.radians(-6), math.radians(side * -14)))
         key(tail, frame, location=(-.80, 0, -.50), rotation=(0, math.radians(-18), math.radians(68 + 2 * breath)))
         for index, (leg, hoof, (x, y, _)) in enumerate(zip(legs, hooves, leg_positions)):
             front = index < 2
             # Front paws stretch ahead under the chin; hind legs fold back along the flank.
-            key(leg, frame, location=(x + (.12 if front else -.05), y, -.60), rotation=(0, math.radians(-76 if front else 66), math.radians(0)))
-            key(hoof, frame, rotation=(0, 0, 0))
+            key(leg, frame, location=(x + (.12 if front else -.05), y, -.60 + wob), rotation=(0, math.radians(-76 if front else 66) + tremor, math.radians(0)))
+            key(hoof, frame, rotation=(0, tremor, 0))
         for lid in lids:
-            key(lid, frame, scale=(1, 1, 1))
+            key(lid, frame, scale=(1 + .01 * breath, 1, 1 + .01 * breath))
     finish_action(everything, "SLEEP", animal)
 
 
