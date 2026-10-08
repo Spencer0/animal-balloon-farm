@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { GARDEN_TOOLS, createGardenToolModel, type GardenToolId } from '../scene/garden-tool-art'
+import { GARDEN_TOOLS, createGardenToolModel, tintSeedPack, type GardenToolId } from '../scene/garden-tool-art'
+import type { GrassPack } from '../game/tool-unlocks'
 import { createUIViewport, rectContains, type DesignPoint, type DesignRect } from './ui-viewport'
 import type { UIPanel } from './ui-layer'
 import type { UiCursorKind } from './ui-cursor'
@@ -37,6 +38,8 @@ export interface ToolsHud extends UIPanel {
   setVisible(visible: boolean): void
   selectTool(id: GardenToolId): void
   setSelectedTool(id: GardenToolId): void
+  /** Show the pack in the seeder's hand; `canSwap` reveals the E chip once the tall pack is owned. */
+  setGrassPack(pack: GrassPack, canSwap: boolean): void
 }
 
 function round(value: number): number {
@@ -76,6 +79,7 @@ interface ToolSlot {
   readonly holder: THREE.Group
   readonly icon: THREE.Group
   readonly badgeMaterial: THREE.MeshBasicMaterial
+  readonly model: THREE.Group
   rect: DesignRect
   centreX: number
   centreY: number
@@ -148,6 +152,7 @@ export function createToolsHud(
       holder,
       icon,
       badgeMaterial,
+      model,
       rect: { x: 0, y: 0, width: SLOT_WIDTH, height: SLOT_HEIGHT },
       centreX: 0,
       centreY: 0,
@@ -158,6 +163,16 @@ export function createToolsHud(
       bob: index * 1.9,
     }
   })
+
+  // The E chip hangs off the seeder's top corner and only shows once there is a
+  // second pack to swap to, so a new farmer is not teased with a key that does nothing.
+  const swapChipMaterial = new THREE.MeshBasicMaterial({ map: createBadgeTexture('E'), transparent: true, depthWrite: false, depthTest: false })
+  const swapChip = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), swapChipMaterial)
+  swapChip.name = 'Seed pack swap key badge · E'
+  swapChip.position.set(SLOT_WIDTH / 2 - 8, SLOT_HEIGHT / 2 - 6, 3)
+  swapChip.renderOrder = 4
+  swapChip.visible = false
+  slots.find((slot) => slot.id === 'grass')?.holder.add(swapChip)
 
   let selected = initialTool
   let visible = true
@@ -274,6 +289,11 @@ export function createToolsHud(
       select(tool.id)
       return true
     },
+    setGrassPack(pack: GrassPack, canSwap: boolean): void {
+      const grass = slots.find((slot) => slot.id === 'grass')
+      if (grass) tintSeedPack(grass.model, pack)
+      swapChip.visible = canSwap
+    },
     update(delta: number): void {
       update(delta, performance.now() / 1000)
     },
@@ -300,6 +320,9 @@ export function createToolsHud(
         slot.badgeMaterial.map?.dispose()
         slot.badgeMaterial.dispose()
       }
+      swapChip.geometry.dispose()
+      swapChipMaterial.map?.dispose()
+      swapChipMaterial.dispose()
     },
   }
 }

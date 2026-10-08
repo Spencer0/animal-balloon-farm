@@ -2,7 +2,7 @@ import "./journal-dom.css";
 import "./shed-dom.css";
 import "./player-dom.css";
 import { PROGRESSION_CONFIG } from "../game/farm-progression";
-import { FARM_EXPANSION_CONFIG, farmBoundsAtLevel } from "../game/farm-expansion";
+import { unlocksAtFarmerLevel } from "../game/tool-unlocks";
 import {
   filterAccomplishmentRows,
   sortAccomplishmentRows,
@@ -13,12 +13,14 @@ import {
 } from "../game/accomplishments";
 
 export interface PlayerLevelCard {
-  readonly parcel: number;
+  /** Farmer level, counted from zero (the screen shows it plus one). */
+  readonly level: number;
   readonly name: string;
   readonly threshold: number;
   readonly unlocked: boolean;
   readonly current: boolean;
-  readonly areaNote: string;
+  /** What the shop starts selling at this level. */
+  readonly unlocksNote: string;
 }
 
 export interface PlayerDomStats {
@@ -57,38 +59,24 @@ export function playerRankForLevel(level: number): string {
   return RANKS[Math.min(index, RANKS.length - 1)];
 }
 
-function parcelName(parcel: number): string {
-  const steps = FARM_EXPANSION_CONFIG.steps;
-  if (steps.length === 0) return `Parcel ${parcel}`;
-  const index = Math.max(0, parcel - 1);
-  const base = steps[index % steps.length].name;
-  const cycle = Math.floor(index / steps.length);
-  return cycle === 0 ? base : `${base} ${cycle + 1}`;
+function unlockThreshold(level: number): number {
+  if (level <= 0) return 0;
+  return PROGRESSION_CONFIG.firstExpansionAt + (level - 1) * PROGRESSION_CONFIG.expansionInterval;
 }
 
-function parcelArea(parcel: number): number {
-  const bounds = farmBoundsAtLevel(Math.max(0, parcel - 1));
-  return Math.round(bounds.halfWidth * 2 * (bounds.halfDepth * 2));
-}
-
-function unlockThreshold(parcel: number): number {
-  if (parcel <= 1) return 0;
-  return PROGRESSION_CONFIG.firstExpansionAt + (parcel - 2) * PROGRESSION_CONFIG.expansionInterval;
-}
-
+/** The current farmer level and the two after it, each with what the shop adds. */
 export function playerLevelCards(points: number, level: number): PlayerLevelCard[] {
-  const current = Number.isFinite(level) ? Math.max(0, Math.floor(level)) + 1 : 1;
-  return [current, current + 1, current + 2].map((parcel) => {
-    const threshold = unlockThreshold(parcel);
-    const area = parcelArea(parcel);
-    const previous = parcel > 1 ? parcelArea(parcel - 1) : area;
+  const current = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0;
+  return [current, current + 1, current + 2].map((target) => {
+    const threshold = unlockThreshold(target);
+    const unlocks = unlocksAtFarmerLevel(target);
     return {
-      parcel,
-      name: parcelName(parcel),
+      level: target,
+      name: playerRankForLevel(target),
       threshold,
       unlocked: points >= threshold,
-      current: parcel === current,
-      areaNote: parcel <= 1 ? `${area} m² of land` : `+${Math.max(0, area - previous)} m² of land`,
+      current: target === current,
+      unlocksNote: unlocks.length > 0 ? `Shop adds: ${unlocks.join(", ")}` : "No new stock",
     };
   });
 }
@@ -148,7 +136,7 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
   document.body.append(overlay);
 
   function signature(next: PlayerDomStats): string {
-    const levels = next.levels.map((card) => `${card.parcel}:${card.unlocked ? 1 : 0}`).join("|");
+    const levels = next.levels.map((card) => `${card.level}:${card.unlocked ? 1 : 0}`).join("|");
     const accs = next.accomplishments.map((row) => `${row.def.id}:${row.state}:${row.completedAt ?? ""}`).join("|");
     const recent = next.recentAccomplishments.map((def) => def.id).join(",");
     return `${next.points}|${next.level}|${next.pointsToNext}|${next.parcel}|${next.population}|` +
@@ -162,13 +150,13 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
         `<div class="pl-recent-row"><span>${escapeHtml(def.title)}</span><span class="pl-acc-pts">+${def.points} pts</span></div>`,
       ).join("");
     return `<div class="pl-growth">` +
-      `<div class="pl-growth-top"><span>GARDEN GROWTH</span><span>PARCEL ${current.parcel}</span></div>` +
+      `<div class="pl-growth-top"><span>FARMER PROGRESS</span><span>FARMER LEVEL ${current.level + 1}</span></div>` +
       `<div class="pl-points">${current.points} points</div>` +
-      `<div class="pl-next">${current.pointsToNext} pts to next expansion</div>` +
-      `<div class="fj-bar" role="progressbar" aria-valuenow="${current.points}" aria-valuemax="${progress}" aria-label="Garden growth"><i style="width:${(pct * 100).toFixed(1)}%"></i></div>` +
-      `<div class="pl-scale"><span>0</span><span>${current.points} / ${progress}</span><span>Parcel ${current.parcel + 1}</span></div>` +
+      `<div class="pl-next">${current.pointsToNext} pts to next farmer level</div>` +
+      `<div class="fj-bar" role="progressbar" aria-valuenow="${current.points}" aria-valuemax="${progress}" aria-label="Farmer progress"><i style="width:${(pct * 100).toFixed(1)}%"></i></div>` +
+      `<div class="pl-scale"><span>0</span><span>${current.points} / ${progress}</span><span>Level ${current.level + 2}</span></div>` +
       `</div>` +
-      `<h3 class="pl-heading">Garden levels</h3>` +
+      `<h3 class="pl-heading">Farmer levels</h3>` +
       `<div class="pl-levels">${levelsHtml}</div>` +
       `<h3 class="pl-heading">Recent accomplishments</h3>` +
       `<div class="pl-recent">${recentHtml}</div>`;
@@ -204,12 +192,10 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
     const levelsHtml = current.levels.map((card) => {
       const state = card.current ? "is-current" : card.unlocked ? "is-open" : "is-locked";
       const sub = card.current
-        ? "You are here"
-        : card.unlocked
-          ? `${card.threshold} pts · ${escapeHtml(card.areaNote)}`
-          : `${card.threshold} pts · ${escapeHtml(card.areaNote)}`;
+        ? `You are here · ${escapeHtml(card.unlocksNote)}`
+        : `${card.threshold} pts · ${escapeHtml(card.unlocksNote)}`;
       return `<div class="pl-level ${state}">` +
-        `<div class="pl-level-title">Level ${card.parcel} · ${escapeHtml(card.name)}</div>` +
+        `<div class="pl-level-title">Level ${card.level + 1} · ${escapeHtml(card.name)}</div>` +
         `<div class="pl-level-sub">${sub}</div></div>`;
     }).join("");
     player.innerHTML =
@@ -234,7 +220,7 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
       `<div class="pl-levelnum"><span>${current.level + 1}</span></div>` +
       `<div class="pl-levelmeta">` +
       
-      `<div class="pl-garden-level">Garden Level ${current.level + 1}</div>` +
+      `<div class="pl-garden-level">Farmer Level ${current.level + 1}</div>` +
       `<div class="pl-parcel-pill">Parcel ${current.parcel}</div>` +
       `</div>` +
       `</div>` +
