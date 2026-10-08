@@ -88,7 +88,7 @@ belly on the ground, legs folded, chin on its paws, eyes shut via eyelid pivots.
 blender --background --factory-startup --python art/blender/trash_props.py
 ```
 
-The dumpster is 2 x 1 cells with its raccoon-sized door on Blender `-Y`; the can fits one cell. Neither carries a node the game reads.
+The dumpster is 2 x 1 cells with its label on Blender `-Y` (no door: the raccoon climbs in over the rim, and a later feature will have it sleep inside); the can fits one cell. Neither carries a node the game reads.
 
 ## The oak: shop prop and roost
 

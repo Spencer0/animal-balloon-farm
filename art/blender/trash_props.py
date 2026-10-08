@@ -9,7 +9,7 @@ props are never rebuilt by accident.
 
 Authoring frame matches the other props: Z-up, resting on z = 0 and centred on
 the origin in X/Y. The dumpster is 2 cells long (X) by 1 cell deep (Y), with its
-raccoon-sized front door on the -Y side; the garbage can fits one cell.
+label sticker on the -Y side and no door: the raccoon climbs in over the rim. The garbage can fits one cell.
 
 Neither model carries a node the game reads. The raccoon sleeps beside whichever
 prop is placed, found through its footprint (see src/scene/garden-props.ts).
@@ -148,12 +148,21 @@ def materials():
         "tin": make_material("CAN · galvanised tin", "#aab2b6", .32, .55, .35),
         "tinDark": make_material("CAN · shaded tin ribs", "#7e878d", .36, .5, .3),
         "lid": make_material("CAN · lid tin", "#bcc4c8", .3, .55, .4),
-        "green": make_material("DUMPSTER · bottle-green balloon steel", "#3f8a5e", .28, .05, .55),
-        "greenDeep": make_material("DUMPSTER · deep green trim", "#2c6a47", .3, .05, .5),
-        "greenLid": make_material("DUMPSTER · lid green", "#4a9b6b", .28, .05, .55),
+        "steel": make_material("DUMPSTER · weathered steel", "#868b8e", .5, .3, .25),
+        "steelDark": make_material("DUMPSTER · dark steel trim", "#5c6266", .5, .3, .2),
+        "lid": make_material("DUMPSTER · charcoal lid", "#3b3e44", .45, .2, .3),
+        "label": make_material("DUMPSTER · label white", "#f1eee4", .6, 0, .1),
+        "red": make_material("DUMPSTER · label red", "#c4483c", .55, 0, .1),
+        "ink": make_material("DUMPSTER · label ink", "#25262b", .6, 0, .05),
+        "rust": make_material("DUMPSTER · rust streak", "#7a5a46", .8, 0, 0),
+        "bagWhite": make_material("TRASH · white bag", "#ece9e2", .4, 0, .5),
+        "bagBlue": make_material("TRASH · blue bag", "#9db6cf", .35, 0, .55),
+        "bagGrey": make_material("TRASH · grey bag", "#aab0b5", .35, 0, .55),
+        "bagClear": make_material("TRASH · clear bag", "#dfe6e9", .25, 0, .6),
+        "bagBlack": make_material("TRASH · black bag", "#2d2e34", .3, 0, .6),
+        "tie": make_material("TRASH · orange tie", "#f08a3c", .4, 0, .3),
+        "carton": make_material("TRASH · cardboard", "#b88a5a", .8, 0, 0),
         "rubber": make_material("TRASH · tyre rubber", "#33343c", .6, 0, .1),
-        "door": make_material("DUMPSTER · cosy doorway shadow", "#241f2b", .8, 0, 0),
-        "frame": make_material("DUMPSTER · doorway trim", "#e6c261", .3, .3, .45),
         "mat": make_material("DUMPSTER · welcome mat", "#c4483c", .7, 0, .1),
         "paper": make_material("TRASH · crumpled paper", "#f4ecdc", .55, 0, .2),
         "peel": make_material("TRASH · banana peel", "#f2cf55", .4, 0, .35),
@@ -288,37 +297,58 @@ def make_garbage_can(M):
 
 def make_dumpster(M):
     root = pivot("PROP DUMPSTER · export root", (0, 0, 0))
-    root["design_size"] = "2 x 1 cells, about 1.5 m tall; raccoon door on -Y"
+    root["design_size"] = "2 x 1 cells, about 1.6 m tall plus the heap; the raccoon climbs in over the rim"
     length, depth, height = 3.2, 1.5, 1.3
-    # The bin: a soft green box with a slightly wider rim.
-    box("DUMPSTER · body", (0, 0, .38 + height / 2), (length, depth, height), M["green"], root, .12)
-    box("DUMPSTER · rim", (0, 0, .38 + height + .02), (length + .1, depth + .1, .14), M["greenDeep"], root, .06)
-    box("DUMPSTER · base rail", (0, 0, .34), (length - .1, depth - .1, .1), M["greenDeep"], root, .04)
-    for index, x in enumerate((-1.0, 0, 1.0)):
+    base = .38
+    rim_z = base + height
+    # The bin: a battered steel box with a heavy rolled rim, on four castors.
+    box("DUMPSTER · body", (0, 0, base + height / 2), (length, depth, height), M["steel"], root, .1)
+    box("DUMPSTER · rolled rim", (0, 0, rim_z + .02), (length + .1, depth + .1, .14), M["steelDark"], root, .06)
+    box("DUMPSTER · base rail", (0, 0, base - .04), (length - .1, depth - .1, .1), M["steelDark"], root, .04)
+    for index, x in enumerate((-1.3, -.62, 1.3)):
         for side, label in ((-1, "front"), (1, "back")):
-            box(f"DUMPSTER · {label} rib {index + 1}", (x, side * (depth / 2 + .012), .38 + height / 2), (.09, .05, height - .25), M["greenDeep"], root, .02)
+            box(f"DUMPSTER · {label} rib {index + 1}", (x, side * (depth / 2 + .012), base + height / 2), (.09, .05, height - .25), M["steelDark"], root, .02)
     for sx in (-1.2, 1.2):
         for sy in (-.55, .55):
-            cylinder(f"DUMPSTER · wheel {sx:+.1f}{sy:+.1f}", (sx, sy, .2), .2, .2, .16, M["rubber"], root, 20, (math.radians(90), 0, 0))
-    # Two lids: one down, one flung open.
-    lid_z = .38 + height + .1
-    box("DUMPSTER · closed lid", (-.82, 0, lid_z + .05), (length / 2 - .08, depth + .1, .1), M["greenLid"], root, .05)
-    hinge = pivot("DUMPSTER · open lid hinge", (.02, 0, lid_z), root)
-    hinge.rotation_euler[1] = math.radians(-62)
-    box("DUMPSTER · open lid", (.78, 0, .05), (length / 2 - .08, depth + .1, .1), M["greenLid"], hinge, .05)
-    litter(M, root, [("bag", .5, .1, lid_z + .02, .34), ("paper", 1.0, -.2, lid_z + .0, .2), ("peel", .9, .3, lid_z + .02, .16),
-                     ("can", .3, -.35, lid_z + .05, .24), ("bone", 1.2, .1, lid_z + .08, .2), ("apple", .1, .25, lid_z + .0, .15)])
-    # The raccoon's front door: an arched dark opening in the -Y wall with trim and a welcome mat.
-    door_y = -(depth / 2) - .02
-    door = sphere("DUMPSTER · raccoon doorway", (.6, door_y, .38 + .46), (.38, .06, .46), M["door"], root, 28, 16)
-    trim = torus("DUMPSTER · doorway trim", (.6, door_y - .02, .38 + .46), .4, .035, M["frame"], root, (math.radians(90), 0, 0))
-    trim.scale = (1, 1, 1.18)
-    sphere("DUMPSTER · welcome mat", (.6, door_y - .34, .395), (.34, .22, .025), M["mat"], root, 20, 10)
-    sphere("DUMPSTER · doorstep lantern", (.18, door_y - .04, .38 + .9), (.07, .07, .09), M["frame"], root, 14, 10)
+            cylinder(f"DUMPSTER · castor {sx:+.1f}{sy:+.1f}", (sx, sy, .2), .2, .2, .16, M["rubber"], root, 20, (math.radians(90), 0, 0))
+    # The sticker on the front: a white label with a red band, beside a black square with the bin icon.
+    front_y = -(depth / 2) - .02
+    box("DUMPSTER · label plate", (.55, front_y, base + .72), (.62, .03, .4), M["label"], root, .02)
+    box("DUMPSTER · label red band", (.55, front_y - .018, base + .56), (.58, .02, .09), M["red"], root, .01)
+    box("DUMPSTER · label type line 1", (.55, front_y - .018, base + .8), (.5, .02, .035), M["ink"], root, .01)
+    box("DUMPSTER · label type line 2", (.55, front_y - .018, base + .72), (.42, .02, .03), M["ink"], root, .01)
+    box("DUMPSTER · icon square", (-.15, front_y, base + .72), (.4, .03, .4), M["ink"], root, .03)
+    cylinder("DUMPSTER · icon bin", (-.15, front_y - .03, base + .72), .13, .1, .24, M["label"], root, 20, (math.radians(90), 0, 0))
+    # Rust-brown streaks and a dent, so it reads as a hard-worked bin.
+    for index, (x, w) in enumerate(((-1.0, .12), (1.05, .08), (-.45, .06))):
+        box(f"DUMPSTER · rust streak {index + 1}", (x, front_y, base + .75), (w, .02, .8), M["rust"], root, .01)
+    # Two lids hinged at the back, thrown open (the left one further than the right).
+    for index, (x, angle) in enumerate(((-.8, -128), (.8, -96))):
+        hinge = pivot(f"DUMPSTER · lid hinge {index + 1}", (x, depth / 2 + .02, rim_z + .06), root)
+        hinge.rotation_euler[0] = math.radians(angle)
+        box(f"DUMPSTER · lid {index + 1}", (0, -(depth + .1) / 2, .05), (length / 2 - .06, depth + .1, .1), M["lid"], hinge, .05)
+        box(f"DUMPSTER · lid {index + 1} lip", (0, -(depth + .1), .0), (length / 2 - .06, .08, .14), M["steelDark"], hinge, .03)
+    # The heap: bags of every sort stacked over the rim, tied with orange.
+    heap = [
+        ("bagWhite", -1.2, -.2, 1.92, .62, .42), ("bagBlue", -.5, .15, 1.98, .66, .5), ("bagGrey", .2, -.1, 2.0, .7, .5),
+        ("bagWhite", .95, .2, 1.92, .6, .45), ("bagBlack", 1.35, -.2, 1.85, .5, .38), ("bagClear", -.9, .3, 2.2, .5, .4),
+        ("bagWhite", -.1, .35, 2.25, .55, .42), ("bagBlue", .6, -.25, 2.18, .5, .4), ("bagGrey", -1.4, .15, 1.8, .42, .34),
+        ("bagBlack", .1, -.4, 2.12, .4, .3), ("bagWhite", 1.0, .05, 2.14, .42, .34),
+    ]
+    for index, (tone, x, y, z, rx, rz) in enumerate(heap):
+        bag = sphere(f"DUMPSTER · heaped bag {index + 1}", (x, y, z), (rx, rx * .78, rz), M[tone], root, 18, 12)
+        bag.rotation_euler[2] = math.radians(index * 37)
+        sphere(f"DUMPSTER · bag tie {index + 1}", (x + rx * .45, y - .1, z + rz * .8), (.07, .07, .09), M["tie"], root, 10, 8)
+    box("DUMPSTER · flattened carton", (-1.1, .0, 1.84), (.9, .5, .09), M["carton"], root, .03).rotation_euler[1] = math.radians(8)
+    box("DUMPSTER · torn carton", (.75, .3, 2.34), (.55, .4, .07), M["carton"], root, .03).rotation_euler = (0, math.radians(-12), math.radians(20))
+    # Overflow on the ground by the front wheels.
+    for index, (tone, x, y, rx, rz) in enumerate((("bagWhite", -1.8, -.8, .5, .42), ("bagClear", -1.5, -1.05, .45, .38), ("bagBlue", 1.8, -.95, .42, .35))):
+        sphere(f"DUMPSTER · bag on the ground {index + 1}", (x, y, rz * .8), (rx, rx * .8, rz), M[tone], root, 16, 10)
+        sphere(f"DUMPSTER · ground bag tie {index + 1}", (x + rx * .4, y - .1, rz * 1.6), (.06, .06, .08), M["tie"], root, 10, 8)
     return root
 
 
-for stem, builder, target_z, scale in (("garbage-can", make_garbage_can, .65, .5), ("dumpster", make_dumpster, .85, .85)):
+for stem, builder, target_z, scale in (("garbage-can", make_garbage_can, .65, .5), ("dumpster", make_dumpster, 1.15, 1.0)):
     clear_scene()
     stage()
     M = materials()
