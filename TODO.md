@@ -14,3 +14,7 @@
 - The "pointer tool" and "default cursor" need an overview. Their behavior is unclear and should be reviewed as a whole
 - Camera tool can be removed
 - After the first cow came and got sold, no new cows entered the farm
+- Chicken coop looks very ugly; needs a visual pass
+- Shop icons are a bit wonky, and the text next to them is too
+- Seed shouldn't start in the player's inventory; it should go into the shop instead
+- The journal is out of sync with the recent changes to animal requirements
