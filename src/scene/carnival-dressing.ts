@@ -64,7 +64,7 @@ function pathGeometry(points: THREE.Vector3[], width: number): THREE.BufferGeome
   return geometry
 }
 
-export function createCarnivalDressing(parent: THREE.Group): { props: readonly DressingProp[]; midway: THREE.Group; update(delta: number, bounds: GardenBounds): void } {
+export function createCarnivalDressing(parent: THREE.Group): { props: readonly DressingProp[]; midway: THREE.Group; update(delta: number, bounds: GardenBounds, amount?: number): void } {
   const props: DressingProp[] = []
   const holders: { holder: THREE.Group; model: string }[] = []
   // The midway promenades and visitors are carnival crowd, so they share one group
@@ -77,6 +77,8 @@ export function createCarnivalDressing(parent: THREE.Group): { props: readonly D
   midway.add(paths)
   const pathMat = standard('#bcb38e')
   pathMat.side = THREE.DoubleSide
+  // The promenades fade in with the set-up instead of snapping on.
+  pathMat.transparent = true
   // Asymmetric loops, not a square apron. Soil sits above paths when land is claimed.
   for (const radius of [19, 35, 60]) {
     const points = Array.from({ length: 25 }, (_, i) => {
@@ -184,8 +186,9 @@ export function createCarnivalDressing(parent: THREE.Group): { props: readonly D
   return {
     props,
     midway,
-    update(delta, bounds): void {
+    update(delta, bounds, amount = 1): void {
       elapsed += Math.max(0, delta)
+      pathMat.opacity = THREE.MathUtils.smoothstep(amount, 0.02, 0.5)
       for (const { holder } of holders) {
         const queue = holder.userData.queue as THREE.Group | undefined
         if (queue && holder.children.length === 1 && holder.children[0] instanceof THREE.Group) holder.add(queue)
@@ -198,7 +201,10 @@ export function createCarnivalDressing(parent: THREE.Group): { props: readonly D
         const z = Math.sin(angle) * radius * .84
         const visible = farmEdgeDistance(x, z, bounds) > 1.6
         const bob = Math.sin(elapsed * 5 + i) * .035
-        dummy.rotation.set(0, -angle, 0); dummy.scale.setScalar(visible ? .85 + i % 3 * .08 : 0)
+        // Visitors drift in one by one as the carnival fills, and thin out again
+        // as it packs, rather than the whole crowd appearing on the first frame.
+        const arrival = THREE.MathUtils.smoothstep(amount, .3 + (i / count) * .6, .4 + (i / count) * .6)
+        dummy.rotation.set(0, -angle, 0); dummy.scale.setScalar(visible ? (.85 + i % 3 * .08) * arrival : 0)
         dummy.position.set(x, .44 + bob, z); dummy.updateMatrix(); bodies.setMatrixAt(i, dummy.matrix)
         dummy.position.y = .9 + bob; dummy.updateMatrix(); heads.setMatrixAt(i, dummy.matrix)
       }

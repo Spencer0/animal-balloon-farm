@@ -1,6 +1,6 @@
 import "./journal-dom.css";
 import "./shed-dom.css";
-import { PLANT_CATALOG, type PlantId } from "../game/plants";
+import { PLANT_CATALOG, SEED_PRICES, type PlantId } from "../game/plants";
 import { PROP_CATALOG, PROP_ORDER, type PropId } from "../game/farm-props";
 import { seedThumb, propThumb } from "./shed-dom";
 import {
@@ -21,6 +21,7 @@ export interface ShopBuyResult {
 export interface ShopDomCallbacks {
   onClose: () => void;
   onBuy: (id: PropId) => ShopBuyResult;
+  onBuySeed: (species: PlantId) => ShopBuyResult;
   countsFor: (id: PropId) => number;
   seedsFor: (species: PlantId) => number;
   balance: () => number;
@@ -61,6 +62,7 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   let tab: ShopDomTab = "props";
   let selected: PropId = "fence";
   let selectedUpgrade: UpgradeId = UPGRADE_ORDER[0] ?? "tall-grass";
+  let selectedSeed: PlantId = PLANT_CATALOG[0]?.id ?? "clover";
   let lastSignature = "";
   let feedback = "";
   const quote = PIP_QUOTES[Math.floor(Math.random() * PIP_QUOTES.length)] ?? PIP_QUOTES[0];
@@ -89,7 +91,8 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       const quote = callbacks.quoteUpgrade(id);
       return `${id}:${quote.status}:${quote.owned}:${quote.price}`;
     }).join("|");
-    return `${tab}|${selected}|${selectedUpgrade}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${feedback}`;
+    const seeds = PLANT_CATALOG.map((plant) => `${plant.id}:${callbacks.seedsFor(plant.id)}`).join("|");
+    return `${tab}|${selected}|${selectedUpgrade}|${selectedSeed}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${seeds}|${feedback}`;
   }
 
   /** A drawn icon for the upgrades, so they need no baked art: a sack for seed, a scroll for land. */
@@ -151,12 +154,13 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     if (tab === "seeds") {
       return PLANT_CATALOG.map((plant) => {
         const count = Math.max(0, callbacks.seedsFor(plant.id));
+        const afford = callbacks.balance() >= SEED_PRICES[plant.id];
         return (
-          `<div class="sh-card" aria-current="false">` +
+          `<button type="button" class="sh-card" data-select-seed="${plant.id}" aria-current="${selectedSeed === plant.id}">` +
           `<span class="sh-count">${count}x</span>` +
           `<img src="${seedThumb(plant.id)}" alt="" draggable="false" />` +
           `<span>${escapeHtml(plant.name)}</span><br />` +
-          `<span class="sh-pill">earned in the garden</span></div>`
+          `<span class="sh-pill"${afford ? "" : ` style="opacity:.55"`}>${SEED_PRICES[plant.id]} coins</span></button>`
         );
       }).join("");
     }
@@ -190,8 +194,22 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   function previewHtml(): string {
     if (tab === "upgrades") return upgradePreviewHtml();
     if (tab !== "props") {
-      if (tab === "seeds")
-        return `<h2>Seeds</h2><p class="sh-blurb">Seeds are earned out in the garden, not bought. Sow, tend, and the shed fills itself.</p><p class="sh-feedback">${escapeHtml(feedback)}</p>`;
+      if (tab === "seeds") {
+        const plant = PLANT_CATALOG.find((entry) => entry.id === selectedSeed) ?? PLANT_CATALOG[0];
+        if (!plant) return `<div class="sh-locked">Nothing selected.</div>`;
+        const price = SEED_PRICES[plant.id];
+        const owned = Math.max(0, callbacks.seedsFor(plant.id));
+        const afford = callbacks.balance() >= price;
+        return (
+          `<img src="${seedThumb(plant.id)}" alt="" draggable="false" />` +
+          `<h2>${escapeHtml(plant.name)} seed</h2>` +
+          `<div class="sh-pills"><span class="sh-pill">${price} coins</span><span class="sh-pill">${owned} in shed</span></div>` +
+          `<p class="sh-blurb">${escapeHtml(plant.description)}</p>` +
+          `<button type="button" class="sh-btn sh-btn-warm" data-buy-seed="${plant.id}"${afford ? "" : " disabled"}>${afford ? `Buy (${price} coins)` : `Need ${price} coins`}</button>` +
+          `<button type="button" class="sh-btn sh-btn-quiet" data-action="close">Keep browsing</button>` +
+          `<p class="sh-feedback">${escapeHtml(feedback)}</p>`
+        );
+      }
       return `<h2>Animals</h2><p class="sh-blurb">No animals for sale yet. Befriend them at the circus instead.</p><p class="sh-feedback">${escapeHtml(feedback)}</p>`;
     }
     const def = PROP_CATALOG[selected];
@@ -238,7 +256,7 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
 
   shop.addEventListener("click", (event) => {
     const target = event.target instanceof HTMLElement
-      ? event.target.closest("[data-tab],[data-select],[data-select-upgrade],[data-action],[data-buy],[data-buy-upgrade]")
+      ? event.target.closest("[data-tab],[data-select],[data-select-seed],[data-select-upgrade],[data-action],[data-buy],[data-buy-seed],[data-buy-upgrade]")
       : null;
     if (!(target instanceof HTMLElement)) return;
     if (target.dataset["action"] === "close") {
@@ -260,9 +278,23 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       render();
       return;
     }
+    const selectSeed = target.dataset["selectSeed"] as PlantId | undefined;
+    if (selectSeed) {
+      selectedSeed = selectSeed;
+      lastSignature = "";
+      render();
+      return;
+    }
     const selectUpgrade = target.dataset["selectUpgrade"] as UpgradeId | undefined;
     if (selectUpgrade) {
       selectedUpgrade = selectUpgrade;
+      lastSignature = "";
+      render();
+      return;
+    }
+    const buySeed = target.dataset["buySeed"] as PlantId | undefined;
+    if (buySeed) {
+      feedback = callbacks.onBuySeed(buySeed).text;
       lastSignature = "";
       render();
       return;

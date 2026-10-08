@@ -368,7 +368,7 @@ export function createViewerPanel(
       if (!isOpen) return undefined
       const overControl = controls.some((control) => rectContains(control.rect, point))
       if (overControl) return 'point'
-      return cardAt(point) >= 0 ? 'point' : 'hand'
+      return cardAt(point) >= 0 ? 'point' : 'idle'
     },
     pointerUp(point: DesignPoint): boolean {
       if (!isOpen) return false

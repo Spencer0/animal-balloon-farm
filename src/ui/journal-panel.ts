@@ -74,6 +74,9 @@ export interface JournalConditionRow {
   readonly hint: string
   /** Habitat metric named beside the progress bar. */
   readonly metricLabel?: string
+  /** What the rung measures, so the journal picks its icon from data rather than from the wording of the hint. */
+  readonly requirementKind?: string
+  readonly requirementSpecies?: string
   /**
    * Unit written after the numbers, e.g. " m²". An empty string means the
    * metric is a plain count (plants, not area), which is also written as a

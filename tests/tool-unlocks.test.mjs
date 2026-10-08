@@ -108,6 +108,8 @@ test('farmer level still comes from progression points', () => {
 test('ground cover refuses a meadow but still takes a short lawn', () => {
   const lawn = { substrate: 'grass', waterDepth: 0, inBounds: true, coverage: 1 }
   const sim = createPlantSimulation()
+  // Seeds are bought now, so stock the shed before asking where things may go.
+  for (const species of ['clover', 'dandelion', 'poppy']) sim.addSeeds(species, 1)
   assert.equal(sim.placementResult('clover', 0, 0, { ...lawn, tallGrass: false }).valid, true)
   const meadow = sim.placementResult('dandelion', 0, 0, { ...lawn, tallGrass: true })
   assert.equal(meadow.valid, false)

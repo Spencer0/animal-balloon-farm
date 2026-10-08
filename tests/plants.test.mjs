@@ -10,17 +10,37 @@ const { outputFiles } = await build({
   write: false,
 })
 const plants = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
-const { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, STARTING_SEEDS_PER_PLANT } = plants
+const { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, STARTING_SEEDS_PER_PLANT, STARTING_SEED_GIFT, SEED_PRICES } = plants
+const stockedSimulation = () => {
+  const simulation = createPlantSimulation()
+  for (const species of PLANT_CATALOG) simulation.addSeeds(species.id, 5)
+  return simulation
+}
 const surface = (substrate, waterDepth = 0, inBounds = true) => ({ substrate, waterDepth, inBounds })
 
-test('catalog starts with four useful plants and five seeds each', () => {
+test('catalog starts with four useful plants and an empty seed shed', () => {
   assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily'])
   const simulation = createPlantSimulation()
-  for (const species of PLANT_CATALOG) assert.equal(simulation.seedsFor(species.id), STARTING_SEEDS_PER_PLANT)
+  for (const species of PLANT_CATALOG) {
+    assert.equal(simulation.seedsFor(species.id), species.id === STARTING_SEED_GIFT.species ? 1 : STARTING_SEEDS_PER_PLANT)
+  }
+  assert.equal(STARTING_SEEDS_PER_PLANT, 0)
+  assert.equal(STARTING_SEED_GIFT.species, 'dandelion')
+  assert.equal(simulation.placementResult('clover', 0, 0, surface('grass')).failure, 'out-of-seeds')
+})
+
+test('bought seeds land in the shed and every plant has a seed price', () => {
+  const simulation = createPlantSimulation()
+  assert.equal(simulation.addSeeds('poppy', 2), 2)
+  assert.equal(simulation.addSeeds('poppy'), 3)
+  assert.equal(simulation.addSeeds('poppy', -4), 3)
+  for (const species of PLANT_CATALOG) assert.ok(SEED_PRICES[species.id] > 0)
+  assert.ok(simulation.plant('poppy', 0, 0, surface('soil')))
+  assert.equal(simulation.seedsFor('poppy'), 2)
 })
 
 test('placement enforces bounds, substrate, visible pond water, seeds, and spacing', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   assert.equal(simulation.placementResult('clover', 0, 0, surface('soil')).failure, 'wrong-substrate')
   assert.equal(simulation.placementResult('clover', 0, 0, surface('grass', 0, false)).failure, 'out-of-bounds')
   assert.equal(simulation.placementResult('water-lily', 0, 0, surface('water', PLANT_WATER_MIN_DEPTH / 2)).failure, 'needs-visible-water')
@@ -31,18 +51,18 @@ test('placement enforces bounds, substrate, visible pond water, seeds, and spaci
 })
 
 test('planting spends only that seed and exposes species counts for future habitat rules', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   for (let index = 0; index < 3; index += 1) {
     assert.ok(simulation.plant('water-lily', 4 + index * 2.3, 0, surface('water', 0.12)))
   }
   assert.equal(simulation.countPlants('water-lily'), 3)
   assert.equal(simulation.countPlants(), 3)
   assert.equal(simulation.seedsFor('water-lily'), 2)
-  assert.equal(simulation.seedsFor('clover'), STARTING_SEEDS_PER_PLANT)
+  assert.equal(simulation.seedsFor('clover'), 5)
 })
 
 test('selling a plant removes it, keeps its spent seed consumed, and cannot sell twice', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   const poppy = simulation.plant('poppy', 0, 0, surface('soil'))
   assert.ok(poppy)
   assert.equal(simulation.seedsFor('poppy'), 4)
@@ -55,7 +75,7 @@ test('selling a plant removes it, keeps its spent seed consumed, and cannot sell
 })
 
 test('ground cover needs real turf: thin grass is refused, thick grass is fine', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   assert.equal(simulation.placementResult('clover', 0, 0, { ...surface('grass'), coverage: 0.3 }).failure, 'wrong-substrate')
   assert.equal(simulation.placementResult('dandelion', 0, 0, { ...surface('grass'), coverage: 0.3 }).failure, 'wrong-substrate')
   assert.equal(simulation.placementResult('clover', 0, 0, { ...surface('grass'), coverage: 0.9 }).valid, true)
@@ -63,14 +83,14 @@ test('ground cover needs real turf: thin grass is refused, thick grass is fine',
 })
 
 test('ground-cover patches claim a round patch of lawn, so neighbours cannot overlap', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   assert.ok(simulation.plant('clover', 0, 0, surface('grass')))
   assert.equal(simulation.placementResult('dandelion', 1.5, 0, surface('grass')).failure, 'too-close')
   assert.equal(simulation.placementResult('dandelion', 2.6, 0, surface('grass')).valid, true)
 })
 
 test('clover asks for exactly two drinks, pausing at each, then grows up and stays for good', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   const clover = simulation.plant('clover', 0, 0, surface('grass'))
   assert.ok(clover)
   let asked = 0
@@ -95,7 +115,7 @@ test('clover asks for exactly two drinks, pausing at each, then grows up and sta
 })
 
 test('care is paced by growth, not by a clock: an unattended seedling never withers', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   simulation.plant('dandelion', 0, 0, surface('grass'))
   simulation.tick(5000)
   const waiting = simulation.plants[0]
@@ -105,7 +125,7 @@ test('care is paced by growth, not by a clock: an unattended seedling never with
 })
 
 test('poppy needs pruning during growth, then matures without further maintenance', () => {
-  const simulation = createPlantSimulation()
+  const simulation = stockedSimulation()
   const poppy = simulation.plant('poppy', 0, 0, surface('soil'))
   assert.ok(poppy)
   const answered = []

@@ -26,6 +26,8 @@ export interface JournalDomPanel {
   setOpen(open: boolean): void;
   /** Jump the reader to a species page; unknown ids keep the current page. */
   selectSpecies(speciesId: string): void;
+  /** Jump the reader to a plant page on the Plants tab. */
+  selectPlant(plantId: string): void;
   refresh(): void;
   dispose(): void;
 }
@@ -76,7 +78,26 @@ interface RowVisual {
   readonly isCount: boolean;
 }
 
-function rowVisual(metricLabel: string | undefined, hint: string, title: string): RowVisual {
+/** The icon and label for what a rung measures, straight from its requirement. */
+function visualForKind(kind: string, species: string | undefined, metricLabel: string | undefined): RowVisual | null {
+  switch (kind) {
+    case "grassArea": return { icon: "tall-grass", label: "Tall grass", isCount: false };
+    case "waterArea": return { icon: "pond-water", label: "Pond water", isCount: false };
+    case "flatArea": return { icon: "open-pasture", label: "Level pasture", isCount: false };
+    case "plantCount": return { icon: species === "water-lily" ? "lily-pad" : "sprout", label: metricLabel ?? "Plants", isCount: true };
+    case "residentCount": return { icon: "friend-paw", label: metricLabel ?? "Residents", isCount: true };
+    case "propCount": return { icon: "circus-tent", label: metricLabel ?? "Props", isCount: true };
+    case "preyEaten": return { icon: "friend-paw", label: metricLabel ?? "Eaten", isCount: true };
+    default: return null;
+  }
+}
+
+function rowVisual(row: { readonly requirementKind?: string; readonly requirementSpecies?: string; readonly metricLabel?: string; readonly hint: string; readonly title: string }): RowVisual {
+  if (row.requirementKind) {
+    const known = visualForKind(row.requirementKind, row.requirementSpecies, row.metricLabel);
+    if (known) return known;
+  }
+  const { metricLabel, hint, title } = row;
   const hay = `${metricLabel ?? ""} ${hint} ${title}`.toLowerCase();
   if (hay.includes("lily")) return { icon: "lily-pad", label: metricLabel ?? "Lily pads", isCount: true };
   if (hay.includes("bunting") || hay.includes("string")) {
@@ -275,7 +296,7 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
       if (row.current === null || row.target === null || row.target <= 0) {
         return `<div class="fj-card">${head}<div class="fj-note">${escapeHtml(row.hint)}</div></div>`;
       }
-      const visual = rowVisual(row.metricLabel, row.hint, row.title);
+      const visual = rowVisual(row);
       const pct = Math.max(0, Math.min(1, row.current / row.target));
       const unit = row.metricUnit ?? (visual.isCount ? "" : " m&sup2;");
       return `<div class="fj-card">${head}
@@ -385,6 +406,13 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
       if (!ANIMAL_CATALOG.some((entry) => entry.id === speciesId)) return;
       category = "animals";
       selectedId = speciesId;
+      lastSignature = "";
+      if (open) render();
+    },
+    selectPlant(plantId: string): void {
+      if (!PLANT_CATALOG.some((entry) => entry.id === plantId)) return;
+      category = "plants";
+      selectedId = `plant:${plantId}`;
       lastSignature = "";
       if (open) render();
     },

@@ -44,6 +44,9 @@ export function animalSaleValue(species: BalloonAnimalId, stage: number): number
   return Math.round(ANIMAL_SALE_PRICES[species] * (1 + normalizedStage * 0.25))
 }
 
+/** Seeds are bought, so the purse opens with enough for the first few. */
+export const STARTING_COINS = 15
+
 export interface Wallet {
   readonly balance: number
   credit(amount: number): number
