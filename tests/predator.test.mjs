@@ -246,10 +246,10 @@ test('the owl only turns up after dark', () => {
 
 test('a night-only visitor does not hold up the rest of the queue by day', () => {
   // The owl is discovered by the resident chicken, but dawn keeps it waiting;
-  // the sheep, a carnival starter, still gets its turn.
-  const life = owlLife({}, ['owl', 'sheep'])
+  // the cow, a carnival starter, still gets its turn.
+  const life = owlLife({}, ['owl', 'cow'])
   tickFor(life, farmWith({ residentCounts: { chicken: 1 } }, false), 5)
-  assert.ok(life.all().find((animal) => animal.species === 'sheep').stage >= 1)
+  assert.ok(life.all().find((animal) => animal.species === 'cow').stage >= 1)
   assert.equal(owlOf(life).stage, 0)
 })
 
@@ -286,10 +286,11 @@ test('a visit that stays at stage two by day is not undone by daylight', () => {
 })
 
 test('the night shift is paced apart from the day visitors', () => {
-  // The sheep arrives first and is stuck at stage two with no pasture. It must not keep the owl waiting.
-  const life = owlLife({}, ['sheep', 'owl'])
-  tickFor(life, farmWith({ residentCounts: { chicken: 1 } }), 10)
-  assert.equal(life.all().find((animal) => animal.species === 'sheep').stage, 2)
+  // The cow arrives first and is stuck at stage two with no pasture. It must not keep the owl waiting.
+  const life = owlLife({}, ['cow', 'owl'])
+  tickFor(life, farmWith({}, false), 30)
+  assert.equal(life.all().find((animal) => animal.species === 'cow').stage, 2)
+  tickFor(life, farmWith({ residentCounts: { chicken: 1 } }), 30)
   assert.ok(owlOf(life).stage >= 1)
 })
 

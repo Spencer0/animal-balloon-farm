@@ -8,7 +8,7 @@ const { outputFiles } = await build({
 const lifeModule = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 const { createAnimalLife } = lifeModule
 const emptyFarm = { state: { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {} }, residentSpecies: new Set(['cow']) }
-const lushFarm = { state: { tallGrassArea: 40, waterArea: 0, flatGrassArea: 40, plantCounts: {} }, residentSpecies: new Set(['cow']) }
+const lushFarm = { state: { tallGrassArea: 40, waterArea: 0, flatGrassArea: 40, plantCounts: {}, propCounts: { barn: 1, coop: 2 } }, residentSpecies: new Set(['cow']) }
 const snapshot = (farm = emptyFarm, expansionLevel = 0) => ({ farm, expansionLevel })
 const quickConfig = {
   visitDelaySeconds: 0, enterFarmSeconds: 0, arrivalIntervalSeconds: 0,
