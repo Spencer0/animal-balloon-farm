@@ -26,6 +26,8 @@ export interface JournalDomPanel {
   setOpen(open: boolean): void;
   /** Jump the reader to a species page; unknown ids keep the current page. */
   selectSpecies(speciesId: string): void;
+  /** Jump the reader to a plant page on the Plants tab. */
+  selectPlant(plantId: string): void;
   refresh(): void;
   dispose(): void;
 }
@@ -404,6 +406,13 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
       if (!ANIMAL_CATALOG.some((entry) => entry.id === speciesId)) return;
       category = "animals";
       selectedId = speciesId;
+      lastSignature = "";
+      if (open) render();
+    },
+    selectPlant(plantId: string): void {
+      if (!PLANT_CATALOG.some((entry) => entry.id === plantId)) return;
+      category = "plants";
+      selectedId = `plant:${plantId}`;
       lastSignature = "";
       if (open) render();
     },

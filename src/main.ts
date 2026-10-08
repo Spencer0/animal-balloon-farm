@@ -21,7 +21,7 @@ import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps } from './scene/garden-props'
-import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, type PlantId, type PlantSubstrate } from './game/plants'
+import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
 import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
 import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
@@ -34,6 +34,7 @@ import { weekdayName } from './game/carnival-schedule'
 import { shopSite } from './game/shop-site'
 import type { ShopBuildReport } from './scene/shop-build'
 import { createClockCalendarHud } from './ui/clock-calendar-hud'
+import { createPlantCard } from './ui/plant-card'
 import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
@@ -1068,6 +1069,7 @@ const viewer = createViewerPanel({
 function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }): void {
   focusedAnimalId = animal.instanceId
   refreshAnimalCrowd(performance.now() / 1000, true)
+  plantCard.close()
   gardenPlants?.clearSelection()
   const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
   // A preview renders states the live ladder cannot hold on demand (a
@@ -1332,7 +1334,72 @@ function balloonInboxAnchor(): { x: number; y: number } {
   }
 }
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, clockCalendarHud]
+/**
+ * The plant info card: the animal card's twin. Clicking a plant pins it beside
+ * the plant with its growth, what it needs, and Sell / Journal buttons.
+ */
+const plantCard = createPlantCard({
+  onSell: (target) => {
+    const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === target.instanceId)
+    if (!plant || !gardenPlants?.removePlant(target.instanceId)) return null
+    const price = plantSaleValue(plant.species, plant.growth)
+    const balance = wallet.credit(price)
+    salePanel.setWallet(balance)
+    shedDom.refresh()
+    plantCard.close()
+    syncFarmChrome()
+    refreshCursor()
+    return { balance, price }
+  },
+  onJournal: (speciesId) => {
+    plantCard.close()
+    journal.openToSpecies('')
+    journalDom.selectPlant(speciesId)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  // Pinned note, not a modal: it never hides the tool bar or pauses the farm.
+  // Closing it drops the plant's selection ring.
+  onToggle: (isOpen) => {
+    if (!isOpen) gardenPlants?.clearSelection()
+    refreshCursor()
+  },
+}, window.innerWidth, window.innerHeight)
+
+function openPlantCardFor(plant: GardenPlant): void {
+  const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
+  const anchorWorld = new THREE.Vector3(plant.x, GARDEN_LAWN_Y + 1.4, plant.z)
+  const anchorNdc = anchorWorld.project(camera)
+  gardenPlants?.cancelPlacement()
+  gardenTools?.setPlantingMode(false)
+  shed.setPlacementActive(false)
+  plantCard.open({
+    instanceId: plant.instanceId,
+    speciesId: plant.species,
+    name: `${species?.name ?? 'Plant'} ${gardenPlants?.selectedPlantNumber ?? 1}`,
+    speciesLabel: species?.subtitle ?? 'Plant',
+    growth: plant.growth,
+    care: plant.careNeeded,
+    price: plantSaleValue(plant.species, plant.growth),
+  }, { x: anchorNdc.x * ui.viewport.width / 2, y: anchorNdc.y * ui.viewport.height / 2 })
+  syncFarmChrome()
+}
+
+let plantCardSyncTimer = 0
+function syncPlantCard(deltaSeconds: number): void {
+  if (!plantCard.isOpen) return
+  plantCardSyncTimer += deltaSeconds
+  if (plantCardSyncTimer < 0.25) return
+  plantCardSyncTimer = 0
+  const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantCard.instanceId)
+  if (!plant) {
+    plantCard.close()
+    return
+  }
+  plantCard.sync({ growth: plant.growth, care: plant.careNeeded, price: plantSaleValue(plant.species, plant.growth) })
+}
+
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, plantCard, clockCalendarHud]
 
 /**
  * The furthest rung each species has reached this session. The journal is a
@@ -1445,6 +1512,7 @@ function setMode(next: GameMode): void {
   if (next !== 'farm') {
     salePanel.close()
     animalCard.close()
+    plantCard.close()
     shed.close()
     shed.setPlacementActive(false)
     shop.setOpen(false)
@@ -1796,6 +1864,7 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
     || shed.contains(point)
     || salePanel.hitTest?.(point)
     || animalCard.hitTest?.(point)
+    || plantCard.hitTest?.(point)
   ))
 }
 
@@ -1953,15 +2022,9 @@ function orbitPointerDown(event: PointerEvent): void {
     }
     const plant = gardenPlants?.selectAt(event.clientX, event.clientY)
     if (plant) {
-      const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
-      salePanel.open({
-        id: String(plant.instanceId),
-        kind: 'plant',
-        name: `${species?.name ?? 'Plant'} ${gardenPlants?.selectedPlantNumber ?? 1}`,
-        detail: plant.mature ? 'Fully grown' : `${Math.round(plant.growth * 100)}% grown`,
-        price: plantSaleValue(plant.species, plant.growth),
-      })
-      syncFarmChrome()
+      animalCard.close()
+      focusedAnimalId = null
+      openPlantCardFor(plant)
       return
     }
   }
@@ -2162,9 +2225,10 @@ function handleKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  if (event.key === 'Escape' && (salePanel.isOpen || animalCard.isOpen)) {
+  if (event.key === 'Escape' && (salePanel.isOpen || animalCard.isOpen || plantCard.isOpen)) {
     salePanel.close()
     animalCard.close()
+    plantCard.close()
     syncFarmChrome()
     event.preventDefault()
     return
@@ -2277,12 +2341,14 @@ gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
 shed.resize(window.innerWidth, window.innerHeight)
 salePanel.resize(window.innerWidth, window.innerHeight)
 animalCard.resize(window.innerWidth, window.innerHeight)
+plantCard.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
   shed.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
   animalCard.resize(window.innerWidth, window.innerHeight)
+  plantCard.resize(window.innerWidth, window.innerHeight)
   balloon.resize(window.innerWidth, window.innerHeight)
 })
 
@@ -2309,6 +2375,8 @@ interface GardenDebugHarness {
    * validates the live animal.
    */
   animalCard(id: string, preview?: { stage?: number; sellable?: boolean }): unknown
+  /** Open the plant info card for a planted instance (default: the first one). */
+  plantCard(instanceId?: number): unknown
   /** Direct water/terrain controls for repeatable visual checks, compiled out in production. */
   digAt(x: number, z: number, radius: number, amount: number): number
   pourAt(x: number, z: number, radius: number, amount: number): unknown
@@ -3165,6 +3233,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       openAnimalCardFor(animal, preview)
       return animalCard.describe?.() ?? null
     },
+    plantCard: (instanceId) => {
+      const plant = gardenPlants?.simulation.plants.find((entry) => instanceId === undefined || entry.instanceId === instanceId)
+      if (!plant) return null
+      openPlantCardFor(plant)
+      return plantCard.describe?.() ?? null
+    },
     player: () => {
       playerDom.refresh(playerDomStats())
       playerDom.setOpen(true)
@@ -3342,6 +3416,7 @@ function frame(now: number): void {
     }
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
+  syncPlantCard(delta)
   gardenProps?.update(delta, fairground.farmExpansion?.level ?? 0)
   const matureIds = new Set<number>()
   for (const plant of gardenPlants?.simulation.plants ?? []) {
