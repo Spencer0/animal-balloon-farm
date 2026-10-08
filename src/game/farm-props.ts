@@ -11,7 +11,7 @@
 
 import type { Wallet } from './sales'
 
-export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'oak'
+export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -97,8 +97,8 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
   coop: {
     id: 'coop',
     name: 'Chicken Coop',
-    description: 'A roomy wooden coop. Purely decorative for now.',
-    blurb: 'Warm nesting boxes. Purely decorative for now -- the chickens just like the shade.',
+    description: 'A roomy wooden coop with warm nesting boxes.',
+    blurb: 'Chickens will not settle for good without one, and a second helps them raise chicks.',
     color: '#c96f4a',
     price: 90,
     footprint: { width: 2, depth: 2 },
@@ -107,6 +107,20 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     rotatable: true,
     blocking: true,
     modelUrl: 'assets/props/coop.glb',
+  },
+  barn: {
+    id: 'barn',
+    name: 'Small Barn',
+    description: 'A little red barn with a hayloft.',
+    blurb: 'Cows and sheep want a roof of their own. Sheep need one to settle; cows to raise calves.',
+    color: '#b8503f',
+    price: 110,
+    footprint: { width: 2, depth: 2 },
+    size: 4.2,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/barn.glb',
   },
   oak: {
     id: 'oak',
@@ -125,7 +139,7 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'oak']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'oak']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -151,7 +165,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, oak: 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0

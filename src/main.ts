@@ -390,11 +390,13 @@ function pickEgg(clientX: number, clientY: number): { id: number; x: number; z: 
 function plantSurfaceAt(x: number, z: number) {
   const waterDepth = gardenWater?.depthAt(x, z) ?? 0
   let substrate: PlantSubstrate = 'soil'
+  const coverage = coverageLookup?.(x, z) ?? 0
   if (waterDepth >= PLANT_WATER_MIN_DEPTH) substrate = 'water'
-  else if ((coverageLookup?.(x, z) ?? 0) > 0.18) substrate = 'grass'
+  else if (coverage > 0.18) substrate = 'grass'
   return {
     substrate,
     waterDepth,
+    coverage,
     inBounds: containsGardenPoint(x, z, currentGardenBounds),
   }
 }
@@ -1336,8 +1338,7 @@ const journalConditionsSource: JournalConditionSource = {
       target: definition.requirement?.amount ?? null,
       met: index < (progress.animal(animal.instanceId)?.stage ?? 0),
       // Area rows keep their old unlabeled look; plant and predator rows name what they count.
-      metricLabel: definition.requirement?.kind === 'plantCount' ? 'Plants in the ground'
-        : isCountKind(definition.requirement?.kind) ? definition.metricLabel : null,
+      metricLabel: isCountKind(definition.requirement?.kind) ? definition.metricLabel : null,
     }))
     if (!rows.length) return null
     return {

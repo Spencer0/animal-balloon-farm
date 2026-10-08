@@ -387,6 +387,29 @@ and every area bug found while building this was found by the harness rather tha
 
 ---
 
+## Pacing: who arrives when
+
+The farm fills one animal at a time, and each arrival is earned.
+
+- **Cow and duck** are the only carnival starters (`CARNIVAL_STARTERS`). A cow
+  needs nothing but grass, so it is the first win.
+- **Sheep** are lured by clover (`DISCOVERY.sheep`: 2 grown patches) and visit at
+  3. **Chickens** are lured by dandelions the same way. `DISCOVERY` is the trigger
+  that takes a species from stage 0 to the carnival, so a lure is one entry there.
+- **Staying and breeding** lean on props: sheep need a small barn to settle, cows
+  need one to breed, chickens need a coop to settle and a second to breed. Use
+  `COUNT_STAGE` with `and: [{ kind: 'propCount', species: 'barn', amount: 1 }]`.
+- **Shifts.** Owls turn up and visit only after dark; every other species turns up
+  and steps inside the fence only in daylight (`isNightOnly`). Residents are never
+  sent away at night: chickens have to be there for the owl to hunt.
+- Only a visitor that is *ready to walk in* holds the arrival queue, so a sheep
+  still waiting for its third clover patch does not stop the chickens arriving.
+
+Ground-cover plants (clover, dandelion) set `groundCover` in `PLANT_CATALOG`: they
+need real turf under them and are drawn as a round patch that melts into the lawn.
+Care is a short list of `care` stops along the growth curve (two waterings for a
+patch), so a plant that is waiting for you just waits. It never withers.
+
 ## Fliers, predators and the night shift
 
 The owl is the first species that does not wander, hunts another species, and only comes out after

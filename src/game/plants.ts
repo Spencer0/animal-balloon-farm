@@ -1,4 +1,4 @@
-export type PlantId = 'clover' | 'poppy' | 'water-lily'
+export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily'
 export type PlantCare = 'water' | 'prune'
 export type PlantSubstrate = 'grass' | 'soil' | 'water' | 'unknown'
 export type PlantPlacementFailure = 'out-of-bounds' | 'wrong-substrate' | 'needs-visible-water' | 'too-close' | 'out-of-seeds'
@@ -12,28 +12,54 @@ export interface PlantSpecies {
   readonly substrate: PlantSubstrate
   readonly spacingRadius: number
   readonly growthSeconds: number
-  readonly waterIntervalSeconds: number
-  readonly pruneAt: number | null
+  /**
+   * Where in its growth (0..1) the plant stops and asks for something. Care is
+   * a short list of moments, not a timer: a few taps per plant, and a plant
+   * that has to wait for you just waits. It never wilts and never dies.
+   */
+  readonly care: readonly PlantCareStop[]
+  /**
+   * Ground cover blends into the lawn instead of standing on it: it needs real
+   * turf under it (this much grass coverage, 0..1) and is drawn as a round patch.
+   */
+  readonly groundCover?: { readonly minCoverage: number }
+}
+
+export interface PlantCareStop {
+  readonly at: number
+  readonly kind: PlantCare
 }
 
 export const PLANT_CATALOG: readonly PlantSpecies[] = [
   {
     id: 'clover', name: 'Clover', subtitle: 'Meadow groundcover',
-    description: 'A soft green patch that likes grassy ground and a drink now and then.',
-    color: '#79ad58', substrate: 'grass', spacingRadius: 0.48,
-    growthSeconds: 48, waterIntervalSeconds: 15, pruneAt: null,
+    description: 'A round patch of clover sown into the lawn. Water it twice while it spreads; it stays for good. Sheep come for it.',
+    color: '#79ad58', substrate: 'grass', spacingRadius: 1.05,
+    growthSeconds: 80,
+    care: [{ at: 0.2, kind: 'water' }, { at: 0.6, kind: 'water' }],
+    groundCover: { minCoverage: 0.5 },
+  },
+  {
+    id: 'dandelion', name: 'Dandelion', subtitle: 'Sunny lawn weed',
+    description: 'A round patch of dandelions sown into the lawn. Water it twice while it blooms; it stays for good. Chickens come for it.',
+    color: '#e9c545', substrate: 'grass', spacingRadius: 1.05,
+    growthSeconds: 90,
+    care: [{ at: 0.25, kind: 'water' }, { at: 0.65, kind: 'water' }],
+    groundCover: { minCoverage: 0.5 },
   },
   {
     id: 'poppy', name: 'Poppy', subtitle: 'A bright little flower',
     description: 'Plant in bare soil. Keep it watered and pinch back one stray shoot.',
     color: '#e77b62', substrate: 'soil', spacingRadius: 0.64,
-    growthSeconds: 54, waterIntervalSeconds: 38, pruneAt: 0.52,
+    growthSeconds: 90,
+    care: [{ at: 0.3, kind: 'water' }, { at: 0.52, kind: 'prune' }, { at: 0.78, kind: 'water' }],
   },
   {
     id: 'water-lily', name: 'Water lily', subtitle: 'Pondside floater',
     description: 'Needs a visible pond, a drink, and a little pruning as it grows.',
     color: '#d994c9', substrate: 'water', spacingRadius: 0.8,
-    growthSeconds: 60, waterIntervalSeconds: 42, pruneAt: 0.48,
+    growthSeconds: 100,
+    care: [{ at: 0.3, kind: 'water' }, { at: 0.48, kind: 'prune' }, { at: 0.75, kind: 'water' }],
   },
 ] as const
 
@@ -55,6 +81,8 @@ export interface PlantSurface {
   readonly substrate: PlantSubstrate
   readonly waterDepth: number
   readonly inBounds: boolean
+  /** How thickly grassed the ground is, 0..1. Unset counts as thick enough. */
+  readonly coverage?: number
 }
 
 export interface GardenPlant {
@@ -65,8 +93,6 @@ export interface GardenPlant {
   readonly growth: number
   readonly mature: boolean
   readonly careNeeded: PlantCare | null
-  readonly watered: boolean
-  readonly pruned: boolean
 }
 
 export interface PlantPlacementResult {
@@ -92,8 +118,8 @@ interface MutablePlant {
   readonly z: number
   growth: number
   careNeeded: PlantCare | null
-  secondsSinceWater: number
-  pruned: boolean
+  /** How many of the species' care stops have been answered. */
+  stopsDone: number
 }
 
 const SPECIES_BY_ID = new Map(PLANT_CATALOG.map((species) => [species.id, species]))
@@ -118,8 +144,6 @@ export function createPlantSimulation(): PlantSimulation {
       growth: plant.growth,
       mature: plant.growth >= 1,
       careNeeded: plant.careNeeded,
-      watered: plant.secondsSinceWater === 0,
-      pruned: plant.pruned,
     }
   }
 
@@ -132,6 +156,8 @@ export function createPlantSimulation(): PlantSimulation {
         return { valid: false, failure: 'needs-visible-water' }
       }
     } else if (surface.substrate !== definition.substrate) {
+      return { valid: false, failure: 'wrong-substrate' }
+    } else if (definition.groundCover && (surface.coverage ?? 1) < definition.groundCover.minCoverage) {
       return { valid: false, failure: 'wrong-substrate' }
     }
     const tooClose = plants.some((other) => {
@@ -163,8 +189,7 @@ export function createPlantSimulation(): PlantSimulation {
         z,
         growth: 0.04,
         careNeeded: null,
-        secondsSinceWater: 0,
-        pruned: false,
+        stopsDone: 0,
       }
       plants.push(plant)
       seedCounts.set(species, (seedCounts.get(species) ?? 0) - 1)
@@ -179,8 +204,7 @@ export function createPlantSimulation(): PlantSimulation {
       const plant = plants.find((entry) => entry.instanceId === instanceId)
       if (!plant || plant.growth >= 1 || plant.careNeeded !== care) return false
       plant.careNeeded = null
-      if (care === 'water') plant.secondsSinceWater = 0
-      else plant.pruned = true
+      plant.stopsDone += 1
       return true
     },
     tick(deltaSeconds): void {
@@ -189,15 +213,11 @@ export function createPlantSimulation(): PlantSimulation {
       for (const plant of plants) {
         if (plant.growth >= 1 || plant.careNeeded) continue
         const definition = plantSpecies(plant.species)
-        plant.secondsSinceWater += delta
-        if (plant.secondsSinceWater >= definition.waterIntervalSeconds) {
-          plant.careNeeded = 'water'
-          continue
-        }
+        const stop = definition.care[plant.stopsDone]
         const nextGrowth = Math.min(1, plant.growth + delta / definition.growthSeconds)
-        if (definition.pruneAt !== null && !plant.pruned && nextGrowth >= definition.pruneAt) {
-          plant.growth = definition.pruneAt
-          plant.careNeeded = 'prune'
+        if (stop && nextGrowth >= stop.at) {
+          plant.growth = stop.at
+          plant.careNeeded = stop.kind
           continue
         }
         plant.growth = nextGrowth

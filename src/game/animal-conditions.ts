@@ -64,6 +64,8 @@ export interface ConditionRequirement {
  */
 const PLANT_METRIC_LABELS: Readonly<Record<string, string>> = {
   'water-lily': 'Lily pads in the pond',
+  clover: 'Clover patches',
+  dandelion: 'Dandelion patches',
 }
 
 function plantMetricLabel(plantId: string): string {
@@ -96,8 +98,14 @@ function speciesPlural(species: string): string {
   return species === 'sheep' ? 'sheep' : species === 'goose' ? 'geese' : `${species}s`
 }
 
+const PROP_PLURALS: Readonly<Record<string, string>> = {
+  oak: 'oak trees',
+  coop: 'chicken coops',
+  barn: 'small barns',
+}
+
 function propPlural(prop: string): string {
-  return `${prop} tree${prop === 'oak' ? 's' : ''}`
+  return PROP_PLURALS[prop] ?? `${prop}s`
 }
 
 /** True for the kinds that are a whole number of things rather than square meters. */
@@ -217,6 +225,14 @@ const COUNT_STAGE = (
   result: string,
 ): Omit<StageDefinition, 'stage'> => ({ title, hint, requirement, result })
 
+/** A visit that waits on plants: the animal only wanders in once its food is growing. */
+const ENTER_FOR_PLANTS = (plant: string, amount: number, hint: string): Omit<StageDefinition, 'stage'> => ({
+  title: 'Visit the farm',
+  hint,
+  requirement: { kind: 'plantCount', species: plant, amount },
+  result: 'Wanders inside the fence. Still wild, still deciding.',
+})
+
 const REQUIRE_RESIDENT = (species: string, name: string): Omit<StageDefinition, 'stage'> => ({
   title: 'Call the farm home',
   hint: `Likes what it sees here. Wants a ${name} already living on the farm.`,
@@ -287,7 +303,12 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       CARNIVAL,
       ENTER_FARM('Likes the look of the open plot, and comes over the fence to investigate.'),
       CALL_HOME('grassArea', 15, 'Wants a good stretch of tall grass to lie in.', 0.75),
-      LOVE_THE_FARM('grassArea', 30, 'Wants a bigger meadow than the one that settled it — twice the grass.', 0.75),
+      COUNT_STAGE(
+        'Love the farm',
+        'Wants twice the meadow, and a small barn to raise a calf in.',
+        { kind: 'grassArea', amount: 30, maturity: 0.75, and: [{ kind: 'propCount', species: 'barn', amount: 1 }] },
+        'Eyes go to hearts. Ready to court and breed.',
+      ),
     ]),
   },
   pig: {
@@ -302,17 +323,37 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
   sheep: {
     stages: withStageNumbers([
       CARNIVAL,
-      ENTER_FARM('Prefers gentle, open ground and comes in to graze.'),
-      CALL_HOME('flatArea', 12, 'Wants a flat, level patch to rest on.', 0.75),
-      LOVE_THE_FARM('grassArea', 24, 'Wants proper pasture — enough tall grass to be content.', 0.75),
+      ENTER_FOR_PLANTS('clover', 3, 'Smells clover on the breeze and comes in to graze: three grown clover patches.'),
+      COUNT_STAGE(
+        'Call the farm home',
+        'Wants a flat, level patch to rest on, and a small barn to shelter in.',
+        { kind: 'flatArea', amount: 12, maturity: 0.75, and: [{ kind: 'propCount', species: 'barn', amount: 1 }] },
+        'Paints into its own colors. A resident of the farm.',
+      ),
+      COUNT_STAGE(
+        'Love the farm',
+        'Wants proper pasture, and clover enough to keep a flock fed.',
+        { kind: 'grassArea', amount: 24, maturity: 0.75, and: [{ kind: 'plantCount', species: 'clover', amount: 4 }] },
+        'Eyes go to hearts. Ready to court and breed.',
+      ),
     ]),
   },
   chicken: {
     stages: withStageNumbers([
       CARNIVAL,
-      ENTER_FARM('Pokes its head over the fence and comes scrabbling in.'),
-      CALL_HOME('grassArea', 6, 'Wants a small grassy corner to scratch about in.', 0.75),
-      LOVE_THE_FARM('grassArea', 12, 'Wants company and a bit more lawn to range over.', 0.75),
+      ENTER_FOR_PLANTS('dandelion', 3, 'Comes scrabbling in for the seeds: three grown dandelion patches.'),
+      COUNT_STAGE(
+        'Call the farm home',
+        'Wants a small grassy corner to scratch about in, and a coop to roost in.',
+        { kind: 'grassArea', amount: 6, maturity: 0.75, and: [{ kind: 'propCount', species: 'coop', amount: 1 }] },
+        'Paints into its own colors. A resident of the farm.',
+      ),
+      COUNT_STAGE(
+        'Love the farm',
+        'Wants a second coop for the nesting boxes, and a bit more lawn to range over.',
+        { kind: 'propCount', species: 'coop', amount: 2, and: [{ kind: 'grassArea', amount: 12, maturity: 0.75 }] },
+        'Eyes go to hearts. Ready to court and breed.',
+      ),
     ]),
   },
   duck: {
@@ -345,8 +386,19 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
 /** Species that only come out after dark. They arrive, visit and hunt at night. */
 export const NIGHT_ONLY_SPECIES: readonly string[] = ['owl']
 
-/** Species that begin the game already turned up at the carnival. */
-export const CARNIVAL_STARTERS: readonly string[] = ['cow', 'sheep', 'chicken', 'duck']
+/**
+ * Species that begin the game already turned up at the carnival.
+ *
+ * Only the cow, which asks for nothing but grass. Sheep and chickens come when
+ * the plants they eat are growing (see `DISCOVERY`), so the farm fills up one
+ * animal at a time instead of all at once.
+ */
+export const CARNIVAL_STARTERS: readonly string[] = ['cow', 'duck']
+
+/** Whether a species only turns up after dark. Every other species arrives in daylight. */
+export function isNightOnly(species: string): boolean {
+  return NIGHT_ONLY_SPECIES.includes(species)
+}
 
 /**
  * How a species that did not start at the carnival first gets noticed.
@@ -356,6 +408,8 @@ export const CARNIVAL_STARTERS: readonly string[] = ['cow', 'sheep', 'chicken', 
  * the farm has to look like before that species wanders up to the tents.
  */
 export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonly description: string }>> = {
+  sheep: { kind: 'plantCount', species: 'clover', amount: 2, description: 'Clover on the breeze carries all the way to the tents.' },
+  chicken: { kind: 'plantCount', species: 'dandelion', amount: 2, description: 'Dandelion seed is a rumor every hen hears.' },
   pig: { kind: 'grassArea', amount: 8, description: 'A patch of grass catches the eye of something rooting around.' },
   goose: { kind: 'waterArea', amount: 5, description: 'Water somewhere on the farm draws the waddlers over.' },
   frog: { kind: 'waterArea', amount: 4, description: 'A little water is sure to bring something green and bouncy.' },

@@ -79,6 +79,20 @@ The game reads one thing from the model: the Empty named `OAK roost`, which sits
 side branch where the owl's talons go (`GLTFLoader` loads it as `OAK_roost`). Move the branch and the
 roost together. The prop budget is 8000 triangles; the leaf balloons are deliberately low-segment.
 
+## The small barn: shop prop
+
+- Authoring script: [`barn_prop.py`](barn_prop.py)
+- Source / portrait / runtime GLB: `../../public/assets/props/barn.blend`, `barn-review.png`, `barn.glb`
+- Thumbnail: `prop-barn.png`, made with `prop_thumbs.py -- barn`
+
+```powershell
+blender --background --factory-startup --python art/blender/barn_prop.py
+```
+
+Like the oak it is its own script, so it never rebuilds the other shop props. The
+door and gable face -Y in Blender, which is +Z (toward the camera) in the game.
+Seed packet icons, including the dandelion, come from `shed_icons.py`.
+
 ## UI props: source, contact sheet, GLBs
 
 - Authoring script: [`ui_props.py`](ui_props.py)
