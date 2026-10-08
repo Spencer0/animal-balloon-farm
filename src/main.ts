@@ -10,20 +10,28 @@ import { FARM_EXPANSION_CONFIG } from './game/farm-expansion'
 import { clearOfFarmBounds } from './game/animal-travel'
 import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker, type AccomplishmentDef, type AccomplishmentStage } from './game/accomplishments'
-import { startNextEarnedExpansion } from './game/progression-rewards'
+import {
+  createUpgradeLedger,
+  purchasePropAtLevel,
+  purchaseUpgrade,
+  upgradeQuote,
+  propUnlockLevel,
+  UPGRADE_CATALOG,
+  type UpgradeId,
+} from './game/tool-unlocks'
 import { type FarmSnapshot } from './game/animal-progress'
 import { farmMetric, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
-import { conditionMetricLabel, conditionMetricUnit, isCountKind, stageDefinition, type AnimalStage } from './game/animal-conditions'
+import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind, type AnimalStage } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
-import { createGardenProps, type GardenProps } from './scene/garden-props'
-import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, type PlantId, type PlantSubstrate } from './game/plants'
+import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
+import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
 import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
-import { animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
+import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
 import { createCameraTour, type CameraTour, type CameraTourSubject } from './game/camera-tour'
 import { cameraPanStep } from './game/camera-rig'
@@ -34,6 +42,7 @@ import { weekdayName } from './game/carnival-schedule'
 import { shopSite } from './game/shop-site'
 import type { ShopBuildReport } from './scene/shop-build'
 import { createClockCalendarHud } from './ui/clock-calendar-hud'
+import { createPlantCard } from './ui/plant-card'
 import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
@@ -42,6 +51,7 @@ import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
+import { createPropCard } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
@@ -398,9 +408,14 @@ function plantSurfaceAt(x: number, z: number) {
     substrate,
     waterDepth,
     coverage,
+    // Ground cover (clover, dandelions) wants short, peaceable lawn; the tall
+    // meadow pack grows past the cap and crowds it out.
+    tallGrass: gardenTools?.grassKindAt(x, z, GROUND_COVER_GRASS_RADIUS) === 'tall',
     inBounds: containsGardenPoint(x, z, currentGardenBounds),
   }
 }
+/** How far around a patch the lawn is checked for tall grass, in metres. */
+const GROUND_COVER_GRASS_RADIUS = 0.9
 if (fairground.gardenSurface && gardenTerrain && gardenWater) {
   const coverageCellSize = 0.58
   const coverageCells = new Map<string, number[]>()
@@ -451,7 +466,7 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
 
 /**
  * The arcade store stands at the treeline, past the fully expanded farm, so no
- * amount of growth can reach it. It unlocks with garden expansion #3 and is built
+ * amount of growth can reach it. It unlocks at farmer level 2 and is built
  * on site. The site and facing come from shop-site.ts, which the grove reads too.
  */
 let gardenProps: GardenProps | null = null
@@ -610,7 +625,9 @@ async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; 
   return animal
 }
 await Promise.all(progress.all().map((record) => createAnimalInstance(record)))
-  const wallet = createWallet()
+  const wallet = createWallet(STARTING_COINS)
+/** Tools and land the shop has sold. Farmer level decides what it will sell next. */
+const upgrades = createUpgradeLedger()
 
 // Individual residents and visitors are spawned from the pure animal-life records below.
 
@@ -996,6 +1013,7 @@ function updateAnimalProgress(deltaSeconds: number): void {
   const positions = Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }]))
   const events = progress.tick({ farm: currentFarmSnapshot(), expansionLevel: fairground.farmExpansion?.state.level ?? 0, positions }, deltaSeconds)
   handleAnimalLifeEvents(events)
+  noteJournalStages()
   const records = progress.all()
   const recordsById = new Map(records.map((record) => [record.id, record]))
   for (const record of records) {
@@ -1021,14 +1039,8 @@ function updateAnimalProgress(deltaSeconds: number): void {
   // already routes the promotion through the model's residency gate, which keeps
   // a settle that arrives out at the tents waiting until the walk-in is done.
   refreshAnimalCrowd(performance.now() / 1000)
-  const targetLevel = progression.level
-  if (fairground.farmExpansion && startNextEarnedExpansion({
-    get level() { return fairground.farmExpansion!.state.level },
-    get isAnimating() { return fairground.farmExpansion!.state.isAnimating },
-    expand: () => fairground.farmExpansion!.expand(),
-  }, targetLevel)) {
-    console.info(`[Animal Balloon Farm] earned expansion parcel ${fairground.farmExpansion.state.level}`)
-  }
+  // Land is no longer handed out for points: farmer level only opens the next
+  // Land Deed at the shop (see game/tool-unlocks.ts), and buying it expands.
 }
 
 // ---------------------------------------------------------------- game modes --
@@ -1101,6 +1113,37 @@ const toolsHud = createToolsHud(
   window.innerWidth,
   window.innerHeight,
 )
+
+/** Put the seeder's pack in the tool bar, and show the E chip once there is a second one. */
+function syncGrassPack(): void {
+  toolsHud.setGrassPack(gardenTools?.grassPack ?? 'short', upgrades.owns('tall-grass'))
+}
+
+/** E with the seed bag out swaps the blue lawn pack and the green meadow pack. */
+function swapGrassPack(): boolean {
+  if (!gardenTools || gardenTools.selectedTool !== 'grass' || !upgrades.owns('tall-grass')) return false
+  gardenTools.setGrassPack(gardenTools.grassPack === 'short' ? 'tall' : 'short')
+  syncGrassPack()
+  return true
+}
+
+// The meadow pack leaves ground cover alone. Plant positions change rarely and
+// the seeder asks per blade, so the patch list is cached for a moment.
+let coverPatches: { x: number; z: number }[] = []
+let coverPatchesAt = -Infinity
+gardenTools?.setTallGrassBlocker((x, z) => {
+  const now = performance.now()
+  if (now - coverPatchesAt > 250) {
+    coverPatchesAt = now
+    coverPatches = (gardenPlants?.simulation.plants ?? [])
+      .filter((plant) => plantSpecies(plant.species).groundCover)
+      .map((plant) => ({ x: plant.x, z: plant.z }))
+  }
+  return coverPatches.some((patch) => (patch.x - x) ** 2 + (patch.z - z) ** 2 < GROUND_COVER_GRASS_RADIUS ** 2)
+})
+
+syncGrassPack()
+
 const menu = createMenuPanel(handleMenuChoice, window.innerWidth, window.innerHeight, () => {
   syncFarmChrome()
 })
@@ -1129,8 +1172,10 @@ const viewer = createViewerPanel({
  * The card pins to the right of the balloon (flipping left at the edge).
  */
 function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }): void {
+  propCard.close()
   focusedAnimalId = animal.instanceId
   refreshAnimalCrowd(performance.now() / 1000, true)
+  plantCard.close()
   gardenPlants?.clearSelection()
   const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
   // A preview renders states the live ladder cannot hold on demand (a
@@ -1241,6 +1286,63 @@ const animalCard = createAnimalCard({
   },
 }, window.innerWidth, window.innerHeight)
 
+/**
+ * The prop info card. `selectedProp` outlives the card closing on purpose: a
+ * button press closes the card first and then runs its action.
+ */
+let selectedProp: PropSelection | null = null
+const propCard = createPropCard({
+  onMove: () => {
+    if (!selectedProp || !gardenProps?.beginMove(selectedProp)) return
+    gardenPlants?.cancelPlacement()
+    gardenTools?.setPlantingMode(false)
+    shed.setPlacementActive(true)
+    syncFarmChrome()
+  },
+  onStore: () => {
+    if (!selectedProp || !gardenProps?.store(selectedProp)) return
+    shedDom.refresh()
+    syncFarmChrome()
+  },
+  onSell: () => {
+    const sold = selectedProp
+    const coins = sold && gardenProps ? gardenProps.sell(sold) : null
+    if (!sold || coins === null) return false
+    salePanel.setWallet(wallet.credit(coins))
+    const burst = createSellBurst(new THREE.Vector3(sold.anchor.x, sold.anchor.y, sold.anchor.z), coins)
+    scene.add(burst.root)
+    sellBursts.push(burst)
+    shedDom.refresh()
+    syncFarmChrome()
+    return true
+  },
+  onToggle: (isOpen) => {
+    if (!isOpen) gardenProps?.select(null)
+    refreshCursor()
+  },
+}, window.innerWidth, window.innerHeight)
+
+/** Pin the prop card beside a placed prop and highlight it on the lawn. */
+function openPropCardFor(selection: PropSelection): void {
+  animalCard.close()
+  plantCard.close()
+  salePanel.close()
+  gardenPlants?.clearSelection()
+  selectedProp = selection
+  gardenProps?.select(selection)
+  const ndc = new THREE.Vector3(selection.anchor.x, selection.anchor.y, selection.anchor.z).project(camera)
+  propCard.open({
+    id: selection.id,
+    name: selection.name,
+    blurb: selection.blurb,
+    sections: selection.sections,
+    salePrice: selection.salePrice,
+    movable: selection.movable,
+    rotatable: selection.rotatable,
+  }, { x: ndc.x * ui.viewport.width / 2, y: ndc.y * ui.viewport.height / 2 })
+  syncFarmChrome()
+}
+
 const shed = createShedPanel(window.innerWidth, window.innerHeight, (isShedOpen) => {
   shedDom.setOpen(isShedOpen)
   syncFarmChrome()
@@ -1251,6 +1353,9 @@ const shedDom: ShedDomPanel = createShedDomPanel({
   onPlant: (species: PlantId) => {
     if (!gardenPlants) return
     shed.close()
+    // Planting, watering and pruning all ride on the Hand tool. Hand it back
+    // before arming the seed, or the click lands on a farm tool and is lost.
+    if (toolsHud.selectedTool !== 'hand') selectGardenTool('hand')
     gardenTools?.setPlantingMode(true)
     gardenPlants.selectSpecies(species)
     shed.setPlacementActive(true)
@@ -1261,6 +1366,7 @@ const shedDom: ShedDomPanel = createShedDomPanel({
   onPlace: (id: PropId) => {
     if (!gardenProps) return
     shed.close()
+    if (toolsHud.selectedTool !== 'hand') selectGardenTool('hand')
     gardenProps.beginPlacement(id)
     gardenPlants?.cancelPlacement()
     gardenTools?.setPlantingMode(false)
@@ -1279,6 +1385,30 @@ function refreshShopUi(): void {
   shop.refresh()
 }
 
+function buyUpgrade(id: UpgradeId): { ok: boolean; text: string } {
+  const definition = UPGRADE_CATALOG[id]
+  const expansion = fairground.farmExpansion
+  if (id === 'land-deed' && (!expansion || expansion.state.isAnimating)) {
+    return { ok: false, text: 'The surveyors are still marking out the last parcel. Give them a moment.' }
+  }
+  const quote = upgradeQuote(id, upgrades, progression.level)
+  const result = purchaseUpgrade(wallet, upgrades, id, progression.level)
+  if (!result.ok) {
+    if (result.failure === 'maxed') return { ok: false, text: `You already own every ${definition.name}.` }
+    if (result.failure === 'locked') return { ok: false, text: `Pip will sell you this at farmer level ${quote.requiredLevel + 1}.` }
+    return { ok: false, text: `Not enough coins for the ${definition.name} -- it costs ${quote.price}.` }
+  }
+  salePanel.setWallet(wallet.balance)
+  if (id === 'land-deed') {
+    expansion?.expand()
+    refreshShopUi()
+    return { ok: true, text: 'Deed signed -- a new strip of land opens up.' }
+  }
+  syncGrassPack()
+  refreshShopUi()
+  return { ok: true, text: 'The green pack is yours. Press E with the seed bag out to swap packs.' }
+}
+
 const shop: ShopDomPanel = createShopDomPanel({
   onClose: () => {
     shop.setOpen(false)
@@ -1287,7 +1417,7 @@ const shop: ShopDomPanel = createShopDomPanel({
   },
   onBuy: (id: PropId) => {
     if (!gardenProps) return { ok: false, text: 'The shopkeeper is still unpacking.' }
-    const result = purchaseProp(wallet, gardenProps.inventory, id)
+    const result = purchasePropAtLevel(wallet, gardenProps.inventory, id, progression.level)
     if (result.ok) {
       salePanel.setWallet(wallet.balance)
       shedDom.refresh()
@@ -1297,9 +1427,26 @@ const shop: ShopDomPanel = createShopDomPanel({
       ok: result.ok,
       text: result.ok
         ? 'Shed stock updated -- Pip slides it across the counter.'
-        : `Not enough coins for the ${PROP_CATALOG[id].name} -- it costs ${PROP_CATALOG[id].price}.`,
+        : result.locked
+          ? `Pip does not stock the ${PROP_CATALOG[id].name} for you yet -- reach farmer level ${result.requiredLevel + 1}.`
+          : `Not enough coins for the ${PROP_CATALOG[id].name} -- it costs ${PROP_CATALOG[id].price}.`,
     }
   },
+  onBuySeed: (species: PlantId) => {
+    const name = PLANT_CATALOG.find((entry) => entry.id === species)?.name ?? 'Seed'
+    const price = SEED_PRICES[species]
+    if (!gardenPlants || wallet.debit(price) === null) {
+      return { ok: false, text: `Not enough coins for ${name} seed -- it costs ${price}.` }
+    }
+    gardenPlants.simulation.addSeeds(species, 1)
+    salePanel.setWallet(wallet.balance)
+    shedDom.refresh()
+    shop.refresh()
+    return { ok: true, text: `One ${name} seed tucked into the shed.` }
+  },
+  farmerLevel: () => progression.level,
+  quoteUpgrade: (id: UpgradeId) => upgradeQuote(id, upgrades, progression.level),
+  onBuyUpgrade: (id: UpgradeId) => buyUpgrade(id),
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
   seedsFor: (species) => gardenPlants?.simulation.seedsFor(species) ?? 0,
   balance: () => wallet.balance,
@@ -1379,7 +1526,86 @@ function balloonInboxAnchor(): { x: number; y: number } {
   }
 }
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, clockCalendarHud]
+/**
+ * The plant info card: the animal card's twin. Clicking a plant pins it beside
+ * the plant with its growth, what it needs, and Sell / Journal buttons.
+ */
+const plantCard = createPlantCard({
+  onSell: (target) => {
+    const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === target.instanceId)
+    if (!plant || !gardenPlants?.removePlant(target.instanceId)) return null
+    const price = plantSaleValue(plant.species, plant.growth)
+    const balance = wallet.credit(price)
+    salePanel.setWallet(balance)
+    shedDom.refresh()
+    plantCard.close()
+    syncFarmChrome()
+    refreshCursor()
+    return { balance, price }
+  },
+  onJournal: (speciesId) => {
+    plantCard.close()
+    journal.openToSpecies('')
+    journalDom.selectPlant(speciesId)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  // Pinned note, not a modal: it never hides the tool bar or pauses the farm.
+  // Closing it drops the plant's selection ring.
+  onToggle: (isOpen) => {
+    if (!isOpen) gardenPlants?.clearSelection()
+    refreshCursor()
+  },
+}, window.innerWidth, window.innerHeight)
+
+function openPlantCardFor(plant: GardenPlant): void {
+  propCard.close()
+  const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
+  const anchorWorld = new THREE.Vector3(plant.x, GARDEN_LAWN_Y + 1.4, plant.z)
+  const anchorNdc = anchorWorld.project(camera)
+  gardenPlants?.cancelPlacement()
+  gardenTools?.setPlantingMode(false)
+  shed.setPlacementActive(false)
+  plantCard.open({
+    instanceId: plant.instanceId,
+    speciesId: plant.species,
+    name: `${species?.name ?? 'Plant'} ${gardenPlants?.selectedPlantNumber ?? 1}`,
+    speciesLabel: species?.subtitle ?? 'Plant',
+    growth: plant.growth,
+    care: plant.careNeeded,
+    price: plantSaleValue(plant.species, plant.growth),
+  }, { x: anchorNdc.x * ui.viewport.width / 2, y: anchorNdc.y * ui.viewport.height / 2 })
+  syncFarmChrome()
+}
+
+let plantCardSyncTimer = 0
+function syncPlantCard(deltaSeconds: number): void {
+  if (!plantCard.isOpen) return
+  plantCardSyncTimer += deltaSeconds
+  if (plantCardSyncTimer < 0.25) return
+  plantCardSyncTimer = 0
+  const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantCard.instanceId)
+  if (!plant) {
+    plantCard.close()
+    return
+  }
+  plantCard.sync({ growth: plant.growth, care: plant.careNeeded, price: plantSaleValue(plant.species, plant.growth) })
+}
+
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, plantCard, propCard, clockCalendarHud]
+
+/**
+ * The furthest rung each species has reached this session. The journal is a
+ * record of what the player has met, so selling the last cow must not turn her
+ * page back into "???" -- the page is read from here, not from a live animal.
+ */
+const journalBestStage = new Map<string, number>()
+
+function noteJournalStages(): void {
+  for (const record of progress.all()) {
+    if (record.stage > (journalBestStage.get(record.species) ?? 0)) journalBestStage.set(record.species, record.stage)
+  }
+}
 
 /**
  * Hand the journal a live view of the condition ladder.
@@ -1390,42 +1616,38 @@ const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, vie
  */
 const journalConditionsSource: JournalConditionSource = {
   get: (species) => {
-    const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
-    if (!animal) return null
-    const conditions = progress.statusOf(animal.instanceId)
-    const rows = conditions.map((definition, index) => ({
-      ...definition,
-      revealed: index <= (progress.animal(animal.instanceId)?.stage ?? 0),
-      current: definition.requirement && definition.requirement.kind !== 'residentSpecies'
-        ? farmMetric(measureFarm(), definition.requirement.kind, definition.requirement.species)
-        : null,
-      target: definition.requirement?.amount ?? null,
-      met: index < (progress.animal(animal.instanceId)?.stage ?? 0),
-      // Area rows keep their old unlabeled look; plant and predator rows name what they count.
-      metricLabel: isCountKind(definition.requirement?.kind) ? definition.metricLabel : null,
-    }))
-    if (!rows.length) return null
+    noteJournalStages()
+    const stage = journalBestStage.get(species) ?? 0
+    if (stage < 1) return null
+    const farm = measureFarm()
+    const definitions = getSpeciesConditions(species)
+    if (!definitions.length) return null
     return {
-      stage: progress.animal(animal.instanceId)?.stage ?? 0,
-      rows: rows.map((row) => {
-        const definition = stageDefinition(animal.id, row.stage as 0 | 1 | 2 | 3 | 4)
+      stage,
+      rows: definitions.map((definition) => {
+        const requirement = definition.requirement
+        const isNumeric = requirement !== null && requirement.kind !== 'residentSpecies'
         // A social condition has no area to meter, so name the friend instead.
-        const wantsSpecies = row.requirement?.kind === 'residentSpecies' ? row.requirement.species : undefined
+        const wantsSpecies = requirement?.kind === 'residentSpecies' ? requirement.species : undefined
+        const revealed = definition.stage <= stage + 1
+        const labelled = isCountKind(requirement?.kind)
         return {
-          stage: row.stage,
-          title: row.title,
-          revealed: row.revealed,
-          current: row.current,
-          target: row.target,
-          met: row.met,
-          result: row.result,
-          hint: definition?.hint ?? '',
-          ...(row.metricLabel ? { metricLabel: row.metricLabel } : {}),
-          ...(row.metricLabel ? { metricUnit: conditionMetricUnit(definition?.requirement ?? null) } : {}),
-          ...(row.revealed && definition?.requirement?.and?.length ? {
-            alsoNeeds: definition.requirement.and.map((also) => ({
+          stage: definition.stage,
+          title: definition.title,
+          revealed,
+          current: isNumeric ? farmMetric(farm, requirement.kind, requirement.species) : null,
+          target: requirement?.amount ?? null,
+          met: definition.stage <= stage,
+          result: definition.result,
+          hint: definition.hint,
+          ...(requirement ? { requirementKind: requirement.kind, ...(requirement.species ? { requirementSpecies: requirement.species } : {}) } : {}),
+          // Area rows keep their old unlabeled look; plant and predator rows name what they count.
+          ...(isNumeric && labelled ? { metricLabel: conditionMetricLabel(requirement) ?? undefined } : {}),
+          ...(isNumeric && labelled ? { metricUnit: conditionMetricUnit(requirement) } : {}),
+          ...(revealed && requirement?.and?.length ? {
+            alsoNeeds: requirement.and.map((also) => ({
               label: conditionMetricLabel(also) ?? 'Also needed',
-              current: farmMetric(measureFarm(), also.kind, also.species),
+              current: farmMetric(farm, also.kind, also.species),
               target: also.amount ?? 1,
             })),
           } : {}),
@@ -1440,7 +1662,7 @@ const journalConditionsSource: JournalConditionSource = {
       }),
     }
   },
-};
+}
 journal.setConditionsSource(journalConditionsSource)
 journalDom.setConditionsSource(journalConditionsSource)
 
@@ -1450,15 +1672,7 @@ const lastPointerClient = { x: -1, y: -1 }
 for (const panel of panels) ui.add(panel)
 
 function selectGardenTool(id: GardenToolId): void {
-  // Space toggles the camera: pressing it again hands the farm back to the
-  // Hand tool rather than leaving the framing mode armed. The tool bar has
-  // already updated its own selection by the time it calls back here, so the
-  // genuinely-before tool is the one the garden tools still hold.
-  if (id === 'camera' && gardenTools?.selectedTool === 'camera') {
-    selectGardenTool('hand')
-    return
-  }
-  if (id !== 'camera') endCameraTour(true)
+  endCameraTour(true)
   gardenPlants?.cancelPlacement()
   gardenProps?.cancelPlacement()
   shed.setPlacementActive(false)
@@ -1466,7 +1680,7 @@ function selectGardenTool(id: GardenToolId): void {
   if (gardenTools) {
     // Tapping the active tool's hotkey again cycles its brush size rather than
     // re-selecting what is already selected. Hand has no brush size to cycle.
-    if (gardenTools.selectedTool === id && id !== 'hand' && id !== 'camera') gardenTools.cycleBrushSize()
+    if (gardenTools.selectedTool === id && id !== 'hand') gardenTools.cycleBrushSize()
     else if (gardenTools.selectedTool !== id) gardenTools.selectTool(id)
   }
   toolsHud.setSelectedTool(id)
@@ -1491,6 +1705,8 @@ function setMode(next: GameMode): void {
   if (next !== 'farm') {
     salePanel.close()
     animalCard.close()
+    propCard.close()
+    plantCard.close()
     shed.close()
     shed.setPlacementActive(false)
     shop.setOpen(false)
@@ -1593,7 +1809,7 @@ syncFarmChrome()
 if (lastPointerClient.x < 0) {
   // No pointer has entered the window yet, so nothing to place. Once it does,
   // the first move resolves the cursor.
-  setCursor('hand', gameCanvas)
+  setCursor('idle', gameCanvas)
 }
 
 // ------------------------------------------------------------- camera tool --
@@ -1623,12 +1839,7 @@ const tourLookAt = new THREE.Vector3()
 const tourDesiredLookAt = new THREE.Vector3()
 const tourOffset = new THREE.Vector3()
 
-/** Is the camera tool the one in hand, i.e. are its gestures armed? */
-function cameraToolSelected(): boolean {
-  return toolsHud.selectedTool === 'camera'
-}
-
-/** The tools that edit the farm. Hand selects, camera frames; neither digs. */
+/** The tools that edit the farm. Hand selects; it never digs. */
 function isWorldToolActive(): boolean {
   const tool = toolsHud.selectedTool
   return tool === 'grass' || tool === 'shovel' || tool === 'water'
@@ -1743,7 +1954,7 @@ function pointerDesign(event: PointerEvent) {
  */
 function updateCursor(point: DesignPoint | null): void {
   if (!point) {
-    setCursor('hand', gameCanvas)
+    setCursor('idle', gameCanvas)
     return
   }
   if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen) {
@@ -1757,18 +1968,12 @@ function updateCursor(point: DesignPoint | null): void {
       return
     }
   }
-  // The camera tool turns the pointer into a camera wherever it is over the
-  // farm itself; the panels above still get to keep their own pointer.
-  if (cameraToolSelected() && mode === 'farm' && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
-    setCursor('camera', gameCanvas)
-    return
-  }
   if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen) {
     const markerKind = gardenPlants?.markerKindAt(lastPointerClient.x, lastPointerClient.y)
     if (markerKind) {
       setCursor(toolsHud.selectedTool === 'hand'
         ? markerKind === 'water' ? 'water' : markerKind === 'prune' ? 'prune' : 'point'
-        : 'hand', gameCanvas)
+        : 'idle', gameCanvas)
       return
     }
 
@@ -1777,7 +1982,7 @@ function updateCursor(point: DesignPoint | null): void {
       return
     }
   }
-  if (toolsHud.selectedTool !== 'hand' && !cameraToolSelected() && !gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
+  if (toolsHud.selectedTool !== 'hand' && !gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
     // A tool stroke lags the pointer by design (drag speed cap), so the OS
     // pointer stays visible mid-stroke: it marks the real mouse while the
     // ring marks where the tool actually works. Without it the mouse goes
@@ -1789,7 +1994,16 @@ function updateCursor(point: DesignPoint | null): void {
     setCursor('hidden', gameCanvas)
     return
   }
-  setCursor('hand', gameCanvas)
+  // The Hand tool is the pointer: anything it can open, hatch or open the door
+  // of gets the excited bee, and bare ground keeps the resting one.
+  if (toolsHud.selectedTool === 'hand' && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen
+    && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
+    && (pickEgg(lastPointerClient.x, lastPointerClient.y) || pickAnimal(lastPointerClient.x, lastPointerClient.y)
+      || gardenProps?.pickShop(lastPointerClient.x, lastPointerClient.y))) {
+    setCursor('point', gameCanvas)
+    return
+  }
+  setCursor('idle', gameCanvas)
 }
 
 function uiPointerDown(event: PointerEvent): boolean {
@@ -1844,6 +2058,8 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
     || shed.contains(point)
     || salePanel.hitTest?.(point)
     || animalCard.hitTest?.(point)
+    || propCard.hitTest?.(point)
+    || plantCard.hitTest?.(point)
   ))
 }
 
@@ -1940,30 +2156,6 @@ function orbitPointerDown(event: PointerEvent): void {
   if (uiPointerDown(event)) return
   if (menu.isOpen || mode === 'viewer') return
   const selectedTool = gardenTools?.selectedTool ?? 'hand'
-  // The camera tool owns every button it can reach; no farm tool sees these.
-  if (cameraToolSelected() && !isOverGameHUD(event.clientX, event.clientY)) {
-    if (event.button === 0) {
-      event.preventDefault()
-      // A drag takes the camera over from a tour at the pose the tour reached.
-      endCameraTour(false)
-      dragPointer = event.pointerId
-      dragMode = 'orbit'
-      previousPointer = { x: event.clientX, y: event.clientY }
-      if (event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
-      return
-    }
-    if (event.button === 1) {
-      event.preventDefault()
-      resetCameraToStart()
-      return
-    }
-    if (event.button === 2) {
-      event.preventDefault()
-      if (cameraTour) endCameraTour(true)
-      else beginCameraTour()
-      return
-    }
-  }
   if (event.button === 0 && selectedTool === 'hand' && !isOverGameHUD(event.clientX, event.clientY)) {
     // Placement owns the click outright while a prop is on the ghost.
     if (gardenProps?.placingId) {
@@ -1971,6 +2163,7 @@ function orbitPointerDown(event: PointerEvent): void {
       gardenProps.pointerMove(event)
       gardenProps.pointerDown(event)
       gardenProps.update(0)
+      if (!gardenProps.placingId) shed.setPlacementActive(false)
       shedDom.refresh()
       syncFarmChrome()
       return
@@ -1992,16 +2185,16 @@ function orbitPointerDown(event: PointerEvent): void {
         }
         return
       }
-      // Hand-tool pick-up first, then the shop door. Both are the same grab the
-      // sale panel already trained the player to make.
-      if (gardenProps?.pickUpAt(event.clientX, event.clientY)) {
-        shedDom.refresh()
-        syncFarmChrome()
+      // A placed prop opens its info card (move, store or sell); then the shop door.
+      const propHit = gardenProps?.inspectAt(event.clientX, event.clientY)
+      if (propHit) {
+        openPropCardFor(propHit)
         return
       }
       if (gardenProps?.pickShop(event.clientX, event.clientY)) {
         salePanel.close()
         animalCard.close()
+        propCard.close()
         gardenProps?.cancelPlacement()
         gardenPlants?.cancelPlacement()
         gardenTools?.setPlantingMode(false)
@@ -2025,15 +2218,10 @@ function orbitPointerDown(event: PointerEvent): void {
     }
     const plant = gardenPlants?.selectAt(event.clientX, event.clientY)
     if (plant) {
-      const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
-      salePanel.open({
-        id: String(plant.instanceId),
-        kind: 'plant',
-        name: `${species?.name ?? 'Plant'} ${gardenPlants?.selectedPlantNumber ?? 1}`,
-        detail: plant.mature ? 'Fully grown' : `${Math.round(plant.growth * 100)}% grown`,
-        price: plantSaleValue(plant.species, plant.growth),
-      })
-      syncFarmChrome()
+      propCard.close()
+      animalCard.close()
+      focusedAnimalId = null
+      openPlantCardFor(plant)
       return
     }
   }
@@ -2129,6 +2317,7 @@ function orbitPointerUp(event: PointerEvent): void {
   uiPointerUp(event)
   if (gardenProps?.placingId) {
     gardenProps.pointerUp()
+    if (!gardenProps.placingId) shed.setPlacementActive(false)
     shedDom.refresh()
     syncFarmChrome()
   }
@@ -2197,7 +2386,7 @@ function handleKeyDown(event: KeyboardEvent): void {
   if (gardenProps?.placingId && !menu.isOpen && !journal.isOpen) {
     if (event.key.toLowerCase() === 'r' && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault()
-      gardenProps.rotate()
+      gardenProps.rotate(event.shiftKey ? -1 : 1)
       return
     }
     if (event.key === 'Escape') {
@@ -2217,6 +2406,10 @@ function handleKeyDown(event: KeyboardEvent): void {
     return
   }
   const key = event.key.toLowerCase()
+  if (key === 'e' && !event.repeat && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && swapGrassPack()) {
+    event.preventDefault()
+    return
+  }
   if (key === '1') {
     event.preventDefault()
     selectGardenTool('hand')
@@ -2234,9 +2427,10 @@ function handleKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  if (event.key === 'Escape' && (salePanel.isOpen || animalCard.isOpen)) {
+  if (event.key === 'Escape' && (salePanel.isOpen || animalCard.isOpen || plantCard.isOpen)) {
     salePanel.close()
     animalCard.close()
+    plantCard.close()
     syncFarmChrome()
     event.preventDefault()
     return
@@ -2349,12 +2543,16 @@ gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
 shed.resize(window.innerWidth, window.innerHeight)
 salePanel.resize(window.innerWidth, window.innerHeight)
 animalCard.resize(window.innerWidth, window.innerHeight)
+propCard.resize(window.innerWidth, window.innerHeight)
+plantCard.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
   ui.resize(window.innerWidth, window.innerHeight)
   shed.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
   animalCard.resize(window.innerWidth, window.innerHeight)
+  propCard.resize(window.innerWidth, window.innerHeight)
+  plantCard.resize(window.innerWidth, window.innerHeight)
   balloon.resize(window.innerWidth, window.innerHeight)
 })
 
@@ -2381,6 +2579,8 @@ interface GardenDebugHarness {
    * validates the live animal.
    */
   animalCard(id: string, preview?: { stage?: number; sellable?: boolean }): unknown
+  /** Open the plant info card for a planted instance (default: the first one). */
+  plantCard(instanceId?: number): unknown
   /** Direct water/terrain controls for repeatable visual checks, compiled out in production. */
   digAt(x: number, z: number, radius: number, amount: number): number
   pourAt(x: number, z: number, radius: number, amount: number): unknown
@@ -2415,7 +2615,7 @@ interface GardenDebugHarness {
    */
   setStage(species: string, stage: number): AnimalConditionReport
   /** Sow a disc of grass, in the same units the cow's 15 m2 is measured in. */
-  sowGrass(x: number, z: number, radius: number): FarmState
+  sowGrass(x: number, z: number, radius: number, pack?: 'short' | 'tall'): FarmState
   /** Dig a pond of the given radius, which is what the water conditions want. */
   digPond(x: number, z: number, radius: number): FarmState
   /**
@@ -2515,6 +2715,10 @@ interface GardenDebugHarness {
   resetCamera(): void
   /** Put coins in the wallet without farming for them, so the shop can be driven. */
   grantCoins(amount: number): number
+  /** Award progression points outright, e.g. 500 reaches farmer level 10. */
+  grantPoints(points: number): { points: number; level: number }
+  /** Put `count` seeds of every plant in the shed. */
+  grantSeeds(count: number): void
   /** Open the storefront screen without walking up to the building. */
   shop(): void
   /** Open the shed inventory without clicking the 3D shed. */
@@ -2525,8 +2729,18 @@ interface GardenDebugHarness {
   balloon(): unknown
   /** Open the player panel without clicking the balloon. */
   player(): unknown
-  /** Buy one prop from the shared wallet, exactly as the Buy button does. */
+  /** Buy one prop from the shared wallet. Skips the farmer-level gate, like grantCoins skips earning. */
   buy(id: string): unknown
+  /** Buy a shop upgrade ('tall-grass' | 'land-deed') through the same rules as the Upgrades tab. */
+  buyUpgrade(id: string): { readonly ok: boolean; readonly text: string }
+  /** Upgrades owned, farmer level, and what the shop would charge for each next one. */
+  upgrades(): Record<string, unknown>
+  /** Hand out progression points without playing for them, to reach a farmer level. */
+  awardPoints(points: number): { readonly points: number; readonly level: number }
+  /** Step the brush forward without waiting on rendered frames, for holding the seeder in a headless check. */
+  stepTools(seconds: number, secondsPerStep?: number): void
+  /** Press E: swap the seeder between the blue short pack and the green tall pack. */
+  swapPack(): string
   propCounts(): Record<string, number>
   placeProp(id: string, cellX: number, cellZ: number, rotation?: number): unknown
   placeFence(fromX: number, fromZ: number, toX: number, toZ: number): unknown
@@ -2873,8 +3087,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       refreshAnimalCrowd(performance.now() / 1000, true)
       return reportConditions()
     },
-    sowGrass: (x, z, radius) => {
-      gardenTools?.sowGrassDisc(x, z, radius)
+    sowGrass: (x, z, radius, pack) => {
+      gardenTools?.sowGrassDisc(x, z, radius, pack ?? gardenTools.grassPack)
       return measureFarm()
     },
     digPond: (x, z, radius) => {
@@ -2913,6 +3127,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     resetConditions: () => {
       gardenTools?.clearGrass()
+      upgrades.reset()
+      gardenTools?.setGrassPack('short')
+      syncGrassPack()
       progress.reset()
       progression.reset()
       accomplishments.reset()
@@ -3072,7 +3289,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       conditions: 'Every species ladder rung + live numbers.',
       setStage: 'setStage(species, 0-4) — force a rung and play its transition.',
       'advance / simulate': 'Tick progression without waiting (advance) or without browser time (simulate).',
-      resetConditions: 'Forget everything: clears garden, herd, fixtures, progression.',
+      resetConditions: 'Forget everything: clears garden, herd, fixtures, progression, upgrades.',
+      'upgrades / buyUpgrade / awardPoints / swapPack / stepTools': 'Farmer level, shop upgrades (tall grass pack, land deeds), and the E pack swap.',
       'sowGrass / digPond / digAt / pourAt / clearGarden': 'Terrain + water fixtures in garden meters.',
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
@@ -3083,6 +3301,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       'selectTool / projectGardenPoint': 'Arm a tool; project garden meters to canvas pixels for pointer tests.',
       'animalReport / rendering': 'Herd list; live counts + crowd stats.',
       hatch: 'Hatch a ready egg by id.',
+      'grantPoints / grantSeeds': 'Jump progression level / stock the seed shed without playing.',
       'grantCoins / shop / buy / placeProp / placeFence / propCounts': 'Wallet + prop placement without UI clicks.',
       crowdStressTest: 'crowdStressTest(n) — one render of n fixtures; returns calls/tris. Restores after.',
       'setCrowd / clearCrowd': 'setCrowd(n) keeps n fixtures live for sustained ramps; clearCrowd restores.',
@@ -3151,6 +3370,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
         for (let step = 0; step < 160; step += 1) fairground.update(.5, dayNightClock.elapsedDays)
         guard += 1
       }
+      upgrades.set('land-deed', expansion.state.level)
       currentGardenBounds = expansion.state.bounds
       gardenTerrain?.syncBounds()
       gardenTerrain?.applyToMeshes()
@@ -3228,6 +3448,15 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     startTour: (seed) => beginCameraTour(seed),
     endTour: (restore = true) => { endCameraTour(restore) },
     resetCamera: () => { resetCameraToStart() },
+    grantPoints: (points) => {
+      progression.awardPoints(`debug-grant-${progression.points}-${Math.floor(points)}`, points)
+      return { points: progression.points, level: progression.level }
+    },
+    grantSeeds: (count) => {
+      for (const plant of PLANT_CATALOG) gardenPlants?.simulation.addSeeds(plant.id, count)
+      shedDom.refresh()
+      shop.refresh()
+    },
     grantCoins: (amount) => {
       const balance = wallet.credit(amount)
       salePanel.setWallet(balance)
@@ -3251,6 +3480,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       openAnimalCardFor(animal, preview)
       return animalCard.describe?.() ?? null
     },
+    plantCard: (instanceId) => {
+      const plant = gardenPlants?.simulation.plants.find((entry) => instanceId === undefined || entry.instanceId === instanceId)
+      if (!plant) return null
+      openPlantCardFor(plant)
+      return plantCard.describe?.() ?? null
+    },
     player: () => {
       playerDom.refresh(playerDomStats())
       playerDom.setOpen(true)
@@ -3263,6 +3498,30 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       notificationDom.setOpen(true, balloonInboxAnchor())
       syncFarmChrome()
       return { open: notificationDom.isOpen }
+    },
+    buyUpgrade: (id) => {
+      if (!(id in UPGRADE_CATALOG)) return { ok: false, text: `Unknown upgrade ${id}.` }
+      return buyUpgrade(id as UpgradeId)
+    },
+    upgrades: () => ({
+      farmerLevel: progression.level,
+      pack: gardenTools?.grassPack ?? 'short',
+      parcels: fairground.farmExpansion?.state.level ?? 0,
+      quotes: Object.fromEntries((Object.keys(UPGRADE_CATALOG) as UpgradeId[]).map((id) => [id, upgradeQuote(id, upgrades, progression.level)])),
+      propLevels: Object.fromEntries((Object.keys(PROP_CATALOG) as PropId[]).map((id) => [id, propUnlockLevel(id)])),
+    }),
+    awardPoints: (points) => {
+      progression.awardPoints(`debug-${progression.points}-${points}`, Math.max(0, Math.floor(points)))
+      refreshShopUi()
+      return { points: progression.points, level: progression.level }
+    },
+    stepTools: (seconds, secondsPerStep = 0.05) => {
+      const steps = Math.max(0, Math.min(2400, Math.round(seconds / secondsPerStep)))
+      for (let index = 0; index < steps; index += 1) gardenTools?.update(secondsPerStep)
+    },
+    swapPack: () => {
+      swapGrassPack()
+      return gardenTools?.grassPack ?? 'short'
     },
     buy: (id) => {
       if (!gardenProps) return null
@@ -3429,7 +3688,8 @@ function frame(now: number): void {
     }
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
-  gardenProps?.update(delta, fairground.farmExpansion?.level ?? 0)
+  syncPlantCard(delta)
+  gardenProps?.update(delta, progression.level)
   const matureIds = new Set<number>()
   for (const plant of gardenPlants?.simulation.plants ?? []) {
     if (!plant.mature) continue

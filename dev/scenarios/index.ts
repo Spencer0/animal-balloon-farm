@@ -1,4 +1,5 @@
 import type { Scenario, ScenarioHarness } from './types'
+import { farmer10 } from './sandbox/farmer-10'
 import { breedReady } from './owl/breed-ready'
 import { firstNight } from './owl/first-night'
 import { huntNow } from './owl/hunt-now'
@@ -12,7 +13,7 @@ import { sleepingByDumpster } from './raccoon/sleeping-by-dumpster'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
-  firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium,
+  farmer10, firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium,
   raccoonFirstNight, sleepingByCan, sleepingByDumpster, raccoonBreedReady,
 ]
 

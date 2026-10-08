@@ -5,6 +5,7 @@ import { clampToFarm, containsFarmPoint } from '../game/farm-footprint'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
+import { lowestClipPoseY } from './animal-grounding'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
 import { advanceAnimalTravel, canAnimalLeaveFarm, clearOfFarmBounds, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
@@ -514,8 +515,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         posePivot.position.copy(center)
         modelRoot.position.sub(center)
         wrapper.updateMatrixWorld(true)
-        const groundedBounds = getLocalBounds(wrapper, modelRoot)
-        posePivot.position.y -= groundedBounds.min.y
+        // Ground on the lowest point the clips reach, not the bind pose (see lowestClipPoseY).
+        const detailRoot: THREE.Group = modelRoot
+        posePivot.position.y -= lowestClipPoseY(detailRoot, mixer, asset.animations, () => getLocalBounds(wrapper, detailRoot).min.y)
         if (options.flier) {
           // A flier has to sit exactly on its perch, so ground the pose it will
           // actually wear: the clips lift the rig to its standing height, which the
@@ -594,6 +596,16 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     return containsFarmPoint(wrapper.position.x, wrapper.position.z, bounds, RESIDENT_INSIDE_MARGIN)
   }
 
+  /**
+   * How long a visitor stays on a side of the gate. A visitor pokes its head
+   * into the plot and ambles back out, so its time inside is short; the time
+   * out at the tents is longer so visits read as comings and goings.
+   */
+  function visitCooldown(side: 'carnival' | 'farm'): number {
+    if (stage >= 3) return 28 + random() * 18
+    return side === 'farm' ? 4.5 + random() * 3.5 : 9 + random() * 8
+  }
+
   function beginTravel(direction: 'enter' | 'leave'): void {
     // Fliers cross the fence by air; there is no gate route for them.
     if (options.flier) {
@@ -607,7 +619,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       travelSide = 'farm'
       travelDirection = null
       travelRoute = null
-      travelCooldown = stage >= 3 ? 28 + random() * 18 : 8 + random() * 8
+      travelCooldown = visitCooldown('farm')
       return
     }
     if (direction === 'enter') travelSide = 'carnival'
@@ -1071,7 +1083,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           const completedDirection = travelDirection
           travelSide = completedDirection === 'leave' ? 'carnival' : 'farm'
           travelDirection = null
-          travelCooldown = canAnimalLeaveFarm(stage) ? 8 + random() * 8 : 0
+          travelCooldown = canAnimalLeaveFarm(stage) ? visitCooldown(travelSide) : 0
           target.set(wrapper.position.x, 0, wrapper.position.z)
           setAnimation('IDLE', 0.22)
         }

@@ -342,6 +342,9 @@ animal sleeps beside (and that gates breeding); the raccoon's dumpster is the te
 | Where | What | Enforced? |
 |-------|------|-----------|
 | `src/game/farm-props.ts` | add to `PropId`, `PROP_CATALOG`, `PROP_ORDER`, and the literal `counts` in `createPropInventory` | yes |
+| other `Record<PropId, ...>` tables | run `npm run typecheck`: the compiler lists every table that still needs the new id | yes |
+| `src/game/farm-props.ts` `PROP_CATEGORY` | the info card's chip ("Shelter", "Utility", ...) | yes (found when merging `main`) |
+| `src/game/tool-unlocks.ts` `PROP_UNLOCK_LEVEL` | the farmer level that stocks it; **it must be reachable before the animal that needs it can settle** (garbage can 2, dumpster 3) | yes |
 | `art/blender/<prop>.py` (copy `trash_props.py`) | the model to `public/assets/props/<id>.glb` (+ `.blend`, review PNG) | no |
 | `art/blender/prop_thumbs.py` `PROPS` | add `("<id>", "assets/props/<id>.glb")`, run with `-- <id>` for the shop icon `prop-<id>.png` | no |
 | `animal-conditions.ts` `PROP_PLURALS` | only for an irregular plural | no |
@@ -359,7 +362,9 @@ Prices so far: garbage can 45, coop 90, barn 110, dumpster 120, oak 140.
 
 Model tips from the raccoon's props: author on `z = 0`, centred in X/Y; do not leave a doorway the
 game cannot use (the dumpster has none: the raccoon climbs in over the rim, and a later feature will
-let it sleep *inside*); keep triangle counts low (`npm run assets:budget`).
+let it sleep *inside*); keep triangle counts low: a prop is capped at **8000 triangles and 400 kB**
+(`npm run assets:budget`, part of `npm run check`). The first dumpster, with 18x12 spheres for its bag heap, was
+14,460 triangles and failed; 12x8 spheres and 2-segment bevels brought it to about 6,200 and looked the same.
 
 ---
 

@@ -20,10 +20,10 @@ const { GARDEN_MAX_BOUNDS } = await load('farm-expansion')
 
 const poseAt = (name, progress) => shopPartPose(SHOP_BUILD_PARTS.find((part) => part.name === name), progress)
 
-test('the shop unlocks with expansion #3 and not before', () => {
-  assert.equal(SHOP_UNLOCK_LEVEL, 3)
+test('the shop unlocks at farmer level 2 (index 1) and not before', () => {
+  assert.equal(SHOP_UNLOCK_LEVEL, 1)
   assert.equal(shopUnlocked(0), false)
-  assert.equal(shopUnlocked(2), false)
+  assert.equal(shopUnlocked(1), true)
   assert.equal(shopUnlocked(3), true)
   assert.equal(shopUnlocked(9), true)
   assert.equal(shopUnlocked(Number.NaN), false)

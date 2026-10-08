@@ -205,3 +205,32 @@ test('the oak is a two-cell blocking tree in the shop, and counts as owned stock
   assert.equal(props.purchaseProp(wallet, inventory, 'oak').ok, true)
   assert.equal(inventory.count('oak'), 3)
 })
+
+test('a placed prop sells for half its shop price, per piece, never below one coin', () => {
+  assert.equal(props.propSaleValue('statue'), 20)
+  assert.equal(props.propSaleValue('oak'), 70)
+  assert.equal(props.propSaleValue('fence', 4), 24)
+  assert.equal(props.propSaleValue('fence', 0), 6)
+  assert.ok(props.propSaleValue('fence') < props.PROP_CATALOG.fence.price)
+})
+
+test('the info card chip names a fence run by its length and everything else by kind', () => {
+  assert.equal(props.propCardChip('fence', 1), 'Fence run · 1 section')
+  assert.equal(props.propCardChip('fence', 5), 'Fence run · 5 sections')
+  assert.equal(props.propCardChip('barn'), 'Shelter')
+  assert.equal(props.propCardChip('oak'), 'Tree')
+})
+
+test('lifting a prop frees its cells so it can be set down overlapping its old footprint', () => {
+  const occupancy = props.createPropOccupancy()
+  const barn = props.placedCellProp('barn', { cellX: 0, cellZ: 0 }, 0)
+  occupancy.add(barn)
+  // While it stands, the next cell over (overlapping its footprint) is blocked.
+  assert.equal(props.placementResult('barn', { cellX: 1, cellZ: 0 }, 0, surface(), occupancy).failure, 'occupied')
+  // Lifted for a move, the same spot is fine, and no stock is needed.
+  assert.equal(occupancy.remove(barn), true)
+  assert.equal(props.placementResult('barn', { cellX: 1, cellZ: 0 }, 0, surface(), occupancy).valid, true)
+  // Cancelling puts the original record straight back.
+  occupancy.add(barn)
+  assert.equal(occupancy.cellOwner({ cellX: 1, cellZ: 1 }), barn)
+})

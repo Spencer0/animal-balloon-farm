@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { containsGardenPoint, GARDEN_BOUNDS, GARDEN_LAWN_Y, GARDEN_MAX_BOUNDS } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
-import { createGardenToolModel, GARDEN_TOOLS, type GardenToolId } from './garden-tool-art'
+import { createGardenToolModel, GARDEN_TOOLS, tintSeedPack, type GardenToolId } from './garden-tool-art'
+import { GRASS_PACKS, SHORT_GRASS_CEILING, SHORT_GRASS_MAX_HEIGHT, type GrassPack } from '../game/tool-unlocks'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
 
@@ -31,6 +32,9 @@ export interface GardenToolDebugState {
   readonly brushLevel: number
   readonly brushRadius: number
   readonly tallestBlade: number
+  readonly grassPack: GrassPack
+  /** Blades currently taller than the lawn cap, so a check can see the meadow being mown back. */
+  readonly meadowBlades: number
   readonly lastGrassSpawnMaxY: number
   readonly terrainMin: number
   readonly terrainMax: number
@@ -74,6 +78,19 @@ export interface GardenTools {
    */
   readonly strokeHeld: boolean
   selectTool(id: GardenToolId): void
+  /** Which seed pack the grass seeder holds: blue short lawn or green tall meadow. */
+  readonly grassPack: GrassPack
+  setGrassPack(pack: GrassPack): void
+  /**
+   * What is growing within `radius` of a point: nothing, a lawn of short grass,
+   * or a meadow with at least one blade taller than the lawn cap.
+   */
+  grassKindAt(x: number, z: number, radius: number): 'none' | 'short' | 'tall'
+  /**
+   * Tall seed never lifts blades where this says no, so a clover patch is not
+   * swallowed by the meadow. The scene wires it to the planted ground cover.
+   */
+  setTallGrassBlocker(blocked: ((x: number, z: number) => boolean) | null): void
   cycleBrushSize(): void
   setPlantingMode(active: boolean): void
   pointerMove(event: GardenPointerMove): void
@@ -92,7 +109,7 @@ export interface GardenTools {
    * square meters, and verifying one by hand-dragging the seeder for a minute
    * per test is not a repeatable loop. Gameplay still grows grass over time.
    */
-  sowGrassDisc(x: number, z: number, radius: number): void
+  sowGrassDisc(x: number, z: number, radius: number, pack?: GrassPack): void
   /** Dig a flat-bottomed basin, which is what a water condition needs. */
   digBasin(x: number, z: number, radius: number, depth: number): void
   update(deltaSeconds: number): void
@@ -128,7 +145,8 @@ const MAX_GRASS_BLADES = 120_000
 const STARTING_BLADE_HEIGHT = 0.085
 const MIN_SEED_BLADES = 22
 const HOLD_SEED_BLADES = 4
-const MAX_BLADE_HEIGHT = 0.72
+// Blade height caps live with the seed packs (game/tool-unlocks): the lawn pack
+// stops at SHORT_GRASS_MAX_HEIGHT, the meadow pack at TALL_GRASS_MAX_HEIGHT.
 // Base growth eased by remaining height (sqrt ease-out): a held patch rockets
 // up quickly and settles into the cap — full height in about two seconds.
 const BLADE_GROWTH_PER_SECOND = 0.7
@@ -307,12 +325,13 @@ export function createGardenTools(
   const cursor = new THREE.Group()
   const toolModels: Record<GardenToolId, THREE.Group> = {
     hand: createGardenToolModel('hand'),
-    grass: createGardenToolModel('grass'),
+    grass: createGardenToolModel('grass', 'short'),
     shovel: createGardenToolModel('shovel'),
     water: createGardenToolModel('water'),
-    camera: createGardenToolModel('camera'),
   }
   let selectedTool: GardenToolId = 'hand'
+  let grassPack: GrassPack = 'short'
+  let tallGrassBlocked: ((x: number, z: number) => boolean) | null = null
   const brushLevels = new Map<GardenToolId, number>()
   let sizePop = 0
   const SIZE_POP_SECONDS = 0.28
@@ -760,19 +779,37 @@ export function createGardenTools(
     const rotation = new THREE.Quaternion()
     const scale = new THREE.Vector3()
     const updatedMeshes = new Set<THREE.InstancedMesh>()
+    const packCap = GRASS_PACKS[grassPack].maxBladeHeight
     for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
       for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
         const cell = occupancy.get(`${cellX},${cellZ}`)
         if (!cell) continue
         for (const blade of cell) {
           const distanceSquared = (x - blade.x) ** 2 + (z - blade.z) ** 2
-          if (distanceSquared > radiusSquared || blade.height >= MAX_BLADE_HEIGHT) continue
+          if (distanceSquared > radiusSquared) continue
+          // The lawn pack stops at the lawn cap and never trims a taller blade;
+          // the meadow pack lifts blades past it, except under ground cover.
+          const cap = packCap > SHORT_GRASS_MAX_HEIGHT && tallGrassBlocked?.(blade.x, blade.z) ? SHORT_GRASS_MAX_HEIGHT : packCap
           const influence = 1 - Math.sqrt(distanceSquared) / radius
+          if (blade.height > cap + 0.0005 && packCap <= SHORT_GRASS_MAX_HEIGHT) {
+            // The lawn pack mows a meadow back down to lawn height.
+            const shrunk = Math.max(cap, blade.height - BLADE_GROWTH_PER_SECOND * 1.35 * deltaSeconds * (0.6 + 0.4 * influence))
+            blade.mesh.getMatrixAt(blade.tileIndex, matrix)
+            matrix.decompose(position, rotation, scale)
+            scale.y = shrunk
+            matrix.compose(position, rotation, scale)
+            blade.mesh.setMatrixAt(blade.tileIndex, matrix)
+            blade.height = shrunk
+            updatedMeshes.add(blade.mesh)
+            changed += 1
+            continue
+          }
+          if (blade.height >= cap) continue
           // Non-linear: rate ∝ remaining height (sqrt ease-out), so blades shoot
           // up early and ease into the cap instead of creeping linearly.
-          const remaining = Math.max(0, (MAX_BLADE_HEIGHT - blade.height) / (MAX_BLADE_HEIGHT - STARTING_BLADE_HEIGHT))
+          const remaining = Math.max(0, (cap - blade.height) / (cap - STARTING_BLADE_HEIGHT))
           const growth = BLADE_GROWTH_PER_SECOND * deltaSeconds * Math.sqrt(remaining) * (0.6 + 0.4 * influence)
-          const height = Math.min(MAX_BLADE_HEIGHT, blade.height + growth)
+          const height = Math.min(cap, blade.height + growth)
           if (height === blade.height) continue
           if (height > tallestBladeHeight) tallestBladeHeight = height
           blade.mesh.getMatrixAt(blade.tileIndex, matrix)
@@ -856,7 +893,7 @@ export function createGardenTools(
           if (distance > radius) continue
           const influence = 1 - Math.min(1, distance / radius)
           // Mirror of the growth easing: tall blades fall fast, the last bit eases out.
-          const progress = Math.min(1, blade.height / (MAX_BLADE_HEIGHT - STARTING_BLADE_HEIGHT))
+          const progress = Math.min(1, blade.height / (SHORT_GRASS_MAX_HEIGHT - STARTING_BLADE_HEIGHT))
           const shrink = BLADE_GROWTH_PER_SECOND * 1.35 * deltaSeconds * Math.sqrt(progress) * (0.6 + 0.4 * influence)
           const height = Math.max(0, blade.height - shrink)
           blade.mesh.getMatrixAt(blade.tileIndex, matrix)
@@ -976,6 +1013,34 @@ export function createGardenTools(
     setWaterLevel(level: number): void {
       waterLevel = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0
     },
+    get grassPack(): GrassPack { return grassPack },
+    setGrassPack(pack): void {
+      if (!(pack in GRASS_PACKS) || grassPack === pack) return
+      grassPack = pack
+      tintSeedPack(toolModels.grass, pack)
+      sizePop = SIZE_POP_SECONDS
+    },
+    grassKindAt(x, z, radius): 'none' | 'short' | 'tall' {
+      const minCellX = Math.floor((x - radius) / GRASS_CELL_SPACING)
+      const maxCellX = Math.floor((x + radius) / GRASS_CELL_SPACING)
+      const minCellZ = Math.floor((z - radius) / GRASS_CELL_SPACING)
+      const maxCellZ = Math.floor((z + radius) / GRASS_CELL_SPACING)
+      const radiusSquared = radius * radius
+      let found = false
+      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+        for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+          const cell = occupancy.get(`${cellX},${cellZ}`)
+          if (!cell) continue
+          for (const blade of cell) {
+            if ((blade.x - x) ** 2 + (blade.z - z) ** 2 > radiusSquared) continue
+            if (blade.height > SHORT_GRASS_CEILING) return 'tall'
+            found = true
+          }
+        }
+      }
+      return found ? 'short' : 'none'
+    },
+    setTallGrassBlocker(blocked): void { tallGrassBlocked = blocked },
     selectTool(id): void {
       if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
@@ -983,7 +1048,6 @@ export function createGardenTools(
       hoverTint = id === 'water' ? '#77c9d5'
         : id === 'shovel' ? '#d9a06b'
           : id === 'grass' ? '#b7d97a'
-            : id === 'camera' ? '#a9b8d6'
               : '#efc894'
       for (const [key, model] of Object.entries(toolModels)) model.visible = key === id
     },
@@ -1009,8 +1073,7 @@ export function createGardenTools(
       }
     },
     pointerMove(event): void {
-      // The camera tool frames the farm, it never edits it, so no brush ring.
-      if (plantingMode || selectedTool === 'hand' || selectedTool === 'camera') {
+      if (plantingMode || selectedTool === 'hand') {
         cursor.visible = false
         cursorVisible = false
         actionGlow.visible = false
@@ -1069,7 +1132,7 @@ export function createGardenTools(
     pointerDown(event): boolean {
       if (plantingMode) return false
       if (event.button !== 0 && event.button !== 1 && event.button !== 2) return false
-      if (selectedTool === 'hand' || selectedTool === 'camera') return false
+      if (selectedTool === 'hand') return false
       const position = updateCursorPosition(event)
       if (!position) return false
       if (selectedTool === 'shovel') {
@@ -1200,6 +1263,8 @@ export function createGardenTools(
         brushLevel: brushLevelIndex() + 1,
         brushRadius: brushRadius(),
         tallestBlade: tallestBladeHeight,
+        grassPack,
+        meadowBlades: [...occupancy.values()].reduce((sum, cell) => sum + cell.filter((blade) => blade.height > SHORT_GRASS_CEILING).length, 0),
         lastGrassSpawnMaxY: +lastGrassSpawnMaxY.toFixed(3),
         terrainMin: terrain.stats().min,
         terrainMax: terrain.stats().max,
@@ -1215,7 +1280,7 @@ export function createGardenTools(
       }
     },
     clearGrass,
-    sowGrassDisc(x, z, radius) {
+    sowGrassDisc(x, z, radius, pack = 'tall') {
       if (!insideGarden(x, z, getActiveBounds()) || radius <= 0) return
       // Seed densely enough that the disc reads as a lawn.
       const steps = 24
@@ -1236,10 +1301,10 @@ export function createGardenTools(
           if ((blade.x - x) ** 2 + (blade.z - z) ** 2 > radius * radius) continue
           blade.mesh.getMatrixAt(blade.tileIndex, matrix)
           matrix.decompose(position, rotation, scale)
-          scale.y = MAX_BLADE_HEIGHT
+          scale.y = GRASS_PACKS[pack].maxBladeHeight
           matrix.compose(position, rotation, scale)
           blade.mesh.setMatrixAt(blade.tileIndex, matrix)
-          blade.height = MAX_BLADE_HEIGHT
+          blade.height = GRASS_PACKS[pack].maxBladeHeight
           touched.add(blade.mesh)
         }
       }

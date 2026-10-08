@@ -83,7 +83,7 @@ def box(name, location, dims, mat, parent=None, bevel=.08):
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     modifier = obj.modifiers.new("soft edges", "BEVEL")
     modifier.width = bevel
-    modifier.segments = 4
+    modifier.segments = 2
     modifier.limit_method = "NONE"
     obj.data.materials.append(mat)
     smooth(obj)
@@ -336,15 +336,15 @@ def make_dumpster(M):
         ("bagBlack", .1, -.4, 2.12, .4, .3), ("bagWhite", 1.0, .05, 2.14, .42, .34),
     ]
     for index, (tone, x, y, z, rx, rz) in enumerate(heap):
-        bag = sphere(f"DUMPSTER · heaped bag {index + 1}", (x, y, z), (rx, rx * .78, rz), M[tone], root, 18, 12)
+        bag = sphere(f"DUMPSTER · heaped bag {index + 1}", (x, y, z), (rx, rx * .78, rz), M[tone], root, 12, 8)
         bag.rotation_euler[2] = math.radians(index * 37)
-        sphere(f"DUMPSTER · bag tie {index + 1}", (x + rx * .45, y - .1, z + rz * .8), (.07, .07, .09), M["tie"], root, 10, 8)
+        sphere(f"DUMPSTER · bag tie {index + 1}", (x + rx * .45, y - .1, z + rz * .8), (.07, .07, .09), M["tie"], root, 8, 6)
     box("DUMPSTER · flattened carton", (-1.1, .0, 1.84), (.9, .5, .09), M["carton"], root, .03).rotation_euler[1] = math.radians(8)
     box("DUMPSTER · torn carton", (.75, .3, 2.34), (.55, .4, .07), M["carton"], root, .03).rotation_euler = (0, math.radians(-12), math.radians(20))
     # Overflow on the ground by the front wheels.
     for index, (tone, x, y, rx, rz) in enumerate((("bagWhite", -1.8, -.8, .5, .42), ("bagClear", -1.5, -1.05, .45, .38), ("bagBlue", 1.8, -.95, .42, .35))):
-        sphere(f"DUMPSTER · bag on the ground {index + 1}", (x, y, rz * .8), (rx, rx * .8, rz), M[tone], root, 16, 10)
-        sphere(f"DUMPSTER · ground bag tie {index + 1}", (x + rx * .4, y - .1, rz * 1.6), (.06, .06, .08), M["tie"], root, 10, 8)
+        sphere(f"DUMPSTER · bag on the ground {index + 1}", (x, y, rz * .8), (rx, rx * .8, rz), M[tone], root, 10, 7)
+        sphere(f"DUMPSTER · ground bag tie {index + 1}", (x + rx * .4, y - .1, rz * 1.6), (.06, .06, .08), M["tie"], root, 8, 6)
     return root
 
 

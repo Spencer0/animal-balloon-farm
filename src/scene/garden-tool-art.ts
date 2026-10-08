@@ -1,6 +1,7 @@
 import * as THREE from 'three'
+import { GRASS_PACKS, type GrassPack } from '../game/tool-unlocks'
 
-export type GardenToolId = 'hand' | 'grass' | 'shovel' | 'water' | 'camera'
+export type GardenToolId = 'hand' | 'grass' | 'shovel' | 'water'
 
 export interface GardenToolDefinition {
   readonly id: GardenToolId
@@ -21,9 +22,9 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
     tint: '#e9c58e', accent: '#f3dfb0',
   },
   {
-    id: 'grass', hotkey: '2', label: 'Grass Seeder', subtitle: 'A little green goes a long way',
+    id: 'grass', hotkey: '2', label: 'Grass Seeder', subtitle: 'Blue for a lawn, green for a meadow',
     description: 'A burlap sack of seed for turning bare soil into a soft patch of meadow.',
-    note: 'Hold and drag to sow grass. Right-click to gently trim it back.',
+    note: 'Hold and drag to sow grass. Right-click to gently trim it back. Press E to swap packs once Pip sells you the tall one.',
     tint: '#b7d97a', accent: '#f3d78a',
   },
   {
@@ -38,20 +39,13 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
     note: 'Hold left-click to pour. Hold right-click to drain.',
     tint: '#77c9d5', accent: '#b3edf0',
   },
-  {
-    id: 'camera', hotkey: 'space', label: 'Camera', subtitle: 'Compose the farm',
-    description: 'A little field camera for framing the farm and the friends in it.',
-    note: 'Drag to orbit the view. Right-click for a gentle cinematic tour. Middle-click to return to the opening shot.',
-    tint: '#a9b8d6', accent: '#f0e2b8',
-  },
 ]
 
-export function createGardenToolModel(id: GardenToolId): THREE.Group {
+export function createGardenToolModel(id: GardenToolId, pack: GrassPack = 'short'): THREE.Group {
   if (id === 'hand') return createHandModel()
   if (id === 'shovel') return createShovelModel()
   if (id === 'water') return createWaterBucketModel()
-  if (id === 'camera') return createCameraModel()
-  return createGrassSeederModel()
+  return createGrassSeederModel(pack)
 }
 
 function createHandModel(): THREE.Group {
@@ -91,13 +85,29 @@ function createHandModel(): THREE.Group {
   return model
 }
 
-function createGrassSeederModel(): THREE.Group {
+/**
+ * Recolour a seeder model's sack for the pack in hand: blue for short grass,
+ * green for tall. Only the sack changes; the twine, sprout and spilled seed
+ * keep their colours so the two packs read as one tool.
+ */
+export function tintSeedPack(model: THREE.Object3D, pack: GrassPack): void {
+  const sack = model.userData.packMaterials as { body: THREE.MeshStandardMaterial; shade: THREE.MeshStandardMaterial; light: THREE.MeshStandardMaterial } | undefined
+  if (!sack) return
+  const definition = GRASS_PACKS[pack]
+  sack.body.color.set(definition.sack)
+  sack.shade.color.set(definition.sackShade)
+  sack.light.color.set(definition.sackLight)
+  model.userData.pack = pack
+}
+
+function createGrassSeederModel(pack: GrassPack): THREE.Group {
   const model = new THREE.Group()
   model.name = 'Grass seed bag'
 
   const burlap = new THREE.MeshStandardMaterial({ color: '#c9a06b', roughness: 0.92 })
   const burlapDark = new THREE.MeshStandardMaterial({ color: '#b58e5c', roughness: 0.94 })
   const burlapLight = new THREE.MeshStandardMaterial({ color: '#d4af75', roughness: 0.9 })
+  model.userData.packMaterials = { body: burlap, shade: burlapDark, light: burlapLight }
   const twine = new THREE.MeshStandardMaterial({ color: '#8a6f3f', roughness: 0.85 })
   const sprout = new THREE.MeshStandardMaterial({ color: '#6fa055', roughness: 0.62 })
   const seedTan = new THREE.MeshStandardMaterial({ color: '#a5804e', roughness: 0.7 })
@@ -174,6 +184,7 @@ function createGrassSeederModel(): THREE.Group {
       object.receiveShadow = true
     }
   })
+  tintSeedPack(model, pack)
   return model
 }
 
@@ -206,80 +217,6 @@ function createWaterBucketModel(): THREE.Group {
   bail.position.set(-0.05, 0.3, 0)
   bail.rotation.set(Math.PI / 2, 0, 0)
   model.add(bail)
-
-  model.traverse((object) => {
-    if (object instanceof THREE.Mesh) {
-      object.castShadow = true
-      object.receiveShadow = true
-    }
-  })
-  return model
-}
-
-/**
- * A little field camera: leather body, brass lens barrel, glass eye. Built as
- * a relief in the XY plane like the other tools, because the tool bar tips
- * every model toward the camera rather than showing its back.
- */
-function createCameraModel(): THREE.Group {
-  const model = new THREE.Group()
-  model.name = 'Handmade field camera'
-
-  const leather = new THREE.MeshStandardMaterial({ color: '#5d4736', roughness: 0.68 })
-  const leatherLight = new THREE.MeshStandardMaterial({ color: '#7c6047', roughness: 0.6 })
-  const brass = new THREE.MeshStandardMaterial({ color: '#d7b765', roughness: 0.3, metalness: 0.48 })
-  const dark = new THREE.MeshStandardMaterial({ color: '#2f2a26', roughness: 0.44, metalness: 0.35 })
-  const glass = new THREE.MeshStandardMaterial({
-    color: '#8fd0dc', roughness: 0.16, metalness: 0.12,
-    emissive: '#1d4b52', emissiveIntensity: 0.35,
-  })
-
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.56, 0.26), leather)
-  body.position.set(0, 0.34, 0)
-  body.castShadow = true
-  body.receiveShadow = true
-  model.add(body)
-
-  const topPlate = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.09, 0.28), leatherLight)
-  topPlate.position.set(0, 0.66, 0)
-  model.add(topPlate)
-
-  const lensHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.21, 0.14, 24), dark)
-  lensHousing.rotation.x = Math.PI / 2
-  lensHousing.position.set(-0.16, 0.33, 0.19)
-  model.add(lensHousing)
-
-  const lensBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.16, 24), brass)
-  lensBarrel.rotation.x = Math.PI / 2
-  lensBarrel.position.set(-0.16, 0.33, 0.3)
-  model.add(lensBarrel)
-
-  const lensGlass = new THREE.Mesh(new THREE.CircleGeometry(0.13, 24), glass)
-  lensGlass.position.set(-0.16, 0.33, 0.385)
-  model.add(lensGlass)
-
-  const viewfinder = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.18), dark)
-  viewfinder.position.set(0.24, 0.74, 0)
-  model.add(viewfinder)
-
-  const finderGlass = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.08), glass)
-  finderGlass.position.set(0.24, 0.74, 0.1)
-  model.add(finderGlass)
-
-  const winder = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.06, 18), brass)
-  winder.rotation.x = Math.PI / 2
-  winder.position.set(0.34, 0.52, 0.18)
-  model.add(winder)
-
-  const shutter = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 14), brass)
-  shutter.position.set(0.34, 0.72, 0)
-  model.add(shutter)
-
-  for (const side of [-1, 1] as const) {
-    const lug = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.016, 8, 14), brass)
-    lug.position.set(side * 0.45, 0.62, 0)
-    model.add(lug)
-  }
 
   model.traverse((object) => {
     if (object instanceof THREE.Mesh) {

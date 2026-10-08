@@ -406,7 +406,7 @@ export function createMenuPanel(
       if (!isOpen) return undefined
       // The whole screen is the menu, so the diorama itself gets the open hand
       // and only the signs switch to the pointing one.
-      return buttonAt(point) >= 0 ? 'point' : 'hand'
+      return buttonAt(point) >= 0 ? 'point' : 'idle'
     },
     keyDown(event: KeyboardEvent): boolean {
       if (!isOpen) return false

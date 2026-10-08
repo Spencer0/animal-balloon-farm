@@ -15,6 +15,8 @@
 export interface ScenarioHarness {
   closeMenu(): void
   grantCoins(amount: number): number
+  grantPoints(points: number): { points: number; level: number }
+  grantSeeds(count: number): void
   expandFarm(level: number): number
   addAnimal(species: string, stage?: number): string | null
   buy(id: string): unknown
