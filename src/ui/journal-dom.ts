@@ -2,7 +2,7 @@ import "./journal-dom.css";
 import { ANIMAL_CATALOG } from "../animals/animal-catalog";
 import { GARDEN_TOOLS } from "../scene/garden-tool-art";
 import { PLANT_CATALOG } from "../game/plants";
-import type { JournalConditionSource } from "./journal-panel";
+import type { JournalAlsoNeeds, JournalConditionSource } from "./journal-panel";
 
 /**
  * Farm Journal as a DOM overlay (feature/journal-redesign-dom).
@@ -52,6 +52,9 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   frog: { rarity: "Uncommon", traits: ["Carnivore", "Hopper", "Springs Skyward"] },
   owl: { rarity: "Rare", traits: ["Predator", "Night Shift", "Barely Flaps"] },
   raccoon: { rarity: "Uncommon", traits: ["Scavenger", "Night Shift", "Naps by the Can"] },
+  mouse: { rarity: "Common", traits: ["Seed Nibbler", "Meadow Dweller", "Tiny Pitter-Patter"] },
+  rat: { rarity: "Uncommon", traits: ["Scavenger", "Night Shift", "Shares the Log"] },
+  snake: { rarity: "Rare", traits: ["Meadow Hunter", "Slithers", "Basks on Rocks"] },
 };
 
 const DEFAULT_META: SpeciesMeta = { rarity: "Common", traits: [] };
@@ -82,7 +85,8 @@ interface RowVisual {
 /** The icon and label for what a rung measures, straight from its requirement. */
 function visualForKind(kind: string, species: string | undefined, metricLabel: string | undefined): RowVisual | null {
   switch (kind) {
-    case "grassArea": return { icon: "tall-grass", label: "Tall grass", isCount: false };
+    case "grassArea": return { icon: "tall-grass", label: "Grass", isCount: false };
+    case "meadowArea": return { icon: "tall-grass", label: "Tall meadow grass", isCount: false };
     case "waterArea": return { icon: "pond-water", label: "Pond water", isCount: false };
     case "flatArea": return { icon: "open-pasture", label: "Level pasture", isCount: false };
     case "plantCount": return { icon: species === "water-lily" ? "lily-pad" : "sprout", label: metricLabel ?? "Plants", isCount: true };
@@ -105,7 +109,7 @@ function rowVisual(row: { readonly requirementKind?: string; readonly requiremen
     return { icon: "balloon-bunting", label: metricLabel ?? "Balloon bunting", isCount: true };
   }
   if (hay.includes("tall grass") || hay.includes("grass") || hay.includes("meadow") || hay.includes("lawn")) {
-    return { icon: "tall-grass", label: "Tall grass", isCount: false };
+    return { icon: "tall-grass", label: "Grass", isCount: false };
   }
   if (hay.includes("pond") || hay.includes("pool") || hay.includes("swim") || hay.includes("water")) {
     return { icon: "pond-water", label: "Pond water", isCount: false };
@@ -118,14 +122,18 @@ function rowVisual(row: { readonly requirementKind?: string; readonly requiremen
 }
 
 /** Extra requirements that must hold alongside a rung's main one, each with its own bar. */
-function alsoNeeds(extras: readonly { readonly label: string; readonly current: number; readonly target: number }[] | undefined): string {
+function alsoNeeds(extras: readonly JournalAlsoNeeds[] | undefined): string {
   if (!extras?.length) return "";
   return extras.map((extra) => {
     const pct = Math.max(0, Math.min(1, extra.target > 0 ? extra.current / extra.target : 0));
-    return `<div class="fj-req"><img src="${ICON_BASE}/journal-icon-sprout.png" alt="" draggable="false">
+    // An area (meadow, water) reads in m² like a main row; anything else is a count.
+    const visual = extra.kind ? visualForKind(extra.kind, extra.species, extra.label) : null;
+    const isCount = visual?.isCount ?? true;
+    const unit = isCount ? "" : " m&sup2;";
+    return `<div class="fj-req"><img src="${ICON_BASE}/journal-icon-${visual?.icon ?? "sprout"}.png" alt="" draggable="false">
         <span class="fj-req-label">${escapeHtml(extra.label)}</span>
         <span class="fj-bar" role="progressbar" aria-valuenow="${extra.current}" aria-valuemax="${extra.target}" aria-label="${escapeHtml(extra.label)}"><i style="width:${(pct * 100).toFixed(1)}%"></i></span>
-        <span class="fj-numbers">${formatMetric(extra.current, true)} / ${formatMetric(extra.target, true)}</span></div>`;
+        <span class="fj-numbers">${formatMetric(extra.current, isCount)} / ${formatMetric(extra.target, isCount)}${unit}</span></div>`;
   }).join("");
 }
 

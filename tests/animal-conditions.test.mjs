@@ -239,7 +239,7 @@ test('journal metric labels describe the revealed habitat without exposing hidde
 
   for (const species of watched) progress.setStage(species, 2)
   progress.tick(snapshot(EMPTY_FARM), 1 / 30)
-  assert.equal(progress.statusOf('cow')[2].metricLabel, 'Mature tall grass')
+  assert.equal(progress.statusOf('cow')[2].metricLabel, 'Grown grass')
   assert.equal(progress.statusOf('duck')[2].metricLabel, 'Visible pond water')
   assert.equal(progress.statusOf('sheep')[2].metricLabel, 'Level grassy pasture')
   assert.equal(progress.statusOf('frog')[2].metricLabel, 'Lily pads in the pond')

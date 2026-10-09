@@ -18,6 +18,9 @@ export const ANIMAL_SALE_PRICES: Readonly<Record<BalloonAnimalId, number>> = {
   frog: 15,
   owl: 30,
   raccoon: 22,
+  mouse: 10,
+  rat: 16,
+  snake: 26,
 }
 
 export interface AnimalSaleStatus {

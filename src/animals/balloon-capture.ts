@@ -13,6 +13,9 @@ const PAINT_PALETTES: Record<BalloonAnimalId, readonly [string, string]> = {
   frog: ['#6ab84e', '#f3ecc9'],
   owl: ['#a9774b', '#fdeecf'],
   raccoon: ['#8f949b', '#2f3038'],
+  mouse: ['#c99a6b', '#f0a3b0'],
+  rat: ['#7b7480', '#dd8f9c'],
+  snake: ['#3f9e6e', '#2a7650'],
 }
 
 export interface CapturePose {
@@ -233,6 +236,33 @@ function captureGesture(id: BalloonAnimalId, time: number, duration: number): Ca
         pitch: Math.sin(time * 4.4) * 0.08 * active,
         roll: Math.sin(time * 3.3) * 0.06 * active,
         yaw: Math.sin(time * 2.9) * 0.14 * active,
+      }
+    case 'mouse':
+      // Quick, twitchy little hops: a mouse never holds still.
+      return {
+        fill,
+        lift: active * (0.03 + Math.max(0, Math.sin(time * 8.4)) * 0.12),
+        pitch: Math.sin(time * 6.2) * 0.07 * active,
+        roll: Math.sin(time * 5.1) * 0.06 * active,
+        yaw: Math.sin(time * 4.3) * 0.16 * active,
+      }
+    case 'rat':
+      // Up on its hind legs for a long sniff, then a nosy look round.
+      return {
+        fill,
+        lift: active * (0.04 + Math.max(0, Math.sin(time * 3.4)) * 0.06),
+        pitch: active * (-0.1 + Math.sin(time * 3.4) * 0.08),
+        roll: Math.sin(time * 2.7) * 0.05 * active,
+        yaw: Math.sin(time * 2.2) * 0.18 * active,
+      }
+    case 'snake':
+      // Stays low and sways: no hop, a slow side-to-side weave.
+      return {
+        fill,
+        lift: active * 0.02,
+        pitch: Math.sin(time * 2.1) * 0.03 * active,
+        roll: Math.sin(time * 2.6) * 0.05 * active,
+        yaw: Math.sin(time * 2.6) * 0.22 * active,
       }
   }
 }

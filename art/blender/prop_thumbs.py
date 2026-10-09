@@ -40,6 +40,8 @@ PROPS = [
     ("sty", "assets/props/sty.glb"),
     ("frog-house", "assets/props/frog-house.glb"),
     ("owl-box", "assets/props/owl-box.glb"),
+    ("hollow-log", "assets/props/hollow-log.glb"),
+    ("rock-pile", "assets/props/rock-pile.glb"),
 ]
 
 

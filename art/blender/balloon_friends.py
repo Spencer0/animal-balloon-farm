@@ -1,4 +1,4 @@
-"""Create Animal Balloon Farm sheep, cow, chicken, duck, goose, frog and owl assets.
+"""Create Animal Balloon Farm sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat and snake assets.
 
 Run from the repository root:
   blender --background --factory-startup --python art/blender/balloon_friends.py
@@ -18,6 +18,11 @@ OUTPUT = ROOT / "public" / "assets" / "animals"
 OUTPUT.mkdir(parents=True, exist_ok=True)
 FRAMES = (1, 7, 13, 19, 25)
 PHASES = (0.0, math.pi / 2, math.pi, 3 * math.pi / 2, math.tau)
+# Mesh density for the animal being built: 1.0 for the original catalog. The tall-grass animals
+# (mouse, rat, snake) are built at LEAN_DETAIL so the whole catalog stays inside the animal
+# download budget (scripts/asset-budget.mjs); at game scale the difference does not show.
+DETAIL = 1.0
+LEAN_DETAIL = .32
 
 
 def rgba(hex_color):
@@ -50,6 +55,8 @@ def local(obj, parent, position):
 
 
 def sphere(name, position, size, material, parent=None, segments=36, rings=24):
+    segments = max(8, round(segments * DETAIL))
+    rings = max(5, round(rings * DETAIL))
     bpy.ops.mesh.primitive_uv_sphere_add(segments=segments, ring_count=rings, radius=1, location=(0, 0, 0))
     obj = bpy.context.object
     obj.name = name
@@ -64,7 +71,7 @@ def sphere(name, position, size, material, parent=None, segments=36, rings=24):
 def curve(name, points, width, material, parent=None, resolution=3):
     data = bpy.data.curves.new(name + " · curve", "CURVE")
     data.dimensions = "3D"
-    data.resolution_u = 16
+    data.resolution_u = max(5, round(16 * DETAIL))
     data.bevel_depth = width
     data.bevel_resolution = resolution
     spline = data.splines.new("BEZIER")
@@ -208,6 +215,36 @@ def materials(animal):
         base["inner"] = mat("RACCOON · dusky-pink ear lining", "#c98f9a", .25, .01, .44)
         base["hoof"] = mat("RACCOON · charcoal paws", "#33343c", .26, .01, .38)
         base["collar"] = mat("RACCOON · midnight-teal bell ribbon", "#4a8f94", .24, .04, .46)
+    elif animal.lower() == "mouse":
+        base["body"] = mat("MOUSE · harvest-fawn balloon fur", "#c99a6b", .26, .02, .54)
+        base["wool"] = mat("MOUSE · toasted-fawn leg balloons", "#b98a5c", .27, .015, .50)
+        base["face"] = mat("MOUSE · light fawn face balloon", "#d5aa7d", .25, .02, .54)
+        base["belly"] = mat("MOUSE · oat-cream belly", "#f4e6cc", .25, .01, .52)
+        base["muzzle"] = mat("MOUSE · oat-cream snout", "#f4e6cc", .24, .01, .50)
+        base["inner"] = mat("MOUSE · petal-pink ear lining", "#f0a3b0", .23, .01, .48)
+        base["pink"] = mat("MOUSE · pink nose, paws and tail", "#e99aa6", .24, .01, .46)
+        base["hoof"] = base["pink"]
+        base["whisker"] = mat("MOUSE · cream whiskers", "#fff6e4", .3, 0, .2)
+        base["collar"] = mat("MOUSE · buttercup bell ribbon", "#f0c34f", .22, .10, .48)
+    elif animal.lower() == "rat":
+        base["body"] = mat("RAT · dusk-slate balloon fur", "#7b7480", .27, .02, .50)
+        base["wool"] = mat("RAT · deep slate leg balloons", "#686270", .28, .015, .48)
+        base["face"] = mat("RAT · pale slate face balloon", "#8c8591", .25, .02, .52)
+        base["belly"] = mat("RAT · moth-grey belly", "#d6d0cf", .26, .01, .50)
+        base["muzzle"] = mat("RAT · moth-grey snout", "#d6d0cf", .24, .01, .50)
+        base["inner"] = mat("RAT · dusky-rose ear lining", "#d898a3", .24, .01, .46)
+        base["pink"] = mat("RAT · rosy nose, paws and tail", "#dd8f9c", .25, .01, .44)
+        base["hoof"] = base["pink"]
+        base["mask"] = mat("RAT · sleepy lid slate", "#5d5763", .24, .01, .48)
+        base["whisker"] = mat("RAT · pale whiskers", "#efe9e4", .3, 0, .2)
+        base["collar"] = mat("RAT · moonlight-violet bell ribbon", "#8e74c2", .24, .04, .46)
+    elif animal.lower() == "snake":
+        base["body"] = mat("SNAKE · meadow-emerald balloon scales", "#3f9e6e", .22, .02, .60)
+        base["head"] = mat("SNAKE · bright emerald head balloon", "#48ab78", .21, .02, .62)
+        base["spot"] = mat("SNAKE · deep-moss diamond markings", "#2a7650", .24, .02, .52)
+        base["belly"] = mat("SNAKE · buttercream belly scales", "#f4ebc4", .24, .01, .50)
+        base["tongue"] = mat("SNAKE · cherry tongue", "#e0505f", .22, .01, .50)
+        base["collar"] = mat("SNAKE · coral bell ribbon", "#ec8573", .24, .04, .46)
     else:
         base["body"] = mat("GOOSE · warm ivory balloon plumage", "#f5eedc", .26, .01, .50)
         base["wing"] = mat("GOOSE · pearl-grey wing balloons", "#ddd7c9", .27, .01, .46)
@@ -405,12 +442,13 @@ def portrait(animal, m):
         lamp.rotation_euler = (Vector((0, 0, 1.1)) - lamp.location).to_track_quat("-Z", "Y").to_euler()
 
 
-def export_asset(root, animal, review_yaw=0.0, review_frame=7):
+def export_asset(root, animal, review_yaw=0.0, review_frame=7, texcoords=True):
     """Save, render the review portrait, and export the GLB.
 
     `review_yaw` turns the whole rig for the still only (degrees about Z) and is
     undone before the GLB is written, so a species with a forward-facing face
     can be shown three-quarter to the portrait camera without changing the asset.
+    `texcoords=False` leaves out UVs: the animals are untextured, so they are dead weight.
     """
     stem = f"balloon-{animal}"
     blend_path = OUTPUT / f"{stem}.blend"
@@ -437,7 +475,7 @@ def export_asset(root, animal, review_yaw=0.0, review_frame=7):
         export_apply=True, export_animations=True, export_animation_mode="NLA_TRACKS",
         export_nla_strips=True, export_nla_strips_merged_animation_name=f"BALLOON {animal.upper()}",
         export_force_sampling=True, export_frame_step=1, export_materials="EXPORT",
-        export_cameras=False, export_lights=False,
+        export_cameras=False, export_lights=False, export_texcoords=texcoords,
     )
     print(f"{animal.title()} Blender source: {blend_path}")
     print(f"{animal.title()} art review: {render_path}")
@@ -1119,7 +1157,198 @@ def make_raccoon():
     export_asset(root, "raccoon")
 
 
+def add_rodent_head(head, m, animal, ear_size, snout_length):
+    """A pointed rodent face on the standard +X head: snout, pink nose, whiskers, round ears."""
+    upper = animal.upper()
+    sphere(f"{upper} · {animal} face balloon", (.03, 0, .04), (.50, .44, .44), m["face"], head, 44, 30)
+    sphere(f"{upper} · pointed snout balloon", (.30 + snout_length * .5, 0, -.08), (.24 + snout_length, .25, .21), m["muzzle"], head, 36, 24)
+    sphere(f"{upper} · pink button nose", (.52 + snout_length * 1.6, 0, -.02), (.075, .085, .07), m["pink"], head, 24, 16)
+    curve(f"{upper} · tiny smile", [(.42 + snout_length, -.10, -.20), (.48 + snout_length, 0, -.22), (.42 + snout_length, .10, -.20)], .011, m["seam"], head, 2)
+    for side, label in ((-1, "near"), (1, "far")):
+        for row, spread in enumerate((.02, -.05)):
+            tip_x = .38 + snout_length * 1.2
+            curve(f"{upper} · {label} whisker {row + 1}", [(tip_x, side * .16, spread), (tip_x + .08, side * .40, spread * 2 + .03), (tip_x + .02, side * .58, spread * 3)], .006, m["whisker"], head, 1)
+    add_face_details(head, m, upper)
+    ears = []
+    for side, label in ((-1, "near"), (1, "far")):
+        ear = pivot(f"{upper} RIG · {label} round ear", (-.12, side * .30, .36), head)
+        ears.append(ear)
+        ear.rotation_euler = (math.radians(side * 16), math.radians(-8), math.radians(side * -10))
+        sphere(f"{upper} · {label} round ear balloon", (0, side * .10, ear_size * .8), (ear_size * .85, .07, ear_size), m["body"], ear, 30, 20)
+        sphere(f"{upper} · {label} pink ear lining", (.035, side * .11, ear_size * .8), (ear_size * .64, .04, ear_size * .74), m["inner"], ear, 26, 16)
+    return ears
+
+
+def add_rodent_tail(body, m, animal, length, lift):
+    """A long, thin, gently curling pink tail: one bevelled curve on a tail pivot."""
+    tail = pivot(f"{animal.upper()} RIG · long pink tail", (-.86, 0, -.06), body)
+    points = []
+    for index in range(7):
+        t = index / 6
+        points.append((-length * t, .16 * math.sin(t * math.pi * 1.4), lift * t * t - .04 * t))
+    curve(f"{animal.upper()} · long pink tail", points, .055, m["pink"], tail, 3)
+    sphere(f"{animal.upper()} · tail root balloon", (0, 0, 0), (.12, .11, .11), m["body"], tail, 20, 14)
+    return tail
+
+
+def make_mouse():
+    global DETAIL
+    DETAIL = LEAN_DETAIL
+    m = materials("MOUSE")
+    root = pivot("BALLOON MOUSE · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_mouse"
+    root["description"] = "Harvest-fawn balloon field mouse with big pink-lined ears and a long curling tail"
+    body = pivot("MOUSE RIG · pear-round body", (0, 0, 1.2), root)
+    head = pivot("MOUSE RIG · pointed head", (.74, 0, .30), body)
+    neck = pivot("MOUSE RIG · soft neck", (.47, 0, .08), body)
+    # Pear-shaped: plump hindquarters, a narrower shoulder into the head.
+    sphere("MOUSE · plump fawn balloon body", (-.08, 0, 0), (.96, .68, .64), m["body"], body, 48, 32)
+    sphere("MOUSE · shoulder balloon", (.36, 0, .04), (.52, .50, .50), m["body"], body, 36, 24)
+    sphere("MOUSE · oat-cream belly", (.08, 0, -.32), (.70, .50, .36), m["belly"], body, 36, 24)
+    sphere("MOUSE · neck ruff", (0, 0, 0), (.44, .44, .44), m["body"], neck)
+    ears = add_rodent_head(head, m, "mouse", ear_size=.34, snout_length=.06)
+    bell = add_collar(body, neck, m, "MOUSE")
+    tail = add_rodent_tail(body, m, "mouse", length=1.75, lift=.55)
+    positions, legs, paws = make_legs(root, body, m, "MOUSE", connected=True)
+    animate("mouse", body, head, neck, ears, tail, legs, paws, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45)
+    portrait("mouse", m)
+    export_asset(root, "mouse", texcoords=False)
+
+
+def make_rat():
+    global DETAIL
+    DETAIL = LEAN_DETAIL
+    m = materials("RAT")
+    root = pivot("BALLOON RAT · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_rat"
+    root["description"] = "Dusk-slate balloon rat with a long snout, rosy paws and a long tail; sleeps curled by day"
+    body = pivot("RAT RIG · long slate body", (0, 0, 1.2), root)
+    head = pivot("RAT RIG · long-snouted head", (.74, 0, .34), body)
+    neck = pivot("RAT RIG · soft neck", (.47, 0, .10), body)
+    sphere("RAT · long slate balloon body", (-.06, 0, 0), (1.06, .64, .60), m["body"], body, 48, 32)
+    sphere("RAT · moth-grey belly", (.05, 0, -.32), (.78, .48, .34), m["belly"], body, 36, 24)
+    sphere("RAT · darker back saddle", (-.10, 0, .38), (.70, .32, .22), m["wool"], body, 28, 18)
+    sphere("RAT · neck ruff", (0, 0, 0), (.48, .48, .48), m["body"], neck)
+    ears = add_rodent_head(head, m, "rat", ear_size=.22, snout_length=.16)
+    bell = add_collar(body, neck, m, "RAT")
+    tail = add_rodent_tail(body, m, "rat", length=1.95, lift=.30)
+    positions, legs, paws = make_legs(root, body, m, "RAT", connected=True)
+    # Eyelids: flat slivers while awake, swelling shut in the SLEEP clip (the raccoon's recipe).
+    lids = []
+    for side, label in ((-1, "near"), (1, "far")):
+        lid = pivot(f"RAT RIG · {label} eyelid", (.15, side * .43, .19), head)
+        lids.append(lid)
+        sphere(f"RAT · {label} sleepy eyelid", (0, side * .02, 0), (.16, .10, .17), m["mask"], lid, 24, 16)
+        curve(f"RAT · {label} closed-eye line", [(-.08, side * .10, .0), (.02, side * .105, -.045), (.13, side * .10, .0)], .012, m["white"], lid, 2)
+    pinned = [(head, tuple(head.location)), (tail, tuple(tail.location))]
+    animate_sleep("rat", body, head, neck, ears, tail, legs, paws, bell, positions, lids)
+    animate("rat", body, head, neck, ears, tail, legs, paws, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45, held=lids, pinned=pinned)
+    portrait("rat", m)
+    export_asset(root, "rat", texcoords=False)
+
+
+SNAKE_SEGMENTS = 13
+SNAKE_SPACING = .27
+
+
+def snake_segment(index):
+    """Rest shape of one body segment: x along the body, a gentle S to the side, and its radius."""
+    t = index / (SNAKE_SEGMENTS - 1)
+    x = .30 - index * SNAKE_SPACING
+    side = .30 * math.sin(t * math.pi * 1.6)
+    radius = .27 - .19 * t ** 1.4
+    return x, side, radius
+
+
+def make_snake():
+    """A balloon snake: one long tapering balloon tube in a lazy S, head raised.
+
+    A new body plan (no legs). The tube is a chain of overlapping segment
+    balloons, each its own pivot under the body, so WALK can pass a travelling
+    wave down it and the body slithers while the head stays on course. IDLE is
+    a slow sway, a head turn and a tongue flick. Every segment rests at its
+    radius above z = 0 so the whole belly lies on the lawn.
+    """
+    global DETAIL
+    DETAIL = LEAN_DETAIL
+    m = materials("SNAKE")
+    root = pivot("BALLOON SNAKE · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_snake"
+    root["description"] = "Meadow-emerald balloon snake with dark diamond markings, a raised head and a cherry tongue"
+    body = pivot("SNAKE RIG · coiled body", (0, 0, 0), root)
+    segments = []
+    for index in range(SNAKE_SEGMENTS):
+        x, side, radius = snake_segment(index)
+        # The glTF exporter writes a location-keyed node's rest translation as zero, which
+        # collapsed the whole body onto the origin at rest (and the runtime sizes the model
+        # from its rest pose). So each segment hangs from an unkeyed anchor at its rest spot,
+        # and only the sway pivot under it is keyed, as an offset from that spot.
+        anchor = pivot(f"SNAKE · body segment {index + 1} anchor", (x, side, radius), body)
+        segment = pivot(f"SNAKE RIG · body segment {index + 1}", (0, 0, 0), anchor)
+        segments.append(segment)
+        # Long, overlapping balloons: neighbours run into each other so the body reads as one tube.
+        sphere(f"SNAKE · balloon segment {index + 1}", (0, 0, 0), (SNAKE_SPACING * 1.15 + radius * .35, radius, radius * .92), m["body"], segment, 30, 20)
+        sphere(f"SNAKE · belly scale {index + 1}", (0, 0, -radius * .52), (SNAKE_SPACING * .95, radius * .80, radius * .46), m["belly"], segment, 22, 14)
+        diamond = sphere(f"SNAKE · back diamond {index + 1}", (0, 0, radius * .80), (radius * .55, radius * .42, radius * .22), m["spot"], segment, 20, 12)
+        diamond.rotation_euler[2] = math.radians(45)
+    sphere("SNAKE · tail-tip knot", (-SNAKE_SPACING * .9, 0, 0), (.07, .05, .05), m["body"], segments[-1], 18, 12)
+    neck_anchor = pivot("SNAKE · raised neck anchor", (.58, 0, .34), body)
+    neck = pivot("SNAKE RIG · raised neck", (0, 0, 0), neck_anchor)
+    sphere("SNAKE · rising neck balloon", (-.10, 0, -.08), (.36, .25, .28), m["body"], neck, 30, 20)
+    sphere("SNAKE · neck belly", (-.04, 0, -.16), (.30, .20, .18), m["belly"], neck, 22, 14)
+    head = pivot("SNAKE RIG · wedge head", (.28, 0, .14), neck)
+    sphere("SNAKE · emerald head balloon", (.10, 0, 0), (.44, .34, .26), m["head"], head, 40, 28)
+    sphere("SNAKE · cream chin", (.14, 0, -.12), (.34, .26, .12), m["belly"], head, 30, 20)
+    sphere("SNAKE · crown diamond", (.0, 0, .22), (.12, .09, .05), m["spot"], head, 18, 12)
+    for side, label in ((-1, "near"), (1, "far")):
+        sphere(f"SNAKE · {label} nostril", (.50, side * .08, .06), (.020, .016, .014), m["seam"], head, 14, 10)
+        # Big friendly eyes high on the head; no brows (they read as feelers). The names match
+        # the heart-eye swap: "bright eye", "dark pupil", "starry catchlight".
+        sphere(f"SNAKE · {label} bright eye", (.16, side * .25, .12), (.12, .075, .13), m["white"], head, 28, 18)
+        sphere(f"SNAKE · {label} dark pupil", (.21, side * .31, .125), (.055, .034, .085), m["eye"], head, 22, 14)
+        sphere(f"SNAKE · {label} starry catchlight", (.235, side * .335, .16), (.022, .014, .026), m["white"], head, 14, 10)
+        cheek = sphere(f"SNAKE · {label} rosy cheek", (.30, side * .27, -.06), (.07, .02, .04), m["inner"], head, 20, 12)
+        cheek.rotation_euler[1] = math.radians(-12)
+    tongue = pivot("SNAKE RIG · flicking tongue", (.50, 0, -.06), head)
+    curve("SNAKE · forked tongue", [(0, 0, 0), (.16, 0, -.01), (.26, -.05, -.02)], .016, m["tongue"], tongue, 2)
+    curve("SNAKE · tongue fork", [(.16, 0, -.01), (.26, .05, -.02)], .016, m["tongue"], tongue, 2)
+    # The keepsake bell hangs under the chin from a ribbon sized to the neck, not a quadruped's.
+    ring = [(.24 * math.cos(i * math.tau / 32) - .06, .25 * math.sin(i * math.tau / 32), -.12 + .05 * math.cos(i * math.tau / 32)) for i in range(32)]
+    curve("SNAKE · satin bell collar", ring, .022, m["collar"], neck, 3)
+    bell = pivot("SNAKE RIG · keepsake bell", (.14, 0, -.30), neck)
+    sphere("SNAKE · rounded golden bell", (0, 0, 0), (.10, .095, .105), m["gold"], bell, 26, 18)
+    sphere("SNAKE · tiny bell clapper", (.015, -.012, -.09), (.028, .028, .034), m["seam"], bell, 16, 10)
+
+    def pose(clip, amplitude, lag_step, s_curve, flick):
+        objects = [body, neck, head, tongue, bell, *segments]
+        for obj in objects:
+            begin_action(obj, f"BALLOON SNAKE · {clip}")
+        for frame, phase in zip(FRAMES, PHASES):
+            bpy.context.scene.frame_set(frame)
+            key(body, frame, location=(0, 0, .004 * math.cos(2 * phase)), rotation=(0, 0, math.radians(1.0 * math.sin(phase))))
+            for index, segment in enumerate(segments):
+                x, side, radius = snake_segment(index)
+                # A travelling wave: each segment lags the one ahead, and the swing grows toward the tail.
+                lag = index * lag_step
+                reach = amplitude * (.2 + .8 * index / (SNAKE_SEGMENTS - 1))
+                lateral = side * s_curve + reach * math.sin(phase - lag)
+                key(segment, frame, location=(0, lateral - side, .004 * math.sin(phase + index)), rotation=(0, 0, math.radians(55 * amplitude * math.cos(phase - lag))))
+            key(neck, frame, location=(0, amplitude * .15 * math.sin(phase + .5), .02 * math.cos(2 * phase)), rotation=(0, math.radians(-6 + 2 * math.cos(2 * phase)), math.radians(6 * math.sin(phase + .3))))
+            key(head, frame, rotation=(math.radians(2 * math.sin(phase)), math.radians(4 + 2 * math.sin(phase + 1)), math.radians(-7 * math.sin(phase + .3))))
+            out = flick(phase)
+            key(tongue, frame, location=(.36 + .14 * out, 0, -.06), scale=(.2 + .8 * out, 1, 1), rotation=(0, math.radians(8 * math.sin(phase)), 0))
+            key(bell, frame, rotation=(math.radians(4 * math.sin(phase + .4)), math.radians(6 * math.sin(phase + .6)), math.radians(1 * math.sin(phase))))
+        finish_action(objects, clip, "snake")
+
+    pose("WALK", .26, .7, .35, lambda phase: max(0.0, math.sin(phase)))
+    pose("IDLE", .04, .5, 1.0, lambda phase: .1 + .9 * max(0.0, math.sin(phase)) ** 2)
+    portrait("snake", m)
+    export_asset(root, "snake", review_yaw=-20, texcoords=False)
+
+
 def reset_scene():
+    global DETAIL
+    DETAIL = 1.0
     scene = bpy.context.scene
     scene.world = None
     bpy.ops.object.select_all(action="SELECT")
@@ -1130,7 +1359,7 @@ def reset_scene():
                 collection.remove(block)
 
 
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon}
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon, "mouse": make_mouse, "rat": make_rat, "snake": make_snake}
 arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
 invalid = [value for value in requested if value not in MAKERS]

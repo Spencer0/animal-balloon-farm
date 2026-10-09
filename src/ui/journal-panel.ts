@@ -53,6 +53,15 @@ interface JournalEntry {
   readonly gesture?: string
 }
 
+/** One extra requirement shown under a rung's main bar. */
+export interface JournalAlsoNeeds {
+  readonly label: string
+  readonly current: number
+  readonly target: number
+  readonly kind?: string
+  readonly species?: string
+}
+
 /**
  * What the journal needs to draw a species' four conditions.
  *
@@ -85,9 +94,10 @@ export interface JournalConditionRow {
   readonly metricUnit?: string
   /**
    * Further things this rung needs at the same time, such as the oak an owl
-   * will not settle without. Each is a count with its own live number.
+   * will not settle without. Each has its own live number; `kind` says whether
+   * it is a count or an area (an area is written in m²).
    */
-  readonly alsoNeeds?: readonly { readonly label: string; readonly current: number; readonly target: number }[]
+  readonly alsoNeeds?: readonly JournalAlsoNeeds[]
   /** A species this condition is waiting on, if it is a social one. */
   readonly waitingOn?: { readonly species: string; readonly name: string; readonly resident: boolean }
 }

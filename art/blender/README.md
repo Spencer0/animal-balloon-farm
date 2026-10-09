@@ -69,6 +69,16 @@ a blink. The dive uses `IDLE` too, so the wings tuck. The portrait is rendered w
 degrees toward the camera (`export_asset(review_yaw=...)`), because an owl's eyes face forward; the
 turn is undone before the GLB is written.
 
+## Mouse, rat and snake (the tall-grass animals)
+
+- `make_mouse()`, `make_rat()` and `make_snake()` in [`balloon_friends.py`](balloon_friends.py); outputs `balloon-<id>.{blend,glb}` and `balloon-<id>-review.png`.
+
+```powershell
+blender --background --factory-startup --python art/blender/balloon_friends.py -- mouse rat snake
+```
+
+The mouse and rat are quadrupeds on the raccoon's skeleton, with a shared pointed face (`add_rodent_head`) and a long curling tail (`add_rodent_tail`); the rat also ships the raccoon's curled `SLEEP` clip. The snake has no legs: a chain of overlapping segment balloons, each keyed under an *unkeyed* anchor, because a location-keyed node exports with a zero rest translation and the runtime sizes a model from its rest pose (see `ANIMAL_PIPELINE.md`, exporter traps).
+
 ## Raccoon, garbage can and dumpster
 
 - Raccoon: `make_raccoon()` in [`balloon_friends.py`](balloon_friends.py); outputs `balloon-raccoon.{blend,glb}` and `balloon-raccoon-review.png`.
@@ -172,10 +182,10 @@ The building is authored facing Blender `-Y`, so it lands in Three.js facing `+Z
 blender --background --factory-startup --python art/blender/chicken_coop.py
 ```
 
-## Animal houses: sty, goose house, frog house, owl box
+## Animal houses: sty, goose house, frog house, owl box, hollow log, rock pile
 
 - Authoring script: [`animal_houses.py`](animal_houses.py)
-- Outputs per house: `../../public/assets/props/<id>.blend`, `<id>-review.png`, `<id>.glb` for `goose-house`, `sty`, `frog-house` and `owl-box`
+- Outputs per house: `../../public/assets/props/<id>.blend`, `<id>-review.png`, `<id>.glb` for `goose-house`, `sty`, `frog-house`, `owl-box`, `hollow-log` (mice and rats) and `rock-pile` (snakes)
 
 Run from the repository root:
 

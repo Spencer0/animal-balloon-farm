@@ -21,11 +21,16 @@ export interface ScenarioHarness {
   addAnimal(species: string, stage?: number): string | null
   buy(id: string): unknown
   placeProp(id: string, cellX: number, cellZ: number, rotation?: number): unknown
+  /** Sow a disc of full-grown grass: 'short' lawn or 'tall' meadow. */
+  sowGrass(x: number, z: number, radius: number, pack?: 'short' | 'tall'): unknown
+  plant(species: string, x: number, z: number): unknown
+  growPlants(steps?: number, secondsPerStep?: number): unknown
   setTimeOfDay(time: number): void
   /** Freeze (or release) the day clock, so a night scenario stays night. */
   holdTime(hold: boolean): void
   advance(steps?: number, secondsPerStep?: number): unknown
   feedOwl(count: number): unknown
+  feedSnake(count: number): unknown
   hurryHunt(): void
   setOwlHelium(level: number): void
   stepHunt(seconds: number, secondsPerStep?: number): unknown

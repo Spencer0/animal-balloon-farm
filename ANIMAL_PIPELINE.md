@@ -4,7 +4,8 @@ How a new animal gets from "add an X" to a reviewed, playable species. The goal:
 **"Add a new animal X, use the animal pipeline"** and the agent can do the whole thing without
 hand-holding, including any plant, prop or house the animal needs.
 
-Current catalog: **9 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon).
+Current catalog: **12 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
+snake).
 
 **Reference animals.** Copy the closest one instead of starting cold.
 
@@ -12,6 +13,7 @@ Current catalog: **9 species** (pig, sheep, cow, chicken, duck, goose, frog, owl
 |--------|-------------|
 | **raccoon** | The default template: a ground walker, a night shift, two shop props (a garbage can and a house), a lying-down sleep animation, curled-ball sleeping by its house. Start here. |
 | **frog** | A species lured and settled by *plants* (water lilies). |
+| **mouse / rat / snake** | The tall-grass animals: settled by *meadow* (`meadowArea`). The mouse and rat are small quadrupeds with a shared `add_rodent_head` / `add_rodent_tail`; the rat is a night animal with a `SLEEP` clip; the snake is the legless body plan (see *A body with no legs*). |
 | **pig / sheep / cow / chicken / duck / goose** | Plain day animals settled by terrain (grass, water, flat ground), a resident friend, or a barn / coop. |
 | **owl** | Only if the animal flies, hunts, or eats another species. The complex case; see *Predators and fliers*. |
 
@@ -38,9 +40,10 @@ from them.
    | **Plants** (`plantCount`) | eats or nests in something the player *grows* | clover, dandelion, poppy, water-lily | a plant: see *Adding a plant* |
    | **Animals it likes** (`residentSpecies` / `residentCount`) | is social, or lives off another species | cow, chicken, ... | nothing: any catalog species works |
    | **A prop** (`propCount`) | needs furniture: a roost, a feeder, something to raid | barn, coop, oak, garbage can | a prop: see *Adding a shop prop* |
-   | **A house** (`propCount` of a house prop) | has somewhere to live; **required** on the breeding rung | barn, coop, sty, goose house, frog house, owl box, dumpster | a house is a prop, plus a `HOUSE_SPECIES` entry: see *Adding a shop prop (and a house)* |
+   | **A house** (`propCount` of a house prop) | has somewhere to live; **required** on the breeding rung | barn, coop, sty, goose house, frog house, owl box, dumpster, hollow log, rock pile | a house is a prop, plus a `HOUSE_SPECIES` entry: see *Adding a shop prop (and a house)* |
    | **Terrain** (`grassArea` / `waterArea` / `flatArea`) | needs land, not objects | all | nothing |
-   | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl | see *Predators and fliers* |
+   | **Tall meadow** (`meadowArea`) | lives in long grass (the green seed pack), not on a lawn | all | nothing |
+   | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl; mouse, for the snake | see *Predators and fliers* |
 
    A good ladder asks for **something different at each rung** and ends on a house for breeding. The
    raccoon: appears when a cow lives on the farm, settles for a garbage can, breeds at a dumpster.
@@ -146,7 +149,7 @@ exporter uses `NLA_TRACKS`, so **an action that never reaches an NLA track is no
   legs fold under, the ears droop, and eyelid pivots swell shut. Call it **before** `animate()` so its
   NLA track sits underneath and the review portrait still shows the standing pose.
 
-### Two silent exporter traps (both hit by the raccoon)
+### Three silent exporter traps
 
 1. **The glTF exporter drops any channel that never changes.** A pose you hold constant never reaches
    the game, and that node stays in its rest pose. Give every channel in every clip a hair of motion
@@ -155,9 +158,23 @@ exporter uses `NLA_TRACKS`, so **an action that never reaches an NLA track is no
    pose.** `SLEEP` moved the head and tail *position*, which `WALK`/`IDLE` never keyed, so the awake
    raccoon walked around with its head sunk into its body. Anything `SLEEP` animates must also be keyed
    in `WALK` and `IDLE`: `animate(..., held=lids, pinned=[(head, rest_location), (tail, rest_location)])`.
+3. **A node whose location is keyed exports with a zero rest translation.** The runtime sizes a model
+   from its *rest* pose (`size` is the rest pose's longest side), so the first snake, whose 13 body
+   segments were each keyed in place, collapsed to 1.3 m at rest, was scaled up almost 2x, and then
+   stretched to 8 m once WALK spread it out. Hang a location-keyed joint from an **unkeyed anchor** at
+   its rest spot and key only an offset from it (`make_snake`). Check the console's
+   `<name> asset {"dimensions": ...}`: it is the rest pose's size, and it should match the model.
 
 After every export count the channels per clip in the GLB JSON (all three clips should list every
 animated node) and look at the animal **awake and asleep, from the side, in the game**.
+
+### A body with no legs (the snake)
+
+`make_snake` is a chain of overlapping segment balloons, each an anchor (unkeyed, its rest spot along
+a lazy S) with a keyed `SNAKE RIG · body segment N` under it. `WALK` passes a travelling wave down the
+chain (each segment lags the one ahead and swings wider toward the tail); `IDLE` is a slow sway and a
+tongue flick. The face is custom, without brows: on a snake they read as feelers. The ground walker in
+`balloon-animal.ts` needs nothing special; it only plays `WALK` and `IDLE`.
 
 ### The rig naming contract
 
@@ -231,7 +248,8 @@ Field notes:
 - `speed` is what makes a species read as a species.
 - `carnivalSpawn`: pick a spot among the tents (existing entries sit at |x| 18-26).
 - `showcaseSpawn` must not collide with another plinth. Taken: a 3x2 ring at `[-7, 0, 7] x [-3.2, 3.2]`,
-  frog `[-11, 0]`, owl `[11, 0]`, raccoon `[-11, 3.2]`. Free next: `[11, 3.2]`.
+  frog `[-11, 0]`, owl `[11, 0]`, raccoon `[-11, 3.2]`, mouse `[11, 3.2]`, rat `[-11, -3.2]`, snake `[11, -3.2]`.
+  Free next: `[-15, 0]`.
 
 ### Compiler-enforced records
 
@@ -313,6 +331,7 @@ raccoon: {
 | Kind | Reads | `species` holds |
 |------|-------|-----------------|
 | `grassArea`, `flatArea`, `waterArea` | m² of mature grass / flat grassy ground / water | n/a |
+| `meadowArea` | m² of **tall** meadow: ground where the green seed pack's blades stand over 0.6 m. A lawn never counts | n/a |
 | `plantCount` | **mature** plants of one kind | a plant id |
 | `residentSpecies` | is any adult of this species a resident | an animal id |
 | `residentCount` | how many adult residents | an animal id |
@@ -323,6 +342,14 @@ Rules that are easy to get wrong:
 
 - **A requirement below the current stage reports a null target.** That is the disclosure rule; it
   lives in the model so the UI cannot leak a number.
+- **Meadow is measured from the blades, once a second.** `measureMeadow` (pure, in `farm-state.ts`)
+  bins blades into 0.58 m cells and counts a cell with three tall blades. It is a pass over every
+  blade, so `main.ts` caches it for a second; anything that swaps the grass outright (a load, a harness
+  `sowGrass`) calls `remeasureMeadow()`. Ground-cover plants (dandelions, clover) only take root in
+  *short* grass, so a ladder that asks for both meadow and dandelions asks for both kinds of lawn.
+- **A new condition kind has two labels.** `conditionMetricLabel` in `animal-conditions.ts` and
+  `visualForKind` in `src/ui/journal-dom.ts` (the journal's icon and label). Missing the second falls back
+  to guessing from the hint text.
 - **Pasture means grassy flat ground.** Flatness on bare dirt is satisfied the moment the game starts.
 - **The grid pitch must be the most common vertex step**, or areas read ~4x small.
 - **Only mature plants count.** Watering and pruning matter because of this.
@@ -355,8 +382,8 @@ nobody owns a bed. At most `OUTDOOR_LIMITS` (5 of a species, 40 in all) are out 
 walk to the nearest house of their kind with room and their models are disposed until they come out.
 Selling a house sells the animals inside it (the card asks twice); animals out on the farm stay.
 House models face local -Y in Blender (+Z in glTF): the game walks animals to that side of the
-footprint to go in and out. `art/blender/animal_houses.py` builds the sty, goose house, frog house
-and owl box.
+footprint to go in and out. `art/blender/animal_houses.py` builds the sty, goose house, frog house,
+owl box, hollow log (mice and rats) and rock pile (snakes).
 
 | Where | What | Enforced? |
 |-------|------|-----------|
@@ -378,7 +405,8 @@ and owl box.
 `footprint` is fine and rotates (`footprintExtent`). `GardenProps.placements(id)` returns the world
 centre of every placed prop of one id, which is what sleeping uses.
 
-Prices so far: garbage can 45, frog house 70, owl box 80, coop 90, sty 95, goose house 100, barn 110, dumpster 120, oak 140.
+Prices so far: garbage can 45, frog house 70, hollow log 75, owl box 80, rock pile 85, coop 90, sty 95, goose house 100, barn 110,
+dumpster 120, oak 140.
 
 Model tips from the raccoon's props: author on `z = 0`, centred in X/Y; do not leave a doorway the
 game cannot use (the dumpster has none: the raccoon climbs in over the rim, and a later feature will
@@ -420,6 +448,8 @@ The farm fills one animal at a time, and each arrival is earned.
   is the first win.
 - **Sheep** are lured by clover (`DISCOVERY.sheep`) and **chickens** by dandelions. **Raccoons** by a
   resident cow. `DISCOVERY` is the trigger that takes a species from stage 0 to the carnival.
+- **Mice** are lured by a little tall meadow, then **rats** (at night) and **snakes** by resident mice.
+  This is what the Tall Grass Seed Pack is for: a lawn alone never brings them.
 - **Staying and breeding** lean on props: sheep need a barn to settle and chickens a coop, raccoons a
   can. **Every species needs its house to breed** (see `HOUSE_SPECIES`), and a baby is born only
   while that house has room. There are no eggs.
@@ -444,6 +474,8 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 | Who eats whom, the prey floor, the eaten tally | `PREY_OF`, `PREY_FLOOR`, `createPredationLedger` in `src/game/predator.ts` |
 | The owl's flight and hunt state machine | `stepOwl` in `predator.ts` (pure, tested in `tests/predator.test.mjs`) |
 | Applying flight, panicking prey | `src/scene/owl-hunt.ts` |
+| A ground hunter's stalk-and-lunge state machine | `stepGroundHunter` in `src/game/ground-hunt.ts` (pure, tested in `tests/tall-grass-animals.test.mjs`) |
+| Steering a ground hunter, panicking prey on the lunge | `src/scene/snake-hunt.ts`, via `BalloonAnimal.setPursuit` |
 | The pop and its clean-up | `src/game/pop-animation.ts` (timeline), `src/scene/pop-burst.ts` (meshes) |
 | The roost | the `OAK roost` node of `public/assets/props/oak.glb`, read by `GardenProps.roosts()` |
 
@@ -453,7 +485,21 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 - **Fliers are always full models**; the instanced crowd has no low-poly flier.
 - **Prey** is a resident, adult, on-farm animal that is not mid-capture, courting or waiting to settle.
   The predator will not take the flock below `PREY_FLOOR` (2).
-- **A catch is a removal.** `handleOwlCatch` forgets the prey from the sim and hands the model to a pop.
+- **A catch is a removal.** `handlePredatorCatch` forgets the prey from the sim and hands the model to a pop.
+- **A ground hunter stalks, then the dice decide.** The snake creeps up (`stalkSpeedScale`) unnoticed.
+  Within `strikeDistance` of its mouth it rolls the strike die (`STRIKE_DIE`, a d6, 4+ catches)
+  *before* lunging, so each outcome gets its own animation instead of relying on physics:
+  - **Catch:** the prey freezes (a zero-speed `setPursuit`) and the lunge lands; it pops.
+  - **Miss:** the snake lunges through the spot the prey left, and `boltHome` (in `main.ts`) sprints
+    the prey into the nearest house of its kind with room (`setHomeTrip(door, ESCAPE_SPRINT)`). It
+    stays in for `ESCAPE_HIDING_SECONDS`, and its trip is exempt from the outdoor roster. With no
+    house it panics in the open for a few seconds.
+  Distances run from the snake's **mouth** (`reach`), never centre to centre: the collision pass
+  holds two animals' centres a body-width apart, so a centre-to-centre catch can never land. Prey
+  indoors is out of the `animals` list, so a house is a refuge. Otherwise a ground hunter is a normal
+  walker: its pursuit is a steer target fed to `setPursuit` each frame, and null hands it back.
+- **Test hunts with collisions on.** `stepHunt` runs `collideAnimals` like the frame loop does; a
+  hunt that only works when animals pass through each other is not a hunt.
 - **Helium.** An oak is where a resident owl tops up. Remove the last oak and it sags and pops.
 - **Count conditions.** `residentCount`, `preyEaten` and `propCount` read maps on `FarmState`, filled
   in `measureFarm()`.
@@ -478,6 +524,10 @@ shared between animals and no longer resolve.
 | `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its can and curls up |
 | `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: its house, so it walks in to sleep |
 | `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (a kit is born in the dumpster) |
+| `meadow/tall-grass-garden` | day: a deep meadow with a hollow log and a rock pile beside a short lawn with dandelions and a can; six mice, two snakes (two mice already eaten) and two rats (asleep in the log), all in love |
+| `meadow/snake-hunt` | day: five resident mice and one visiting snake. Each lunge rolls a d6: 4+ and the mouse pops, otherwise it sprints into the hollow log. Two catches and the snake calls the farm home |
+| `meadow/tall-grass-night` | the same garden at night, rats awake |
+| `meadow/empty-meadow` | the same garden with no animals and the clock running: mice find the meadow first |
 
 To add one: write a `Scenario` in `dev/scenarios/<animal>/` using only the verbs on `ScenarioHarness`
 (`dev/scenarios/types.ts`), and list it in `dev/scenarios/index.ts`. Nothing in `dev/` ships: `main.ts`
@@ -508,7 +558,7 @@ d.focusPoint(x, z, height); d.frameAngle(x, z, height, azimuthDeg, elevationDeg)
 d.openJournal(); d.openViewer(); d.resetConditions()
 ```
 
-Predator verbs: `feedOwl(n)`, `hurryHunt()`, `stepHunt(seconds)`, `predation()`, `setOwlHelium(0..1)`.
+Predator verbs: `feedOwl(n)`, `feedSnake(n)`, `hurryHunt()`, `stepHunt(seconds)`, `predation()`, `setOwlHelium(0..1)`.
 `sowGrass`, `digPond` and `plant` go through the real tool code; do not verify a condition by
 hand-dragging the seeder.
 
@@ -570,8 +620,12 @@ only the paths you changed.
 4. **Several registrations are string-keyed tables** (the silent list in section 3). Moving `DISCOVERY`,
    `NIGHT_ONLY_SPECIES`, `SLEEP_PROPS` and `SPECIES_META` onto the catalog entry would make a missing
    one a compile error.
-5. **Each `.blend` + `.glb` + PNG is about 1.5-2.2 MB.** Twenty species is ~40 MB of binaries; consider
-   decimation or Draco before scaling up.
+5. **The animal download budget is full.** `npm run assets:budget` caps every animal GLB together at
+   16 MB, and the twelve species use about 15.9 MB. The first nine are 1.3-2.2 MB each; the
+   tall-grass animals are built at `LEAN_DETAIL` (a third of the sphere and curve resolution, no UVs:
+   the animals are untextured) and are 0.2-0.3 MB each with no visible difference at game scale. **Build
+   every new animal lean** (`global DETAIL; DETAIL = LEAN_DETAIL` and `export_asset(..., texcoords=False)`),
+   and rebuild the older ones the same way before the next few species.
 6. **Capture is 6.8 s per animal** and starts on click, so "Play all" is a parade, not a test.
 7. **A night animal's house cannot be entered yet.** Sleepers lie beside their house; a planned
    feature will have animals sleep inside, with an inside-the-home viewer.
