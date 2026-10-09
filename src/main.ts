@@ -2332,7 +2332,8 @@ function orbitPointerDown(event: PointerEvent): void {
   if (salePanel.isOpen) {
     salePanel.close()
   }
-  if (event.button === 0 && pointerActive() && !onObject && !journal.isOpen && !shed.isOpen && !shop.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
+  // Plant mode owns the lawn press, so an armed seed plants without Shift.
+  if (event.button === 0 && (pointerActive() || plantingArmed()) && !onObject && !journal.isOpen && !shed.isOpen && !shop.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
     event.preventDefault()
     if (!gardenPlants.selectedSpecies) {
       shed.setPlacementActive(false)
