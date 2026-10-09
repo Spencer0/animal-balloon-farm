@@ -29,7 +29,8 @@ import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps, type HouseSpot, type PropSelection } from './scene/garden-props'
 import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
-import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
+import { footprintWorldRect, PROP_CATALOG, propDefinition, purchaseProp, type PropId } from './game/farm-props'
+import { resolveCollisions, type CollisionBody, type CollisionBox } from './game/animal-collision'
 import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
 import { createCameraTour, type CameraTour, type CameraTourSubject } from './game/camera-tour'
@@ -1105,6 +1106,54 @@ function residentsOf(selection: { readonly id: PropId; readonly siteId: string }
     saleValue: inside.reduce((sum, record) => sum + animalSaleValue(record.species as BalloonAnimalId, record.stage), 0),
     rows: occupancy.species.map((row) => ({ name: speciesPluralName(row.species), inside: row.inside })),
   }
+}
+
+// ---------------------------------------------------------------- collisions --
+
+/** Solid prop footprints, rebuilt a few times a second: props move rarely, animals every frame. */
+let collisionBoxes: readonly CollisionBox[] = []
+let collisionBoxesAt = -Infinity
+const COLLISION_BOX_REFRESH_SECONDS = 0.25
+/** An animal's footprint radius as a share of its catalog size (its longest side). */
+const BODY_RADIUS_SHARE = 0.24
+const bodySizeBySpecies = new Map(ANIMAL_CATALOG.map((entry) => [entry.id as string, entry.size]))
+
+/**
+ * Keep walking animals out of houses and other solid props, and out of each
+ * other. Only the animals out on the farm have models, so this never sees more
+ * than the outdoor limit (plus perf-ramp fixtures).
+ */
+function collideAnimals(nowSeconds: number): void {
+  if (mode !== 'farm') return
+  if (nowSeconds - collisionBoxesAt >= COLLISION_BOX_REFRESH_SECONDS) {
+    collisionBoxesAt = nowSeconds
+    collisionBoxes = (gardenProps?.occupancy.placed ?? [])
+      .filter((prop) => prop.id !== 'fence' && propDefinition(prop.id).blocking)
+      .map((prop) => footprintWorldRect(prop.id, prop.cell, prop.rotation))
+  }
+  const walkers: BalloonAnimal[] = []
+  const bodies: CollisionBody[] = []
+  for (const animal of [...animals, ...crowdFixtures]) {
+    if (animal.isFlier || animal.isSold) continue
+    const position = animal.currentPosition
+    walkers.push(animal)
+    bodies.push({
+      x: position.x,
+      z: position.z,
+      radius: (bodySizeBySpecies.get(animal.id) ?? 2) * BODY_RADIUS_SHARE * animal.currentScale,
+      fixed: animal.isSleeping || animal.isCapturing || animal.isRomancing,
+      // On its way in through a door, walking the gate route from the carnival, or
+      // asleep in a bed laid out beside a prop (moving it would wake it to walk back).
+      ghost: animal.isGoingHome || !animal.isAtFarm || animal.isSleeping,
+    })
+  }
+  resolveCollisions(bodies, collisionBoxes)
+  bodies.forEach((body, index) => {
+    const animal = walkers[index]
+    const dx = body.x - animal.currentPosition.x
+    const dz = body.z - animal.currentPosition.z
+    if (dx !== 0 || dz !== 0) animal.nudge(dx, dz)
+  })
 }
 
 // ---------------------------------------------------------------- game modes --
@@ -3767,6 +3816,7 @@ function frame(now: number): void {
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
+  collideAnimals(now / 1000)
   if (!menu.isOpen && !salePanel.isOpen) updateOwlHunt(delta)
   updateSleepers()
   // Farewell bursts are fire-and-forget: tick them with the herd and prune

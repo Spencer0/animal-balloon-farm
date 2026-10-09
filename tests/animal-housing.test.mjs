@@ -6,14 +6,20 @@ const { outputFiles } = await build({
   entryPoints: ['src/game/animal-housing.ts'], bundle: true, format: 'esm', platform: 'node', write: false,
 })
 const housing = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
+const catalogBuild = await build({
+  entryPoints: ['src/animals/animal-catalog.ts'], bundle: true, format: 'esm', platform: 'node', write: false,
+})
+const { ANIMAL_CATALOG } = await import(`data:text/javascript;base64,${Buffer.from(catalogBuild.outputFiles[0].text).toString('base64')}`)
 const { chooseOutdoorRoster, freeRoomFor, houseFor, houseAccepts, houseOccupancy, houseWithRoom, occupantsByHouse, HOUSE_SPECIES, OUTDOOR_LIMITS } = housing
 
 const herd = (species, count, extra = {}) => Array.from({ length: count }, (_, index) => ({
   id: `${species}-${index + 1}`, species, canGoIndoors: false, pinned: false, ...extra,
 }))
 
-test('every species has exactly one house, and shared houses are the coop and barn', () => {
-  for (const species of ['cow', 'sheep', 'chicken', 'duck', 'goose', 'pig', 'frog', 'owl', 'raccoon']) {
+// ANIMAL_PIPELINE.md makes a house mandatory: a new species without one fails here.
+test('every species in the catalog has exactly one house, and shared houses are the coop and barn', () => {
+  assert.ok(ANIMAL_CATALOG.length >= 9)
+  for (const { id: species } of ANIMAL_CATALOG) {
     assert.ok(houseFor(species), `${species} has a house`)
     assert.equal(Object.values(HOUSE_SPECIES).filter((list) => list.includes(species)).length, 1)
   }

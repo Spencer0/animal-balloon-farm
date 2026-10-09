@@ -129,6 +129,10 @@ export interface BalloonAnimal {
   setHomeTrip(door: { readonly x: number; readonly z: number } | null): void
   /** True once it has reached the door it was sent to. */
   readonly isAtDoor: boolean
+  /** True while it walks to a house door. */
+  readonly isGoingHome: boolean
+  /** Shift it sideways on the ground, e.g. out of a house wall or a neighbour. Walking carries on. */
+  nudge(dx: number, dz: number): void
   /** Stand at a point, e.g. a house door it has just stepped out of, and wander from there. */
   placeAt(x: number, z: number): void
   readonly isLoose: boolean
@@ -866,6 +870,12 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isAlarmed(): boolean { return alarmed },
     get isSleeping(): boolean { return asleep },
     get isAtDoor(): boolean { return atDoor },
+    get isGoingHome(): boolean { return homeTrip !== null },
+    nudge(dx: number, dz: number): void {
+      if (options.flier || sold) return
+      wrapper.position.x += dx
+      wrapper.position.z += dz
+    },
     setHomeTrip(door): void {
       if (options.flier) return
       homeTrip = door

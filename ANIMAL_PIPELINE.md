@@ -53,6 +53,14 @@ from them.
 
 ## 1 · The whole job, in order
 
+> **Every animal must have a house. No exceptions.** A species without one can never breed (babies
+> are born indoors), has no space indoors, and keeps every member out on the farm, where it eats
+> into the 40-animal outdoor limit. Either share an existing house that fits (chickens and ducks
+> share the coop, cows and sheep the barn) or build a new one in Blender. Register it in
+> `HOUSE_SPECIES` (`src/game/animal-housing.ts`) and ask for it on the species' "Love the farm"
+> rung. `tests/animal-housing.test.mjs` reads the catalog and fails for any species without exactly
+> one house.
+
 Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
 
 1. **Brief** (above).
@@ -61,8 +69,8 @@ Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
 3. **Register.** Catalog entry, then fix the compiler errors (four records).
 4. **Register what the compiler cannot see** (the silent list, below).
 5. **Conditions.** `SPECIES_CONDITIONS`, `DISCOVERY`, and `NIGHT_ONLY_SPECIES` if it is nocturnal.
-6. **Build the ingredients** the ladder asks for (plant / prop / house) and, for a night animal, the
-   `SLEEP_PROPS` entry.
+6. **Build the house** (required, see above) and the other ingredients the ladder asks for (plant /
+   prop) and, for a night animal, the `SLEEP_PROPS` entry.
 7. **Scenarios + tests.**
 8. **Verify** in the browser from several angles, awake and asleep, plus its journal page.
 9. **Ship** (`npm run check`, PR, merge) when Spencer says so.
@@ -72,6 +80,8 @@ Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
 - [ ] `npm run check` is green (tests, asset budget, typecheck, build, scenario leak guard)
 - [ ] Art: review PNG looks right; GLB lists every clip with every animated node; **awake and asleep
       both look right in the game from the side** (angle sheet)
+- [ ] **It has a house:** listed in `HOUSE_SPECIES`, asked for on its "Love the farm" rung, buyable
+      in the shop, and animals walk in and out of its door in the game
 - [ ] Every compiler-enforced record and every silent registration below is filled
 - [ ] The ladder's ingredients exist, are buyable or growable, and are covered by tests
 - [ ] Journal page opened and looked at
@@ -245,6 +255,7 @@ Adding the entry produces **exactly these errors** (verified by adding a throwaw
 | `animal-conditions.ts` `DISCOVERY` | the lure | the species sits at stage 0 forever |
 | `animal-conditions.ts` `SPECIES_CONDITIONS` | the ladder | an invented default four-rung ladder with made-up numbers |
 | `animal-conditions.ts` `NIGHT_ONLY_SPECIES` | the shift | a night animal turns up at noon |
+| `src/game/animal-housing.ts` `HOUSE_SPECIES` | **its house (required)** | it never breeds, never goes indoors, and crowds the outdoor limit |
 | `src/game/sleep.ts` `SLEEP_PROPS` | what a night animal sleeps beside | it sleeps wherever it stands |
 | `src/ui/journal-dom.ts` `SPECIES_META` | journal rarity + trait pills | "Common" and no trait pills |
 | `animal-conditions.ts` `PROP_PLURALS` | prop wording in the journal | falls back to `<id>s` (fine for regular plurals) |
