@@ -57,6 +57,8 @@ export interface Wallet {
    */
   debit(amount: number): number | null
   canAfford(amount: number): boolean
+  /** Put the purse back to a saved balance. Not for gameplay: it skips the rules of earning. */
+  restore(balance: number): number
 }
 
 export function createWallet(initialBalance = 0): Wallet {
@@ -78,6 +80,10 @@ export function createWallet(initialBalance = 0): Wallet {
     canAfford(amount): boolean {
       if (!Number.isFinite(amount) || amount < 0) return false
       return Math.floor(amount) <= balance
+    },
+    restore(saved): number {
+      balance = Number.isFinite(saved) ? Math.max(0, Math.floor(saved)) : 0
+      return balance
     },
   }
 }

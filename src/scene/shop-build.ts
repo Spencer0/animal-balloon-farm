@@ -15,6 +15,8 @@ export interface ShopBuildReport {
 export interface ShopBuild {
   /** Starts the build the first frame the farmer level reaches the unlock level. */
   update(deltaSeconds: number, farmerLevel: number): void
+  /** Settle the build instantly, as a loaded save does when the shop was already standing. */
+  finishNow(): void
   /** True once the build has begun. */
   readonly started: boolean
   /** True once every piece has settled and the construction site is packed away. */
@@ -73,6 +75,12 @@ export function createShopBuild(building: THREE.Object3D): ShopBuild {
       if (Number.isFinite(deltaSeconds) && deltaSeconds > 0) elapsed = Math.min(SHOP_BUILD_SECONDS, elapsed + deltaSeconds)
       apply(shopBuildProgress(elapsed))
       if (elapsed >= SHOP_BUILD_SECONDS) finished = true
+    },
+    finishNow(): void {
+      started = true
+      finished = true
+      elapsed = SHOP_BUILD_SECONDS
+      apply(shopBuildProgress(elapsed))
     },
     get started() { return started },
     get finished() { return finished },

@@ -2,9 +2,18 @@ import * as THREE from 'three'
 import { containsGardenPoint, GARDEN_BOUNDS, GARDEN_LAWN_Y, GARDEN_MAX_BOUNDS } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
 import { createGardenToolModel, GARDEN_TOOLS, tintSeedPack, type GardenToolId } from './garden-tool-art'
-import { GRASS_PACKS, SHORT_GRASS_CEILING, SHORT_GRASS_MAX_HEIGHT, type GrassPack } from '../game/tool-unlocks'
+import { GRASS_PACKS, SHORT_GRASS_CEILING, SHORT_GRASS_MAX_HEIGHT, TALL_GRASS_MAX_HEIGHT, type GrassPack } from '../game/tool-unlocks'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
+import {
+  GRASS_HEIGHT_STEPS,
+  GRASS_POSITION_SCALE,
+  packInt16,
+  packUint8,
+  unpackInt16,
+  unpackUint8,
+  type SavedGrass,
+} from '../game/save-game'
 
 export interface GardenPointerMove {
   readonly clientX: number
@@ -107,6 +116,14 @@ export interface GardenTools {
   debugState(): GardenToolDebugState
   pickReport(clientX: number, clientY: number): unknown
   clearGrass(): void
+  /** Every live blade and the painted lawn as packed plain data, for saving. */
+  exportGrass(): SavedGrass
+  /**
+   * Replace the grass with a saved lawn. Blades are stood on the *current*
+   * terrain, so restore the height field first. Throws on data that is not
+   * the shape `exportGrass` wrote.
+   */
+  importGrass(saved: SavedGrass): void
   /**
    * Sow a disc of grass straight to full height, bypassing the per-frame
    * growth. This exists for the condition harness: a condition is measured in
@@ -956,7 +973,8 @@ export function createGardenTools(
     lawnColors.needsUpdate = true
   }
 
-  function clearGrass(): void {
+  /** Everything `clearGrass` does except reshape the ground. */
+  function clearBlades(): void {
     for (const batch of batches.values()) {
       grassGroup.remove(batch.mesh)
       batch.mesh.dispose()
@@ -981,8 +999,95 @@ export function createGardenTools(
     lawnColors.needsUpdate = true
     tallestBladeHeight = 0
     lastGrassSpawnMaxY = 0
+  }
+
+  function clearGrass(): void {
+    clearBlades()
     terrain.clear()
     terrain.clearSoilBandColors()
+  }
+
+  function exportGrass(): SavedGrass {
+    const xs: number[] = []
+    const zs: number[] = []
+    const heights: number[] = []
+    for (const cell of occupancy.values()) {
+      for (const blade of cell) {
+        if (blade.height <= 0) continue
+        xs.push(blade.x)
+        zs.push(blade.z)
+        heights.push(blade.height)
+      }
+    }
+    const paintKeys: number[] = []
+    const paintCoverage: number[] = []
+    for (const [key, coverage] of groundPaintAt) {
+      if (coverage < 0.005) continue
+      const [kx, kz] = key.split(',').map(Number)
+      paintKeys.push(kx, kz)
+      paintCoverage.push(coverage)
+    }
+    return {
+      xs: packInt16(xs, GRASS_POSITION_SCALE),
+      zs: packInt16(zs, GRASS_POSITION_SCALE),
+      heights: packUint8(heights, GRASS_HEIGHT_STEPS),
+      count: xs.length,
+      paintKeys: packInt16(paintKeys, 1),
+      paintCoverage: packUint8(paintCoverage, 100),
+      paintCount: paintCoverage.length,
+    }
+  }
+
+  function importGrass(saved: SavedGrass): void {
+    const xs = unpackInt16(saved.xs, GRASS_POSITION_SCALE, saved.count)
+    const zs = unpackInt16(saved.zs, GRASS_POSITION_SCALE, saved.count)
+    const heights = unpackUint8(saved.heights, GRASS_HEIGHT_STEPS, saved.count)
+    const paintKeys = unpackInt16(saved.paintKeys, 1, saved.paintCount * 2)
+    const paintCoverage = unpackUint8(saved.paintCoverage, 100, saved.paintCount)
+    clearBlades()
+    for (let index = 0; index < saved.paintCount; index += 1) {
+      groundPaintAt.set(`${paintKeys[index * 2]},${paintKeys[index * 2 + 1]}`, Math.min(1, paintCoverage[index]))
+    }
+    syncSurfaceGeometry()
+    const bounds = getActiveBounds()
+    const updatedBatches = new Set<GrassBatch>()
+    for (let index = 0; index < saved.count && totalGrassBlades < MAX_GRASS_BLADES; index += 1) {
+      const x = xs[index]
+      const z = zs[index]
+      const height = Math.min(TALL_GRASS_MAX_HEIGHT, heights[index])
+      if (height <= 0 || !insideGarden(x, z, bounds)) continue
+      const batch = getBatch(x, z)
+      if (!batch) break
+      const cellKey = occupancyCell(x, z)
+      let cell = occupancy.get(cellKey)
+      if (!cell) {
+        cell = []
+        occupancy.set(cellKey, cell)
+      }
+      // A blade's lean, width and tint are not worth saving; they come from
+      // where it stands, so a reload looks the same every time.
+      const look = seededRandom(Math.imul(Math.round(x * 100), 73856093) ^ Math.imul(Math.round(z * 100), 19349663))
+      const width = 0.62 + look() * 0.62
+      const color = GRASS_COLOR_VALUES[Math.floor(look() * GRASS_COLOR_VALUES.length)]
+      const tileIndex = batch.blades.length
+      dummy.position.set(x, GARDEN_LAWN_Y + 0.009 + terrain.heightAt(x, z), z)
+      dummy.rotation.set((look() - 0.5) * 0.12, look() * Math.PI * 2, (look() - 0.5) * 0.12)
+      dummy.scale.set(width, height, width)
+      dummy.updateMatrix()
+      batch.mesh.setMatrixAt(tileIndex, dummy.matrix)
+      batch.mesh.setColorAt(tileIndex, color)
+      batch.mesh.count = tileIndex + 1
+      const blade = { x, z, tileIndex, mesh: batch.mesh, height }
+      batch.blades.push(blade)
+      cell.push(blade)
+      updatedBatches.add(batch)
+      totalGrassBlades += 1
+      tallestBladeHeight = Math.max(tallestBladeHeight, height)
+    }
+    for (const batch of updatedBatches) {
+      batch.mesh.instanceMatrix.needsUpdate = true
+      if (batch.mesh.instanceColor) batch.mesh.instanceColor.needsUpdate = true
+    }
   }
 
   function dispose(): void {
@@ -1301,6 +1406,8 @@ export function createGardenTools(
       }
     },
     clearGrass,
+    exportGrass,
+    importGrass,
     sowGrassDisc(x, z, radius, pack = 'tall') {
       if (!insideGarden(x, z, getActiveBounds()) || radius <= 0) return
       // Seed densely enough that the disc reads as a lawn.

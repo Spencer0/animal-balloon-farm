@@ -201,6 +201,14 @@ export interface GardenWaterField {
   shoreField(): { readonly level: Float32Array; readonly wetness: Float32Array }
   summary(): WaterFieldSummary
   clear(): void
+  /** A copy of every cell's water depth (row-major, `gridCols * gridRows`), for saving. */
+  exportDepths(): Float32Array
+  /**
+   * Put saved water back. Returns false, changing nothing, when the grid is not
+   * the size the save was made on. The pools are re-solved on the next settle,
+   * so water that no longer fits the loaded ground drains instead of floating.
+   */
+  restoreDepths(values: ArrayLike<number>): boolean
   /** Grow the simulation grid while preserving every existing water cell. */
   resize(gridCols: number, gridRows: number): void
 }
@@ -1046,6 +1054,25 @@ export function createGardenWaterField(
     capacityGeneration += 1
   }
 
+  function exportDepths(): Float32Array {
+    return depth.slice()
+  }
+
+  function restoreDepths(values: ArrayLike<number>): boolean {
+    if (values.length !== cellCount) return false
+    for (let index = 0; index < cellCount; index += 1) {
+      const value = values[index]
+      depth[index] = Number.isFinite(value) && value > 0 ? value : 0
+    }
+    totalRunoff = 0
+    groundStale = true
+    ensureGround()
+    refreshSurfaces()
+    dirty = true
+    capacityGeneration += 1
+    return true
+  }
+
   function resize(nextCols: number, nextRows: number): void {
     const cols = Math.max(gridCols, Math.floor(nextCols))
     const rows = Math.max(gridRows, Math.floor(nextRows))
@@ -1139,6 +1166,8 @@ export function createGardenWaterField(
     shoreField,
     summary,
     clear,
+    exportDepths,
+    restoreDepths,
     resize,
   }
 }

@@ -91,6 +91,43 @@ export interface AnimalLifeSnapshot {
   readonly positions?: Readonly<Record<string, { readonly x: number; readonly z: number }>>
 }
 
+/** One animal as saved: the whole mutable record, including a courtship in progress. */
+export interface SavedAnimal {
+  readonly id: string
+  readonly species: string
+  readonly stage: number
+  readonly elapsed: number
+  readonly invited: boolean
+  readonly baby: boolean
+  readonly ageSeconds: number
+  readonly romanceCooldown: number
+  readonly parentIds: readonly string[]
+  readonly paired: boolean
+  readonly courtshipPartnerId: string | null
+  readonly courtshipRemaining: number
+  readonly courtshipSuccessful: boolean
+}
+
+export interface SavedEgg {
+  readonly id: number
+  readonly species: string
+  readonly x: number
+  readonly z: number
+  readonly incubation: number
+  readonly parentIds: readonly string[]
+}
+
+/** Everything `createAnimalLife` needs to carry on exactly where a farm left off. */
+export interface AnimalLifeState {
+  readonly animals: readonly SavedAnimal[]
+  readonly eggs: readonly SavedEgg[]
+  readonly discovered: readonly string[]
+  readonly pendingVisitors: readonly string[]
+  readonly nextAnimalId: number
+  readonly nextEggId: number
+  readonly arrivalElapsed: number
+}
+
 export interface AnimalLifeOptions {
   readonly config?: Partial<AnimalLifeConfig>
   readonly random?: () => number
@@ -110,6 +147,14 @@ export interface AnimalLife {
   remove(id: string): AnimalRecord | null
   capacity(expansionLevel: number): number
   reset(): void
+  /** A plain-data copy of the whole simulation, for saving. */
+  exportState(): AnimalLifeState
+  /**
+   * Replace the simulation with a saved one. Unknown species and malformed
+   * entries are dropped rather than trusted, so an old or hand-edited save can
+   * not put the farm in a state the rules could never reach.
+   */
+  importState(state: AnimalLifeState): void
 }
 
 interface MutableAnimal {
@@ -362,6 +407,80 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       nextEggId = 1
       arrivalElapsed = 0
       for (const species of speciesIds.slice(0, config.maximumPopulation)) newAnimal(species, 0)
+      lastSnapshot = null
+    },
+    exportState() {
+      return {
+        animals: [...animals.values()].map((animal) => ({ ...animal, parentIds: [...animal.parentIds] })),
+        eggs: [...eggs.values()].map((egg) => ({ ...egg, parentIds: [...egg.parentIds] })),
+        discovered: [...discovered],
+        pendingVisitors: [...pendingVisitors],
+        nextAnimalId,
+        nextEggId,
+        arrivalElapsed,
+      }
+    },
+    importState(state) {
+      const finite = (value: unknown, fallback = 0): number => (typeof value === 'number' && Number.isFinite(value) ? value : fallback)
+      const known = (species: unknown): species is string => typeof species === 'string' && speciesIds.includes(species)
+      const ids = (value: unknown): string[] => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
+      animals.clear()
+      eggs.clear()
+      inFlightAnimalIds.clear()
+      discovered.clear()
+      pendingVisitors.length = 0
+      let highestAnimal = 0
+      for (const saved of state.animals) {
+        if (!known(saved.species) || typeof saved.id !== 'string' || animals.has(saved.id)) continue
+        const stage = Math.max(0, Math.min(4, Math.floor(finite(saved.stage)))) as AnimalStage
+        animals.set(saved.id, {
+          id: saved.id,
+          species: saved.species,
+          stage,
+          elapsed: Math.max(0, finite(saved.elapsed)),
+          invited: Boolean(saved.invited) || stage >= 2,
+          baby: Boolean(saved.baby),
+          ageSeconds: Math.max(0, finite(saved.ageSeconds)),
+          romanceCooldown: Math.max(0, finite(saved.romanceCooldown)),
+          parentIds: ids(saved.parentIds),
+          paired: Boolean(saved.paired),
+          courtshipPartnerId: typeof saved.courtshipPartnerId === 'string' ? saved.courtshipPartnerId : null,
+          courtshipRemaining: Math.max(0, finite(saved.courtshipRemaining)),
+          courtshipSuccessful: Boolean(saved.courtshipSuccessful),
+        })
+        highestAnimal = Math.max(highestAnimal, Number(saved.id.replace(/^animal-/, '')) || 0)
+      }
+      // A courtship needs both partners. If one did not survive loading, the
+      // other goes back to being single instead of waiting on a ghost.
+      for (const animal of animals.values()) {
+        if (animal.courtshipPartnerId === null) continue
+        const partner = animals.get(animal.courtshipPartnerId)
+        if (partner && partner.courtshipPartnerId === animal.id) {
+          inFlightAnimalIds.add(animal.id)
+        } else {
+          animal.courtshipPartnerId = null
+          animal.courtshipRemaining = 0
+          animal.paired = false
+        }
+      }
+      let highestEgg = 0
+      for (const saved of state.eggs) {
+        if (!known(saved.species) || !Number.isFinite(saved.id) || eggs.has(saved.id)) continue
+        eggs.set(saved.id, {
+          id: saved.id,
+          species: saved.species,
+          x: finite(saved.x),
+          z: finite(saved.z),
+          incubation: Math.max(0, finite(saved.incubation)),
+          parentIds: ids(saved.parentIds),
+        })
+        highestEgg = Math.max(highestEgg, saved.id)
+      }
+      for (const species of state.discovered) if (known(species)) discovered.add(species)
+      for (const species of state.pendingVisitors) if (known(species)) pendingVisitors.push(species)
+      nextAnimalId = Math.max(highestAnimal + 1, Math.floor(finite(state.nextAnimalId, 1)))
+      nextEggId = Math.max(highestEgg + 1, Math.floor(finite(state.nextEggId, 1)))
+      arrivalElapsed = Math.max(0, finite(state.arrivalElapsed))
       lastSnapshot = null
     },
     tick(snapshot, deltaSeconds) {
