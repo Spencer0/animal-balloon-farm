@@ -17,3 +17,6 @@ coverage/
 .DS_Store
 .vscode/
 .idea/
+
+# Gate outputs (scripts/gate-stress.mjs, scripts/check-no-scenarios.mjs)
+.gate/
