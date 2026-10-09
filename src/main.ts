@@ -814,12 +814,13 @@ function preyLabel(species: string): string {
  * sim forgets it at once), but instead of a coin burst it swells, pops, and the
  * effect holds the model until the clean-up is done.
  */
-function handlePredatorCatch(hunter: string, prey: BalloonAnimal): void {
+function handlePredatorCatch(hunter: string, prey: BalloonAnimal, roll?: number): void {
   const total = predationLedger.record(prey.id)
   const name = animalNames.get(prey.instanceId) ?? preyLabel(prey.id)
   popAnimal(prey)
   const eaten = total === 1 ? preyLabel(prey.id) : speciesPluralName(prey.id).toLowerCase()
-  notificationPanel.notifyAccomplishment(`The ${preyLabel(hunter)} caught ${name}`, `${total} ${eaten} eaten on your farm`)
+  const rolled = roll ? ` (rolled ${roll})` : ''
+  notificationPanel.notifyAccomplishment(`The ${preyLabel(hunter)} caught ${name}${rolled}`, `${total} ${eaten} eaten on your farm`)
   console.info(`[Animal Balloon Farm] ${hunter} caught ${prey.id} (${total} eaten)`)
 }
 
@@ -932,9 +933,55 @@ function updateSnakeHunt(deltaSeconds: number): void {
     })
     .map((animal) => ({ animal, targetable: !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending && !animal.isGoingHome }))
   const counts = residentCounts()
-  for (const caught of snakeHunt.update(deltaSeconds, { snakes, prey: quarry, preyCounts: counts })) {
-    handlePredatorCatch('snake', caught.prey)
+  const result = snakeHunt.update(deltaSeconds, { snakes, prey: quarry, preyCounts: counts })
+  for (const caught of result.catches) handlePredatorCatch('snake', caught.prey, caught.roll)
+  for (const escaped of result.escapes) boltHome(escaped.prey, escaped.roll)
+  const now = performance.now() / 1000
+  for (const [id, until] of panicking) {
+    if (until > now) continue
+    animalById.get(id)?.setAlarmed(false)
+    panicking.delete(id)
   }
+}
+
+/** How much faster than its walk a mouse runs for home when the strike die lets it off. */
+const ESCAPE_SPRINT = 3
+/** How long an escaped mouse hides indoors before it dares come out. */
+const ESCAPE_HIDING_SECONDS = 30
+/** How long one with no house to run to panics in the open. */
+const ESCAPE_PANIC_SECONDS = 4
+/** Prey sprinting home from a snake: its trip is not cancelled by the outdoor roster. */
+const bolting = new Set<string>()
+/** Prey that escaped indoors stays in until then (seconds, `performance.now` clock). */
+const hidingUntil = new Map<string, number>()
+/** Prey with nowhere to hide, scattering in the open until then. */
+const panicking = new Map<string, number>()
+
+/**
+ * The strike die let the prey off: it sprints for the nearest house of its kind
+ * with room and hides there a while. With no house, it scatters in a panic.
+ */
+function boltHome(prey: BalloonAnimal, roll: number): void {
+  const now = performance.now() / 1000
+  const name = animalNames.get(prey.instanceId) ?? preyLabel(prey.id)
+  const reserved = new Map<string, number>()
+  for (const trip of goingIn.values()) reserved.set(trip.houseId, (reserved.get(trip.houseId) ?? 0) + 1)
+  const used = new Map(occupantsByHouse(progress.all(), reserved))
+  const from = { x: prey.currentPosition.x, z: prey.currentPosition.z }
+  const house = houseWithRoom(prey.id, houseSpots, used, HOUSE_CAPACITY, from)
+  if (house) {
+    prey.setHomeTrip({ x: house.doorX, z: house.doorZ }, ESCAPE_SPRINT)
+    goingIn.set(prey.instanceId, { houseId: house.id, since: now })
+    bolting.add(prey.instanceId)
+    hidingUntil.set(prey.instanceId, now + ESCAPE_HIDING_SECONDS)
+    const place = propDefinition(house.prop).name.toLowerCase()
+    notificationPanel.notifyAccomplishment(`${name} got away (snake rolled ${roll})`, `It dashed into the ${place} to hide.`)
+  } else {
+    prey.setAlarmed(true)
+    panicking.set(prey.instanceId, now + ESCAPE_PANIC_SECONDS)
+    notificationPanel.notifyAccomplishment(`${name} got away (snake rolled ${roll})`, 'With no house to hide in, it scatters through the grass.')
+  }
+  console.info(`[Animal Balloon Farm] snake rolled ${roll}: ${prey.id} escaped${house ? ` into ${house.id}` : ''}`)
 }
 
 /** Where each sleeping night animal lay down, so it keeps its bed all day instead of chasing the nearest can. */
@@ -1080,6 +1127,7 @@ function pinnedOutside(id: string, nowSeconds: number): boolean {
 function retireModel(animal: BalloonAnimal): void {
   animal.setHomeTrip(null)
   goingIn.delete(animal.instanceId)
+  bolting.delete(animal.instanceId)
   animalById.delete(animal.instanceId)
   const index = animals.indexOf(animal)
   if (index >= 0) animals.splice(index, 1)
@@ -1101,6 +1149,7 @@ function stepOut(record: AnimalRecord, door: { readonly x: number; readonly z: n
 function cancelTrip(id: string): void {
   animalById.get(id)?.setHomeTrip(null)
   goingIn.delete(id)
+  bolting.delete(id)
 }
 
 /** Give up waiting for a loaded farm's houses after this long and bring indoor animals out instead. */
@@ -1156,6 +1205,9 @@ function updateHousing(nowSeconds: number): void {
     if (record.insideId) {
       lastHouseOf.set(record.id, record.insideId)
       if (!outdoorRoster.has(record.id)) continue
+      // It just escaped a snake in here: it is not coming out yet.
+      if ((hidingUntil.get(record.id) ?? 0) > nowSeconds) continue
+      hidingUntil.delete(record.id)
       const house = houseSpot(record.insideId)
       progress.leaveHouse(record.id)
       if (house) stepOut(record, { x: house.doorX, z: house.doorZ })
@@ -1167,7 +1219,9 @@ function updateHousing(nowSeconds: number): void {
       continue
     }
     const trip = goingIn.get(record.id)
-    if (outdoorRoster.has(record.id) || record.stage < 3) {
+    // Fleeing a snake beats the roster: it is running for the door, not strolling.
+    const fleeing = Boolean(trip) && bolting.has(record.id)
+    if (!fleeing && (outdoorRoster.has(record.id) || record.stage < 3)) {
       if (trip) cancelTrip(record.id)
       continue
     }
@@ -3735,6 +3789,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       predationLedger.clear()
       owlHunt.reset()
       snakeHunt.reset()
+      bolting.clear()
+      hidingUntil.clear()
+      panicking.clear()
       animalById.clear()
       for (const burst of sellBursts) {
         scene.remove(burst.root)

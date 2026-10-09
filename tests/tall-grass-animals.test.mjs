@@ -109,10 +109,10 @@ const hunt = await load('src/game/ground-hunt.ts')
 const predator = await load('src/game/predator.ts')
 
 /** Step a snake at `snake` against `prey` for `seconds`, moving the snake as the sim asks. */
-function runHunt(hunter, snake, prey, preyCounts, seconds, speed = 0.75) {
+function runHunt(hunter, snake, prey, preyCounts, seconds, speed = 0.75, random = () => 0.99) {
   const events = []
   for (let t = 0; t < seconds; t += 0.05) {
-    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, huntAllowed: true, prey, preyCounts }, 0.05)
+    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, huntAllowed: true, prey, preyCounts, random }, 0.05)
     events.push(...step.events)
     if (step.pursuit) {
       const dx = step.pursuit.x - snake.x
@@ -153,7 +153,7 @@ test('a lunge lands even though the collision pass keeps the snake and mouse a b
   const mouse = { id: 'm1', species: 'mouse', x: 4, z: 0, targetable: true, radius: 1.6 * 0.24 }
   const events = []
   for (let t = 0; t < 10 && !events.some((event) => event.kind === 'catch'); t += 0.05) {
-    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, reach: 2.8 * 0.42, huntAllowed: true, prey: [mouse], preyCounts: { mouse: 4 } }, 0.05)
+    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, reach: 2.8 * 0.42, huntAllowed: true, prey: [mouse], preyCounts: { mouse: 4 }, random: () => 0.99 }, 0.05)
     events.push(...step.events)
     if (step.pursuit) {
       const dx = step.pursuit.x - snake.x
@@ -175,22 +175,49 @@ test('a snake leaves the last breeding pair alone, and ignores prey out of sight
   assert.deepEqual(runHunt(hunter, { x: 0, z: 0 }, [far], { mouse: 6 }, 5), [])
 })
 
-test('a lunge at a mouse that bolts away misses, and the snake waits before trying again', () => {
+test('the strike die is a d6: four or better catches, even odds', () => {
+  const faces = Array.from({ length: 6 }, (_, face) => hunt.rollStrike((face + 0.5) / 6))
+  assert.deepEqual(faces.map((entry) => entry.roll), [1, 2, 3, 4, 5, 6])
+  assert.deepEqual(faces.map((entry) => entry.caught), [false, false, false, true, true, true])
+  assert.equal(hunt.rollStrike(1).roll, 6)
+  assert.equal(hunt.rollStrike(Number.NaN).roll, 1)
+})
+
+test('a low roll: the snake strikes empty grass and the mouse escapes, never caught', () => {
   const hunter = hunt.createGroundHunter()
   hunter.cooldown = 0
   const snake = { x: 0, z: 0 }
   const mouse = { id: 'm1', species: 'mouse', x: 1.4, z: 0, targetable: true }
   const events = []
-  for (let t = 0; t < 2; t += 0.05) {
-    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, huntAllowed: true, prey: [mouse], preyCounts: { mouse: 5 } }, 0.05)
+  let lungedAt = null
+  for (let t = 0; t < 3; t += 0.05) {
+    // The mouse does not move at all, and still the snake misses: the die decided.
+    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, huntAllowed: true, prey: [mouse], preyCounts: { mouse: 5 }, random: () => 0.1 }, 0.05)
     events.push(...step.events)
-    // A panicking mouse outruns the lunge.
-    if (events.some((event) => event.kind === 'strike')) mouse.x += 6 * 0.05
+    if (hunter.phase === 'miss') lungedAt = { x: hunter.missX, z: hunter.missZ }
     if (step.pursuit) snake.x += Math.min(Math.abs(step.pursuit.x - snake.x), 0.75 * step.pursuit.speedScale * 0.05)
   }
-  assert.deepEqual(events.map((event) => event.kind), ['stalk', 'strike', 'abandon'])
+  assert.deepEqual(events.map((event) => event.kind), ['stalk', 'strike'])
+  assert.equal(events[1].caught, false)
+  assert.equal(events[1].roll, 1)
+  assert.ok(lungedAt && lungedAt.x > mouse.x, 'the miss lunges through where the mouse was')
   assert.equal(hunter.phase, 'roam')
+  assert.equal(hunter.preyId, null)
   assert.equal(hunter.cooldown > 0, true)
+})
+
+test('a high roll always lands, even if the frozen mouse is nudged out of reach', () => {
+  const hunter = hunt.createGroundHunter()
+  hunter.cooldown = 0
+  const mouse = { id: 'm1', species: 'mouse', x: 1.4, z: 0, targetable: true }
+  const events = []
+  for (let t = 0; t < 2; t += 0.05) {
+    // The snake never moves: only the strike timer can land this one.
+    const step = hunt.stepGroundHunter(hunter, { x: 0, z: 0, huntAllowed: true, prey: [mouse], preyCounts: { mouse: 5 }, random: () => 0.95 }, 0.05)
+    events.push(...step.events)
+  }
+  assert.deepEqual(events.map((event) => event.kind), ['stalk', 'strike', 'catch'])
+  assert.equal(events[1].roll, 6)
 })
 
 // ------------------------------------------------------- houses and props --

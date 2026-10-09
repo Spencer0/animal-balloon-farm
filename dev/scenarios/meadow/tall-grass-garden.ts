@@ -39,7 +39,7 @@ export const emptyMeadow: Scenario = {
 /** One hungry snake and a meadow full of mice: watch it stalk, lunge and catch. */
 export const snakeHunt: Scenario = {
   id: 'meadow/snake-hunt',
-  description: 'Day in the tall-grass garden: five resident mice and one visiting snake that hunts at once. It stalks a mouse through the grass, lunges, and the mouse pops; after two catches the snake calls the farm home.',
+  description: 'Day in the tall-grass garden: five resident mice and one visiting snake that hunts at once. It stalks a mouse through the grass and rolls a d6 to strike: 4+ and the mouse pops, otherwise the mouse sprints into the hollow log to hide. After two catches the snake calls the farm home.',
   async run(d) {
     await openMeadow(d)
     for (let index = 0; index < 5; index += 1) d.addAnimal('mouse', 3)

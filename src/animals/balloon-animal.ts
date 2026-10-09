@@ -125,8 +125,9 @@ export interface BalloonAnimal {
   /**
    * Walk to a house door to go indoors, or carry on wandering when null. Takes
    * priority over sleeping. A flier ignores it: it is simply shown or hidden.
+   * `speedScale` above 1 is a sprint, e.g. a mouse fleeing a snake.
    */
-  setHomeTrip(door: { readonly x: number; readonly z: number } | null): void
+  setHomeTrip(door: { readonly x: number; readonly z: number } | null, speedScale?: number): void
   /** True once it has reached the door it was sent to. */
   readonly isAtDoor: boolean
   /** True while it walks to a house door. */
@@ -464,6 +465,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let flightRate = 1
   let sleepSpot: SleepSpot | null = null
   let homeTrip: { readonly x: number; readonly z: number } | null = null
+  let homeTripSpeed = 1
   let pursuit: { readonly x: number; readonly z: number; readonly speedScale: number } | null = null
   let atDoor = false
   let sleepBlend = 0
@@ -886,10 +888,12 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       wrapper.position.x += dx
       wrapper.position.z += dz
     },
-    setHomeTrip(door): void {
+    setHomeTrip(door, speedScale = 1): void {
       if (options.flier) return
       homeTrip = door
+      homeTripSpeed = door && Number.isFinite(speedScale) && speedScale > 0 ? speedScale : 1
       atDoor = false
+      if (loaded) loaded.mixer.timeScale = homeTripSpeed > 1 ? Math.min(3, homeTripSpeed) : alarmScale()
     },
     setPursuit(next): void {
       if (options.flier) return
@@ -1084,7 +1088,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           direction.normalize()
           const facing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
           wrapper.quaternion.slerp(facing, 1 - Math.exp(-4.5 * delta))
-          wrapper.position.addScaledVector(direction, Math.min(options.speed * delta, distance))
+          wrapper.position.addScaledVector(direction, Math.min(options.speed * homeTripSpeed * delta, distance))
           setAnimation('WALK', 0.24)
         } else {
           atDoor = true

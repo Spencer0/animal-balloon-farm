@@ -486,11 +486,20 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 - **Prey** is a resident, adult, on-farm animal that is not mid-capture, courting or waiting to settle.
   The predator will not take the flock below `PREY_FLOOR` (2).
 - **A catch is a removal.** `handlePredatorCatch` forgets the prey from the sim and hands the model to a pop.
-- **A ground hunter stalks, then lunges.** The snake is slower than a mouse, so it cannot run one down.
-  It creeps up (`stalkSpeedScale`) unnoticed, and only when it is within `strikeDistance` does it
-  lunge and the prey panic. A lunge that has not landed in `strikeSeconds` misses. Prey indoors is out
-  of the `animals` list, so a house is a refuge. A ground hunter is a normal walker otherwise: its
-  pursuit is just a steer target fed to `setPursuit` each frame, and null hands it back to wandering.
+- **A ground hunter stalks, then the dice decide.** The snake creeps up (`stalkSpeedScale`) unnoticed.
+  Within `strikeDistance` of its mouth it rolls the strike die (`STRIKE_DIE`, a d6, 4+ catches)
+  *before* lunging, so each outcome gets its own animation instead of relying on physics:
+  - **Catch:** the prey freezes (a zero-speed `setPursuit`) and the lunge lands; it pops.
+  - **Miss:** the snake lunges through the spot the prey left, and `boltHome` (in `main.ts`) sprints
+    the prey into the nearest house of its kind with room (`setHomeTrip(door, ESCAPE_SPRINT)`). It
+    stays in for `ESCAPE_HIDING_SECONDS`, and its trip is exempt from the outdoor roster. With no
+    house it panics in the open for a few seconds.
+  Distances run from the snake's **mouth** (`reach`), never centre to centre: the collision pass
+  holds two animals' centres a body-width apart, so a centre-to-centre catch can never land. Prey
+  indoors is out of the `animals` list, so a house is a refuge. Otherwise a ground hunter is a normal
+  walker: its pursuit is a steer target fed to `setPursuit` each frame, and null hands it back.
+- **Test hunts with collisions on.** `stepHunt` runs `collideAnimals` like the frame loop does; a
+  hunt that only works when animals pass through each other is not a hunt.
 - **Helium.** An oak is where a resident owl tops up. Remove the last oak and it sags and pops.
 - **Count conditions.** `residentCount`, `preyEaten` and `propCount` read maps on `FarmState`, filled
   in `measureFarm()`.
@@ -516,7 +525,7 @@ shared between animals and no longer resolve.
 | `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: its house, so it walks in to sleep |
 | `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (a kit is born in the dumpster) |
 | `meadow/tall-grass-garden` | day: a deep meadow with a hollow log and a rock pile beside a short lawn with dandelions and a can; six mice, two snakes (two mice already eaten) and two rats (asleep in the log), all in love |
-| `meadow/snake-hunt` | day: five resident mice and one visiting snake, hunting at once; two catches and it calls the farm home |
+| `meadow/snake-hunt` | day: five resident mice and one visiting snake. Each lunge rolls a d6: 4+ and the mouse pops, otherwise it sprints into the hollow log. Two catches and the snake calls the farm home |
 | `meadow/tall-grass-night` | the same garden at night, rats awake |
 | `meadow/empty-meadow` | the same garden with no animals and the clock running: mice find the meadow first |
 

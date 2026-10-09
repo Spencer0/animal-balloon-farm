@@ -10,8 +10,9 @@ import {
 /**
  * Drives every snake each frame: gathers the mice and rats it can see, steps the
  * pure hunt in `src/game/ground-hunt.ts`, and steers the snake with the result.
- * The prey only panics once the snake lunges, and a catch is handed back to the
- * caller, who owns removing the prey from the farm (it pops, as the owl's does).
+ * When the strike die says the snake catches its prey, the prey freezes in
+ * fright until the lunge lands. A catch and an escape are both handed back to
+ * the caller, who owns popping the prey or sending it sprinting home.
  */
 export interface HuntSnake {
   readonly animal: BalloonAnimal
@@ -32,6 +33,14 @@ export interface SnakeHuntContext {
 export interface SnakeCatch {
   readonly snake: BalloonAnimal
   readonly prey: BalloonAnimal
+  /** The strike die's face. */
+  readonly roll: number
+}
+
+export interface SnakeHuntResult {
+  readonly catches: readonly SnakeCatch[]
+  /** Prey the die let off: the snake strikes empty grass, and the prey should run for home. */
+  readonly escapes: readonly SnakeCatch[]
 }
 
 export interface SnakeHuntReport {
@@ -39,7 +48,7 @@ export interface SnakeHuntReport {
 }
 
 export interface SnakeHunt {
-  update(deltaSeconds: number, context: SnakeHuntContext): readonly SnakeCatch[]
+  update(deltaSeconds: number, context: SnakeHuntContext): SnakeHuntResult
   /** Prey a snake is after right now; the scene keeps these in full detail. */
   huntedIds(): ReadonlySet<string>
   /** Debug: make every snake hunt as soon as it can. */
@@ -52,12 +61,15 @@ export interface SnakeHunt {
 export function createSnakeHunt(): SnakeHunt {
   const hunters = new Map<string, GroundHunter>()
   const steered = new Map<string, BalloonAnimal>()
-  const alarmed = new Map<string, BalloonAnimal>()
+  /** Prey frozen in fright by a winning roll, held still until the lunge lands. */
+  const frozen = new Map<string, BalloonAnimal>()
+  const rolls = new Map<string, number>()
   const hunted = new Set<string>()
 
   function calm(preyId: string): void {
-    alarmed.get(preyId)?.setAlarmed(false)
-    alarmed.delete(preyId)
+    frozen.get(preyId)?.setPursuit(null)
+    frozen.delete(preyId)
+    rolls.delete(preyId)
     hunted.delete(preyId)
   }
 
@@ -69,6 +81,7 @@ export function createSnakeHunt(): SnakeHunt {
   return {
     update(deltaSeconds, context) {
       const catches: SnakeCatch[] = []
+      const escapes: SnakeCatch[] = []
       const views: GroundPreyView[] = context.prey.map(({ animal, targetable }) => ({
         id: animal.instanceId,
         species: animal.id,
@@ -100,16 +113,23 @@ export function createSnakeHunt(): SnakeHunt {
             hunted.add(event.preyId)
           } else if (event.kind === 'strike') {
             const prey = preyById.get(event.preyId)
-            if (prey) {
-              prey.setAlarmed(true)
-              alarmed.set(event.preyId, prey)
+            if (!prey) continue
+            if (event.caught) {
+              // Frozen to the spot, the way a mouse goes still when it is too late.
+              prey.setPursuit({ x: prey.currentPosition.x, z: prey.currentPosition.z, speedScale: 0 })
+              frozen.set(event.preyId, prey)
+              rolls.set(event.preyId, event.roll)
+            } else {
+              calm(event.preyId)
+              escapes.push({ snake: snake.animal, prey, roll: event.roll })
             }
           } else if (event.kind === 'abandon') {
             calm(event.preyId)
           } else if (event.kind === 'catch') {
             const prey = preyById.get(event.preyId)
+            const roll = rolls.get(event.preyId) ?? 0
             calm(event.preyId)
-            if (prey) catches.push({ snake: snake.animal, prey })
+            if (prey) catches.push({ snake: snake.animal, prey, roll })
           }
         }
         if (step.pursuit) {
@@ -127,16 +147,16 @@ export function createSnakeHunt(): SnakeHunt {
         release(id)
         hunters.delete(id)
       }
-      for (const id of [...alarmed.keys()]) if (!preyById.has(id)) calm(id)
+      for (const id of [...frozen.keys()]) if (!preyById.has(id)) calm(id)
       for (const id of [...hunted]) if (!preyById.has(id)) hunted.delete(id)
-      return catches
+      return { catches, escapes }
     },
     huntedIds: () => hunted,
     hurry() {
       for (const hunter of hunters.values()) hunter.cooldown = 0
     },
     reset() {
-      for (const id of [...alarmed.keys()]) calm(id)
+      for (const id of [...frozen.keys()]) calm(id)
       hunted.clear()
       for (const id of [...steered.keys()]) release(id)
       hunters.clear()
