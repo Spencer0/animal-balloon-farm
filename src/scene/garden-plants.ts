@@ -29,6 +29,10 @@ export interface GardenPlants {
   selectAt(clientX: number, clientY: number): GardenPlant | null
   removePlant(instanceId: number): GardenPlant | null
   markerKindAt(clientX: number, clientY: number): PlantCare | 'mature' | null
+  /** The plant whose body is under the pointer, with where its footprint sits. */
+  plantAt(clientX: number, clientY: number): HoverPlant | null
+  /** The plant the pointer is over; it grows a little while hovered. */
+  setHoveredPlant(instanceId: number | null): void
   update(deltaSeconds: number, allowGrowth: boolean): void
   dispose(): void
 }
@@ -53,6 +57,16 @@ const careTextureCache = new Map<PlantCare, THREE.CanvasTexture>()
 let completionTexture: THREE.CanvasTexture | null = null
 let completionCheckTexture: THREE.CanvasTexture | null = null
 const CELEBRATION_SECONDS = 3.2
+/** How much bigger a plant stands while the pointer rests on it. */
+const HOVER_GROW = 1.12
+
+export interface HoverPlant {
+  readonly instanceId: number
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  readonly radius: number
+}
 
 function plantCompletionCheckTexture(): THREE.CanvasTexture {
   if (completionCheckTexture) return completionCheckTexture
@@ -452,6 +466,7 @@ export function createGardenPlants(
   root.add(preview)
   let selectedSpecies: PlantId | null = null
   let previewVisible = false
+  let hoveredPlantId: number | null = null
   let previewPosition: THREE.Vector3 | null = null
   let invalidSeconds = 0
   const placementRing = preview.children[1] as THREE.Mesh
@@ -653,7 +668,7 @@ export function createGardenPlants(
       // A patch grows from a small round seedling mat to the full circle; it
       // sits on the lawn and does not sway or bob the way a flower does.
       const scale = groundCover ? 0.3 + 0.7 * plant.growth : Math.max(0.16, plant.growth)
-      visual.group.scale.setScalar(scale)
+      visual.group.scale.setScalar(plant.instanceId === hoveredPlantId ? scale * HOVER_GROW : scale)
       if (!groundCover) {
         visual.group.rotation.y = Math.sin(elapsed * 1.3 + plant.instanceId) * 0.08
         visual.group.position.y += Math.sin(elapsed * 2 + plant.instanceId) * 0.018 * scale
@@ -828,6 +843,32 @@ export function createGardenPlants(
     get selectedPlantNumber() {
       const id = selectedPlantIds.values().next().value as number | undefined
       return id === undefined ? null : visuals.get(id)?.plantNumber ?? null
+    },
+    plantAt(clientX, clientY): HoverPlant | null {
+      const rect = canvas.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return null
+      ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
+      raycaster.setFromCamera(ndc, camera)
+      let best: { visual: PlantVisual; distance: number } | null = null
+      for (const visual of visuals.values()) {
+        if (!visual.group.visible) continue
+        const meshes: THREE.Mesh[] = []
+        visual.group.traverse((object) => { if (object instanceof THREE.Mesh) meshes.push(object) })
+        const hit = raycaster.intersectObjects(meshes, false)[0]
+        if (hit && (!best || hit.distance < best.distance)) best = { visual, distance: hit.distance }
+      }
+      if (!best) return null
+      const group = best.visual.group
+      return {
+        instanceId: best.visual.instanceId,
+        x: group.position.x,
+        y: group.position.y,
+        z: group.position.z,
+        radius: Math.max(0.2, 0.42 * group.scale.x),
+      }
+    },
+    setHoveredPlant(instanceId): void {
+      hoveredPlantId = instanceId
     },
     markerKindAt(clientX, clientY): PlantCare | 'mature' | null {
       const target = markerHit(clientX, clientY)

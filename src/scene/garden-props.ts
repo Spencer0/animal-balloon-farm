@@ -4,6 +4,7 @@ import { containsGardenPoint, GARDEN_LAWN_Y } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
+import type { HoverGlowTarget } from './hover-glow'
 import { createShopBuild, type ShopBuild, type ShopBuildReport } from './shop-build'
 import {
   createPropInventory,
@@ -140,6 +141,8 @@ export interface GardenProps {
   rotate(direction?: 1 | -1): void
   /** The prop under a client point, nearest to the camera, or null. Changes nothing. */
   inspectAt(clientX: number, clientY: number): PropSelection | null
+  /** The placed prop under the pointer, read-only; null when nothing is hit. */
+  propAt(clientX: number, clientY: number): HoverGlowTarget | null
   /** Highlight a placed prop (or clear the highlight with null). */
   select(selection: PropSelection | null): void
   /** Lift a placed prop onto the ghost; returns false if it is gone or fixed. */
@@ -1003,6 +1006,17 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   }
 
   /** Harness shortcut: straight back to the shed, no card. */
+  /** Footprint of the placed prop under the pointer, read-only, for the hover glow. */
+  function propAt(clientX: number, clientY: number): HoverGlowTarget | null {
+    const selection = inspectAt(clientX, clientY)
+    const visual = selection ? visualByProp.get(selection.handle) : undefined
+    if (!visual) return null
+    const box = new THREE.Box3().setFromObject(visual.object)
+    const center = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    return { x: center.x, y: box.min.y, z: center.z, radius: Math.max(size.x, size.z) / 2 }
+  }
+
   function pickUpAt(clientX: number, clientY: number): PropId | null {
     const selection = inspectAt(clientX, clientY)
     if (!selection || !store(selection)) return null
@@ -1144,6 +1158,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     cancelPlacement,
     rotate,
     inspectAt,
+    propAt,
     select,
     beginMove,
     store,

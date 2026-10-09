@@ -4,26 +4,24 @@
  */
 
 /**
- * Two bee cursors carry every state of "where can I click":
- *   idle   the resting bee, over the world and over anything inert,
- *   point  the excited bee, over anything that answers a click.
+ * Two balloon mouse cursors carry every state of "where can I click":
+ *   idle   the resting red balloon arrow, over the world and over anything inert,
+ *   point  the same balloon, lit up, over anything that answers a click.
  * 'hidden' gives the pointer to the farm tool's brush ring, and the three
  * action cursors (plant, prune, water) say what a click on a plant will do.
  */
 export type UiCursorKind = 'idle' | 'point' | 'hidden' | 'plant' | 'prune' | 'water'
 
-type BeeCursor = 'idle' | 'point'
+type BalloonCursor = 'idle' | 'point'
 
-const FRAMES: Record<BeeCursor, string> = {
-  idle: 'assets/cursors/bee-idle.png',
-  point: 'assets/cursors/bee-excited.png',
+const FRAMES: Record<BalloonCursor, string> = {
+  idle: 'assets/cursors/balloon-mouse-idle.png',
+  point: 'assets/cursors/balloon-mouse-point.png',
 }
 
-const HOTSPOTS: Record<BeeCursor, { x: number; y: number }> = {
-  idle: { x: 0.5, y: 0.92 },
-  point: { x: 0.5, y: 0.9 },
-}
-const CURSOR_SIZE = 64
+// Pixel hotspot: the arrow's tip, as printed by art/blender/balloon_mouse_cursor.py.
+const HOTSPOT = { x: 16, y: 6 }
+
 const cache = new Map<UiCursorKind, string>()
 let current: UiCursorKind | null = null
 let target: HTMLCanvasElement | null = null
@@ -49,12 +47,11 @@ export function setCursor(kind: UiCursorKind, canvas: HTMLCanvasElement): void {
   apply(kind, canvas)
 }
 
-function apply(kind: BeeCursor, canvas: HTMLCanvasElement): void {
+function apply(kind: BalloonCursor, canvas: HTMLCanvasElement): void {
   let url = cache.get(kind)
   if (url === undefined) {
     url = FRAMES[kind]
     cache.set(kind, url)
   }
-  const hotspot = HOTSPOTS[kind]
-  canvas.style.cursor = `url(${url}) ${Math.round(hotspot.x * CURSOR_SIZE)} ${Math.round(hotspot.y * CURSOR_SIZE)}, auto`
+  canvas.style.cursor = `url(${url}) ${HOTSPOT.x} ${HOTSPOT.y}, auto`
 }
