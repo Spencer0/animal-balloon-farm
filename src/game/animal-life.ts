@@ -91,6 +91,35 @@ export interface HousingReport {
   readonly used: number
 }
 
+/**
+ * One animal as saved: the whole mutable record. `inside` says it was indoors.
+ * House ids are rebuilt every session, so the caller puts it back into a house
+ * of its kind after loading rather than the sim trusting an old id.
+ */
+export interface SavedAnimal {
+  readonly id: string
+  readonly species: string
+  readonly stage: number
+  readonly elapsed: number
+  readonly invited: boolean
+  readonly baby: boolean
+  readonly ageSeconds: number
+  readonly parentIds: readonly string[]
+  readonly inside?: boolean
+}
+
+/**
+ * Everything `createAnimalLife` needs to carry on where a farm left off. Saves
+ * from before houses also carry eggs and courtships; those fields are ignored.
+ */
+export interface AnimalLifeState {
+  readonly animals: readonly SavedAnimal[]
+  readonly discovered: readonly string[]
+  readonly pendingVisitors: readonly string[]
+  readonly nextAnimalId: number
+  readonly arrivalElapsed: number
+}
+
 export interface AnimalLifeOptions {
   readonly config?: Partial<AnimalLifeConfig>
   readonly random?: () => number
@@ -118,6 +147,14 @@ export interface AnimalLife {
   /** Bring an animal back out onto the farm. */
   leaveHouse(id: string): void
   reset(): void
+  /** A plain-data copy of the whole simulation, for saving. */
+  exportState(): AnimalLifeState
+  /**
+   * Replace the simulation with a saved one. Unknown species and malformed
+   * entries are dropped rather than trusted, so an old or hand-edited save can
+   * not put the farm in a state the rules could never reach.
+   */
+  importState(state: AnimalLifeState): void
 }
 
 interface MutableAnimal {
@@ -380,6 +417,57 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       nextAnimalId = 1
       arrivalElapsed = 0
       for (const species of speciesIds.slice(0, config.maximumPopulation)) newAnimal(species, 0)
+      lastSnapshot = null
+    },
+    exportState() {
+      return {
+        animals: [...animals.values()].map((animal) => ({
+          id: animal.id,
+          species: animal.species,
+          stage: animal.stage,
+          elapsed: animal.elapsed,
+          invited: animal.invited,
+          baby: animal.baby,
+          ageSeconds: animal.ageSeconds,
+          parentIds: [...animal.parentIds],
+          inside: animal.insideId !== null,
+        })),
+        discovered: [...discovered],
+        pendingVisitors: [...pendingVisitors],
+        nextAnimalId,
+        arrivalElapsed,
+      }
+    },
+    importState(state) {
+      const finite = (value: unknown, fallback = 0): number => (typeof value === 'number' && Number.isFinite(value) ? value : fallback)
+      const known = (species: unknown): species is string => typeof species === 'string' && speciesIds.includes(species)
+      const ids = (value: unknown): string[] => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
+      animals.clear()
+      breedElapsed.clear()
+      discovered.clear()
+      pendingVisitors.length = 0
+      let highestAnimal = 0
+      for (const saved of state.animals) {
+        if (!known(saved.species) || typeof saved.id !== 'string' || animals.has(saved.id)) continue
+        const stage = Math.max(0, Math.min(4, Math.floor(finite(saved.stage)))) as AnimalStage
+        animals.set(saved.id, {
+          id: saved.id,
+          species: saved.species,
+          stage,
+          elapsed: Math.max(0, finite(saved.elapsed)),
+          invited: Boolean(saved.invited) || stage >= 2,
+          baby: Boolean(saved.baby),
+          ageSeconds: Math.max(0, finite(saved.ageSeconds)),
+          parentIds: ids(saved.parentIds),
+          // Back indoors once the caller knows this session's houses.
+          insideId: null,
+        })
+        highestAnimal = Math.max(highestAnimal, Number(saved.id.replace(/^animal-/, '')) || 0)
+      }
+      for (const species of state.discovered) if (known(species)) discovered.add(species)
+      for (const species of state.pendingVisitors) if (known(species)) pendingVisitors.push(species)
+      nextAnimalId = Math.max(highestAnimal + 1, Math.floor(finite(state.nextAnimalId, 1)))
+      arrivalElapsed = Math.max(0, finite(state.arrivalElapsed))
       lastSnapshot = null
     },
     tick(snapshot, deltaSeconds) {

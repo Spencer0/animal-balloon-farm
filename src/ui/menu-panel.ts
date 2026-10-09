@@ -30,7 +30,7 @@ import {
  * card at the bottom tells you what the sign you are pointing at will do.
  */
 
-export type MenuChoice = 'enter' | 'viewer' | 'options'
+export type MenuChoice = 'enter' | 'farms' | 'viewer' | 'options'
 
 export interface MenuPanel extends UIPanel {
   readonly isOpen: boolean
@@ -58,15 +58,19 @@ interface MenuButtonSpec {
 const MENU_BUTTONS: readonly MenuButtonSpec[] = [
   {
     choice: 'enter', title: 'Enter', hotkey: '1', accent: UI_THEME.meadow,
-    blurb: 'Walk into the garden. Plant, sow and make a friend.', tilt: -0.055, drop: 150,
+    blurb: 'Walk into the garden. Plant, sow and make a friend.', tilt: -0.055, drop: 246,
   },
   {
-    choice: 'viewer', title: 'Viewer', hotkey: '2', accent: UI_THEME.gold,
-    blurb: 'Every animal on its plinth, waiting for its colour.', tilt: 0.048, drop: -30,
+    choice: 'farms', title: 'Farms', hotkey: '2', accent: UI_THEME.barnRed,
+    blurb: 'Save this farm, bring another back, or start a fresh one.', tilt: 0.04, drop: 82,
   },
   {
-    choice: 'options', title: 'Options', hotkey: '3', accent: '#7f9fb8',
-    blurb: 'Sound, controls and everything else.', tilt: -0.028, drop: -210,
+    choice: 'viewer', title: 'Viewer', hotkey: '3', accent: UI_THEME.gold,
+    blurb: 'Every animal on its plinth, waiting for its colour.', tilt: -0.036, drop: -82,
+  },
+  {
+    choice: 'options', title: 'Options', hotkey: '4', accent: '#7f9fb8',
+    blurb: 'Sound, controls and everything else.', tilt: 0.03, drop: -246,
   },
 ]
 

@@ -31,6 +31,7 @@ import {
   vertexKey,
   PROP_CATALOG,
   PROP_LATTICE_CELL,
+  PROP_ORDER,
   type CellCoord,
   type FenceSegment,
   type LatticeVertex,
@@ -98,6 +99,12 @@ export interface PropReport {
   readonly fenceRuns: number
 }
 
+/** Placed props as plain data: cell props by footprint corner, fences as runs of lattice edges. */
+export interface SavedProps {
+  readonly props: readonly { readonly id: string; readonly cellX: number; readonly cellZ: number; readonly rotation: number }[]
+  readonly fenceRuns: readonly (readonly { readonly x: number; readonly z: number; readonly axis: 'x' | 'z' }[])[]
+}
+
 export interface ShopBuildingPlacement {
   readonly x: number
   readonly z: number
@@ -135,6 +142,15 @@ export interface GardenProps {
   readonly shopBuildingReady: boolean
   /** Null until the model loads; then whether the build has started and whether it has finished. */
   shopBuildState(): ShopBuildReport | null
+  /**
+   * Have the shop finish building the moment it can, with no construction
+   * show. A loaded farm that was past the unlock level should not rebuild it.
+   */
+  finishShopBuild(): void
+  /** Every placed prop (including one lifted mid-move) as plain data, for saving. */
+  exportPlaced(): SavedProps
+  /** Clear the farm's props and place the saved ones, skipping any that no longer fit. */
+  importPlaced(saved: SavedProps): void
   /** True when the click landed on the shop building. */
   pickShop(clientX: number, clientY: number): boolean
   /** Where an owl can perch: the `OAK roost` node of every placed oak whose model has loaded. */
@@ -376,6 +392,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
 
   let shopBuilding: THREE.Object3D | null = null
   let shopBuild: ShopBuild | null = null
+  let finishShopWhenReady = false
   const shopMeshes: THREE.Mesh[] = []
   let shopReady = false
   /** Farm-safe landmark: unlike traveling attractions, the shop takes root. */
@@ -411,6 +428,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       root.add(holder)
       shopBuilding = holder
       shopBuild = createShopBuild(holder)
+      if (finishShopWhenReady) shopBuild.finishNow()
       shopReady = true
       options.onChange?.()
     },
@@ -1103,6 +1121,57 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     if (placingId && placingId !== 'fence') ensureGhostModel(placingId)
   }
 
+  function exportPlaced(): SavedProps {
+    const owned = moving ? [...occupancy.placed, moving] : occupancy.placed
+    return {
+      props: owned.filter((prop) => prop.id !== 'fence').map((prop) => ({
+        id: prop.id,
+        cellX: prop.cell.cellX,
+        cellZ: prop.cell.cellZ,
+        rotation: prop.rotation,
+      })),
+      fenceRuns: owned.filter((prop) => prop.id === 'fence').map((prop) => prop.segments.map((segment) => ({
+        x: segment.x,
+        z: segment.z,
+        axis: segment.axis,
+      }))),
+    }
+  }
+
+  function importPlaced(saved: SavedProps): void {
+    cancelPlacement()
+    showSelection(null)
+    for (const prop of [...occupancy.placed]) {
+      occupancy.remove(prop)
+      removeVisual(prop)
+    }
+    fencesDirty = true
+    for (const entry of saved.props) {
+      if (!PROP_ORDER.includes(entry.id as PropId) || entry.id === 'fence') continue
+      if (![entry.cellX, entry.cellZ, entry.rotation].every(Number.isFinite)) continue
+      const id = entry.id as PropId
+      const cell = { cellX: Math.floor(entry.cellX), cellZ: Math.floor(entry.cellZ) }
+      // Placement rules are checked against the loaded ground, not trusted: a
+      // save made before a rule changed must not seat a statue in a pond.
+      const result = placementResult(id, cell, entry.rotation, surface, occupancy)
+      if (!result.valid) continue
+      const placed = placedCellProp(id, cell, entry.rotation)
+      occupancy.add(placed)
+      addVisual(placed)
+    }
+    for (const run of saved.fenceRuns) {
+      const segments = run
+        .filter((segment) => Number.isFinite(segment.x) && Number.isFinite(segment.z) && (segment.axis === 'x' || segment.axis === 'z'))
+        .map((segment) => ({ x: Math.floor(segment.x), z: Math.floor(segment.z), axis: segment.axis }))
+        .filter((segment) => occupancy.isEdgeFree(segment))
+      if (segments.length === 0) continue
+      const placed = placedFenceRun(segments)
+      occupancy.add(placed)
+      addVisual(placed)
+    }
+    options.onChange?.()
+  }
+
   function report(): PropReport {
     return {
       placing: placingId,
@@ -1193,6 +1262,12 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     shopBuildState() {
       return shopBuild ? shopBuild.report() : null
     },
+    finishShopBuild() {
+      finishShopWhenReady = true
+      shopBuild?.finishNow()
+    },
+    exportPlaced,
+    importPlaced,
     pickShop,
     roosts,
     propCounts,

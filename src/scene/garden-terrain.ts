@@ -59,6 +59,14 @@ export interface GardenTerrain {
   syncBounds(): boolean
   readonly dirty: boolean
   clear(): void
+  /** A copy of the whole height field (row-major, `gridCols * gridRows`), for saving. */
+  exportHeights(): Float32Array
+  /**
+   * Put a saved height field back. Returns false, changing nothing, when the
+   * grid is not the size the save was made on. Ground outside the current
+   * parcel is flattened again, so a save can not dig beyond the owned land.
+   */
+  restoreHeights(values: ArrayLike<number>): boolean
   clearSoilBandColors(): void
   stats(): { min: number; max: number; changedCells: number; depthBands: number; maxNeighborDelta: number }
 }
@@ -730,6 +738,22 @@ export function createGardenTerrain(
     fullMeshDirty = true
   }
 
+  function exportHeights(): Float32Array {
+    return heights.slice()
+  }
+
+  function restoreHeights(values: ArrayLike<number>): boolean {
+    if (values.length !== heights.length) return false
+    for (let index = 0; index < heights.length; index += 1) {
+      const value = values[index]
+      heights[index] = Number.isFinite(value) ? Math.max(TERRAIN_MIN_H, Math.min(TERRAIN_MAX_H, value)) : 0
+    }
+    rebuildParcelMask()
+    dirty = true
+    fullMeshDirty = true
+    return true
+  }
+
   function stats(): { min: number; max: number; changedCells: number; depthBands: number; maxNeighborDelta: number } {
     let min = 0
     let max = 0
@@ -882,6 +906,8 @@ export function createGardenTerrain(
       return dirty
     },
     clear,
+    exportHeights,
+    restoreHeights,
     clearSoilBandColors: resetSoilBandColors,
     stats,
   }
