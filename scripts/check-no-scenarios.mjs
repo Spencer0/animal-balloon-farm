@@ -6,7 +6,7 @@ import { resolveOutdir } from './outdir.mjs'
 // build folds the debug harness away; this proves the scenarios went with it.
 // Run after `npm run build` (a production build, i.e. without GARDEN_DEBUG=1).
 const outdir = env.PAGES_OUTDIR ?? resolveOutdir()
-const markers = ['owl/hunt-now', 'owl/ready-to-settle', 'scenario ready:', 'runScenario']
+const markers = ['owl/hunt-now', 'owl/ready-to-settle', 'raccoon/sleeping-by-can','scenario ready:', 'runScenario']
 
 const leaks = []
 for (const name of await readdir(outdir)) {

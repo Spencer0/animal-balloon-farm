@@ -22,6 +22,7 @@ import {
   placedCellProp,
   placedFenceRun,
   propDefinition,
+  propSaleValue,
   postWorld,
   segmentCenterWorld,
   segmentVertices,
@@ -51,8 +52,27 @@ export interface PropPlacementOutcome {
   readonly failure: PropPlacementFailure | 'skewed' | 'skipped' | null
 }
 
+/** A placed prop the player clicked, as the info card needs to see it. */
+export interface PropSelection {
+  /** The placed record; every action re-checks it is still on the farm. */
+  readonly handle: PlacedProp
+  readonly id: PropId
+  readonly name: string
+  readonly blurb: string
+  /** Fence sections in the run; 1 for everything else. */
+  readonly sections: number
+  readonly salePrice: number
+  /** Cell props can be lifted and set down elsewhere; a fence run cannot. */
+  readonly movable: boolean
+  readonly rotatable: boolean
+  /** World point just above the prop, for pinning the card beside it. */
+  readonly anchor: { readonly x: number; readonly y: number; readonly z: number }
+}
+
 export interface PropReport {
   readonly placing: PropId | null
+  /** The prop being moved, as its original cell key, or null. */
+  readonly moving: string | null
   readonly rotation: number
   readonly counts: Readonly<Record<PropId, number>>
   readonly placed: readonly {
@@ -108,11 +128,29 @@ export interface GardenProps {
   roosts(): readonly RoostPoint[]
   /** Placed props per id (fences excluded), which is what a `propCount` condition reads. */
   propCounts(): Readonly<Record<string, number>>
+  /** World centres of every placed prop of one id, e.g. the garbage cans a raccoon sleeps beside. */
+  placements(id: PropId): readonly { readonly x: number; readonly z: number }[]
   readonly placingId: PropId | null
+  /** True while a placed prop is lifted and riding the ghost. */
+  readonly moving: boolean
   readonly rotation: number
   beginPlacement(id: PropId): void
+  /** Ends placement; a prop being moved goes back where it was. */
   cancelPlacement(): void
-  rotate(): void
+  /** Quarter-turn the ghost; `-1` turns the other way. */
+  rotate(direction?: 1 | -1): void
+  /** The prop under a client point, nearest to the camera, or null. Changes nothing. */
+  inspectAt(clientX: number, clientY: number): PropSelection | null
+  /** The placed prop under the pointer, read-only; null when nothing is hit. */
+  propAt(clientX: number, clientY: number): HoverGlowTarget | null
+  /** Highlight a placed prop (or clear the highlight with null). */
+  select(selection: PropSelection | null): void
+  /** Lift a placed prop onto the ghost; returns false if it is gone or fixed. */
+  beginMove(selection: PropSelection): boolean
+  /** Send a placed prop back to the shed. */
+  store(selection: PropSelection): boolean
+  /** Remove a placed prop and return what it sells for, or null if it is gone. */
+  sell(selection: PropSelection): number | null
   pointerMove(event: Pick<PropPointerEvent, 'clientX' | 'clientY'>): void
   pointerLeave(): void
   pointerDown(event: PropPointerEvent): boolean
@@ -121,14 +159,17 @@ export interface GardenProps {
   placeProp(id: PropId, cellX: number, cellZ: number, rotation?: number): PropPlacementOutcome
   /** Direct, harness-friendly placement of a straight fence run. */
   placeFence(fromX: number, fromZ: number, toX: number, toZ: number): PropPlacementOutcome
-  /** Hand tool: return a placed prop to the inventory. */
+  /** Harness shortcut: return the prop under a client point straight to the inventory. */
   pickUpAt(clientX: number, clientY: number): PropId | null
-  /** The placed prop under the pointer, read-only; null when nothing is hit. */
-  propAt(clientX: number, clientY: number): HoverGlowTarget | null
   /** `farmerLevel` drives the shop's build, which starts once the farmer reaches level 2. */
   update(deltaSeconds: number, farmerLevel?: number): void
   report(): PropReport
   dispose(): void
+}
+
+/** A 0..3 quarter-turn count as a yaw in radians. */
+function quarterTurns(rotation: number): number {
+  return normalizeRotation(rotation) * (Math.PI / 2)
 }
 
 const MAX_POSTS = 320
@@ -224,7 +265,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     group.name = `Prop · ${prop.id}`
     const source = loadProp(prop.id)
     if (source) {
-      const fitted = fitModel(source, def.size, normalizeRotation(prop.rotation))
+      const fitted = fitModel(source, def.size, quarterTurns(prop.rotation))
       group.add(fitted)
       models.push(fitted)
     }
@@ -400,7 +441,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   root.add(ghost)
 
   const ghostFillMaterial = new THREE.MeshBasicMaterial({
-    color: '#8cff61', transparent: true, opacity: 0.3, depthWrite: false, depthTest: false, toneMapped: false,
+    color: '#8cff61', transparent: true, opacity: 0.2, depthWrite: false, depthTest: false, toneMapped: false,
   })
   const ghostEdgeMaterial = new THREE.MeshBasicMaterial({
     color: '#8cff61', transparent: true, opacity: 0.9, depthWrite: false, depthTest: false, toneMapped: false,
@@ -425,28 +466,60 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   ghost.add(ghostModelHolder)
   let ghostModelId: PropId | null = null
   let ghostModel: THREE.Object3D | null = null
-  const ghostMaterial = new THREE.MeshStandardMaterial({
-    color: '#8cff61', transparent: true, opacity: 0.42, roughness: 0.6, depthWrite: false,
-  })
+  /** The ghost's own copies of the model's materials; geometry and textures stay shared. */
+  let ghostMaterials: THREE.Material[] = []
+  const GHOST_OPACITY = 0.6
+  const GHOST_VALID = new THREE.Color('#8cff61')
+  const GHOST_INVALID = new THREE.Color('#ff5148')
 
+  function clearGhostModel(): void {
+    if (ghostModel) ghostModelHolder.remove(ghostModel)
+    for (const material of ghostMaterials) material.dispose()
+    ghostMaterials = []
+    ghostModel = null
+    ghostModelId = null
+  }
+
+  /**
+   * Build the translucent model for `id`. The source loads asynchronously, so
+   * until it arrives this leaves `ghostModelId` unset and the next frame's
+   * `syncVisuals` tries again; only a finished build is remembered.
+   */
   function ensureGhostModel(id: PropId): void {
     if (ghostModelId === id) return
-    if (ghostModel) {
-      ghostModelHolder.remove(ghostModel)
-      ghostModel = null
-    }
-    ghostModelId = id
+    clearGhostModel()
     const source = loadProp(id)
     if (!source) return
     const fitted = fitModel(source, propDefinition(id).size, 0)
     fitted.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
-      object.material = ghostMaterial
       object.castShadow = false
       object.receiveShadow = false
+      object.renderOrder = 888
+      const clones = (Array.isArray(object.material) ? object.material : [object.material]).map((material) => {
+        const clone = material.clone()
+        clone.transparent = true
+        clone.opacity = GHOST_OPACITY
+        clone.depthWrite = false
+        ghostMaterials.push(clone)
+        return clone
+      })
+      object.material = Array.isArray(object.material) ? clones : clones[0]
     })
     ghostModel = fitted
+    ghostModelId = id
     ghostModelHolder.add(fitted)
+    tintGhostModel(lastTintValid)
+  }
+
+  let lastTintValid = true
+  function tintGhostModel(valid: boolean): void {
+    const colour = valid ? GHOST_VALID : GHOST_INVALID
+    for (const material of ghostMaterials) {
+      if (!(material instanceof THREE.MeshStandardMaterial)) continue
+      material.emissive.copy(colour)
+      material.emissiveIntensity = valid ? 0.16 : 0.45
+    }
   }
 
   const reasonSurface = createReasonSurface()
@@ -465,7 +538,9 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     const colour = valid ? '#8cff61' : '#ff5148'
     ghostFillMaterial.color.set(colour)
     ghostEdgeMaterial.color.set(colour)
-    ghostMaterial.color.set(colour)
+    lastTintValid = valid
+    ghostFenceMaterial.color.set(colour)
+    tintGhostModel(valid)
     reasonColour.key = colour
   }
 
@@ -501,6 +576,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   // ------------------------------------------------------------ placement ----
 
   let placingId: PropId | null = null
+  /** A placed prop lifted off the farm and riding the ghost; null for a fresh placement. */
+  let moving: PlacedProp | null = null
   let rotation = 0
   let hoverPoint: THREE.Vector3 | null = null
   let fenceAnchor: LatticeVertex | null = null
@@ -520,36 +597,71 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   }
 
   function previewCells(id: PropId, cell: CellCoord, y: number): void {
+    ghostPosts.count = 0
+    ghostRails.count = 0
     ensureGhostModel(id)
     const cells = footprintCells(id, cell, rotation)
     setGhostTransformAlongLattice(cells, y)
     const centre = footprintCenterWorld(id, cell, rotation)
     ghostModelHolder.position.set(centre.x, y, centre.z)
-    ghostModelHolder.rotation.y = normalizeRotation(rotation) * (Math.PI / 2)
+    ghostModelHolder.rotation.y = quarterTurns(rotation)
     ghostModelHolder.visible = ghostModel !== null
   }
 
-  /**
-   * Paint the run preview: one lattice tile per segment, at the run's ground
-   * height. The segment's midpoint is the cell centre for both axes, so the
-   * same formula places an x-axis and a z-axis segment.
-   */
-  function previewFenceTiles(segments: readonly FenceSegment[], y: number): void {
-    for (const [index, tile] of cellTiles.entries()) {
-      const segment = segments[index]
-      tile.visible = Boolean(segment)
-      if (!segment) continue
-      tile.position.set(
-        (segment.x + 0.5) * PROP_LATTICE_CELL,
-        y + 0.012,
-        (segment.z + 0.5) * PROP_LATTICE_CELL,
-      )
-      const edge = cellEdges[index]
-      edge.visible = true
-      edge.position.copy(tile.position)
-    }
-    for (let index = segments.length; index < cellEdges.length; index += 1) cellEdges[index].visible = false
+  // The run preview is the fence itself, translucent: the same posts and rails
+  // the placed fence will have, in pooled instances, so a long drag previews in
+  // full and shows exactly where the posts land.
+  const MAX_GHOST_SEGMENTS = 64
+  const ghostFenceMaterial = new THREE.MeshStandardMaterial({
+    color: '#8cff61', transparent: true, opacity: 0.6, roughness: 0.78, depthWrite: false,
+  })
+  const ghostPosts = new THREE.InstancedMesh(postGeometry, ghostFenceMaterial, MAX_GHOST_SEGMENTS + 1)
+  const ghostRails = new THREE.InstancedMesh(railGeometry, ghostFenceMaterial, MAX_GHOST_SEGMENTS * 2)
+  ghostPosts.name = 'Ghost fence posts'
+  ghostRails.name = 'Ghost fence rails'
+  ghostPosts.count = 0
+  ghostRails.count = 0
+  ghostPosts.frustumCulled = false
+  ghostRails.frustumCulled = false
+  ghostPosts.renderOrder = ghostRails.renderOrder = 888
+  ghost.add(ghostPosts, ghostRails)
+
+  /** Show `segments` as a ghost run, or one lone post at `loneVertex` before a drag has begun. */
+  function previewFence(segments: readonly FenceSegment[], loneVertex: LatticeVertex | null): void {
+    for (const tile of cellTiles) tile.visible = false
+    for (const edge of cellEdges) edge.visible = false
     ghostModelHolder.visible = false
+    const shown = segments.slice(0, MAX_GHOST_SEGMENTS)
+    const posts = new Map<string, LatticeVertex>()
+    for (const segment of shown) {
+      for (const vertex of segmentVertices(segment)) posts.set(vertexKey(vertex), vertex)
+    }
+    if (loneVertex) posts.set(vertexKey(loneVertex), loneVertex)
+    let postCount = 0
+    for (const vertex of posts.values()) {
+      const point = postWorld(vertex)
+      dummy.position.set(point.x, GARDEN_LAWN_Y + terrain.heightAt(point.x, point.z) + 0.51, point.z)
+      dummy.rotation.set(0, 0, 0)
+      dummy.updateMatrix()
+      ghostPosts.setMatrixAt(postCount, dummy.matrix)
+      postCount += 1
+    }
+    ghostPosts.count = postCount
+    ghostPosts.instanceMatrix.needsUpdate = true
+    let railCount = 0
+    for (const segment of shown) {
+      const centre = segmentCenterWorld(segment)
+      const base = GARDEN_LAWN_Y + terrain.heightAt(centre.x, centre.z)
+      for (const height of [0.34, 0.72]) {
+        dummy.position.set(centre.x, base + height, centre.z)
+        dummy.rotation.set(0, segment.axis === 'z' ? Math.PI / 2 : 0, 0)
+        dummy.updateMatrix()
+        ghostRails.setMatrixAt(railCount, dummy.matrix)
+        railCount += 1
+      }
+    }
+    ghostRails.count = railCount
+    ghostRails.instanceMatrix.needsUpdate = true
   }
 
   function fenceSegmentList(from: LatticeVertex, to: LatticeVertex): FenceSegment[] {
@@ -585,35 +697,38 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       const segments = anchor ? fenceSegmentList(anchor, target) : []
       const label = new THREE.Vector3(hoverPoint.x, y + 1.4, hoverPoint.z)
       if (!anchor) {
-        previewFenceTiles([], y)
+        previewFence([], target)
         setGhostTint(true)
         showReason('drag a run', '#8cff61', label)
         return
       }
       if (segments.length === 0) {
-        previewFenceTiles([], y)
+        previewFence([], target)
         setGhostTint(false)
         showReason(REASON_LABEL.skewed, '#ff5148', label)
         return
       }
-      previewFenceTiles(segments, y)
+      previewFence(segments, null)
       const run = fenceRunPlacement(anchor, target, surface, occupancy, inventory)
       setGhostTint(run.valid)
       if (run.valid) {
-        showReason(`${run.cost} coins · ${run.free.length} fence${run.free.length === 1 ? '' : 's'}`, '#8cff61', label)
+        const left = inventory.count('fence') - run.free.length
+        showReason(`${run.free.length} fence${run.free.length === 1 ? '' : 's'} · ${left} left`, '#8cff61', label)
       } else {
         showReason(REASON_LABEL[run.failure ?? ''] ?? 'blocked', '#ff5148', label)
       }
       return
     }
     const cell = cellAt(hoverPoint.x, hoverPoint.z)
-    const result = placementResult(placingId, cell, rotation, surface, occupancy, inventory)
+    const result = placementResult(placingId, cell, rotation, surface, occupancy, moving ? undefined : inventory)
     previewCells(placingId, cell, y)
     setGhostTint(result.valid)
     const rect = footprintWorldRect(placingId, cell, rotation)
     const label = new THREE.Vector3((rect.minX + rect.maxX) / 2, y + propDefinition(placingId).size + 0.5, (rect.minZ + rect.maxZ) / 2)
     if (result.valid) {
-      showReason(`${propDefinition(placingId).name} · ready`, '#8cff61', label)
+      const def = propDefinition(placingId)
+      const verb = moving ? 'click to set down' : 'click to place'
+      showReason(def.rotatable ? `${def.name} · R rotates` : `${def.name} · ${verb}`, '#8cff61', label)
     } else {
       showReason(REASON_LABEL[result.failure ?? ''] ?? 'blocked', '#ff5148', label)
     }
@@ -625,6 +740,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
 
   function beginPlacement(id: PropId): void {
     if (inventory.count(id) <= 0) return
+    cancelPlacement()
     placingId = id
     rotation = 0
     fenceAnchor = null
@@ -632,7 +748,18 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     if (hoverPoint) updatePreview()
   }
 
+  /** Put a lifted prop back exactly where it stood. */
+  function restoreMove(): void {
+    const lifted = moving
+    if (!lifted) return
+    moving = null
+    occupancy.add(lifted)
+    const visual = visualByProp.get(lifted)
+    if (visual) visual.object.visible = true
+  }
+
   function cancelPlacement(): void {
+    restoreMove()
     placingId = null
     fenceAnchor = null
     fenceTarget = null
@@ -640,16 +767,23 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     reasonSprite.visible = false
   }
 
-  function rotate(): void {
+  function rotate(direction: 1 | -1 = 1): void {
     if (!placingId || !propDefinition(placingId).rotatable) return
-    rotation = (rotation + 1) % 4
+    rotation = normalizeRotation(rotation + direction)
     if (hoverPoint) updatePreview()
   }
 
   function placeCell(id: PropId, cell: CellCoord, rot: number): PropPlacementOutcome {
-    const result = placementResult(id, cell, rot, surface, occupancy, inventory)
+    const lifted = moving
+    const result = placementResult(id, cell, rot, surface, occupancy, lifted ? undefined : inventory)
     if (!result.valid) return { ok: false, failure: result.failure }
-    if (!consumeOne(id)) return { ok: false, failure: 'out-of-stock' }
+    if (lifted) {
+      // A move spends nothing: the lifted prop's visual is swapped for a fresh one at the new cell.
+      moving = null
+      removeVisual(lifted)
+    } else if (!consumeOne(id)) {
+      return { ok: false, failure: 'out-of-stock' }
+    }
     const placed = placedCellProp(id, cell, rot)
     occupancy.add(placed)
     addVisual(placed)
@@ -701,8 +835,10 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     const point = hoverPoint ?? groundAt(event)
     if (!point) return true
     const cell = cellAt(point.x, point.z)
-    placeCell(placingId, cell, rotation)
-    if (inventory.count(placingId) <= 0) cancelPlacement()
+    const wasMoving = moving !== null
+    const outcome = placeCell(placingId, cell, rotation)
+    // A move is one set-down; a fresh placement carries on while the box has stock.
+    if (wasMoving ? outcome.ok : inventory.count(placingId) <= 0) cancelPlacement()
     else if (hoverPoint) updatePreview()
     return true
   }
@@ -716,55 +852,175 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     else if (hoverPoint) updatePreview()
   }
 
-  /** Read-only twin of pickUpAt: the placed prop under the pointer, and the ground it stands on. */
-  function propAt(clientX: number, clientY: number): HoverGlowTarget | null {
+  // ------------------------------------------------------------ selection ----
+
+  const selectionGroup = new THREE.Group()
+  selectionGroup.name = 'Prop selection highlight'
+  root.add(selectionGroup)
+  const selectionGeometry = new THREE.PlaneGeometry(1, 1)
+  const selectionMaterial = new THREE.MeshBasicMaterial({
+    color: '#f2cd72', transparent: true, opacity: 0.4, depthWrite: false, depthTest: false, toneMapped: false,
+  })
+  const selectionTiles: THREE.Mesh[] = []
+  const MAX_SELECTION_TILES = 64
+  let selected: PlacedProp | null = null
+  let selectionClock = 0
+
+  function showSelection(prop: PlacedProp | null): void {
+    selected = prop
+    const rects: { x: number; z: number; w: number; d: number }[] = []
+    if (prop?.id === 'fence') {
+      for (const segment of prop.segments) {
+        const centre = segmentCenterWorld(segment)
+        const along = segment.axis === 'x'
+        rects.push({ x: centre.x, z: centre.z, w: along ? PROP_LATTICE_CELL : 0.5, d: along ? 0.5 : PROP_LATTICE_CELL })
+      }
+    } else if (prop) {
+      for (const cell of prop.cells) {
+        rects.push({
+          x: cell.cellX * PROP_LATTICE_CELL + PROP_LATTICE_CELL / 2,
+          z: cell.cellZ * PROP_LATTICE_CELL + PROP_LATTICE_CELL / 2,
+          w: PROP_LATTICE_CELL * 0.96,
+          d: PROP_LATTICE_CELL * 0.96,
+        })
+      }
+    }
+    for (const [index, rect] of rects.slice(0, MAX_SELECTION_TILES).entries()) {
+      let tile = selectionTiles[index]
+      if (!tile) {
+        tile = new THREE.Mesh(selectionGeometry, selectionMaterial)
+        tile.rotation.x = -Math.PI / 2
+        tile.renderOrder = 880
+        selectionGroup.add(tile)
+        selectionTiles.push(tile)
+      }
+      tile.visible = true
+      tile.scale.set(rect.w, rect.d, 1)
+      tile.position.set(rect.x, GARDEN_LAWN_Y + terrain.heightAt(rect.x, rect.z) + 0.03, rect.z)
+    }
+    for (let index = Math.min(rects.length, MAX_SELECTION_TILES); index < selectionTiles.length; index += 1) {
+      selectionTiles[index].visible = false
+    }
+  }
+
+  function select(selection: PropSelection | null): void {
+    showSelection(selection && occupancy.placed.includes(selection.handle) ? selection.handle : null)
+  }
+
+  // ------------------------------------------------------------ inspection ----
+
+  interface PropHit {
+    readonly prop: PlacedProp
+    readonly distance: number
+    readonly point: THREE.Vector3
+  }
+
+  /** The placed prop nearest the camera along the pointer ray, fences included. */
+  function nearestHit(clientX: number, clientY: number): PropHit | null {
     if (!pointerRay({ clientX, clientY })) return null
+    let best: PropHit | null = null
     for (const prop of occupancy.placed) {
       if (prop.id === 'fence') continue
       const visual = visualByProp.get(prop)
-      if (!visual) continue
-      const meshes: THREE.Mesh[] = []
-      visual.object.traverse((object) => { if (object instanceof THREE.Mesh) meshes.push(object) })
-      if (meshes.length === 0 || raycaster.intersectObjects(meshes, false).length === 0) continue
-      const box = new THREE.Box3().setFromObject(visual.object)
-      const center = box.getCenter(new THREE.Vector3())
-      const size = box.getSize(new THREE.Vector3())
-      return { x: center.x, y: box.min.y, z: center.z, radius: Math.max(size.x, size.z) / 2 }
+      if (!visual?.object.visible) continue
+      const hit = raycaster.intersectObject(visual.object, true)[0]
+      if (hit && (!best || hit.distance < best.distance)) best = { prop, distance: hit.distance, point: hit.point.clone() }
     }
-    return null
+    // A fence is declared by its instanced rails and posts; a hit names one segment, and its owner is the whole drawn run.
+    const fenceHit = raycaster.intersectObjects([postMesh, railMesh], false)[0]
+    if (fenceHit && fenceHit.instanceId !== undefined && (!best || fenceHit.distance < best.distance)) {
+      const segment = fenceSegmentForInstance(fenceHit)
+      const owner = segment ? occupancy.edgeOwner(segment) : null
+      if (owner) best = { prop: owner, distance: fenceHit.distance, point: fenceHit.point.clone() }
+    }
+    return best
+  }
+
+  function inspectAt(clientX: number, clientY: number): PropSelection | null {
+    const hit = nearestHit(clientX, clientY)
+    if (!hit) return null
+    const { prop } = hit
+    const def = propDefinition(prop.id)
+    const sections = prop.id === 'fence' ? prop.segments.length : 1
+    let anchor: PropSelection['anchor']
+    if (prop.id === 'fence') {
+      anchor = { x: hit.point.x, y: hit.point.y + 0.8, z: hit.point.z }
+    } else {
+      const centre = footprintCenterWorld(prop.id, prop.cell, prop.rotation)
+      anchor = { x: centre.x, y: GARDEN_LAWN_Y + terrain.heightAt(centre.x, centre.z) + def.size * 0.6, z: centre.z }
+    }
+    return {
+      handle: prop,
+      id: prop.id,
+      name: def.name,
+      blurb: def.blurb,
+      sections,
+      salePrice: propSaleValue(prop.id, sections),
+      movable: def.kind === 'cell',
+      rotatable: def.rotatable,
+      anchor,
+    }
+  }
+
+  /** Take a placed prop off the farm. Returns false when it is already gone. */
+  function detach(prop: PlacedProp): boolean {
+    if (!occupancy.remove(prop)) return false
+    removeVisual(prop)
+    // Fence runs have no visual of their own; the instanced rails and posts rebuild from occupancy.
+    if (prop.id === 'fence') fencesDirty = true
+    if (selected === prop) showSelection(null)
+    options.onChange?.()
+    return true
+  }
+
+  function store(selection: PropSelection): boolean {
+    const prop = selection.handle
+    const sections = prop.id === 'fence' ? prop.segments.length : 1
+    if (!detach(prop)) return false
+    inventory.add(prop.id, sections)
+    return true
+  }
+
+  function sell(selection: PropSelection): number | null {
+    const prop = selection.handle
+    const sections = prop.id === 'fence' ? prop.segments.length : 1
+    if (!detach(prop)) return null
+    return propSaleValue(prop.id, sections)
+  }
+
+  function beginMove(selection: PropSelection): boolean {
+    const prop = selection.handle
+    if (propDefinition(prop.id).kind !== 'cell' || !occupancy.placed.includes(prop)) return false
+    cancelPlacement()
+    occupancy.remove(prop)
+    const visual = visualByProp.get(prop)
+    if (visual) visual.object.visible = false
+    moving = prop
+    placingId = prop.id
+    rotation = prop.rotation
+    fenceAnchor = null
+    fenceTarget = null
+    showSelection(null)
+    if (hoverPoint) updatePreview()
+    return true
+  }
+
+  /** Harness shortcut: straight back to the shed, no card. */
+  /** Footprint of the placed prop under the pointer, read-only, for the hover glow. */
+  function propAt(clientX: number, clientY: number): HoverGlowTarget | null {
+    const selection = inspectAt(clientX, clientY)
+    const visual = selection ? visualByProp.get(selection.handle) : undefined
+    if (!visual) return null
+    const box = new THREE.Box3().setFromObject(visual.object)
+    const center = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    return { x: center.x, y: box.min.y, z: center.z, radius: Math.max(size.x, size.z) / 2 }
   }
 
   function pickUpAt(clientX: number, clientY: number): PropId | null {
-    if (!pointerRay({ clientX, clientY })) return null
-    const candidates = occupancy.placed.filter((prop) => prop.id !== 'fence')
-    for (const prop of candidates) {
-      const visual = visualByProp.get(prop)
-      if (!visual) continue
-      const meshes: THREE.Mesh[] = []
-      visual.object.traverse((object) => { if (object instanceof THREE.Mesh) meshes.push(object) })
-      if (meshes.length === 0) continue
-      if (raycaster.intersectObjects(meshes, false).length === 0) continue
-      inventory.add(prop.id, 1)
-      occupancy.remove(prop)
-      removeVisual(prop)
-      options.onChange?.()
-      return prop.id
-    }
-    // Fences are declared by their rails and posts; a hit returns one segment.
-    const hit = raycaster.intersectObjects([postMesh, railMesh], false)[0]
-    if (hit && hit.instanceId !== undefined) {
-      const segment = fenceSegmentForInstance(hit)
-      if (segment) {
-        const owner = occupancy.edgeOwner(segment)
-        if (owner && occupancy.remove(owner)) {
-          inventory.add('fence', owner.segments.length)
-          fencesDirty = true
-          options.onChange?.()
-          return 'fence'
-        }
-      }
-    }
-    return null
+    const selection = inspectAt(clientX, clientY)
+    if (!selection || !store(selection)) return null
+    return selection.id
   }
 
   function fenceSegmentForInstance(hit: THREE.Intersection): FenceSegment | null {
@@ -812,16 +1068,17 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       if (visual.prop.id === 'fence' || visual.models.length > 0) continue
       const source = loadProp(visual.prop.id)
       if (!source) continue
-      const fitted = fitModel(source, propDefinition(visual.prop.id).size, normalizeRotation(visual.prop.rotation))
+      const fitted = fitModel(source, propDefinition(visual.prop.id).size, quarterTurns(visual.prop.rotation))
       visual.object.add(fitted)
       visual.models.push(fitted)
     }
-    if (ghostModelId) ensureGhostModel(ghostModelId)
+    if (placingId && placingId !== 'fence') ensureGhostModel(placingId)
   }
 
   function report(): PropReport {
     return {
       placing: placingId,
+      moving: moving ? cellKey(moving.cell) : null,
       rotation,
       counts: inventory.counts,
       placed: occupancy.placed.map((prop) => ({
@@ -842,23 +1099,32 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   function roosts(): readonly RoostPoint[] {
     const points: RoostPoint[] = []
     for (const visual of visualByProp.values()) {
-      if (visual.prop.id !== 'oak') continue
+      if (visual.prop.id !== 'oak' || !visual.object.visible) continue
       const node = visual.object.getObjectByName(ROOST_NODE)
       if (!node) continue
       visual.object.updateWorldMatrix(true, true)
       node.getWorldPosition(roostWorld)
-      points.push({ x: roostWorld.x, y: roostWorld.y, z: roostWorld.z, rotationY: normalizeRotation(visual.prop.rotation) * Math.PI / 2 })
+      points.push({ x: roostWorld.x, y: roostWorld.y, z: roostWorld.z, rotationY: quarterTurns(visual.prop.rotation) })
     }
     return points
   }
 
   function propCounts(): Readonly<Record<string, number>> {
     const counts: Record<string, number> = {}
-    for (const prop of occupancy.placed) {
+    // A prop in the air mid-move is still the player's; it must not blink out of conditions.
+    const owned = moving ? [...occupancy.placed, moving] : occupancy.placed
+    for (const prop of owned) {
       if (prop.id === 'fence') continue
       counts[prop.id] = (counts[prop.id] ?? 0) + 1
     }
     return counts
+  }
+
+  function placements(id: PropId): readonly { readonly x: number; readonly z: number }[] {
+    return occupancy.placed.filter((prop) => prop.id === id).map((prop) => {
+      const centre = footprintCenterWorld(prop.id, prop.cell, prop.rotation)
+      return { x: centre.x, z: centre.z }
+    })
   }
 
   /** Free a cached source's geometry and materials; clones share them. */
@@ -884,11 +1150,19 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     pickShop,
     roosts,
     propCounts,
+    placements,
     get placingId() { return placingId },
+    get moving() { return moving !== null },
     get rotation() { return rotation },
     beginPlacement,
     cancelPlacement,
     rotate,
+    inspectAt,
+    propAt,
+    select,
+    beginMove,
+    store,
+    sell,
     pointerMove,
     pointerLeave,
     pointerDown,
@@ -896,9 +1170,12 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     placeProp,
     placeFence,
     pickUpAt,
-    propAt,
     update(deltaSeconds: number, farmerLevel = 0): void {
       if (fencesDirty) rebuildFences()
+      if (selected) {
+        selectionClock += deltaSeconds
+        selectionMaterial.opacity = 0.34 + 0.14 * Math.sin(selectionClock * 4)
+      }
       syncVisuals()
       updateShopPlacement()
       shopBuild?.update(deltaSeconds, farmerLevel)
@@ -913,12 +1190,18 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       postGeometry.dispose()
       railGeometry.dispose()
       fenceMaterial.dispose()
+      restoreMove()
+      selectionGeometry.dispose()
+      selectionMaterial.dispose()
+      ghostPosts.dispose()
+      ghostRails.dispose()
+      ghostFenceMaterial.dispose()
       for (const mesh of [...cellTiles, ...cellEdges]) mesh.geometry.dispose()
       ghostFillMaterial.dispose()
       ghostEdgeMaterial.dispose()
       reasonTexture.dispose()
       reasonSprite.material.dispose()
-      ghostMaterial.dispose()
+      clearGhostModel()
       for (const object of sources.values()) {
         if (object === 'loading' || object === 'failed') continue
         disposeSource(object)
@@ -964,6 +1247,11 @@ function drawReason(surface: ReasonSurface, text: string, colour: string): void 
   context.textAlign = 'center'
   context.textBaseline = 'middle'
   context.fillStyle = '#fff6df'
-  context.font = 'bold 74px Georgia, "Times New Roman", serif'
+  let size = 74
+  context.font = `bold ${size}px Georgia, "Times New Roman", serif`
+  while (size > 36 && context.measureText(text).width > width - 90) {
+    size -= 4
+    context.font = `bold ${size}px Georgia, "Times New Roman", serif`
+  }
   context.fillText(text, width / 2, height / 2 + 5)
 }

@@ -12,6 +12,7 @@ const PAINT_PALETTES: Record<BalloonAnimalId, readonly [string, string]> = {
   goose: ['#fff2df', '#ed8543'],
   frog: ['#6ab84e', '#f3ecc9'],
   owl: ['#a9774b', '#fdeecf'],
+  raccoon: ['#8f949b', '#2f3038'],
 }
 
 export interface CapturePose {
@@ -223,6 +224,15 @@ function captureGesture(id: BalloonAnimalId, time: number, duration: number): Ca
         pitch: Math.sin(time * 1.7) * 0.05 * active,
         roll: Math.sin(time * 1.9 + 0.8) * 0.06 * active,
         yaw: Math.sin(time * 1.3) * 0.12 * active,
+      }
+    case 'raccoon':
+      // Sneaky little tiptoe wiggle: a quick pitch and a nosy side-to-side sniff.
+      return {
+        fill,
+        lift: active * (0.03 + Math.max(0, Math.sin(time * 6.1)) * 0.08),
+        pitch: Math.sin(time * 4.4) * 0.08 * active,
+        roll: Math.sin(time * 3.3) * 0.06 * active,
+        yaw: Math.sin(time * 2.9) * 0.14 * active,
       }
   }
 }

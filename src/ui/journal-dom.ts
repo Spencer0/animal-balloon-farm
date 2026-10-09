@@ -51,6 +51,7 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   goose: { rarity: "Uncommon", traits: ["Herbivore", "Proud Stride", "Takes Flight"] },
   frog: { rarity: "Uncommon", traits: ["Carnivore", "Hopper", "Springs Skyward"] },
   owl: { rarity: "Rare", traits: ["Predator", "Night Shift", "Barely Flaps"] },
+  raccoon: { rarity: "Uncommon", traits: ["Scavenger", "Night Shift", "Naps by the Can"] },
 };
 
 const DEFAULT_META: SpeciesMeta = { rarity: "Common", traits: [] };

@@ -28,7 +28,7 @@ import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
-import { createGardenProps, type GardenProps } from './scene/garden-props'
+import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
 import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
 import { PROP_CATALOG, purchaseProp, type PropId } from './game/farm-props'
 import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
@@ -51,10 +51,12 @@ import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
+import { createPropCard } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
 import { createPredationLedger, isNightTime } from './game/predator'
+import { SLEEP_PROPS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -266,7 +268,7 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
       distance: camera.position.distanceTo(animal.currentPosition),
       priority: animal.renderPriority + (animal.instanceId === focusedAnimalId ? 200 : 0),
       interactive: animal.isCapturing || animal.isRomancing || animal.instanceId === focusedAnimalId
-        || animal.isFlier || owlHunt.huntedIds().has(animal.instanceId),
+        || animal.isFlier || animal.isSleeping || owlHunt.huntedIds().has(animal.instanceId),
     })
   }
   const detailedIds = new Set(mode === 'farm'
@@ -947,6 +949,69 @@ function updateOwlHunt(deltaSeconds: number): void {
   }
 }
 
+/** Where each sleeping night animal lay down, so it keeps its bed all day instead of chasing the nearest can. */
+const sleepBeds = new Map<string, Bed>()
+
+/**
+ * Night animals sleep by day: a resident curls up beside a garbage can, anything else
+ * where it stands. Everyone wakes at dusk. Beds are chosen once per sleep so the
+ * animal is not shuffled about as other animals settle.
+ */
+function updateSleepers(): void {
+  if (mode === 'viewer') return
+  const night = isNightTime(dayNightClock.timeOfDay)
+  // Each night species sleeps by the first prop on its SLEEP_PROPS list that is placed (a house
+  // before a can); with none, or no entry, it sleeps where it stands.
+  type Home = { x: number; z: number; radius: number; key: string }
+  const homesFor = (species: string): Home[] => {
+    for (const { prop, radius } of SLEEP_PROPS[species] ?? []) {
+      const spots = gardenProps?.placements(prop as PropId) ?? []
+      if (spots.length > 0) return spots.map((spot, index) => ({ ...spot, radius, key: `${prop}:${index}` }))
+    }
+    return []
+  }
+  const occupancy = new Map<string, number>()
+  const nearHome = (bed: Bed, home: Home): boolean => Math.hypot(bed.x - home.x, bed.z - home.z) < home.radius + 0.5
+  for (const animal of animals) {
+    const bed = sleepBeds.get(animal.instanceId)
+    if (!bed || !shouldSleep(animal.id, night)) continue
+    const home = homesFor(animal.id).find((candidate) => nearHome(bed, candidate))
+    if (home) occupancy.set(home.key, (occupancy.get(home.key) ?? 0) + 1)
+  }
+  for (const animal of animals) {
+    if (animal.isFlier) continue
+    if (animal.isSold) {
+      sleepBeds.delete(animal.instanceId)
+      continue
+    }
+    const record = progress.animal(animal.instanceId)
+    const wantsSleep = shouldSleep(animal.id, night) && animal.isAtFarm && !animal.isCapturing && !animal.isRomancing
+      && Boolean(record && record.stage >= 2 && !record.baby)
+    if (!wantsSleep) {
+      if (sleepBeds.delete(animal.instanceId)) animal.setSleepSpot(null)
+      continue
+    }
+    let bed = sleepBeds.get(animal.instanceId)
+    // A resident prefers a home; if one is placed after it lay down, it moves over.
+    const resident = (record?.stage ?? 0) >= 3
+    const homes = resident ? homesFor(animal.id) : []
+    if (!bed || (homes.length > 0 && !homes.some((home) => nearHome(bed!, home)))) {
+      const from = { x: animal.currentPosition.x, z: animal.currentPosition.z }
+      const index = pickAnchor(homes, homes.map((home) => occupancy.get(home.key) ?? 0), from)
+      if (index >= 0) {
+        const home = homes[index]
+        const slot = occupancy.get(home.key) ?? 0
+        occupancy.set(home.key, slot + 1)
+        bed = bedBeside(home, slot, home.radius)
+      } else {
+        bed = { x: from.x, z: from.z, heading: animal.currentHeading }
+      }
+      sleepBeds.set(animal.instanceId, bed)
+    }
+    animal.setSleepSpot(bed)
+  }
+}
+
 function updateAnimalProgress(deltaSeconds: number): void {
   if (mode === 'viewer' || menu.isOpen || salePanel.isOpen) return
   const positions = Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }]))
@@ -1017,7 +1082,7 @@ let expansionFeedbackStrength = 0
 // ------------------------------------------------------------------- UI layer --
 
 const ui = createUILayer()
-const performanceOverlay = __GARDEN_DEBUG__ && gardenDebugMode ? createPerformanceOverlay() : null
+const performanceOverlay = __GARDEN_DEBUG__ && gardenDebugMode && !pageParams.has('nohud') ? createPerformanceOverlay() : null
 ui.resize(window.innerWidth, window.innerHeight)
 
 const journal = createJournalPanel(window.innerWidth, window.innerHeight, (isJournalOpen) => {
@@ -1111,6 +1176,7 @@ const viewer = createViewerPanel({
  * The card pins to the right of the balloon (flipping left at the edge).
  */
 function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }): void {
+  propCard.close()
   focusedAnimalId = animal.instanceId
   refreshAnimalCrowd(performance.now() / 1000, true)
   plantCard.close()
@@ -1223,6 +1289,63 @@ const animalCard = createAnimalCard({
     refreshCursor()
   },
 }, window.innerWidth, window.innerHeight)
+
+/**
+ * The prop info card. `selectedProp` outlives the card closing on purpose: a
+ * button press closes the card first and then runs its action.
+ */
+let selectedProp: PropSelection | null = null
+const propCard = createPropCard({
+  onMove: () => {
+    if (!selectedProp || !gardenProps?.beginMove(selectedProp)) return
+    gardenPlants?.cancelPlacement()
+    gardenTools?.setPlantingMode(false)
+    shed.setPlacementActive(true)
+    syncFarmChrome()
+  },
+  onStore: () => {
+    if (!selectedProp || !gardenProps?.store(selectedProp)) return
+    shedDom.refresh()
+    syncFarmChrome()
+  },
+  onSell: () => {
+    const sold = selectedProp
+    const coins = sold && gardenProps ? gardenProps.sell(sold) : null
+    if (!sold || coins === null) return false
+    salePanel.setWallet(wallet.credit(coins))
+    const burst = createSellBurst(new THREE.Vector3(sold.anchor.x, sold.anchor.y, sold.anchor.z), coins)
+    scene.add(burst.root)
+    sellBursts.push(burst)
+    shedDom.refresh()
+    syncFarmChrome()
+    return true
+  },
+  onToggle: (isOpen) => {
+    if (!isOpen) gardenProps?.select(null)
+    refreshCursor()
+  },
+}, window.innerWidth, window.innerHeight)
+
+/** Pin the prop card beside a placed prop and highlight it on the lawn. */
+function openPropCardFor(selection: PropSelection): void {
+  animalCard.close()
+  plantCard.close()
+  salePanel.close()
+  gardenPlants?.clearSelection()
+  selectedProp = selection
+  gardenProps?.select(selection)
+  const ndc = new THREE.Vector3(selection.anchor.x, selection.anchor.y, selection.anchor.z).project(camera)
+  propCard.open({
+    id: selection.id,
+    name: selection.name,
+    blurb: selection.blurb,
+    sections: selection.sections,
+    salePrice: selection.salePrice,
+    movable: selection.movable,
+    rotatable: selection.rotatable,
+  }, { x: ndc.x * ui.viewport.width / 2, y: ndc.y * ui.viewport.height / 2 })
+  syncFarmChrome()
+}
 
 const shed = createShedPanel(window.innerWidth, window.innerHeight, (isShedOpen) => {
   shedDom.setOpen(isShedOpen)
@@ -1440,6 +1563,7 @@ const plantCard = createPlantCard({
 }, window.innerWidth, window.innerHeight)
 
 function openPlantCardFor(plant: GardenPlant): void {
+  propCard.close()
   const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
   const anchorWorld = new THREE.Vector3(plant.x, GARDEN_LAWN_Y + 1.4, plant.z)
   const anchorNdc = anchorWorld.project(camera)
@@ -1472,7 +1596,7 @@ function syncPlantCard(deltaSeconds: number): void {
   plantCard.sync({ growth: plant.growth, care: plant.careNeeded, price: plantSaleValue(plant.species, plant.growth) })
 }
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, plantCard, clockCalendarHud]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, plantCard, propCard, clockCalendarHud]
 
 /**
  * The furthest rung each species has reached this session. The journal is a
@@ -1588,6 +1712,7 @@ function setMode(next: GameMode): void {
   if (next !== 'farm') {
     salePanel.close()
     animalCard.close()
+    propCard.close()
     plantCard.close()
     shed.close()
     shed.setPlacementActive(false)
@@ -2036,6 +2161,7 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
     || shed.contains(point)
     || salePanel.hitTest?.(point)
     || animalCard.hitTest?.(point)
+    || propCard.hitTest?.(point)
     || plantCard.hitTest?.(point)
   ))
 }
@@ -2141,6 +2267,7 @@ function orbitPointerDown(event: PointerEvent): void {
       gardenProps.pointerMove(event)
       gardenProps.pointerDown(event)
       gardenProps.update(0)
+      if (!gardenProps.placingId) shed.setPlacementActive(false)
       shedDom.refresh()
       syncFarmChrome()
       return
@@ -2162,16 +2289,16 @@ function orbitPointerDown(event: PointerEvent): void {
         }
         return
       }
-      // Pick-up first, then the shop door. Both are the same grab the sale
-      // panel already trained the player to make.
-      if (gardenProps?.pickUpAt(event.clientX, event.clientY)) {
-        shedDom.refresh()
-        syncFarmChrome()
+      // A placed prop opens its info card (move, store or sell); then the shop door.
+      const propHit = gardenProps?.inspectAt(event.clientX, event.clientY)
+      if (propHit) {
+        openPropCardFor(propHit)
         return
       }
       if (gardenProps?.pickShop(event.clientX, event.clientY)) {
         salePanel.close()
         animalCard.close()
+        propCard.close()
         gardenProps?.cancelPlacement()
         gardenPlants?.cancelPlacement()
         gardenTools?.setPlantingMode(false)
@@ -2195,6 +2322,7 @@ function orbitPointerDown(event: PointerEvent): void {
     }
     const plant = gardenPlants?.selectAt(event.clientX, event.clientY)
     if (plant) {
+      propCard.close()
       animalCard.close()
       focusedAnimalId = null
       openPlantCardFor(plant)
@@ -2293,6 +2421,7 @@ function orbitPointerUp(event: PointerEvent): void {
   uiPointerUp(event)
   if (gardenProps?.placingId) {
     gardenProps.pointerUp()
+    if (!gardenProps.placingId) shed.setPlacementActive(false)
     shedDom.refresh()
     syncFarmChrome()
   }
@@ -2362,7 +2491,7 @@ function handleKeyDown(event: KeyboardEvent): void {
   if (gardenProps?.placingId && !menu.isOpen && !journal.isOpen) {
     if (event.key.toLowerCase() === 'r' && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault()
-      gardenProps.rotate()
+      gardenProps.rotate(event.shiftKey ? -1 : 1)
       return
     }
     if (event.key === 'Escape') {
@@ -2516,6 +2645,7 @@ gameCanvas.addEventListener('pointerleave', handleCanvasLeave)
 shed.resize(window.innerWidth, window.innerHeight)
 salePanel.resize(window.innerWidth, window.innerHeight)
 animalCard.resize(window.innerWidth, window.innerHeight)
+propCard.resize(window.innerWidth, window.innerHeight)
 plantCard.resize(window.innerWidth, window.innerHeight)
 window.addEventListener('resize', () => {
   updateCameraProjection()
@@ -2523,6 +2653,7 @@ window.addEventListener('resize', () => {
   shed.resize(window.innerWidth, window.innerHeight)
   salePanel.resize(window.innerWidth, window.innerHeight)
   animalCard.resize(window.innerWidth, window.innerHeight)
+  propCard.resize(window.innerWidth, window.innerHeight)
   plantCard.resize(window.innerWidth, window.innerHeight)
   balloon.resize(window.innerWidth, window.innerHeight)
 })
@@ -2668,6 +2799,12 @@ interface GardenDebugHarness {
    * — a pond and the lily pads planted in it, say.
    */
   focusPoint(x: number, z: number, height?: number): void
+  /**
+   * Frame a point from any side, for model review. `azimuthDegrees` walks round the
+   * target (0 looks along -z), `elevationDegrees` is the angle above the ground
+   * (the game's own view is steep; 15-20 reads a pose from the side).
+   */
+  frameAngle(x: number, z: number, height: number, azimuthDegrees: number, elevationDegrees: number): void
   /** Camera pose and tour state, for verifying framing without screenshots. */
   camera(): CameraDebugReport
   /** Advance the cinematic tour by `seconds` of simulated time, no waiting. */
@@ -3148,6 +3285,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       loose: isLoose(animal.instanceId),
       atFarm: animal.isAtFarm,
       residencyPending: animal.isResidencyPending,
+      sleeping: animal.isSleeping,
+      bed: sleepBeds.get(animal.instanceId) ?? null,
     })),
     focusSpecies: (species, height = 4.5) => {
       const animal = animals.find((entry) => entry.id === species || entry.instanceId === species)
@@ -3156,6 +3295,25 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     focusPoint: (x, z, height = 14) => {
       frameAt(new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z), height)
+    },
+    frameAngle: (x, z, height, azimuthDegrees, elevationDegrees) => {
+      const target = new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z)
+      const azimuth = THREE.MathUtils.degToRad(azimuthDegrees)
+      const elevation = THREE.MathUtils.degToRad(elevationDegrees)
+      const distance = initialOffset.length()
+      const offset = new THREE.Vector3(
+        Math.sin(azimuth) * Math.cos(elevation),
+        Math.sin(elevation),
+        Math.cos(azimuth) * Math.cos(elevation),
+      ).multiplyScalar(distance)
+      cameraTarget.copy(target)
+      viewHalfHeight = height / 2
+      camera.position.copy(cameraTarget).add(offset)
+      viewDirection.copy(offset).normalize()
+      cameraDistance = distance
+      camera.lookAt(cameraTarget)
+      camera.updateMatrixWorld()
+      updateCameraProjection()
     },
     progression: () => ({ points: progression.points, level: progression.level, pointsToNextLevel: progression.pointsToNextLevel }),
     rendering: () => ({ animalCount: animals.filter((animal) => !animal.isSold).length, populationLimit: animalPopulationLimit, crowd: { ...crowdStats } }),
@@ -3223,6 +3381,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       focusGarden: 'Frame the whole garden. Run before pointer scenarios.',
       focusPoint: 'focusPoint(x, z, height?) — frame a habitat, e.g. a pond.',
       focusSpecies: 'focusSpecies(species, height?) — close-up for model review.',
+      frameAngle: 'frameAngle(x, z, height, azimuthDeg, elevationDeg) — low side-on view; scripts/angle-sheet.mjs uses it.',
       resetCamera: 'Back to the opening shot.',
       'openMenu / closeMenu / openJournal / openViewer': 'Drive the menu without clicks.',
       layout: 'Every UI panel rect — use instead of screenshots for layout checks.',
@@ -3583,6 +3742,7 @@ function frame(now: number): void {
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
   if (!menu.isOpen && !salePanel.isOpen) updateOwlHunt(delta)
+  updateSleepers()
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
   for (let burstIndex = sellBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {
