@@ -346,8 +346,9 @@ const RACCOON_CONDITIONS: SpeciesConditions = {
  *    with dandelions to nibble; it breeds in a hollow log.
  *  - Rat: a night animal that follows the mice in, settles where there is a
  *    garbage can to raid, and shares the mice's hollow log.
- *  - Snake: comes for the mice, stays for a big meadow with mice in it, and
- *    breeds in a rock pile.
+ *  - Snake: comes for the mice, and hunts them (and rats) through the grass.
+ *    Like the owl it stays once it has eaten on the farm; it breeds in a rock
+ *    pile with mice left to hunt.
  */
 const MOUSE_CONDITIONS: SpeciesConditions = {
   stages: withStageNumbers([
@@ -413,14 +414,14 @@ const SNAKE_CONDITIONS: SpeciesConditions = {
     ),
     COUNT_STAGE(
       'Call the farm home',
-      'Wants a big meadow to hunt in, with three mice living in it.',
-      { kind: 'meadowArea', amount: 25, and: [{ kind: 'residentCount', species: 'mouse', amount: 3 }] },
+      'Must catch two mice on your farm, in a big meadow to hunt through.',
+      { kind: 'preyEaten', species: 'mouse', amount: 2, and: [{ kind: 'meadowArea', amount: 25 }] },
       'Paints into its own colors. A resident of the farm.',
     ),
     COUNT_STAGE(
       'Love the farm',
-      'Wants a rock pile to bask on and raise hatchlings in, deep in the meadow.',
-      { kind: 'propCount', species: 'rock-pile', amount: 1, and: [{ kind: 'meadowArea', amount: 30 }] },
+      'Wants a rock pile to bask on and raise hatchlings in, deep in the meadow, and three mice left to hunt.',
+      { kind: 'propCount', species: 'rock-pile', amount: 1, and: [{ kind: 'meadowArea', amount: 30 }, { kind: 'residentCount', species: 'mouse', amount: 3 }] },
       'Eyes go to hearts. Ready to raise young in its house.',
     ),
   ]),

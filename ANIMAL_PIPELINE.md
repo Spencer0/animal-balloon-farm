@@ -43,7 +43,7 @@ from them.
    | **A house** (`propCount` of a house prop) | has somewhere to live; **required** on the breeding rung | barn, coop, sty, goose house, frog house, owl box, dumpster, hollow log, rock pile | a house is a prop, plus a `HOUSE_SPECIES` entry: see *Adding a shop prop (and a house)* |
    | **Terrain** (`grassArea` / `waterArea` / `flatArea`) | needs land, not objects | all | nothing |
    | **Tall meadow** (`meadowArea`) | lives in long grass (the green seed pack), not on a lawn | all | nothing |
-   | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl | see *Predators and fliers* |
+   | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl; mouse, for the snake | see *Predators and fliers* |
 
    A good ladder asks for **something different at each rung** and ends on a house for breeding. The
    raccoon: appears when a cow lives on the farm, settles for a garbage can, breeds at a dumpster.
@@ -474,6 +474,8 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 | Who eats whom, the prey floor, the eaten tally | `PREY_OF`, `PREY_FLOOR`, `createPredationLedger` in `src/game/predator.ts` |
 | The owl's flight and hunt state machine | `stepOwl` in `predator.ts` (pure, tested in `tests/predator.test.mjs`) |
 | Applying flight, panicking prey | `src/scene/owl-hunt.ts` |
+| A ground hunter's stalk-and-lunge state machine | `stepGroundHunter` in `src/game/ground-hunt.ts` (pure, tested in `tests/tall-grass-animals.test.mjs`) |
+| Steering a ground hunter, panicking prey on the lunge | `src/scene/snake-hunt.ts`, via `BalloonAnimal.setPursuit` |
 | The pop and its clean-up | `src/game/pop-animation.ts` (timeline), `src/scene/pop-burst.ts` (meshes) |
 | The roost | the `OAK roost` node of `public/assets/props/oak.glb`, read by `GardenProps.roosts()` |
 
@@ -483,7 +485,12 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 - **Fliers are always full models**; the instanced crowd has no low-poly flier.
 - **Prey** is a resident, adult, on-farm animal that is not mid-capture, courting or waiting to settle.
   The predator will not take the flock below `PREY_FLOOR` (2).
-- **A catch is a removal.** `handleOwlCatch` forgets the prey from the sim and hands the model to a pop.
+- **A catch is a removal.** `handlePredatorCatch` forgets the prey from the sim and hands the model to a pop.
+- **A ground hunter stalks, then lunges.** The snake is slower than a mouse, so it cannot run one down.
+  It creeps up (`stalkSpeedScale`) unnoticed, and only when it is within `strikeDistance` does it
+  lunge and the prey panic. A lunge that has not landed in `strikeSeconds` misses. Prey indoors is out
+  of the `animals` list, so a house is a refuge. A ground hunter is a normal walker otherwise: its
+  pursuit is just a steer target fed to `setPursuit` each frame, and null hands it back to wandering.
 - **Helium.** An oak is where a resident owl tops up. Remove the last oak and it sags and pops.
 - **Count conditions.** `residentCount`, `preyEaten` and `propCount` read maps on `FarmState`, filled
   in `measureFarm()`.
@@ -508,7 +515,8 @@ shared between animals and no longer resolve.
 | `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its can and curls up |
 | `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: its house, so it walks in to sleep |
 | `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (a kit is born in the dumpster) |
-| `meadow/tall-grass-garden` | day: a deep meadow with a hollow log and a rock pile beside a short lawn with dandelions and a can; four mice, two snakes and two rats (asleep in the log), all in love |
+| `meadow/tall-grass-garden` | day: a deep meadow with a hollow log and a rock pile beside a short lawn with dandelions and a can; six mice, two snakes (two mice already eaten) and two rats (asleep in the log), all in love |
+| `meadow/snake-hunt` | day: five resident mice and one visiting snake, hunting at once; two catches and it calls the farm home |
 | `meadow/tall-grass-night` | the same garden at night, rats awake |
 | `meadow/empty-meadow` | the same garden with no animals and the clock running: mice find the meadow first |
 
@@ -541,7 +549,7 @@ d.focusPoint(x, z, height); d.frameAngle(x, z, height, azimuthDeg, elevationDeg)
 d.openJournal(); d.openViewer(); d.resetConditions()
 ```
 
-Predator verbs: `feedOwl(n)`, `hurryHunt()`, `stepHunt(seconds)`, `predation()`, `setOwlHelium(0..1)`.
+Predator verbs: `feedOwl(n)`, `feedSnake(n)`, `hurryHunt()`, `stepHunt(seconds)`, `predation()`, `setOwlHelium(0..1)`.
 `sowGrass`, `digPond` and `plant` go through the real tool code; do not verify a condition by
 hand-dragging the seeder.
 

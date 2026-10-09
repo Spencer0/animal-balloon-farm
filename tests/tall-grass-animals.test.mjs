@@ -88,18 +88,86 @@ test('the rat follows a resident mouse in at night and settles by a garbage can'
   assert.equal(met(rungs[3].requirement, { propCounts: { 'hollow-log': 1, 'garbage-can': 1 } }), true)
 })
 
-test('the snake comes for the mice and needs a big meadow and a rock pile', () => {
+test('the snake comes for the mice, stays once it has eaten some, and breeds in a rock pile', () => {
   assert.equal(conditions.isNightOnly('snake'), false)
   assert.equal(conditions.DISCOVERY.snake.kind, 'residentCount')
   assert.equal(conditions.DISCOVERY.snake.species, 'mouse')
   assert.equal(conditions.DISCOVERY.snake.amount, 2)
   const rungs = conditions.getSpeciesConditions('snake')
   assert.equal(met(rungs[1].requirement, { meadowArea: 15 }), true)
-  assert.equal(met(rungs[2].requirement, { meadowArea: 25, residentCounts: { mouse: 2 } }), false)
-  assert.equal(met(rungs[2].requirement, { meadowArea: 25, residentCounts: { mouse: 3 } }), true)
-  assert.equal(met(rungs[3].requirement, { meadowArea: 30 }), false)
-  assert.equal(met(rungs[3].requirement, { meadowArea: 30, propCounts: { 'rock-pile': 1 } }), true)
-  assert.equal(conditions.conditionMetricLabel(rungs[2].requirement.and[0]), 'Resident mice')
+  assert.equal(met(rungs[2].requirement, { meadowArea: 25, preyEaten: { mouse: 1 } }), false)
+  assert.equal(met(rungs[2].requirement, { meadowArea: 20, preyEaten: { mouse: 2 } }), false)
+  assert.equal(met(rungs[2].requirement, { meadowArea: 25, preyEaten: { mouse: 2 } }), true)
+  assert.equal(conditions.conditionMetricLabel(rungs[2].requirement), 'Mice eaten')
+  assert.equal(met(rungs[3].requirement, { meadowArea: 30, propCounts: { 'rock-pile': 1 } }), false)
+  assert.equal(met(rungs[3].requirement, { meadowArea: 30, propCounts: { 'rock-pile': 1 }, residentCounts: { mouse: 3 } }), true)
+})
+
+// ------------------------------------------------------------------ hunt --
+
+const hunt = await load('src/game/ground-hunt.ts')
+const predator = await load('src/game/predator.ts')
+
+/** Step a snake at `snake` against `prey` for `seconds`, moving the snake as the sim asks. */
+function runHunt(hunter, snake, prey, preyCounts, seconds, speed = 0.75) {
+  const events = []
+  for (let t = 0; t < seconds; t += 0.05) {
+    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, huntAllowed: true, prey, preyCounts }, 0.05)
+    events.push(...step.events)
+    if (step.pursuit) {
+      const dx = step.pursuit.x - snake.x
+      const dz = step.pursuit.z - snake.z
+      const distance = Math.hypot(dx, dz)
+      const move = Math.min(distance, speed * step.pursuit.speedScale * 0.05)
+      if (distance > 1e-6) { snake.x += (dx / distance) * move; snake.z += (dz / distance) * move }
+    }
+  }
+  return events
+}
+
+test('snakes eat mice and rats, nothing else', () => {
+  assert.deepEqual([...predator.PREY_OF.snake].sort(), ['mouse', 'rat'])
+  assert.equal(hunt.huntsSpecies('snake', 'mouse'), true)
+  assert.equal(hunt.huntsSpecies('snake', 'rat'), true)
+  assert.equal(hunt.huntsSpecies('snake', 'chicken'), false)
+})
+
+test('a snake stalks a still mouse, lunges and catches it, then digests', () => {
+  const hunter = hunt.createGroundHunter()
+  hunter.cooldown = 0
+  const snake = { x: 0, z: 0 }
+  const mouse = { id: 'm1', species: 'mouse', x: 4, z: 0, targetable: true }
+  const events = runHunt(hunter, snake, [mouse], { mouse: 4 }, 10)
+  assert.deepEqual(events.map((event) => event.kind), ['stalk', 'strike', 'catch'])
+  assert.equal(hunter.phase === 'digest' || hunter.phase === 'roam', true)
+  assert.equal(hunter.cooldown > 30, true)
+})
+
+test('a snake leaves the last breeding pair alone, and ignores prey out of sight', () => {
+  const hunter = hunt.createGroundHunter()
+  hunter.cooldown = 0
+  const near = { id: 'r1', species: 'rat', x: 2, z: 0, targetable: true }
+  assert.deepEqual(runHunt(hunter, { x: 0, z: 0 }, [near], { rat: predator.PREY_FLOOR }, 5), [])
+  const far = { id: 'm1', species: 'mouse', x: 20, z: 0, targetable: true }
+  assert.deepEqual(runHunt(hunter, { x: 0, z: 0 }, [far], { mouse: 6 }, 5), [])
+})
+
+test('a lunge at a mouse that bolts away misses, and the snake waits before trying again', () => {
+  const hunter = hunt.createGroundHunter()
+  hunter.cooldown = 0
+  const snake = { x: 0, z: 0 }
+  const mouse = { id: 'm1', species: 'mouse', x: 1.4, z: 0, targetable: true }
+  const events = []
+  for (let t = 0; t < 2; t += 0.05) {
+    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, huntAllowed: true, prey: [mouse], preyCounts: { mouse: 5 } }, 0.05)
+    events.push(...step.events)
+    // A panicking mouse outruns the lunge.
+    if (events.some((event) => event.kind === 'strike')) mouse.x += 6 * 0.05
+    if (step.pursuit) snake.x += Math.min(Math.abs(step.pursuit.x - snake.x), 0.75 * step.pursuit.speedScale * 0.05)
+  }
+  assert.deepEqual(events.map((event) => event.kind), ['stalk', 'strike', 'abandon'])
+  assert.equal(hunter.phase, 'roam')
+  assert.equal(hunter.cooldown > 0, true)
 })
 
 // ------------------------------------------------------- houses and props --

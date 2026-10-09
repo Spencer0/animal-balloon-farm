@@ -30,6 +30,7 @@ export interface ScenarioHarness {
   holdTime(hold: boolean): void
   advance(steps?: number, secondsPerStep?: number): unknown
   feedOwl(count: number): unknown
+  feedSnake(count: number): unknown
   hurryHunt(): void
   setOwlHelium(level: number): void
   stepHunt(seconds: number, secondsPerStep?: number): unknown

@@ -131,6 +131,12 @@ export interface BalloonAnimal {
   readonly isAtDoor: boolean
   /** True while it walks to a house door. */
   readonly isGoingHome: boolean
+  /**
+   * Steer toward a point at `speedScale` times its walking speed, as a hunting
+   * snake does; 0 holds it still. Null hands it back to its own wandering.
+   * A house trip takes priority. A flier ignores it.
+   */
+  setPursuit(pursuit: { readonly x: number; readonly z: number; readonly speedScale: number } | null): void
   /** Shift it sideways on the ground, e.g. out of a house wall or a neighbour. Walking carries on. */
   nudge(dx: number, dz: number): void
   /** Stand at a point, e.g. a house door it has just stepped out of, and wander from there. */
@@ -458,6 +464,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let flightRate = 1
   let sleepSpot: SleepSpot | null = null
   let homeTrip: { readonly x: number; readonly z: number } | null = null
+  let pursuit: { readonly x: number; readonly z: number; readonly speedScale: number } | null = null
   let atDoor = false
   let sleepBlend = 0
   let asleep = false
@@ -884,6 +891,16 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       homeTrip = door
       atDoor = false
     },
+    setPursuit(next): void {
+      if (options.flier) return
+      if (pursuit && !next) {
+        // Back to wandering: pick a fresh spot rather than the one from before the chase.
+        paused = 0
+        nextDecision = 0
+        if (loaded) loaded.mixer.timeScale = alarmScale()
+      }
+      pursuit = next
+    },
     placeAt(x: number, z: number): void {
       if (options.flier) return
       travelRoute = null
@@ -1072,6 +1089,32 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         } else {
           atDoor = true
           setAnimation('IDLE', 0.3)
+        }
+        if (detailActive) loaded?.mixer.update(delta)
+        if (options.groundSampler) {
+          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
+          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
+          wrapper.position.y = groundYCurrent
+        }
+        wrapper.updateMatrixWorld(true)
+        return
+      }
+      if (pursuit) {
+        direction.set(pursuit.x - wrapper.position.x, 0, pursuit.z - wrapper.position.z)
+        const distance = direction.length()
+        const speed = options.speed * pursuit.speedScale
+        if (speed > 0 && distance > 0.05) {
+          direction.normalize()
+          const facing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
+          // A lunge snaps round to face the prey; a stalk turns smoothly.
+          wrapper.quaternion.slerp(facing, 1 - Math.exp(-(pursuit.speedScale > 3 ? 14 : 5) * delta))
+          wrapper.position.addScaledVector(direction, Math.min(speed * delta, distance))
+          setAnimation('WALK', 0.18)
+          // Creeping is a slow ripple; a lunge whips the body through it.
+          if (loaded) loaded.mixer.timeScale = Math.max(0.6, pursuit.speedScale * 0.55)
+        } else {
+          setAnimation('IDLE', 0.3)
+          if (loaded) loaded.mixer.timeScale = 0.6
         }
         if (detailActive) loaded?.mixer.update(delta)
         if (options.groundSampler) {

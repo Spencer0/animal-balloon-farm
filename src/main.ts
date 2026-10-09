@@ -60,6 +60,8 @@ import { createPropCard, type PropResidents } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
+import { createSnakeHunt } from './scene/snake-hunt'
+import { PREY_OF } from './game/predator'
 import { createPredationLedger, isNightTime } from './game/predator'
 import { SLEEP_PROPS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
 import { createShedPanel } from './ui/shed-panel'
@@ -444,6 +446,8 @@ let shownAnimalCount = 0
  */
 const predationLedger = createPredationLedger()
 const owlHunt = createOwlHunt(fairground.root, GARDEN_LAWN_Y)
+/** Snakes hunt mice and rats on the ground (pure sim in game/ground-hunt.ts); catches go in the same ledger. */
+const snakeHunt = createSnakeHunt()
 interface PopInFlight { readonly burst: PopBurst; readonly animal: BalloonAnimal }
 const popsInFlight: PopInFlight[] = []
 /**
@@ -810,12 +814,13 @@ function preyLabel(species: string): string {
  * sim forgets it at once), but instead of a coin burst it swells, pops, and the
  * effect holds the model until the clean-up is done.
  */
-function handleOwlCatch(prey: BalloonAnimal): void {
+function handlePredatorCatch(hunter: string, prey: BalloonAnimal): void {
   const total = predationLedger.record(prey.id)
   const name = animalNames.get(prey.instanceId) ?? preyLabel(prey.id)
   popAnimal(prey)
-  notificationPanel.notifyAccomplishment(`The owl caught ${name}`, `${total} ${preyLabel(prey.id)}${total === 1 ? '' : 's'} eaten on your farm`)
-  console.info(`[Animal Balloon Farm] owl caught ${prey.id} (${total} eaten)`)
+  const eaten = total === 1 ? preyLabel(prey.id) : speciesPluralName(prey.id).toLowerCase()
+  notificationPanel.notifyAccomplishment(`The ${preyLabel(hunter)} caught ${name}`, `${total} ${eaten} eaten on your farm`)
+  console.info(`[Animal Balloon Farm] ${hunter} caught ${prey.id} (${total} eaten)`)
 }
 
 /** Take an animal out of the farm and play its pop; the effect disposes the model when done. */
@@ -890,12 +895,41 @@ function updateOwlHunt(deltaSeconds: number): void {
     prey: flock,
     farm: { halfWidth: bounds.halfWidth, halfDepth: bounds.halfDepth },
   })
-  for (const caught of result.catches) handleOwlCatch(caught.prey)
+  for (const caught of result.catches) handlePredatorCatch('owl', caught.prey)
   for (const owl of result.deflated) {
     const name = animalNames.get(owl.instanceId) ?? preyLabel(owl.id)
     popAnimal(owl)
     notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'Without an oak to roost on, an owl slowly deflates.')
     console.info(`[Animal Balloon Farm] ${owl.id} popped: out of helium`)
+  }
+}
+
+/**
+ * Snakes stalk mice and rats through the grass. A snake on the farm (a visitor
+ * or a resident) hunts; prey is any adult mouse or rat out on the farm, and a
+ * species down to its breeding pair is left alone.
+ */
+function updateSnakeHunt(deltaSeconds: number): void {
+  if (mode === 'viewer') return
+  const prey = PREY_OF.snake ?? []
+  const snakes = animals
+    .filter((animal) => animal.id === 'snake' && !animal.isSold)
+    .map((animal) => {
+      const record = progress.animal(animal.instanceId)
+      const busy = animal.isCapturing || animal.isRomancing || animal.isResidencyPending || animal.isGoingHome
+      return { animal, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy) }
+    })
+  if (snakes.length === 0) return
+  const quarry = animals
+    .filter((animal) => prey.includes(animal.id) && !animal.isSold && animal.isAtFarm)
+    .filter((animal) => {
+      const record = progress.animal(animal.instanceId)
+      return Boolean(record && record.stage >= 3 && !record.baby)
+    })
+    .map((animal) => ({ animal, targetable: !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending && !animal.isGoingHome }))
+  const counts = residentCounts()
+  for (const caught of snakeHunt.update(deltaSeconds, { snakes, prey: quarry, preyCounts: counts })) {
+    handlePredatorCatch('snake', caught.prey)
   }
 }
 
@@ -1035,7 +1069,7 @@ function pinnedOutside(id: string, nowSeconds: number): boolean {
   const animal = animalById.get(id)
   if (!animal) return false
   return animal.isCapturing || animal.isResidencyPending || animal.isAlarmed || !animal.isAtFarm
-    || owlHunt.huntedIds().has(id)
+    || owlHunt.huntedIds().has(id) || snakeHunt.huntedIds().has(id)
 }
 
 /** Take an animal's model off the farm. The record stays in the sim. */
@@ -2116,6 +2150,8 @@ const journalConditionsSource: JournalConditionSource = {
               label: conditionMetricLabel(also) ?? 'Also needed',
               current: farmMetric(farm, also.kind, also.species),
               target: also.amount ?? 1,
+              kind: also.kind,
+              ...(also.species ? { species: also.species } : {}),
             })),
           } : {}),
           ...(wantsSpecies ? {
@@ -3221,7 +3257,7 @@ interface GardenDebugHarness {
   /** The arcade store's build: null before the model loads, else started/finished. */
   shopBuild(): ShopBuildReport | null
   /** Predator and prey: what the owls are doing, and how many chickens have been eaten. */
-  predation(): { readonly eaten: Readonly<Record<string, number>>; readonly owls: ReturnType<typeof owlHunt.report>['owls']; readonly oaks: number; readonly flock: number }
+  predation(): { readonly eaten: Readonly<Record<string, number>>; readonly owls: ReturnType<typeof owlHunt.report>['owls']; readonly snakes: ReturnType<typeof snakeHunt.report>['snakes']; readonly oaks: number; readonly flock: number }
   /** Freeze or release the day clock. */
   holdTime(hold: boolean): void
   /** The test scenarios you can jump into, by id. Nothing here ships. */
@@ -3230,14 +3266,16 @@ interface GardenDebugHarness {
   runScenario(name: string): Promise<string>
   /** Set every owl's helium, 0..1, to test the deflate-and-pop without a two-minute wait. */
   setOwlHelium(level: number): void
-  /** Make the owls hunt as soon as they can, instead of waiting out the cooldown. */
+  /** Make the owls and snakes hunt as soon as they can, instead of waiting out the cooldown. */
   hurryHunt(): void
-  /** Step the owl hunt and any pops forward without waiting on rendered frames. */
+  /** Step the owl and snake hunts and any pops forward without waiting on rendered frames. */
   stepHunt(seconds: number, secondsPerStep?: number): ReturnType<typeof owlHunt.report>['owls']
   /** Add a tracked animal at a rung of the ladder, standing at its farm spawn; returns its id. */
   addAnimal(species: string, stage?: number): string | null
   /** Credit chickens as already eaten, to reach the stay condition without a long night. */
   feedOwl(count: number): Readonly<Record<string, number>>
+  /** Credit mice as already eaten by snakes, to reach the snake's stay condition without a long hunt. */
+  feedSnake(count: number): Readonly<Record<string, number>>
   /** What the topmost visible surfaces at a garden point are, for finding stray planes. */
   probeGround(x: number, z: number): readonly { readonly name: string; readonly y: number; readonly color: string | null }[]
   /**
@@ -3692,6 +3730,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       popsInFlight.length = 0
       predationLedger.clear()
       owlHunt.reset()
+      snakeHunt.reset()
       animalById.clear()
       for (const burst of sellBursts) {
         scene.remove(burst.root)
@@ -3860,10 +3899,14 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     predation: () => ({
       eaten: predationLedger.totals,
       owls: owlHunt.report().owls,
+      snakes: snakeHunt.report().snakes,
       oaks: gardenProps?.propCounts().oak ?? 0,
       flock: animals.filter((animal) => animal.id === 'chicken' && !animal.isSold && (progress.animal(animal.instanceId)?.stage ?? 0) >= 3).length,
     }),
-    hurryHunt: () => owlHunt.hurry(),
+    hurryHunt: () => {
+      owlHunt.hurry()
+      snakeHunt.hurry()
+    },
     setOwlHelium: (level) => owlHunt.setHelium(level),
     holdTime: (hold) => { clockHeld = hold },
     scenarios: () => scenarioList,
@@ -3873,6 +3916,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       for (let step = 0; step < steps; step += 1) {
         animals.forEach((animal) => animal.update(secondsPerStep))
         updateOwlHunt(secondsPerStep)
+        updateSnakeHunt(secondsPerStep)
       }
       return owlHunt.report().owls
     },
@@ -3886,6 +3930,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     feedOwl: (count) => {
       for (let index = 0; index < Math.max(0, Math.floor(count)); index += 1) predationLedger.record('chicken')
+      return predationLedger.totals
+    },
+    feedSnake: (count) => {
+      for (let index = 0; index < Math.max(0, Math.floor(count)); index += 1) predationLedger.record('mouse')
       return predationLedger.totals
     },
     expandFarm: (level) => {
@@ -4158,7 +4206,10 @@ function frame(now: number): void {
   animals.forEach((animal) => animal.update(delta))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
   collideAnimals(now / 1000)
-  if (!menu.isOpen && !salePanel.isOpen) updateOwlHunt(delta)
+  if (!menu.isOpen && !salePanel.isOpen) {
+    updateOwlHunt(delta)
+    updateSnakeHunt(delta)
+  }
   updateSleepers()
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.

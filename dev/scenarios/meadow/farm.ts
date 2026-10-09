@@ -32,9 +32,14 @@ export async function openMeadow(d: ScenarioHarness): Promise<void> {
   await pause(1500)
 }
 
-/** Every tall-grass species, settled and in love, so the houses fill and young are born. */
+/**
+ * Every tall-grass species, settled and in love, so the houses fill and young
+ * are born. Six mice, because the snakes hunt them down to the breeding pair;
+ * the two already "eaten" are what made the snakes stay.
+ */
 export function addMeadowAnimals(d: ScenarioHarness): void {
-  for (let index = 0; index < 4; index += 1) d.addAnimal('mouse', 4)
+  d.feedSnake(2)
+  for (let index = 0; index < 6; index += 1) d.addAnimal('mouse', 4)
   for (let index = 0; index < 2; index += 1) d.addAnimal('rat', 4)
   for (let index = 0; index < 2; index += 1) d.addAnimal('snake', 4)
 }

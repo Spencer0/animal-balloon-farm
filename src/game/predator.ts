@@ -17,6 +17,8 @@ import { phaseOf } from './day-night'
 /** Who eats what. A predator only ever hunts the species listed against it. */
 export const PREY_OF: Readonly<Record<string, readonly string[]>> = {
   owl: ['chicken'],
+  // The snake hunts on the ground, in the long grass: see `ground-hunt.ts`.
+  snake: ['mouse', 'rat'],
 }
 
 /** The flock the owl will not hunt below, so the prey can keep breeding. */

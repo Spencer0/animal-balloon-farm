@@ -2,7 +2,7 @@ import "./journal-dom.css";
 import { ANIMAL_CATALOG } from "../animals/animal-catalog";
 import { GARDEN_TOOLS } from "../scene/garden-tool-art";
 import { PLANT_CATALOG } from "../game/plants";
-import type { JournalConditionSource } from "./journal-panel";
+import type { JournalAlsoNeeds, JournalConditionSource } from "./journal-panel";
 
 /**
  * Farm Journal as a DOM overlay (feature/journal-redesign-dom).
@@ -122,14 +122,18 @@ function rowVisual(row: { readonly requirementKind?: string; readonly requiremen
 }
 
 /** Extra requirements that must hold alongside a rung's main one, each with its own bar. */
-function alsoNeeds(extras: readonly { readonly label: string; readonly current: number; readonly target: number }[] | undefined): string {
+function alsoNeeds(extras: readonly JournalAlsoNeeds[] | undefined): string {
   if (!extras?.length) return "";
   return extras.map((extra) => {
     const pct = Math.max(0, Math.min(1, extra.target > 0 ? extra.current / extra.target : 0));
-    return `<div class="fj-req"><img src="${ICON_BASE}/journal-icon-sprout.png" alt="" draggable="false">
+    // An area (meadow, water) reads in m² like a main row; anything else is a count.
+    const visual = extra.kind ? visualForKind(extra.kind, extra.species, extra.label) : null;
+    const isCount = visual?.isCount ?? true;
+    const unit = isCount ? "" : " m&sup2;";
+    return `<div class="fj-req"><img src="${ICON_BASE}/journal-icon-${visual?.icon ?? "sprout"}.png" alt="" draggable="false">
         <span class="fj-req-label">${escapeHtml(extra.label)}</span>
         <span class="fj-bar" role="progressbar" aria-valuenow="${extra.current}" aria-valuemax="${extra.target}" aria-label="${escapeHtml(extra.label)}"><i style="width:${(pct * 100).toFixed(1)}%"></i></span>
-        <span class="fj-numbers">${formatMetric(extra.current, true)} / ${formatMetric(extra.target, true)}</span></div>`;
+        <span class="fj-numbers">${formatMetric(extra.current, isCount)} / ${formatMetric(extra.target, isCount)}${unit}</span></div>`;
   }).join("");
 }
 
