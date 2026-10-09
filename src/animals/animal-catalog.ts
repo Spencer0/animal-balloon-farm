@@ -86,6 +86,24 @@ export const ANIMAL_CATALOG = [
     note: 'Quiet on its feet, thorough with a lid. A dumpster is the nearest thing it has to a front door.', color: '#8f949b', gesture: 'Sniffs about',
     assetUrl: 'assets/animals/balloon-raccoon.glb', spawn: [5.4, -4.8], carnivalSpawn: [-26, -4], showcaseSpawn: [-11, 3.2], seed: 8221, size: 2.1, speed: 1.1, bounds: { x: 10.5, z: 6.1 },
   },
+  {
+    id: 'mouse', name: 'Mouse', label: 'mouse', spriteUrl: 'assets/animals/balloon-mouse-review.png',
+    subtitle: 'The meadow scurrier', description: 'A harvest-fawn field mouse with big pink-lined ears that only feels safe where the grass grows long.',
+    note: 'Watch the tall grass twitch. Somewhere under it, a tiny bell is jingling.', color: '#c99a6b', gesture: 'Whiskers twitch',
+    assetUrl: 'assets/animals/balloon-mouse.glb', spawn: [-2, -5], carnivalSpawn: [22, -8], showcaseSpawn: [11, 3.2], seed: 9133, size: 1.6, speed: 1.5, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
+    id: 'rat', name: 'Rat', label: 'rat', spriteUrl: 'assets/animals/balloon-rat-review.png',
+    subtitle: 'The night-shift lodger', description: 'A dusk-slate rat that follows the mice in, raids the garbage can after dark and shares their hollow log.',
+    note: 'Clever, tidy and nocturnal. By day it sleeps curled up with its tail round its nose.', color: '#7b7480', gesture: 'Sniffs the air',
+    assetUrl: 'assets/animals/balloon-rat.glb', spawn: [3, 5], carnivalSpawn: [-24, 14], showcaseSpawn: [-11, -3.2], seed: 9547, size: 1.5, speed: 1.3, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
+    id: 'snake', name: 'Snake', label: 'snake', spriteUrl: 'assets/animals/balloon-snake-review.png',
+    subtitle: 'The long-grass glider', description: 'A meadow-emerald balloon snake with moss diamonds down its back, never far from deep grass or a warm rock.',
+    note: 'It looks like one long twisted balloon, because it is. It loves a sunny rock pile.', color: '#3f9e6e', gesture: 'Flicks its tongue',
+    assetUrl: 'assets/animals/balloon-snake.glb', spawn: [-9, -1], carnivalSpawn: [25, -16], showcaseSpawn: [11, -3.2], seed: 9871, size: 2.8, speed: 0.75, bounds: { x: 10.5, z: 6.1 },
+  },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']

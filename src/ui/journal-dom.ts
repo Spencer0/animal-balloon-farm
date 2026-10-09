@@ -52,6 +52,9 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   frog: { rarity: "Uncommon", traits: ["Carnivore", "Hopper", "Springs Skyward"] },
   owl: { rarity: "Rare", traits: ["Predator", "Night Shift", "Barely Flaps"] },
   raccoon: { rarity: "Uncommon", traits: ["Scavenger", "Night Shift", "Naps by the Can"] },
+  mouse: { rarity: "Common", traits: ["Seed Nibbler", "Meadow Dweller", "Tiny Pitter-Patter"] },
+  rat: { rarity: "Uncommon", traits: ["Scavenger", "Night Shift", "Shares the Log"] },
+  snake: { rarity: "Rare", traits: ["Meadow Hunter", "Slithers", "Basks on Rocks"] },
 };
 
 const DEFAULT_META: SpeciesMeta = { rarity: "Common", traits: [] };
@@ -82,7 +85,8 @@ interface RowVisual {
 /** The icon and label for what a rung measures, straight from its requirement. */
 function visualForKind(kind: string, species: string | undefined, metricLabel: string | undefined): RowVisual | null {
   switch (kind) {
-    case "grassArea": return { icon: "tall-grass", label: "Tall grass", isCount: false };
+    case "grassArea": return { icon: "tall-grass", label: "Grass", isCount: false };
+    case "meadowArea": return { icon: "tall-grass", label: "Tall meadow grass", isCount: false };
     case "waterArea": return { icon: "pond-water", label: "Pond water", isCount: false };
     case "flatArea": return { icon: "open-pasture", label: "Level pasture", isCount: false };
     case "plantCount": return { icon: species === "water-lily" ? "lily-pad" : "sprout", label: metricLabel ?? "Plants", isCount: true };
@@ -105,7 +109,7 @@ function rowVisual(row: { readonly requirementKind?: string; readonly requiremen
     return { icon: "balloon-bunting", label: metricLabel ?? "Balloon bunting", isCount: true };
   }
   if (hay.includes("tall grass") || hay.includes("grass") || hay.includes("meadow") || hay.includes("lawn")) {
-    return { icon: "tall-grass", label: "Tall grass", isCount: false };
+    return { icon: "tall-grass", label: "Grass", isCount: false };
   }
   if (hay.includes("pond") || hay.includes("pool") || hay.includes("swim") || hay.includes("water")) {
     return { icon: "pond-water", label: "Pond water", isCount: false };

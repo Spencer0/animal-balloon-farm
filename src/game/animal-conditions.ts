@@ -29,6 +29,8 @@ export const LAST_STAGE = 4
 /** One measurable thing the farm can be asked to provide. */
 export type ConditionKind =
   | 'grassArea'
+  /** Square meters of tall meadow grass (the green seed pack), not lawn. */
+  | 'meadowArea'
   | 'waterArea'
   | 'flatArea'
   | 'residentSpecies'
@@ -79,7 +81,8 @@ function plantMetricLabel(plantId: string): string {
 export function conditionMetricLabel(requirement: ConditionRequirement | null): string | null {
   if (!requirement) return null
   switch (requirement.kind) {
-    case 'grassArea': return 'Mature tall grass'
+    case 'grassArea': return 'Grown grass'
+    case 'meadowArea': return 'Tall meadow grass'
     case 'waterArea': return 'Visible pond water'
     case 'flatArea': return 'Level grassy pasture'
     case 'plantCount': return requirement.species ? plantMetricLabel(requirement.species) : null
@@ -95,7 +98,10 @@ function capitalise(text: string): string {
 }
 
 function speciesPlural(species: string): string {
-  return species === 'sheep' ? 'sheep' : species === 'goose' ? 'geese' : `${species}s`
+  if (species === 'sheep') return 'sheep'
+  if (species === 'goose') return 'geese'
+  if (species === 'mouse') return 'mice'
+  return `${species}s`
 }
 
 const PROP_PLURALS: Readonly<Record<string, string>> = {
@@ -107,6 +113,8 @@ const PROP_PLURALS: Readonly<Record<string, string>> = {
   'frog-house': 'frog houses',
   'owl-box': 'owl boxes',
   'garbage-can': 'garbage cans',
+  'hollow-log': 'hollow logs',
+  'rock-pile': 'rock piles',
 }
 
 function propPlural(prop: string): string {
@@ -331,6 +339,94 @@ const RACCOON_CONDITIONS: SpeciesConditions = {
 }
 
 /**
+ * The tall-grass animals. Each asks for meadow (`meadowArea`), the long grass
+ * the green seed pack grows, which a lawn of short grass never counts toward.
+ *
+ *  - Mouse: the first of them. A little meadow lures it; more makes it stay,
+ *    with dandelions to nibble; it breeds in a hollow log.
+ *  - Rat: a night animal that follows the mice in, settles where there is a
+ *    garbage can to raid, and shares the mice's hollow log.
+ *  - Snake: comes for the mice, stays for a big meadow with mice in it, and
+ *    breeds in a rock pile.
+ */
+const MOUSE_CONDITIONS: SpeciesConditions = {
+  stages: withStageNumbers([
+    CARNIVAL,
+    COUNT_STAGE(
+      'Visit the farm',
+      'Scurries in once there is long grass to hide in: 6 m² of tall meadow.',
+      { kind: 'meadowArea', amount: 6 },
+      'Pitter-patters in through the long grass. Still wild, still deciding.',
+    ),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Wants a proper meadow to nest in, and dandelions to nibble.',
+      { kind: 'meadowArea', amount: 15, and: [{ kind: 'plantCount', species: 'dandelion', amount: 2 }] },
+      'Paints into its own colors. A resident of the farm.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Wants more meadow, and a hollow log to raise its young in.',
+      { kind: 'meadowArea', amount: 20, and: [{ kind: 'propCount', species: 'hollow-log', amount: 1 }] },
+      'Eyes go to hearts. Ready to raise young in its house.',
+    ),
+  ]),
+}
+
+const RAT_CONDITIONS: SpeciesConditions = {
+  stages: withStageNumbers([
+    {
+      title: 'Appear at the carnival',
+      hint: 'Creeps out after dark, following the mice.',
+      requirement: null,
+      result: 'Turns up at the carnival in wild balloon red, but only after dark.',
+    },
+    COUNT_STAGE(
+      'Visit the farm',
+      'Slips in at night where the grass is long: 10 m² of tall meadow.',
+      { kind: 'meadowArea', amount: 10 },
+      'Noses through the meadow after dark. Still wild, still deciding.',
+    ),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Wants a garbage can to raid, and long grass to run home through.',
+      { kind: 'propCount', species: 'garbage-can', amount: 1, and: [{ kind: 'meadowArea', amount: 15 }] },
+      'Paints into its own colors and curls up by day. A resident of the farm.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Wants a hollow log to share with the mice, and the can kept close.',
+      { kind: 'propCount', species: 'hollow-log', amount: 1, and: [{ kind: 'propCount', species: 'garbage-can', amount: 1 }] },
+      'Eyes go to hearts. Ready to raise young in its house.',
+    ),
+  ]),
+}
+
+const SNAKE_CONDITIONS: SpeciesConditions = {
+  stages: withStageNumbers([
+    CARNIVAL,
+    COUNT_STAGE(
+      'Visit the farm',
+      'Only slithers in where the grass is deep: 15 m² of tall meadow.',
+      { kind: 'meadowArea', amount: 15 },
+      'Slides through the long grass. Still wild, still deciding.',
+    ),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Wants a big meadow to hunt in, with three mice living in it.',
+      { kind: 'meadowArea', amount: 25, and: [{ kind: 'residentCount', species: 'mouse', amount: 3 }] },
+      'Paints into its own colors. A resident of the farm.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Wants a rock pile to bask on and raise hatchlings in, deep in the meadow.',
+      { kind: 'propCount', species: 'rock-pile', amount: 1, and: [{ kind: 'meadowArea', amount: 30 }] },
+      'Eyes go to hearts. Ready to raise young in its house.',
+    ),
+  ]),
+}
+
+/**
  * The test configuration the user asked for, and the shape the rest of the
  * catalog will grow into.
  *
@@ -415,6 +511,9 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
   },
   owl: OWL_CONDITIONS,
   raccoon: RACCOON_CONDITIONS,
+  mouse: MOUSE_CONDITIONS,
+  rat: RAT_CONDITIONS,
+  snake: SNAKE_CONDITIONS,
   frog: {
     stages: withStageNumbers([
       CARNIVAL,
@@ -426,7 +525,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
 }
 
 /** Species that only come out after dark. They arrive, visit and hunt at night. */
-export const NIGHT_ONLY_SPECIES: readonly string[] = ['owl', 'raccoon']
+export const NIGHT_ONLY_SPECIES: readonly string[] = ['owl', 'raccoon', 'rat']
 
 /**
  * Species that begin the game already turned up at the carnival.
@@ -457,6 +556,9 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
   frog: { kind: 'waterArea', amount: 4, description: 'A little water is sure to bring something green and bouncy.' },
   raccoon: { kind: 'residentCount', species: 'cow', amount: 1, description: 'Spilt feed and scraps from a working farm smell like dinner.' },
   owl: { kind: 'residentCount', species: 'chicken', amount: 1, description: 'A resident chicken carries a long way on a still night.' },
+  mouse: { kind: 'meadowArea', amount: 4, description: 'Long grass rustling at the fence line is all a field mouse needs to hear.' },
+  rat: { kind: 'residentCount', species: 'mouse', amount: 1, description: 'Where one mouse has settled, a rat is never far behind.' },
+  snake: { kind: 'residentCount', species: 'mouse', amount: 2, description: 'Mice in the long grass draw something patient and green.' },
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {

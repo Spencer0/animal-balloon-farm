@@ -4,16 +4,18 @@ Run from repository root:
   blender --background --factory-startup --python art/blender/animal_houses.py
   blender --background --factory-startup --python art/blender/animal_houses.py -- sty owl-box
 
-Regenerates, for each house named after `--` (all four by default):
+Regenerates, for each house named after `--` (all six by default):
   public/assets/props/<id>.blend, <id>-review.png and <id>.glb
 
 The coop (chicken_coop.py), barn (barn_prop.py) and dumpster have their own
-scripts. These four complete the set, one house per species:
+scripts. These six complete the set, one house per species:
 
   goose-house  a low A-frame shed with a wide door, a ramp and a water trough
   sty          a lean-to pig shelter behind a fenced mud wallow
   frog-house   a hollow stump with a round door, ringed with lily pads
   owl-box      a peaked nest box with a round entrance, up on a tall post
+  hollow-log   a fallen hollow log with a knothole door, for mice and rats
+  rock-pile    a sun-warmed cairn with a crevice door, for snakes
 
 They share the coop's palette (cream boards, teal trim, terracotta roofs) so the
 farm reads as one set. Authoring frame matches the other props: Z-up, resting on
@@ -457,11 +459,130 @@ def build_owl_box():
     return root, {"camera": (5.0, -8.6, 5.2), "target": (0, 0, 1.55), "ortho": 4.0}
 
 
+# -------------------------------------------------------------- hollow log --
+
+def build_hollow_log():
+    M = shared_materials("HOLLOW LOG")
+    M["bark"] = make_material("HOLLOW LOG · oak bark", "#8a6240", .85, 0, .04)
+    M["barkDark"] = make_material("HOLLOW LOG · bark furrows", "#6b4a2f", .88, 0, .02)
+    M["rings"] = make_material("HOLLOW LOG · cut end", "#e3c48d", .7, 0, .06)
+    M["ringLine"] = make_material("HOLLOW LOG · ring lines", "#c49d63", .75, 0, .04)
+    M["moss"] = make_material("HOLLOW LOG · moss", "#6fae4f", .85, 0, .03)
+    M["capRed"] = make_material("HOLLOW LOG · toadstool", "#d9574a", .5, 0, .2)
+    M["capDot"] = make_material("HOLLOW LOG · toadstool dots", "#fff3dc", .6, 0, .05)
+    M["sack"] = make_material("HOLLOW LOG · seed sack", "#e8d2a2", .85, 0, .03)
+    M["seed"] = make_material("HOLLOW LOG · sunflower seeds", "#4f4038", .6, 0, .08)
+    root = pivot("PROP HOLLOW LOG · export root", (0, 0, 0))
+    root["asset_id"] = "hollow-log"
+    root["design_size"] = "2 x 1 cells, about 1.4 m tall"
+    root["description"] = "A fallen hollow log in the long grass, with a round front door for mice and rats"
+
+    L, R = 3.2, .62
+    Z = R
+    cylinder("HOLLOW LOG · log", (0, 0, Z), R, L, M["bark"], root, "X", 24)
+    for index in range(12):
+        a = index * math.tau / 12 + .15
+        if abs(a - math.pi) < .6:
+            continue  # leave the door side (-Y) clear around the door
+        y, z = math.cos(a) * (R + .006), Z + math.sin(a) * (R + .006)
+        if z < .12:
+            continue
+        box(f"HOLLOW LOG · bark furrow {index}", (-.1 + (index % 3) * .15, y, z), (L - .5 - (index % 2) * .4, .05, .05), M["barkDark"], root, .015, rotation=(a, 0, 0))
+    # Both cut ends show their rings and a dark hollow, so the log reads as hollow from any side.
+    for side in (-1, 1):
+        x = side * (L / 2 + .01)
+        cylinder(f"HOLLOW LOG · cut end {side}", (x, 0, Z), R - .02, .03, M["rings"], root, "X", 24)
+        cylinder(f"HOLLOW LOG · hollow {side}", (x + side * .01, 0, Z), R - .2, .03, M["dark"], root, "X", 20)
+        bpy.ops.mesh.primitive_torus_add(major_radius=R - .1, minor_radius=.012, major_segments=24, minor_segments=6, location=(0, 0, 0))
+        ring = bpy.context.object
+        ring.name = f"HOLLOW LOG · growth ring {side}"
+        ring.data.name = ring.name + " · mesh"
+        ring.data.materials.append(M["ringLine"])
+        ring.rotation_euler = (0, math.pi / 2, 0)
+        parent_local(ring, root, (x + side * .02, 0, Z))
+    # The front door: a round knothole in the side facing -Y, with a teal frame and a step.
+    DOOR_Z = .5
+    cylinder("HOLLOW LOG · door frame", (.25, -R + .05, DOOR_Z), .3, .14, M["trim"], root, "Y", 24)
+    cylinder("HOLLOW LOG · door", (.25, -R - .01, DOOR_Z), .23, .08, M["dark"], root, "Y", 24)
+    blob("HOLLOW LOG · door knob", (.38, -R - .06, DOOR_Z), (.035, .035, .035), M["straw"], root)
+    box("HOLLOW LOG · door step", (.25, -R - .2, .05), (.5, .26, .1), M["stone"], root, .04)
+    cylinder("HOLLOW LOG · window frame", (-.75, -R + .17, .82), .13, .08, M["trim"], root, "Y", 18, rotation=(math.pi / 2 + .45, 0, 0))
+    cylinder("HOLLOW LOG · window", (-.75, -R + .14, .82), .085, .08, M["dark"], root, "Y", 18, rotation=(math.pi / 2 + .45, 0, 0))
+    # A branch stub, moss on top and a toadstool cluster for the storybook silhouette.
+    cylinder("HOLLOW LOG · branch stub", (-.95, .15, Z + R + .1), .1, .4, M["bark"], root, "Z", 10, rotation=(.35, -.2, 0))
+    cylinder("HOLLOW LOG · stub end", (-.88, .23, Z + R + .29), .085, .02, M["rings"], root, "Z", 10, rotation=(.35, -.2, 0))
+    blob("HOLLOW LOG · moss saddle", (.5, .05, Z + R - .02), (.55, .4, .08), M["moss"], root, 18, 10)
+    blob("HOLLOW LOG · moss tuft", (-.4, .2, Z + R - .03), (.3, .25, .06), M["moss"], root, 14, 8)
+    for index, (x, y, h, s) in enumerate([(1.05, -.2, .34, .2), (1.25, -.05, .24, .14)]):
+        cylinder(f"HOLLOW LOG · toadstool stem {index}", (x, y, Z + R - .02 + h / 2), .05, h, M["capDot"], root, "Z", 10)
+        blob(f"HOLLOW LOG · toadstool cap {index}", (x, y, Z + R + h - .02), (s, s, s * .55), M["capRed"], root, 16, 10)
+        blob(f"HOLLOW LOG · cap dot {index}", (x + s * .4, y - s * .4, Z + R + h + s * .3), (.04, .04, .025), M["capDot"], root)
+    # A little seed sack by the door, spilling sunflower seeds.
+    blob("HOLLOW LOG · seed sack", (-.3, -R - .32, .2), (.2, .18, .22), M["sack"], root, 16, 10)
+    cylinder("HOLLOW LOG · sack tie", (-.3, -R - .32, .42), .07, .06, M["straw"], root, "Z", 10)
+    for index in range(6):
+        blob(f"HOLLOW LOG · seed {index}", (-.05 + index * .07, -R - .42 - (index % 2) * .06, .02), (.035, .02, .015), M["seed"], root, 8, 6)
+    # Long grass tufts hugging the log, so it sits in a meadow.
+    for index, (x, y) in enumerate([(-1.5, -.55), (-1.25, .6), (1.45, .55), (1.6, -.6), (-.1, .7), (.9, -.75), (-1.0, -.7)]):
+        for blade in range(3):
+            a = blade * 2.1 + index
+            cone(f"HOLLOW LOG · grass {index}-{blade}", (x + math.cos(a) * .06, y + math.sin(a) * .06, .26), .05, 0, .52 + .1 * (blade % 2), M["grass"], root, 5)
+    return root, {"camera": (5.6, -8.8, 5.0), "target": (0, -.1, .55), "ortho": 4.4}
+
+
+# --------------------------------------------------------------- rock pile --
+
+def build_rock_pile():
+    M = shared_materials("ROCK PILE")
+    M["rock"] = make_material("ROCK PILE · sun-warm sandstone", "#b9a582", .72, 0, .05)
+    M["rockDark"] = make_material("ROCK PILE · shaded stone", "#968670", .76, 0, .04)
+    M["rockWarm"] = make_material("ROCK PILE · basking slab", "#d6b984", .6, 0, .08)
+    M["lichen"] = make_material("ROCK PILE · lichen", "#c9c45a", .85, 0, .02)
+    M["moss"] = make_material("ROCK PILE · moss", "#6fae4f", .85, 0, .03)
+    M["flower"] = make_material("ROCK PILE · clover flower", "#f2a6c8", .6, 0, .06)
+    root = pivot("PROP ROCK PILE · export root", (0, 0, 0))
+    root["asset_id"] = "rock-pile"
+    root["design_size"] = "1 x 1 cell, about 1.3 m tall"
+    root["description"] = "A sun-warmed cairn of round stones with a snug crevice door for snakes"
+
+    # Big rounded stones, stacked so the -Y face leaves a dark crevice between two of them.
+    stones = [
+        ("base left", (-.42, .05, .26), (.42, .5, .32), "rock", 0.3),
+        ("base right", (.44, .1, .25), (.4, .46, .3), "rockDark", -0.2),
+        ("base back", (0, .45, .28), (.55, .35, .3), "rockDark", 0.1),
+        ("middle", (-.05, .2, .62), (.5, .42, .28), "rock", 0.5),
+        ("cap", (.08, .14, .92), (.42, .36, .14), "rockWarm", -0.3),
+        ("side pebble", (.72, -.35, .12), (.18, .16, .13), "rock", 0.8),
+        ("front pebble", (-.68, -.42, .1), (.15, .13, .1), "rockDark", 1.4),
+    ]
+    for name, location, scale, tone, turn in stones:
+        stone = blob(f"ROCK PILE · {name} stone", location, scale, M[tone], root, 18, 12)
+        stone.rotation_euler = (0, 0, turn)
+    # The crevice: a dark arched gap between the two front stones, with a flat threshold stone.
+    blob("ROCK PILE · crevice", (.02, -.32, .24), (.2, .12, .24), M["dark"], root, 14, 10)
+    box("ROCK PILE · threshold slab", (.02, -.56, .03), (.46, .3, .06), M["rockWarm"], root, .03)
+    # Lichen spots and a moss collar soften the stones.
+    for index, (x, y, z, s) in enumerate([(-.55, -.25, .42, .08), (.3, -.18, .5, .07), (.15, -.05, 1.04, .1), (-.2, -.1, .82, .06), (.6, -.12, .38, .06)]):
+        blob(f"ROCK PILE · lichen {index}", (x, y, z), (s, s * .5, s * .7), M["lichen"], root, 10, 6)
+    blob("ROCK PILE · moss collar", (-.35, .35, .5), (.3, .25, .07), M["moss"], root, 12, 8)
+    # Clover flowers and long grass at the foot, so it sits in the meadow it guards.
+    for index, (x, y) in enumerate([(-.8, .1), (.85, .35), (-.4, .78), (.5, .75)]):
+        for blade in range(3):
+            a = blade * 2.1 + index
+            cone(f"ROCK PILE · grass {index}-{blade}", (x + math.cos(a) * .06, y + math.sin(a) * .06, .24), .05, 0, .48 + .1 * (blade % 2), M["grass"], root, 5)
+    for index, (x, y) in enumerate([(-.45, -.7), (.5, -.62)]):
+        cylinder(f"ROCK PILE · flower stem {index}", (x, y, .1), .015, .2, M["grass"], root, "Z", 6)
+        blob(f"ROCK PILE · clover flower {index}", (x, y, .22), (.06, .06, .05), M["flower"], root, 10, 8)
+    return root, {"camera": (4.0, -7.0, 3.8), "target": (0, -.05, .45), "ortho": 2.8}
+
+
 HOUSES = {
     "goose-house": build_goose_house,
     "sty": build_sty,
     "frog-house": build_frog_house,
     "owl-box": build_owl_box,
+    "hollow-log": build_hollow_log,
+    "rock-pile": build_rock_pile,
 }
 
 

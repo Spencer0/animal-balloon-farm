@@ -672,12 +672,35 @@ function residentCounts(): Record<string, number> {
   return counts
 }
 
+/**
+ * Tall meadow is measured from every grass blade, which is too much work to
+ * redo each frame. Measure it at most once a second; anything that replaces
+ * the grass outright (a load, a harness sow or clear) asks for a fresh one.
+ */
+const MEADOW_REMEASURE_MS = 1000
+let meadowMeasuredAt = Number.NEGATIVE_INFINITY
+let meadowAreaCache = 0
+
+function currentMeadowArea(): number {
+  const now = performance.now()
+  if (now - meadowMeasuredAt >= MEADOW_REMEASURE_MS) {
+    meadowAreaCache = gardenTools?.meadowArea() ?? 0
+    meadowMeasuredAt = now
+  }
+  return meadowAreaCache
+}
+
+function remeasureMeadow(): void {
+  meadowMeasuredAt = Number.NEGATIVE_INFINITY
+}
+
 function measureFarm(): FarmState {
   const lawn = currentLawnSample()
   const terrain = currentTerrainSample()
   if (!lawn || !terrain) return lastFarmState
   lastFarmState = {
     ...measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts()),
+    meadowArea: currentMeadowArea(),
     residentCounts: residentCounts(),
     preyEaten: predationLedger.totals,
     propCounts: gardenProps?.propCounts() ?? {},
@@ -1141,6 +1164,7 @@ function speciesPluralName(species: string): string {
   const name = animalDisplayName(species)
   if (species === 'sheep') return name
   if (species === 'goose') return 'Geese'
+  if (species === 'mouse') return 'Mice'
   return `${name}s`
 }
 
@@ -2000,7 +2024,10 @@ function applySavedWorld(data: SaveGameData): void {
     }
     gardenWaterMesh?.markDirty()
   })
-  section('grass', () => gardenTools?.importGrass(data.grass))
+  section('grass', () => {
+    gardenTools?.importGrass(data.grass)
+    remeasureMeadow()
+  })
   section('purse and progress', () => {
     wallet.restore(data.coins)
     progression.importState(data.progression)
@@ -3609,6 +3636,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     sowGrass: (x, z, radius, pack) => {
       gardenTools?.sowGrassDisc(x, z, radius, pack ?? gardenTools.grassPack)
+      remeasureMeadow()
       return measureFarm()
     },
     digPond: (x, z, radius) => {
@@ -3647,6 +3675,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     resetConditions: () => {
       gardenTools?.clearGrass()
+      remeasureMeadow()
       upgrades.reset()
       gardenTools?.setGrassPack('short')
       syncGrassPack()

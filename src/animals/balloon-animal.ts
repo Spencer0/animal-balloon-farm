@@ -187,6 +187,9 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   frog: new THREE.MeshStandardMaterial({ color: '#6ab84e', roughness: 0.3, metalness: 0.01 }),
   owl: new THREE.MeshStandardMaterial({ color: '#a9774b', roughness: 0.28, metalness: 0.01 }),
   raccoon: new THREE.MeshStandardMaterial({ color: '#8f949b', roughness: 0.3, metalness: 0.01 }),
+  mouse: new THREE.MeshStandardMaterial({ color: '#c99a6b', roughness: 0.3, metalness: 0.01 }),
+  rat: new THREE.MeshStandardMaterial({ color: '#7b7480', roughness: 0.3, metalness: 0.01 }),
+  snake: new THREE.MeshStandardMaterial({ color: '#3f9e6e', roughness: 0.26, metalness: 0.01 }),
 }
 const HOOF_MATERIAL = new THREE.MeshStandardMaterial({ color: '#76505d', roughness: 0.31 })
 const WILD_BALLOON_COLOR = new THREE.Color('#e53649')

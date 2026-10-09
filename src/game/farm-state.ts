@@ -5,6 +5,8 @@
  * Three quantities matter, all in square meters:
  *
  *   tallGrassArea    lawn covered by grass past a maturity threshold
+ *   meadowArea       ground grown over with the *tall* meadow pack, the long
+ *                    grass mice, rats and snakes hide in
  *   waterArea        visible pond surface: cells holding actual water
  *   flatGrassArea    level, walkable, *grassy* ground — open pasture
  *
@@ -31,6 +33,12 @@ export interface FarmState {
   readonly tallGrassArea: number
   readonly waterArea: number
   readonly flatGrassArea: number
+  /**
+   * Square meters of tall meadow: ground where the green seed pack's grass
+   * has grown well past lawn height. Short lawn never counts, however lush.
+   * Optional because it is measured from the blades, which only the scene has.
+   */
+  readonly meadowArea?: number
   /**
    * Grown-up plants per species id, e.g. `{ 'water-lily': 3 }`.
    *
@@ -143,6 +151,40 @@ export function measureTallGrass(lawn: LawnSample, maturity = DEFAULT_MATURITY):
   return round2(area)
 }
 
+/** A meadow blade stands at least this tall: well over the lawn cap (0.34 m). */
+export const MEADOW_MIN_HEIGHT = 0.6
+
+/** Meadow is measured on cells this size, the lawn's own vertex pitch. */
+export const MEADOW_CELL = 0.58
+
+/** A cell is meadow once it holds this many tall blades, so a stray blade at a stroke's edge is not a field. */
+export const MEADOW_BLADES_PER_CELL = 3
+
+export interface MeadowBlade {
+  readonly x: number
+  readonly z: number
+  readonly height: number
+}
+
+/**
+ * Square meters of tall meadow. Blades are binned into lawn-sized cells, and a
+ * cell counts once it holds a few blades past `MEADOW_MIN_HEIGHT`. One pass over
+ * the blades; the scene throttles how often it asks.
+ */
+export function measureMeadow(blades: Iterable<MeadowBlade>, minHeight = MEADOW_MIN_HEIGHT, cell = MEADOW_CELL): number {
+  const counts = new Map<number, number>()
+  let cells = 0
+  for (const blade of blades) {
+    if (blade.height < minHeight) continue
+    // Pack the two cell indices into one number key; the garden is far smaller than 4096 cells across.
+    const key = (Math.floor(blade.x / cell) + 2048) * 4096 + (Math.floor(blade.z / cell) + 2048)
+    const count = (counts.get(key) ?? 0) + 1
+    counts.set(key, count)
+    if (count === MEADOW_BLADES_PER_CELL) cells += 1
+  }
+  return round2(cells * cell * cell)
+}
+
 export function measureWater(water: WaterSample | null | undefined): number {
   if (!water) return 0
   const cellArea = water.cellSize * water.cellSize
@@ -203,6 +245,7 @@ export function measureFarmState(
 export function farmMetric(state: FarmState, kind: string, species?: string): number {
   switch (kind) {
     case 'grassArea': return state.tallGrassArea
+    case 'meadowArea': return state.meadowArea ?? 0
     case 'waterArea': return state.waterArea
     case 'flatArea': return state.flatGrassArea
     case 'plantCount': return species ? state.plantCounts[species] ?? 0 : 0

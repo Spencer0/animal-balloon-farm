@@ -22,6 +22,8 @@ export interface Bed extends BedPoint {
 export const BED_RADIUS = 1.8
 /** The same for a dumpster, which is 3.6 m long: measured from its centre, so it lies a little off the end or side. */
 export const DUMPSTER_BED_RADIUS = 2.6
+/** A rat curled beside the 3.8 m hollow log: clear of the log's long side. */
+export const HOLLOW_LOG_BED_RADIUS = 2.4
 /** Angle between neighbouring sleepers around one can, in radians. */
 const BED_STEP = 2.2
 
@@ -68,6 +70,10 @@ export function pickAnchor(anchors: readonly BedPoint[], occupancy: readonly num
 export const SLEEP_PROPS: Readonly<Record<string, readonly { readonly prop: string; readonly radius: number }[]>> = {
   raccoon: [
     { prop: 'dumpster', radius: DUMPSTER_BED_RADIUS },
+    { prop: 'garbage-can', radius: BED_RADIUS },
+  ],
+  rat: [
+    { prop: 'hollow-log', radius: HOLLOW_LOG_BED_RADIUS },
     { prop: 'garbage-can', radius: BED_RADIUS },
   ],
 }

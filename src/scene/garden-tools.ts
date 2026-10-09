@@ -4,6 +4,7 @@ import type { GardenBounds } from '../game/farm-expansion'
 import { createGardenToolModel, GARDEN_TOOLS, tintSeedPack, type GardenToolId } from './garden-tool-art'
 import { GRASS_PACKS, SHORT_GRASS_CEILING, SHORT_GRASS_MAX_HEIGHT, TALL_GRASS_MAX_HEIGHT, type GrassPack } from '../game/tool-unlocks'
 import type { GardenTerrain } from './garden-terrain'
+import { measureMeadow, type MeadowBlade } from '../game/farm-state'
 import type { GardenWaterField } from '../game/garden-water'
 import {
   GRASS_HEIGHT_STEPS,
@@ -104,6 +105,11 @@ export interface GardenTools {
    * swallowed by the meadow. The scene wires it to the planted ground cover.
    */
   setTallGrassBlocker(blocked: ((x: number, z: number) => boolean) | null): void
+  /**
+   * Square meters of tall meadow on the lawn (`measureMeadow`). One pass over
+   * every blade, so the caller decides how often to ask.
+   */
+  meadowArea(): number
   cycleBrushSize(): void
   setPlantingMode(active: boolean): void
   pointerMove(event: GardenPointerMove): void
@@ -1149,6 +1155,12 @@ export function createGardenTools(
       return found ? 'short' : 'none'
     },
     setTallGrassBlocker(blocked): void { tallGrassBlocked = blocked },
+    meadowArea(): number {
+      function* everyBlade(): Generator<MeadowBlade> {
+        for (const batch of batches.values()) yield* batch.blades
+      }
+      return measureMeadow(everyBlade())
+    },
     overLawn(event): boolean {
       if (!pointerRay(event)) return false
       const position = floorPosition()
