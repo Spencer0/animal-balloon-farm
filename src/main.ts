@@ -46,6 +46,9 @@ import { createPlantCard } from './ui/plant-card'
 import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
+import { createOptionsDomPanel, type OptionsDomPanel } from './ui/options-dom'
+import { createFpsCounter } from './ui/fps-counter'
+import { createSettingsStore } from './game/settings'
 import { createToolsHud } from './ui/tools-hud'
 import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
@@ -1093,6 +1096,26 @@ const journalDom: JournalDomPanel = createJournalDomPanel({
   onClose: () => journal.close(),
 })
 journal.setSpreadSuppressed(true)
+
+const settingsStore = createSettingsStore((() => {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+})())
+const fpsCounter = createFpsCounter()
+fpsCounter.setVisible(settingsStore.settings.showFps)
+settingsStore.subscribe((settings) => fpsCounter.setVisible(settings.showFps))
+const optionsDom: OptionsDomPanel = createOptionsDomPanel({
+  onClose: () => {
+    optionsDom.setOpen(false)
+    refreshCursor()
+  },
+  settings: () => settingsStore.settings,
+  onChange: (key, value) => settingsStore.set(key, value),
+})
+
 const notificationPanel = createNotificationPanel(window.innerWidth, window.innerHeight)
 notificationPanel.setMailboxVisible(false)
 const notificationDom = createNotificationDomPanel({
@@ -1697,9 +1720,8 @@ function selectGardenTool(id: GardenToolId | null): void {
 
 function handleMenuChoice(choice: MenuChoice): void {
   if (choice === 'options') {
-    // Options is a placeholder destination for now; it must not look like a
-    // dead end, so bounce back to the menu and leave the farm running.
-    console.info('[menu] Options is not built yet.')
+    // The screen opens over the menu; closing it lands back on the menu.
+    optionsDom.setOpen(true)
     return
   }
   setMode(choice === 'viewer' ? 'viewer' : 'farm')
@@ -3711,6 +3733,7 @@ window.addEventListener('resize', () => {
 performanceOverlay?.resize(window.innerWidth, window.innerHeight)
 
 function frame(now: number): void {
+  fpsCounter.frame(now)
   const intervalMs = previousFrameTimestamp === null ? 0 : now - previousFrameTimestamp
   previousFrameTimestamp = now
   const timingEnabled = __GARDEN_DEBUG__ && gardenDebugMode
