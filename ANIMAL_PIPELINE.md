@@ -38,7 +38,7 @@ from them.
    | **Plants** (`plantCount`) | eats or nests in something the player *grows* | clover, dandelion, poppy, water-lily | a plant: see *Adding a plant* |
    | **Animals it likes** (`residentSpecies` / `residentCount`) | is social, or lives off another species | cow, chicken, ... | nothing: any catalog species works |
    | **A prop** (`propCount`) | needs furniture: a roost, a feeder, something to raid | barn, coop, oak, garbage can | a prop: see *Adding a shop prop* |
-   | **A house** (`propCount` of a house prop) | has somewhere to live; the natural **breeding** gate | barn, coop, oak, dumpster | a house is a prop, plus a `SLEEP_PROPS` entry so it beds down beside it |
+   | **A house** (`propCount` of a house prop) | has somewhere to live; **required** on the breeding rung | barn, coop, sty, goose house, frog house, owl box, dumpster | a house is a prop, plus a `HOUSE_SPECIES` entry: see *Adding a shop prop (and a house)* |
    | **Terrain** (`grassArea` / `waterArea` / `flatArea`) | needs land, not objects | all | nothing |
    | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl | see *Predators and fliers* |
 
@@ -53,6 +53,14 @@ from them.
 
 ## 1 · The whole job, in order
 
+> **Every animal must have a house. No exceptions.** A species without one can never breed (babies
+> are born indoors), has no space indoors, and keeps every member out on the farm, where it eats
+> into the 40-animal outdoor limit. Either share an existing house that fits (chickens and ducks
+> share the coop, cows and sheep the barn) or build a new one in Blender. Register it in
+> `HOUSE_SPECIES` (`src/game/animal-housing.ts`) and ask for it on the species' "Love the farm"
+> rung. `tests/animal-housing.test.mjs` reads the catalog and fails for any species without exactly
+> one house.
+
 Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
 
 1. **Brief** (above).
@@ -61,8 +69,8 @@ Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
 3. **Register.** Catalog entry, then fix the compiler errors (four records).
 4. **Register what the compiler cannot see** (the silent list, below).
 5. **Conditions.** `SPECIES_CONDITIONS`, `DISCOVERY`, and `NIGHT_ONLY_SPECIES` if it is nocturnal.
-6. **Build the ingredients** the ladder asks for (plant / prop / house) and, for a night animal, the
-   `SLEEP_PROPS` entry.
+6. **Build the house** (required, see above) and the other ingredients the ladder asks for (plant /
+   prop) and, for a night animal, the `SLEEP_PROPS` entry.
 7. **Scenarios + tests.**
 8. **Verify** in the browser from several angles, awake and asleep, plus its journal page.
 9. **Ship** (`npm run check`, PR, merge) when Spencer says so.
@@ -72,6 +80,8 @@ Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
 - [ ] `npm run check` is green (tests, asset budget, typecheck, build, scenario leak guard)
 - [ ] Art: review PNG looks right; GLB lists every clip with every animated node; **awake and asleep
       both look right in the game from the side** (angle sheet)
+- [ ] **It has a house:** listed in `HOUSE_SPECIES`, asked for on its "Love the farm" rung, buyable
+      in the shop, and animals walk in and out of its door in the game
 - [ ] Every compiler-enforced record and every silent registration below is filled
 - [ ] The ladder's ingredients exist, are buyable or growable, and are covered by tests
 - [ ] Journal page opened and looked at
@@ -245,6 +255,7 @@ Adding the entry produces **exactly these errors** (verified by adding a throwaw
 | `animal-conditions.ts` `DISCOVERY` | the lure | the species sits at stage 0 forever |
 | `animal-conditions.ts` `SPECIES_CONDITIONS` | the ladder | an invented default four-rung ladder with made-up numbers |
 | `animal-conditions.ts` `NIGHT_ONLY_SPECIES` | the shift | a night animal turns up at noon |
+| `src/game/animal-housing.ts` `HOUSE_SPECIES` | **its house (required)** | it never breeds, never goes indoors, and crowds the outdoor limit |
 | `src/game/sleep.ts` `SLEEP_PROPS` | what a night animal sleeps beside | it sleeps wherever it stands |
 | `src/ui/journal-dom.ts` `SPECIES_META` | journal rarity + trait pills | "Common" and no trait pills |
 | `animal-conditions.ts` `PROP_PLURALS` | prop wording in the journal | falls back to `<id>s` (fine for regular plurals) |
@@ -336,8 +347,16 @@ A plant is a growable ingredient (frog: lilies; sheep: clover). In `src/game/pla
 
 ### Adding a shop prop (and a house)
 
-A prop is something the shop sells and a `propCount` reads. A **house** is just a prop that a night
-animal sleeps beside (and that gates breeding); the raccoon's dumpster is the template.
+A prop is something the shop sells and a `propCount` reads. A **house** is a prop listed in
+`HOUSE_SPECIES` (`src/game/animal-housing.ts`). **Every species has exactly one house** (some share:
+chickens and ducks the coop, cows and sheep the barn), and its breeding rung asks for it, because
+babies are born indoors. Each house holds `HOUSE_CAPACITY` (10) animals, shared by whoever walks in:
+nobody owns a bed. At most `OUTDOOR_LIMITS` (5 of a species, 40 in all) are out on the farm; the rest
+walk to the nearest house of their kind with room and their models are disposed until they come out.
+Selling a house sells the animals inside it (the card asks twice); animals out on the farm stay.
+House models face local -Y in Blender (+Z in glTF): the game walks animals to that side of the
+footprint to go in and out. `art/blender/animal_houses.py` builds the sty, goose house, frog house
+and owl box.
 
 | Where | What | Enforced? |
 |-------|------|-----------|
@@ -349,7 +368,8 @@ animal sleeps beside (and that gates breeding); the raccoon's dumpster is the te
 | `art/blender/prop_thumbs.py` `PROPS` | add `("<id>", "assets/props/<id>.glb")`, run with `-- <id>` for the shop icon `prop-<id>.png` | no |
 | `animal-conditions.ts` `PROP_PLURALS` | only for an irregular plural | no |
 | `src/ui/shop-dom.ts` `PIP_QUOTES` | optional shop-keeper line | no |
-| `src/game/sleep.ts` `SLEEP_PROPS` | **for a house:** add it, first in the species' list, with a bed radius | no |
+| `src/game/animal-housing.ts` `HOUSE_SPECIES` | **for a house:** which species it takes in. A species missing here can never breed | no |
+| `src/game/sleep.ts` `SLEEP_PROPS` | for a night animal: what an animal *without* room indoors sleeps beside | no |
 | `tests/farm-props.test.mjs` or the animal's test | footprint, blocking, in `PROP_ORDER`, buyable | no |
 | `scripts/check-no-scenarios.mjs` | add a marker only when you add a scenario folder | no |
 
@@ -358,7 +378,7 @@ animal sleeps beside (and that gates breeding); the raccoon's dumpster is the te
 `footprint` is fine and rotates (`footprintExtent`). `GardenProps.placements(id)` returns the world
 centre of every placed prop of one id, which is what sleeping uses.
 
-Prices so far: garbage can 45, coop 90, barn 110, dumpster 120, oak 140.
+Prices so far: garbage can 45, frog house 70, owl box 80, coop 90, sty 95, goose house 100, barn 110, dumpster 120, oak 140.
 
 Model tips from the raccoon's props: author on `z = 0`, centred in X/Y; do not leave a doorway the
 game cannot use (the dumpster has none: the raccoon climbs in over the rim, and a later feature will
@@ -400,8 +420,9 @@ The farm fills one animal at a time, and each arrival is earned.
   is the first win.
 - **Sheep** are lured by clover (`DISCOVERY.sheep`) and **chickens** by dandelions. **Raccoons** by a
   resident cow. `DISCOVERY` is the trigger that takes a species from stage 0 to the carnival.
-- **Staying and breeding** lean on props: sheep need a barn to settle, cows one to breed, chickens a
-  coop to settle and a second to breed, raccoons a can to settle and a dumpster to breed.
+- **Staying and breeding** lean on props: sheep need a barn to settle and chickens a coop, raccoons a
+  can. **Every species needs its house to breed** (see `HOUSE_SPECIES`), and a baby is born only
+  while that house has room. There are no eggs.
 - **Shifts.** Night species arrive and visit only after dark; everyone else only in daylight
   (`isNightOnly`). Residents are never sent away at night: chickens have to be there for the owl.
 - Only a visitor that is **ready to walk in** holds the arrival queue.
@@ -451,12 +472,12 @@ shared between animals and no longer resolve.
 | `owl/hunt-now` | five chickens, night, owl visiting with its hunt ready |
 | `owl/ready-to-settle` | as above plus an oak, four chickens eaten: the next catch settles it |
 | `owl/resident-roosting` | daytime, a resident owl asleep on the oak |
-| `owl/breed-ready` | night, two oaks, two owls in love |
+| `owl/breed-ready` | night, two oaks, an owl box, two owls in love: an owlet is born in the box |
 | `owl/low-helium` | night, a resident owl with no oak and ~15 s of helium |
 | `raccoon/first-night` | night, a resident cow, a wild raccoon visiting, no garbage can |
 | `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its can and curls up |
-| `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: it curls up by the dumpster |
-| `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (an egg is laid) |
+| `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: its house, so it walks in to sleep |
+| `raccoon/breed-ready` | night, a can and a dumpster, two raccoons in love (a kit is born in the dumpster) |
 
 To add one: write a `Scenario` in `dev/scenarios/<animal>/` using only the verbs on `ScenarioHarness`
 (`dev/scenarios/types.ts`), and list it in `dev/scenarios/index.ts`. Nothing in `dev/` ships: `main.ts`

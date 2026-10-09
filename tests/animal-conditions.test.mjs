@@ -158,10 +158,9 @@ test('grown lily pads settle the frog; seeds in the water do not', () => {
   const two = snapshot({ ...EMPTY_FARM, waterArea: 60, plantCounts: { 'water-lily': 2 } })
   assert.equal(requirementMet(settle.requirement, two), true)
   assert.equal(requirementMet(love.requirement, two), false, 'two pads settle it; four are what it loves')
-  assert.equal(
-    requirementMet(love.requirement, snapshot({ ...EMPTY_FARM, waterArea: 60, plantCounts: { 'water-lily': 4 } })),
-    true,
-  )
+  const fourPads = { ...EMPTY_FARM, waterArea: 60, plantCounts: { 'water-lily': 4 } }
+  assert.equal(requirementMet(love.requirement, snapshot(fourPads)), false, 'and a frog house to raise froglets in')
+  assert.equal(requirementMet(love.requirement, snapshot({ ...fourPads, propCounts: { 'frog-house': 1 } })), true)
 })
 
 test('a plant condition counts the plant it asked for and no other', () => {
@@ -531,7 +530,8 @@ test('a naive, direct progression run reaches the full four-step arc', () => {
         clover: Math.min(4, Math.floor(step / 40)),
         dandelion: Math.min(4, Math.floor(step / 40)),
       },
-      propCounts: { barn: step > 100 ? 1 : 0, coop: step > 100 ? 2 : 0 },
+      // Every species needs its house to love the farm and raise young.
+      propCounts: step > 100 ? { barn: 1, coop: 1, sty: 1, 'goose-house': 1, 'frog-house': 1 } : {},
     }
     farm = makeFarmSnapshot(state, progress)
     seen.push(...progress.tick(farm, step).map((event) => `${event.species}:${event.kind}`))

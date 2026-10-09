@@ -29,9 +29,9 @@ export interface PlayerDomStats {
   readonly pointsToNext: number;
   readonly parcel: number;
   readonly population: number;
-  readonly capacity: number;
-  readonly eggs: number;
-  readonly readyEggs: number;
+  readonly outside: number;
+  readonly houseRoom: number;
+  readonly houseUsed: number;
   readonly levels: readonly PlayerLevelCard[];
   readonly accomplishments: readonly AccomplishmentRow[];
   readonly recentAccomplishments: readonly AccomplishmentDef[];
@@ -89,10 +89,9 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function eggsCopy(eggs: number, readyEggs: number): string {
-  if (readyEggs > 0) return `${readyEggs} ready to hatch`;
-  if (eggs > 0) return `${eggs} ${eggs === 1 ? "egg" : "eggs"} incubating`;
-  return "No eggs yet";
+function houseCopy(room: number, used: number): string {
+  if (room === 0) return "No houses yet: build one to raise young";
+  return `${used}/${room} indoors`;
 }
 
 function accomplishmentRowHtml(row: AccomplishmentRow): string {
@@ -140,7 +139,7 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
     const accs = next.accomplishments.map((row) => `${row.def.id}:${row.state}:${row.completedAt ?? ""}`).join("|");
     const recent = next.recentAccomplishments.map((def) => def.id).join(",");
     return `${next.points}|${next.level}|${next.pointsToNext}|${next.parcel}|${next.population}|` +
-      `${next.capacity}|${next.eggs}|${next.readyEggs}|${levels}|${accs}|${recent}|${tab}|${filter}|${sort}`;
+      `${next.outside}|${next.houseRoom}|${next.houseUsed}|${levels}|${accs}|${recent}|${tab}|${filter}|${sort}`;
   }
 
   function overviewHtml(current: PlayerDomStats, levelsHtml: string, progress: number, pct: number): string {
@@ -225,8 +224,8 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
       `</div>` +
       `</div>` +
       `<div class="pl-residents">` +
-      `<div class="pl-stat"><i class="pl-dot"></i><span>Residents &amp; visitors ${current.population}/${current.capacity}</span></div>` +
-      `<div class="pl-stat is-dim"><i class="pl-dot is-gold"></i><span>${escapeHtml(eggsCopy(current.eggs, current.readyEggs))}</span></div>` +
+      `<div class="pl-stat"><i class="pl-dot"></i><span>Animals ${current.population} (${current.outside} outside)</span></div>` +
+      `<div class="pl-stat is-dim"><i class="pl-dot is-gold"></i><span>${escapeHtml(houseCopy(current.houseRoom, current.houseUsed))}</span></div>` +
       `</div>` +
       `</aside>` +
       `<main class="fj-detail pl-detail">` +

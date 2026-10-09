@@ -1,8 +1,11 @@
 # Testing & performance QA
 
-Run **`npm run gate`** before calling a game change done. It is the one
-command that answers "did we break the game?" and it runs the same way on
-a laptop and in CI. It takes about 6 minutes and needs Chrome installed.
+**`npm run gate`** is the one command that answers "did we break the game?".
+It runs on GitHub CI for every pull request (the Performance workflow); read
+that check before merging. **Don't run it locally by default:** it takes about
+6 minutes of software-rendered Chrome and bogs the machine down. Locally, run
+`npm run check`, and use a single `npm run gate:stress -- --only <scenario>`
+only when you are chasing a specific budget.
 
 | Command | What it proves | Needs | Fails when |
 |---|---|---|---|

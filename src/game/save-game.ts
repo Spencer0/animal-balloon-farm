@@ -221,7 +221,7 @@ export function parseEnvelope(text: string | null): ParseResult {
     && isRecord(data.clock) && isNumber(data.clock.timeOfDay) && isNumber(data.clock.elapsedDays)
     && isRecord(data.progression) && Array.isArray(data.progression.awarded)
     && isRecord(data.upgrades) && Array.isArray(data.accomplishments)
-    && isRecord(life) && Array.isArray(life.animals) && Array.isArray(life.eggs)
+    && isRecord(life) && Array.isArray(life.animals)
     && Array.isArray(life.discovered) && Array.isArray(life.pendingVisitors)
     && isRecord(data.animalPlaces) && isRecord(data.preyEaten)
     && isRecord(data.plants) && Array.isArray(data.plants.plants) && isRecord(data.plants.seeds)

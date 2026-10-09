@@ -77,17 +77,19 @@ test('sheep settle only with level pasture and a barn; chickens only with grass 
   assert.equal(stageOf(life, 'sheep'), 3)
   assert.equal(stageOf(life, 'chicken'), 2)
   run(life, farm({ ...pasture, propCounts: { barn: 1, coop: 1 } }), 10)
-  assert.equal(stageOf(life, 'chicken'), 3)
+  assert.ok(stageOf(life, 'chicken') >= 3)
 })
 
-test('the breeding rung asks for more props: a barn for cows, a second coop for chickens', () => {
+test("the breeding rung asks for every species' own house, since babies are born indoors", () => {
   const cow = conditions.getSpeciesConditions('cow')[3].requirement
   assert.equal(cow.kind, 'grassArea')
   assert.deepEqual(cow.and, [{ kind: 'propCount', species: 'barn', amount: 1 }])
-  const chicken = conditions.getSpeciesConditions('chicken')[3].requirement
-  assert.equal(chicken.kind, 'propCount')
-  assert.equal(chicken.species, 'coop')
-  assert.equal(chicken.amount, 2)
+  const houses = { cow: 'barn', sheep: 'barn', chicken: 'coop', duck: 'coop', goose: 'goose-house', pig: 'sty', frog: 'frog-house', owl: 'owl-box', raccoon: 'dumpster' }
+  const asks = (requirement, prop) => (requirement.kind === 'propCount' && requirement.species === prop)
+    || (requirement.and ?? []).some((also) => asks(also, prop))
+  for (const [species, prop] of Object.entries(houses)) {
+    assert.ok(asks(conditions.getSpeciesConditions(species)[3].requirement, prop), `${species} loves the farm only with a ${prop}`)
+  }
   assert.equal(conditions.getSpeciesConditions('sheep')[3].requirement.and[0].species, 'clover')
 })
 

@@ -17,6 +17,17 @@ import { createSurface, fillRoundRect, grain, strokeRoundRect, UI_THEME, vertica
  * `PropCardActions`, so this file only draws and routes clicks.
  */
 
+/** Who is inside a house: shown in place of the blurb on a house's card. */
+export interface PropResidents {
+  readonly capacity: number
+  readonly used: number
+  /** One row per species the house takes in, e.g. "Cows" with 3 inside. */
+  readonly rows: readonly { readonly name: string; readonly inside: number }[]
+  /** Selling the house sells the animals inside it: how many, and for how much. */
+  readonly saleCount: number
+  readonly saleValue: number
+}
+
 export interface PropCardTarget {
   readonly id: PropId
   readonly name: string
@@ -26,6 +37,8 @@ export interface PropCardTarget {
   /** Cell props can be lifted and set down elsewhere; a fence run cannot. */
   readonly movable: boolean
   readonly rotatable: boolean
+  /** Set for an animal house. */
+  readonly residents?: PropResidents | null
 }
 
 export interface PropCardActions {
@@ -39,6 +52,8 @@ export interface PropCardActions {
 export interface PropCardPanel extends UIPanel {
   readonly isOpen: boolean
   open(target: PropCardTarget, anchor?: DesignPoint): void
+  /** Refresh a house's residents while its card is open. */
+  setResidents(residents: PropResidents | null): void
   close(): void
 }
 
@@ -96,6 +111,11 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
   object.add(card)
 
   const state = createAnimalCardState()
+  /**
+   * A house with residents asks twice: the usual "Sure?", then a warning that
+   * its animals are sold with it. True while that second warning is showing.
+   */
+  let residentWarning = false
   let target: PropCardTarget | null = null
   let hovered: string | null = null
 
@@ -124,6 +144,13 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
   /** The buttons the card shows right now: its row depends on the prop and the confirm. */
   function buttons(): readonly CardButton[] {
     if (!target) return []
+    if (state.mode === 'confirm' && residentWarning) {
+      const total = target.salePrice + (target.residents?.saleValue ?? 0)
+      return row([
+        { id: 'confirm', label: `Sell all · ${total}`, weight: 2 },
+        { id: 'keep', label: 'Keep' },
+      ])
+    }
     if (state.mode === 'confirm') {
       return row([
         { id: 'confirm', label: `Sure? Sell for ${target.salePrice}`, weight: 2 },
@@ -218,14 +245,57 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
     context.textBaseline = 'alphabetic'
     context.fillStyle = UI_THEME.inkSoft
     context.font = '15px Georgia, "Times New Roman", serif'
-    const afterBlurb = wrapText(context, current.blurb, PAD, BLURB_BASELINE, WIDTH - PAD * 2, 20)
-    if (current.rotatable) {
-      context.font = 'italic 14px Georgia, "Times New Roman", serif'
-      context.fillText('Press R while moving to turn it.', PAD, Math.min(afterBlurb + 4, BUTTON_TOP - 12))
+    if (residentWarning && current.residents) {
+      context.fillStyle = '#9c3730'
+      context.font = 'bold 16px Georgia, "Times New Roman", serif'
+      const count = current.residents.saleCount
+      wrapText(
+        context,
+        `This will sell all ${count} ${count === 1 ? 'animal' : 'animals'} in the house, giving you an extra ${current.residents.saleValue} coins. Are you sure?`,
+        PAD, BLURB_BASELINE - 8, WIDTH - PAD * 2, 22,
+      )
+    } else if (current.residents) {
+      drawResidents(current.residents)
+    } else {
+      const afterBlurb = wrapText(context, current.blurb, PAD, BLURB_BASELINE, WIDTH - PAD * 2, 20)
+      if (current.rotatable) {
+        context.font = 'italic 14px Georgia, "Times New Roman", serif'
+        context.fillText('Press R while moving to turn it.', PAD, Math.min(afterBlurb + 4, BUTTON_TOP - 12))
+      }
     }
 
     for (const button of buttons()) drawButton(button)
     texture.needsUpdate = true
+  }
+
+  /** Space in use, then how many of each species the house takes in are inside. */
+  function drawResidents(residents: PropResidents): void {
+    const context = surface.context
+    context.textAlign = 'left'
+    context.fillStyle = UI_THEME.ink
+    context.font = 'bold 16px Georgia, "Times New Roman", serif'
+    context.fillText(`Inside ${residents.used} / ${residents.capacity}`, PAD, BLURB_BASELINE - 8)
+    const barX = PAD + 118
+    const barWidth = WIDTH - PAD - barX
+    fillRoundRect(context, barX, BLURB_BASELINE - 20, barWidth, 10, 5, '#d7c49b')
+    const share = residents.capacity > 0 ? Math.min(1, residents.used / residents.capacity) : 0
+    if (share > 0) fillRoundRect(context, barX, BLURB_BASELINE - 20, Math.max(10, barWidth * share), 10, 5, UI_THEME.meadow)
+    let y = BLURB_BASELINE + 20
+    for (const row of residents.rows) {
+      context.fillStyle = UI_THEME.ink
+      context.font = 'bold 17px Georgia, "Times New Roman", serif'
+      context.fillText(row.name, PAD, y)
+      context.font = '17px Georgia, "Times New Roman", serif'
+      context.textAlign = 'right'
+      context.fillText(row.inside === 0 ? 'none inside' : `${row.inside} inside`, WIDTH - PAD, y)
+      context.textAlign = 'left'
+      y += 23
+    }
+    if (y < BUTTON_TOP - 6) {
+      context.font = 'italic 14px Georgia, "Times New Roman", serif'
+      context.fillStyle = UI_THEME.inkSoft
+      context.fillText(residents.used < residents.capacity ? 'Babies are born here while there is room.' : 'Full: build another to raise more young.', PAD, y + 2)
+    }
   }
 
   function regionAt(point: DesignPoint): string | null {
@@ -243,6 +313,7 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
 
   function reset(): void {
     resetAnimalCardState(state)
+    residentWarning = false
     hovered = null
   }
 
@@ -262,6 +333,12 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
       card.visible = true
       draw()
       if (!wasOpen) actions.onToggle?.(true)
+    },
+    setResidents(residents: PropResidents | null): void {
+      if (!target) return
+      if (JSON.stringify(residents ?? null) === JSON.stringify(target.residents ?? null)) return
+      target = { ...target, residents }
+      draw()
     },
     close(): void {
       if (!target) return
@@ -289,14 +366,19 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
         armSellConfirm(state)
         draw()
       } else if (region === 'confirm') {
-        if (actions.onSell()) {
+        if (!residentWarning && (target.residents?.saleCount ?? 0) > 0) {
+          residentWarning = true
+          draw()
+        } else if (actions.onSell()) {
           this.close()
         } else {
           cancelSellConfirm(state)
+          residentWarning = false
           draw()
         }
       } else if (region === 'keep') {
         cancelSellConfirm(state)
+        residentWarning = false
         draw()
       }
       return true
@@ -344,7 +426,9 @@ export function createPropCard(actions: PropCardActions, cssWidth: number, cssHe
         name: target?.name ?? null,
         sections: target?.sections ?? null,
         salePrice: target?.salePrice ?? null,
+        residents: target?.residents ?? null,
         mode: state.mode,
+        residentWarning,
         buttons: buttons().map((button) => ({ id: button.id, label: button.label, rect: { ...button.rect } })),
         card: { x: object.position.x - WIDTH / 2, y: object.position.y - HEIGHT / 2, width: WIDTH, height: HEIGHT },
       }

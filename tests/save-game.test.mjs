@@ -46,7 +46,7 @@ function sampleData(overrides = {}) {
     upgrades: { 'tall-grass': 1 },
     accomplishments: [],
     expansionLevel: 1,
-    life: { animals: [], eggs: [], discovered: [], pendingVisitors: [], nextAnimalId: 1, nextEggId: 1, arrivalElapsed: 0 },
+    life: { animals: [], discovered: [], pendingVisitors: [], nextAnimalId: 1, arrivalElapsed: 0 },
     animalPlaces: {},
     preyEaten: {},
     plants: { seeds: {}, plants: [], nextInstanceId: 1 },
@@ -270,7 +270,7 @@ test('animal life exports and re-imports to the same farm', () => {
 
 test('animal life import drops unknown species, duplicates and garbage instead of trusting them', () => {
   const life = save.createAnimalLife(SPECIES)
-  const base = { elapsed: 0, invited: true, baby: false, ageSeconds: 0, romanceCooldown: 0, parentIds: [], paired: false, courtshipPartnerId: null, courtshipRemaining: 0, courtshipSuccessful: false }
+  const base = { elapsed: 0, invited: true, baby: false, ageSeconds: 0, parentIds: [] }
   life.importState({
     animals: [
       { ...base, id: 'animal-7', species: 'cow', stage: 3 },
@@ -278,11 +278,9 @@ test('animal life import drops unknown species, duplicates and garbage instead o
       { ...base, id: 'animal-8', species: 'dragon', stage: 3 },
       { ...base, id: 'animal-9', species: 'sheep', stage: 99, elapsed: Number.NaN, ageSeconds: -5 },
     ],
-    eggs: [{ id: 4, species: 'ghost', x: 0, z: 0, incubation: 0, parentIds: [] }],
     discovered: ['cow', 'dragon'],
     pendingVisitors: ['owl', 'dragon'],
     nextAnimalId: 1,
-    nextEggId: 1,
     arrivalElapsed: Number.NaN,
   })
   const all = life.all()
@@ -291,35 +289,38 @@ test('animal life import drops unknown species, duplicates and garbage instead o
   assert.equal(all[1].stage, 4, 'a stage past the top clamps to the top')
   assert.equal(all[1].elapsed, 0)
   assert.equal(all[1].ageSeconds, 0)
-  assert.equal(life.eggs().length, 0)
   const state = life.exportState()
   assert.deepEqual(state.discovered, ['cow'])
   assert.deepEqual(state.pendingVisitors, ['owl'])
   assert.ok(state.nextAnimalId > 9, 'the id counter is pushed past every loaded animal')
 })
 
-test('a courtship whose partner was lost is cancelled on load', () => {
+test('a save from before houses, with eggs and courtships, still loads', () => {
   const life = save.createAnimalLife(SPECIES)
-  const base = { elapsed: 0, invited: true, baby: false, ageSeconds: 0, romanceCooldown: 0, parentIds: [], paired: true, courtshipRemaining: 5, courtshipSuccessful: true }
+  const old = { elapsed: 0, invited: true, baby: false, ageSeconds: 0, romanceCooldown: 30, parentIds: [], paired: true, courtshipPartnerId: 'animal-2', courtshipRemaining: 5, courtshipSuccessful: true }
   life.importState({
-    animals: [{ ...base, id: 'animal-1', species: 'cow', stage: 4, courtshipPartnerId: 'animal-2' }],
-    eggs: [], discovered: [], pendingVisitors: [], nextAnimalId: 3, nextEggId: 1, arrivalElapsed: 0,
+    animals: [{ ...old, id: 'animal-1', species: 'cow', stage: 4 }],
+    eggs: [{ id: 5, species: 'cow', x: 1, z: 2, incubation: 12, parentIds: ['a', 'b'] }],
+    discovered: [], pendingVisitors: [], nextAnimalId: 3, nextEggId: 6, arrivalElapsed: 0,
   })
   const record = life.animal('animal-1')
-  assert.equal(record.partnerId, null)
-  assert.equal(record.paired, false)
+  assert.equal(record.stage, 4)
+  assert.equal(record.insideId, null)
+  const state = life.exportState()
+  assert.equal('eggs' in state, false)
+  assert.equal('paired' in state.animals[0], false)
 })
 
-test('eggs keep their incubation across a save', () => {
+test('an animal indoors is saved as indoors, and loads outside until the caller houses it', () => {
   const life = save.createAnimalLife(SPECIES)
-  life.importState({
-    animals: [], eggs: [{ id: 5, species: 'cow', x: 1, z: 2, incubation: 12, parentIds: ['a', 'b'] }],
-    discovered: [], pendingVisitors: [], nextAnimalId: 1, nextEggId: 1, arrivalElapsed: 0,
-  })
-  const [egg] = life.eggs()
-  assert.equal(egg.id, 5)
-  assert.equal(egg.incubation, 12)
-  assert.equal(life.exportState().nextEggId, 6)
+  const cow = life.add('cow', 3)
+  life.tick({ farm: { state: { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {} }, residentSpecies: new Set() }, expansionLevel: 0, houses: [{ id: 'barn-1', prop: 'barn', x: 0, z: 0 }] }, 0)
+  assert.equal(life.enterHouse(cow.id, 'barn-1'), true)
+  const state = JSON.parse(JSON.stringify(life.exportState()))
+  assert.equal(state.animals.find((entry) => entry.id === cow.id).inside, true)
+  const clone = save.createAnimalLife(SPECIES)
+  clone.importState(state)
+  assert.equal(clone.animal(cow.id).insideId, null, "house ids are this session's; main puts it back in")
 })
 
 test('the progress ledger keeps its points and its one-time awards', () => {

@@ -1,11 +1,10 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
-import { createAnimalCrowdRenderer, type AnimalCrowdEntry, type AnimalCrowdStats } from './animals/animal-crowd-renderer'
-import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST } from './animals/animal-catalog'
-import { chooseDetailedAnimals, type AnimalRenderCandidate } from './game/animal-render-policy'
+import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST, type BalloonAnimalId } from './animals/animal-catalog'
+import { chooseOutdoorRoster, HOUSE_CAPACITY, houseAccepts, houseOccupancy, houseWithRoom, isHouse, occupantsByHouse, OUTDOOR_LIMITS, type RosterAnimal } from './game/animal-housing'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairground'
-import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent } from './game/animal-life'
+import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent, type AnimalLifeSnapshot } from './game/animal-life'
 import { FARM_EXPANSION_CONFIG } from './game/farm-expansion'
 import { clearOfFarmBounds } from './game/animal-travel'
 import { createProgressLedger } from './game/farm-progression'
@@ -29,9 +28,10 @@ import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
-import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
+import { createGardenProps, type GardenProps, type HouseSpot, type PropSelection } from './scene/garden-props'
 import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
-import { PROP_CATALOG, PROP_ORDER, purchaseProp, type PropId } from './game/farm-props'
+import { footprintWorldRect, PROP_CATALOG, PROP_ORDER, propDefinition, purchaseProp, type PropId } from './game/farm-props'
+import { resolveCollisions, type CollisionBody, type CollisionBox } from './game/animal-collision'
 import { shopUnlocked } from './game/shop-construction'
 import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
@@ -56,7 +56,7 @@ import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
-import { createPropCard } from './ui/prop-card'
+import { createPropCard, type PropResidents } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
@@ -251,173 +251,54 @@ function pickAnimal(clientX: number, clientY: number): BalloonAnimal | null {
     return meshes
   })
   const detailedHit = worldRaycaster.intersectObjects(detailedMeshes, false)[0]
-  if (detailedHit) return animals.find((animal) => animal.root === detailedHit.object || animal.root.getObjectById(detailedHit.object.id) !== undefined) ?? null
-  const crowdId = animalCrowd.pick(worldRaycaster)
-  return crowdId ? animalById.get(crowdId) ?? null : null
+  if (!detailedHit) return null
+  return animals.find((animal) => animal.root === detailedHit.object || animal.root.getObjectById(detailedHit.object.id) !== undefined) ?? null
 }
 
-function refreshAnimalCrowd(nowSeconds: number, force = false): void {
-  if (!force && nowSeconds - lastCrowdRefreshAt < 1 / 15) return
-  lastCrowdRefreshAt = nowSeconds
-  const viewportHeight = Math.max(1, gameCanvas.clientHeight)
-  const worldToPixels = viewportHeight / Math.max(0.001, viewHalfHeight * 2)
+/**
+ * Show every animal that is out on the farm and in view, and hide the rest.
+ *
+ * Animals indoors have no model in the scene at all (see `updateHousing`), so
+ * at most `OUTDOOR_LIMITS.total` are ever drawn and each one gets its full
+ * model. Off-screen animals are hidden too, which also stops their mixers.
+ */
+function refreshAnimalVisibility(nowSeconds: number, force = false): void {
+  if (!force && nowSeconds - lastVisibilityRefreshAt < 1 / 15) return
+  lastVisibilityRefreshAt = nowSeconds
   camera.updateMatrixWorld()
-  const candidates: AnimalRenderCandidate[] = []
-  const visibleAnimals: BalloonAnimal[] = []
   const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
   const activeInViewer = new Set(getViewerCastAnimals().map((animal) => animal.instanceId))
+  let shown = 0
   for (const animal of animals) {
     const record = progress.animal(animal.instanceId)
-    if (!record || record.stage <= 0 || animal.isSold) continue
-    // A flier is away by day and only ever drawn as its full model.
+    if (!record || record.stage <= 0 || animal.isSold) {
+      animal.setDetailedVisible(false)
+      continue
+    }
+    // A flier is away by day.
     if (animal.isFlier && !animal.flightVisible) {
       animal.setDetailedVisible(false)
       continue
     }
-    if (mode === 'viewer' && !activeInViewer.has(animal.instanceId)) {
-      animal.setDetailedVisible(false)
+    if (mode === 'viewer') {
+      const cast = activeInViewer.has(animal.instanceId)
+      animal.setDetailedVisible(cast)
+      if (cast) shown += 1
       continue
     }
     const size = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)?.size ?? 2
-    const projectedHeight = size * animal.currentScale * worldToPixels
     const renderPosition = animal.currentPosition.clone()
     renderPosition.y += 0.4 * size * animal.currentScale
     const sphere = new THREE.Sphere(renderPosition, Math.max(1.2, size * animal.currentScale * 0.9))
-    if (!frustum.intersectsSphere(sphere)) {
-      animal.setDetailedVisible(false)
-      continue
-    }
-    visibleAnimals.push(animal)
-    candidates.push({
-      id: animal.instanceId,
-      projectedHeight,
-      distance: camera.position.distanceTo(animal.currentPosition),
-      priority: animal.renderPriority + (animal.instanceId === focusedAnimalId ? 200 : 0),
-      interactive: animal.isCapturing || animal.isRomancing || animal.instanceId === focusedAnimalId
-        || animal.isFlier || animal.isSleeping || owlHunt.huntedIds().has(animal.instanceId),
-    })
+    const inView = frustum.intersectsSphere(sphere)
+    animal.setDetailedVisible(inView)
+    if (inView) shown += 1
   }
-  const detailedIds = new Set(mode === 'farm'
-    ? chooseDetailedAnimals(candidates)
-    : animals.filter((animal) => activeInViewer.has(animal.instanceId)).map((animal) => animal.instanceId))
-  const visibleAnimalIds = new Set(visibleAnimals.map((animal) => animal.instanceId))
-  const entries: AnimalCrowdEntry[] = []
-  const actuallyDetailedIds = new Set<string>()
-  for (const animal of animals) {
-    const record = progress.animal(animal.instanceId)
-    const desiredDetailed = detailedIds.has(animal.instanceId)
-      && (mode === 'viewer' ? activeInViewer.has(animal.instanceId) : visibleAnimalIds.has(animal.instanceId))
-    const detailed = desiredDetailed && animal.hasDetailedModel
-    animal.setDetailedVisible(desiredDetailed)
-    if (!record || record.stage <= 0 || animal.isSold || !visibleAnimalIds.has(animal.instanceId)) continue
-    if (detailed) actuallyDetailedIds.add(animal.instanceId)
-    // The crowd has no low-poly owl; a flier waits for its model instead.
-    if (animal.isFlier) continue
-    entries.push({
-      id: animal.instanceId,
-      species: animal.id,
-      x: animal.currentPosition.x,
-      y: animal.currentPosition.y,
-      z: animal.currentPosition.z,
-      heading: animal.currentHeading,
-      scale: animal.currentScale,
-      // Read the look off the model, not the ladder record: residency is gated
-      // on the animal having walked in, so a pending settle is still wild here.
-      wild: animal.appearance === 'wild',
-      phase: animal.animationPhase,
-    })
-  }
-  for (const fixture of crowdFixtureEntries) entries.push(fixture)
-  animalCrowd.setVisible(mode === 'farm')
-  animalCrowd.update(entries, actuallyDetailedIds, nowSeconds)
-  lastCrowdEntries = entries
-  crowdStats = animalCrowd.stats()
+  shownAnimalCount = shown
 }
-
 
 let gardenPlants: GardenPlants | null = null
 let coverageLookup: ((x: number, z: number) => number) | null = null
-/** Egg meshes can be clicked independently from animals to hatch when ready. */
-function createEggVisual(egg: { readonly id: number; readonly x: number; readonly z: number; readonly ready: boolean; readonly incubationProgress: number }): void {
-  removeEggVisual(egg.id)
-  const group = new THREE.Group()
-  group.name = `Incubating egg ${egg.id}`
-  group.position.set(egg.x, GARDEN_LAWN_Y + (gardenTerrain?.heightAt(egg.x, egg.z) ?? 0) + 0.14, egg.z)
-  group.renderOrder = 5
-  group.userData.eggId = egg.id
-  const shell = new THREE.Mesh(
-    new THREE.SphereGeometry(0.19, 18, 14),
-    new THREE.MeshStandardMaterial({ color: egg.ready ? '#fff2cf' : '#e7d9bc', roughness: 0.42 }),
-  )
-  shell.scale.set(0.78, 1.12, 0.78)
-  shell.castShadow = true
-  shell.userData.eggId = egg.id
-  group.add(shell)
-  const progressRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.29, 0.025, 7, 32),
-    new THREE.MeshBasicMaterial({ color: egg.ready ? '#f3c85b' : '#91c8a0', transparent: true, opacity: 0.9, depthWrite: false }),
-  )
-  progressRing.rotation.x = Math.PI / 2
-  progressRing.position.y = -0.11
-  progressRing.scale.setScalar(0.45 + 0.55 * egg.incubationProgress)
-  group.add(progressRing)
-  const sparkle = new THREE.Mesh(
-    new THREE.SphereGeometry(0.055, 8, 6),
-    new THREE.MeshBasicMaterial({ color: '#fff7d4', transparent: true, opacity: egg.ready ? 0.95 : 0.25, depthWrite: false }),
-  )
-  sparkle.position.set(0.11, 0.26, 0.02)
-  sparkle.userData.eggId = egg.id
-  progressRing.userData.eggId = egg.id
-  group.add(sparkle)
-  fairground.root.add(group)
-  eggVisuals.set(egg.id, group)
-}
-
-function updateEggVisual(egg: { readonly id: number; readonly x: number; readonly z: number; readonly ready: boolean; readonly incubationProgress: number }): void {
-  const group = eggVisuals.get(egg.id)
-  if (!group) {
-    createEggVisual(egg)
-    return
-  }
-  group.position.set(egg.x, GARDEN_LAWN_Y + (gardenTerrain?.heightAt(egg.x, egg.z) ?? 0) + 0.14 + (egg.ready ? 0.035 : 0), egg.z)
-  const shell = group.children[0] as THREE.Mesh
-  const ring = group.children[1] as THREE.Mesh
-  const sparkle = group.children[2] as THREE.Mesh
-  ;(shell.material as THREE.MeshStandardMaterial).color.set(egg.ready ? '#fff2cf' : '#e7d9bc')
-  ;(ring.material as THREE.MeshBasicMaterial).color.set(egg.ready ? '#f3c85b' : '#91c8a0')
-  ring.scale.setScalar(0.45 + 0.55 * egg.incubationProgress)
-  ;(sparkle.material as THREE.MeshBasicMaterial).opacity = egg.ready ? 0.95 : 0.25
-}
-
-function removeEggVisual(eggId: number): void {
-  const group = eggVisuals.get(eggId)
-  if (!group) return
-  group.parent?.remove(group)
-  group.traverse((object) => {
-    if (!(object instanceof THREE.Mesh)) return
-    object.geometry.dispose()
-    const materials = Array.isArray(object.material) ? object.material : [object.material]
-    materials.forEach((material) => material.dispose())
-  })
-  eggVisuals.delete(eggId)
-}
-
-function pickEgg(clientX: number, clientY: number): { id: number; x: number; z: number; ready: boolean } | null {
-  const rect = gameCanvas.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0 || !containsGardenPoint(0, 0, currentGardenBounds)) return null
-  worldPointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
-  worldRaycaster.setFromCamera(worldPointer, camera)
-  const hits = worldRaycaster.intersectObjects([...eggVisuals.values()], true)
-  let object: THREE.Object3D | null = hits[0]?.object ?? null
-  let id: number | undefined
-  while (object && id === undefined) {
-    id = object.userData.eggId as number | undefined
-    object = object.parent
-  }
-  if (id === undefined) return null
-  const egg = progress.eggs().find((entry) => entry.id === id)
-  return egg ? { id: egg.id, x: egg.x, z: egg.z, ready: egg.ready } : null
-}
 
 /**
  * What the ground is like at a world position, for the plant rules.
@@ -552,11 +433,9 @@ const animalNames = new Map<string, string>()
 const animalById = new Map<string, BalloonAnimal>()
 const animals: BalloonAnimal[] = []
 const animalPopulationLimit = ANIMAL_LIFE_CONFIG.maximumPopulation
-const animalCrowd = createAnimalCrowdRenderer(fairground.root)
 let focusedAnimalId: string | null = null
-let crowdStats = animalCrowd.stats()
-/** Where every visible animal was drawn this refresh, so the hover glow can sit under it. */
-let lastCrowdEntries: readonly AnimalCrowdEntry[] = []
+/** How many animal models were drawn at the last visibility refresh. */
+let shownAnimalCount = 0
 /**
  * Predator and prey. The owl's flight is stepped by `owlHunt` (which wraps the
  * pure sim in game/predator.ts); every chicken it takes is tallied in the ledger,
@@ -568,41 +447,58 @@ const owlHunt = createOwlHunt(fairground.root, GARDEN_LAWN_Y)
 interface PopInFlight { readonly burst: PopBurst; readonly animal: BalloonAnimal }
 const popsInFlight: PopInFlight[] = []
 /**
- * Live crowd fixtures for sustained load ramps. Empty in normal play; the
- * debug harness fills it via setCrowd and every reset path drains it, so a
- * fixture can never leak into a shipped session.
+ * Real animal models stood on the lawn for sustained load ramps. Empty in
+ * normal play; the debug harness fills it via setCrowd and every reset path
+ * drains it, so a fixture can never leak into a shipped session.
  */
-let crowdFixtureEntries: AnimalCrowdEntry[] = []
-function makeCrowdFixtures(requestedCount: number): AnimalCrowdEntry[] {
-  const count = Math.max(0, Math.min(animalPopulationLimit, Math.floor(requestedCount)))
-  return Array.from({ length: count }, (_, index) => {
-    const catalog = ANIMAL_CATALOG[index % ANIMAL_CATALOG.length]
-    const column = index % 40
-    const row = Math.floor(index / 40)
-    return {
-      id: `crowd-stress-${index}`,
-      species: catalog.id,
-      x: (column - 19.5) * 1.15,
-      y: GARDEN_LAWN_Y,
-      z: (row - 12.5) * 1.15,
-      heading: (index % 16) * Math.PI / 8,
-      scale: 0.85 + (index % 5) * 0.04,
-      wild: index % 3 === 0,
-      phase: (index * 0.61803398875) % (Math.PI * 2),
-    }
-  })
+const crowdFixtures: BalloonAnimal[] = []
+const CROWD_FIXTURE_LIMIT = 60
+function clearCrowdFixtures(): void {
+  for (const fixture of crowdFixtures) fixture.dispose()
+  crowdFixtures.length = 0
 }
-let lastCrowdRefreshAt = 0
-const eggVisuals = new Map<number, THREE.Group>()
+async function setCrowdFixtures(requestedCount: number): Promise<number> {
+  const count = Math.max(0, Math.min(CROWD_FIXTURE_LIMIT, Math.floor(requestedCount)))
+  if (crowdFixtures.length === count) return count
+  clearCrowdFixtures()
+  const walkers = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
+    .filter((entry) => !entry.flier)
+  const created = await Promise.all(Array.from({ length: count }, (_, index) => {
+    const options = walkers[index % walkers.length]
+    const column = index % 10
+    const row = Math.floor(index / 10)
+    return createBalloonAnimal(fairground.root, {
+      ...options,
+      name: `Crowd ${index}`,
+      instanceId: `crowd-stress-${index}`,
+      stage: 3,
+      appearance: index % 3 === 0 ? 'wild' : 'standard',
+      captureOnClick: false,
+      spawn: [(column - 4.5) * 1.6, (row - 2.5) * 1.6],
+      getGardenBounds: activeGardenBounds,
+    })
+  }))
+  for (const fixture of created) {
+    fixture.setDetailedVisible(true)
+    crowdFixtures.push(fixture)
+  }
+  return count
+}
+let lastVisibilityRefreshAt = 0
 const farmHomes = new Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>()
 const viewerStands = new Map<string, THREE.Vector3>()
 const animalCreations = new Map<string, Promise<BalloonAnimal>>()
-function createAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }): Promise<BalloonAnimal> {
+/**
+ * Build the model for a tracked animal. `emerging` is for an animal stepping out
+ * of its house: it is already a resident, so it appears in its own colours at
+ * the door instead of replaying the capture reveal.
+ */
+function createAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }, emerging = false): Promise<BalloonAnimal> {
   const existing = animalById.get(record.id)
   if (existing) return Promise.resolve(existing)
   const pending = animalCreations.get(record.id)
   if (pending) return pending
-  const creation = loadAnimalInstance(record, position)
+  const creation = loadAnimalInstance(record, position, emerging)
   animalCreations.set(record.id, creation)
   void creation.then(
     () => { if (animalCreations.get(record.id) === creation) animalCreations.delete(record.id) },
@@ -611,7 +507,7 @@ function createAnimalInstance(record: AnimalRecord, position?: { x: number; z: n
   return creation
 }
 
-async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }): Promise<BalloonAnimal> {
+async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }, emerging = false): Promise<BalloonAnimal> {
   if (animals.length + animalCreations.size >= animalPopulationLimit && !animalById.has(record.id)) return Promise.reject(new Error(`The farm is at its ${animalPopulationLimit}-animal limit`))
   const options = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
     .find((entry) => entry.id === record.species)
@@ -622,10 +518,11 @@ async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; 
   const animal = await createBalloonAnimal(fairground.root, {
     ...options,
     name,
-    onDetailedModelReady: () => refreshAnimalCrowd(performance.now() / 1000, true),
+    onDetailedModelReady: () => refreshAnimalVisibility(performance.now() / 1000, true),
     instanceId: record.id,
     growthScale: record.growth,
-    stage: 0,
+    stage: emerging ? record.stage : 0,
+    ...(emerging && record.stage >= 3 ? { appearance: 'standard' as const } : {}),
     captureOnClick: false,
     spawn: position ? [position.x, position.z] : carnivalSpawnFor(record.species),
     isLoose: () => isLoose(record.id),
@@ -633,8 +530,7 @@ async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; 
   })
   animal.stage = record.stage
   animal.setGrowth(record.growth * record.adultScale)
-  if (record.romancing && !record.baby) animal.setRomancing(true)
-  else animal.setDetailedVisible(false)
+  animal.setDetailedVisible(false)
   animalById.set(record.id, animal)
   animals.push(animal)
   farmHomes.set(record.id, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
@@ -650,14 +546,19 @@ async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; 
   if (latest) {
     animal.stage = latest.stage
     animal.setGrowth(latest.growth * latest.adultScale)
-    if (latest.romancing && !latest.baby) animal.setRomancing(true)
-    else animal.setDetailedVisible(false)
+    animal.setDetailedVisible(false)
   }
   return animal
 }
 // A loaded farm brings its animals back as they were: same ids, names, stages,
 // growth and places. Their models are built below exactly as a fresh farm's are.
 const savedPlaces = new Map<string, { x: number; z: number }>()
+/**
+ * Animals that were indoors when the farm was saved, and the door they went in
+ * by. They get no model at load; once this session's houses exist they go
+ * straight back into the nearest one of their kind (see `updateHousing`).
+ */
+const savedIndoors = new Map<string, { x: number; z: number }>()
 if (loadedSave) {
   progress.importState(loadedSave.life)
   for (const [id, place] of Object.entries(loadedSave.animalPlaces)) {
@@ -665,8 +566,13 @@ if (loadedSave) {
     if (place.name) animalNames.set(id, place.name)
     if (Number.isFinite(place.x) && Number.isFinite(place.z)) savedPlaces.set(id, { x: place.x, z: place.z })
   }
+  for (const saved of loadedSave.life.animals) {
+    if (saved.inside && progress.animal(saved.id)) savedIndoors.set(saved.id, savedPlaces.get(saved.id) ?? { x: 0, z: 0 })
+  }
 }
-await Promise.all(progress.all().map((record) => createAnimalInstance(record, savedPlaces.get(record.id))))
+await Promise.all(progress.all()
+  .filter((record) => !savedIndoors.has(record.id))
+  .map((record) => createAnimalInstance(record, savedPlaces.get(record.id))))
   const wallet = createWallet(STARTING_COINS)
 /** Tools and land the shop has sold. Farmer level decides what it will sell next. */
 const upgrades = createUpgradeLedger()
@@ -787,16 +693,15 @@ function measureFarm(): FarmState {
  * Keeping the event handling here means `balloon-animal.ts` never has to know
  * that a condition system exists. */
 function progressionHudState() {
-  const eggs = progress.eggs()
-
+  const housing = progress.housing()
   return {
     points: progression.points,
     level: progression.level,
     pointsToNextLevel: progression.pointsToNextLevel,
-    population: progress.all().filter((animal) => animal.stage > 0).length + eggs.length,
-    capacity: progress.capacity(fairground.farmExpansion?.state.level ?? 0),
-    eggs: eggs.length,
-    readyEggs: eggs.filter((egg) => egg.ready).length,
+    population: progress.all().filter((animal) => animal.stage > 0).length,
+    outside: animals.filter((animal) => !animal.isSold && (progress.animal(animal.instanceId)?.stage ?? 0) > 0).length,
+    houseRoom: housing.capacity,
+    houseUsed: housing.used,
   }
 }
 
@@ -839,7 +744,7 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
     }
     if (event.stage !== undefined && animal) {
       animal.stage = event.stage
-      animal.setDetailedVisible(animal.instanceId === focusedAnimalId || animal.isCapturing || animal.isRomancing)
+      animal.setDetailedVisible(animal.instanceId === focusedAnimalId || animal.isCapturing)
       if (event.kind === 'arriveCarnival') {
         const spawn = carnivalSpawnFor(event.species)
         animal.root.position.set(spawn[0], GARDEN_LAWN_Y, spawn[1])
@@ -860,28 +765,12 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
         }
       })
     }
-    if (event.kind === 'courtship') {
-      const partner = event.partnerId ? animalById.get(event.partnerId) : undefined
-      if (animal && partner && !animal.isFlier && !partner.isFlier) {
-        const separation = new THREE.Vector3(animal.root.position.x - partner.root.position.x, 0, animal.root.position.z - partner.root.position.z)
-        if (separation.lengthSq() < 1e-6) separation.set(1, 0, 0)
-        separation.setLength(0.9)
-        animal.setRomancing(true, partner.root.position.clone().add(separation))
-        partner.setRomancing(true, animal.root.position.clone().sub(separation))
-      }
+    if (event.kind === 'birth' && event.animalId) {
+      // The baby is born indoors; keeping it in view for a while brings it out of the door.
+      newbornUntil.set(event.animalId, performance.now() / 1000 + NEWBORN_SHOW_SECONDS)
+      notificationPanel.notifyMilestone('birth', animalDisplayName(event.species))
+      console.info(`[Animal Balloon Farm] a ${event.species} was born in ${event.houseId}`)
     }
-    if (event.kind === 'courtshipEnd' || event.kind === 'layEgg') {
-      animal?.setRomancing(false)
-      const partner = event.partnerId ? animalById.get(event.partnerId) : undefined
-      partner?.setRomancing(false)
-    }
-    if (event.kind === 'layEgg') {
-      const egg = progress.eggs().find((entry) => entry.id === event.eggId)
-      if (egg) createEggVisual(egg)
-      notificationPanel.notifyMilestone('egg', animalDisplayName(event.species))
-      console.info(`[Animal Balloon Farm] ${event.species} laid an egg`)
-    }
-    if (event.kind === 'hatch' && event.eggId !== undefined) removeEggVisual(event.eggId)
     if (event.kind === 'growUp' && animal) animal.setGrowth(1)
   }
 }
@@ -931,7 +820,7 @@ function popAnimal(prey: BalloonAnimal): void {
   })
   scene.add(burst.root)
   popsInFlight.push({ burst, animal: prey })
-  refreshAnimalCrowd(performance.now() / 1000, true)
+  refreshAnimalVisibility(performance.now() / 1000, true)
 }
 
 function updateOwlHunt(deltaSeconds: number): void {
@@ -1050,39 +939,296 @@ function updateSleepers(): void {
   }
 }
 
+/**
+ * Everything the animal sim reads from the scene, in one place. Every tick goes
+ * through here: a tick that left out the houses would evict every resident.
+ */
+function animalLifeSnapshot(): AnimalLifeSnapshot {
+  houseSpots = gardenProps?.houses() ?? []
+  return {
+    farm: currentFarmSnapshot(),
+    expansionLevel: fairground.farmExpansion?.state.level ?? 0,
+    positions: Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }])),
+    houses: houseSpots.map((house) => ({ id: house.id, prop: house.prop, x: house.x, z: house.z })),
+  }
+}
+
 function updateAnimalProgress(deltaSeconds: number): void {
   if (mode === 'viewer' || menu.isOpen || salePanel.isOpen) return
-  const positions = Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }]))
-  const events = progress.tick({ farm: currentFarmSnapshot(), expansionLevel: fairground.farmExpansion?.state.level ?? 0, positions }, deltaSeconds)
+  const events = progress.tick(animalLifeSnapshot(), deltaSeconds)
   handleAnimalLifeEvents(events)
   noteJournalStages()
-  const records = progress.all()
-  const recordsById = new Map(records.map((record) => [record.id, record]))
-  for (const record of records) {
+  for (const record of progress.all()) {
     const animal = animalById.get(record.id)
     if (!animal || animal.isSold) continue
     animal.setGrowth(record.growth * record.adultScale)
-    const partner = record.partnerId ? animalById.get(record.partnerId) : undefined
-    const partnerRecord = record.partnerId ? recordsById.get(record.partnerId) : undefined
-    if (record.romancing && partner && partnerRecord) {
-      const separation = new THREE.Vector3(animal.root.position.x - partner.root.position.x, 0, animal.root.position.z - partner.root.position.z)
-      if (separation.lengthSq() < 1e-6) separation.set(record.id.localeCompare(partnerRecord.id) < 0 ? -1 : 1, 0, 0)
-      separation.setLength(0.9)
-      animal.setRomancing(true, partner.root.position.clone().add(separation))
-    } else if (!record.paired) {
-      animal.setRomancing(false)
-    }
   }
-  const eggs = progress.eggs()
-  for (const egg of eggs) updateEggVisual(egg)
-  const liveEggIds = new Set(eggs.map((egg) => egg.id))
-  for (const eggId of [...eggVisuals.keys()]) if (!liveEggIds.has(eggId)) removeEggVisual(eggId)
+  updateHousing(performance.now() / 1000)
   // No appearance is applied from the event list here: `animal.stage = event.stage`
   // already routes the promotion through the model's residency gate, which keeps
   // a settle that arrives out at the tents waiting until the walk-in is done.
-  refreshAnimalCrowd(performance.now() / 1000)
+  refreshAnimalVisibility(performance.now() / 1000)
   // Land is no longer handed out for points: farmer level only opens the next
   // Land Deed at the shop (see game/tool-unlocks.ts), and buying it expands.
+}
+
+// -------------------------------------------------------------------- houses --
+//
+// Each species keeps a few animals out on the farm and the rest indoors (see
+// game/animal-housing.ts). Nobody owns a bed: an animal sent in walks to the
+// nearest house of its kind with room and takes a space, and its model is
+// disposed; one coming out is rebuilt at that house's door. That is what keeps
+// the drawn herd small however big it grows.
+
+/** Houses on the farm, refreshed every tick from the placed props. */
+let houseSpots: readonly HouseSpot[] = []
+/** Who the roster last put outside. */
+let outdoorRoster: ReadonlySet<string> = new Set()
+let lastRosterAt = -Infinity
+const ROSTER_REFRESH_SECONDS = 0.5
+/** Animals walking to a door to go in: which house, and when they set off. */
+const goingIn = new Map<string, { readonly houseId: string; readonly since: number }>()
+/** Give up on a walk in that never arrives (stuck on a prop) after this long. */
+const GOING_IN_TIMEOUT_SECONDS = 20
+/** A newborn stays in view this long after its birth, so the player sees it come out. */
+const newbornUntil = new Map<string, number>()
+const NEWBORN_SHOW_SECONDS = 25
+/** Every door seen this session, so an animal put out of a stored house appears where it stood. */
+const knownDoors = new Map<string, { readonly x: number; readonly z: number }>()
+/** The house each indoor animal went into. */
+const lastHouseOf = new Map<string, string>()
+
+function houseSpot(id: string | null | undefined): HouseSpot | undefined {
+  return id ? houseSpots.find((house) => house.id === id) : undefined
+}
+
+function hasHouseFor(species: string): boolean {
+  return houseSpots.some((house) => houseAccepts(house.prop, species))
+}
+
+/** Must stay in view: busy, selected, hunted, or not yet settled at the farm. */
+function pinnedOutside(id: string, nowSeconds: number): boolean {
+  if (id === focusedAnimalId || (newbornUntil.get(id) ?? 0) > nowSeconds) return true
+  const animal = animalById.get(id)
+  if (!animal) return false
+  return animal.isCapturing || animal.isResidencyPending || animal.isAlarmed || !animal.isAtFarm
+    || owlHunt.huntedIds().has(id)
+}
+
+/** Take an animal's model off the farm. The record stays in the sim. */
+function retireModel(animal: BalloonAnimal): void {
+  animal.setHomeTrip(null)
+  goingIn.delete(animal.instanceId)
+  animalById.delete(animal.instanceId)
+  const index = animals.indexOf(animal)
+  if (index >= 0) animals.splice(index, 1)
+  farmHomes.delete(animal.instanceId)
+  viewerStands.delete(animal.instanceId)
+  sleepBeds.delete(animal.instanceId)
+  animal.dispose()
+}
+
+/** Rebuild an animal's model at a door: it is stepping out onto the farm. */
+function stepOut(record: AnimalRecord, door: { readonly x: number; readonly z: number }): void {
+  if (animalById.has(record.id) || animalCreations.has(record.id)) return
+  void createAnimalInstance(record, door, true).then((created) => {
+    created.placeAt(door.x, door.z)
+    refreshAnimalVisibility(performance.now() / 1000, true)
+  })
+}
+
+function cancelTrip(id: string): void {
+  animalById.get(id)?.setHomeTrip(null)
+  goingIn.delete(id)
+}
+
+/** Give up waiting for a loaded farm's houses after this long and bring indoor animals out instead. */
+const SAVED_INDOORS_WAIT_SECONDS = 5
+let savedIndoorsSince: number | null = null
+
+/**
+ * Put animals that were indoors in a save back into this session's houses:
+ * the nearest house of their kind with room to the door they went in by. One
+ * with nowhere to go steps out there instead.
+ */
+function restoreSavedIndoors(nowSeconds: number): void {
+  if (savedIndoors.size === 0) return
+  savedIndoorsSince ??= nowSeconds
+  const waited = nowSeconds - savedIndoorsSince >= SAVED_INDOORS_WAIT_SECONDS
+  if (houseSpots.length === 0 && !waited) return
+  for (const [id, door] of savedIndoors) {
+    savedIndoors.delete(id)
+    const record = progress.animal(id)
+    if (!record) continue
+    const used = occupantsByHouse(progress.all())
+    const house = houseWithRoom(record.species, houseSpots, used, HOUSE_CAPACITY, door)
+    if (house && progress.enterHouse(id, house.id)) {
+      lastHouseOf.set(id, house.id)
+      continue
+    }
+    stepOut(record, door)
+  }
+}
+
+function updateHousing(nowSeconds: number): void {
+  if (mode !== 'farm') return
+  for (const house of houseSpots) knownDoors.set(house.id, { x: house.doorX, z: house.doorZ })
+  for (const [id, until] of newbornUntil) if (until <= nowSeconds || !progress.animal(id)) newbornUntil.delete(id)
+  restoreSavedIndoors(nowSeconds)
+  const records = progress.all().filter((record) => record.stage > 0)
+  if (nowSeconds - lastRosterAt >= ROSTER_REFRESH_SECONDS) {
+    lastRosterAt = nowSeconds
+    const roster: RosterAnimal[] = records.map((record) => ({
+      id: record.id,
+      species: record.species,
+      canGoIndoors: record.stage >= 3 && (record.insideId !== null || hasHouseFor(record.species)),
+      pinned: pinnedOutside(record.id, nowSeconds),
+    }))
+    outdoorRoster = chooseOutdoorRoster({ animals: roster, night: isNightTime(dayNightClock.timeOfDay), timeSeconds: nowSeconds })
+  }
+  // Space already promised to animals on their way in counts as taken.
+  const reserved = new Map<string, number>()
+  for (const trip of goingIn.values()) reserved.set(trip.houseId, (reserved.get(trip.houseId) ?? 0) + 1)
+  const used = new Map(occupantsByHouse(records, reserved))
+  for (const record of records) {
+    const animal = animalById.get(record.id)
+    if (record.insideId) {
+      lastHouseOf.set(record.id, record.insideId)
+      if (!outdoorRoster.has(record.id)) continue
+      const house = houseSpot(record.insideId)
+      progress.leaveHouse(record.id)
+      if (house) stepOut(record, { x: house.doorX, z: house.doorZ })
+      continue
+    }
+    if (!animal) {
+      // Out in the sim but with no model: its house was stored or sold from under it.
+      if (record.stage >= 3 && !savedIndoors.has(record.id)) stepOut(record, knownDoors.get(lastHouseOf.get(record.id) ?? '') ?? { x: 0, z: 0 })
+      continue
+    }
+    const trip = goingIn.get(record.id)
+    if (outdoorRoster.has(record.id) || record.stage < 3) {
+      if (trip) cancelTrip(record.id)
+      continue
+    }
+    if (!trip) {
+      const house = houseWithRoom(record.species, houseSpots, used, HOUSE_CAPACITY, { x: animal.currentPosition.x, z: animal.currentPosition.z })
+      // Every house of its kind is full: it stays out, over the outdoor limit.
+      if (!house) continue
+      used.set(house.id, (used.get(house.id) ?? 0) + 1)
+      if (animal.isFlier) {
+        if (progress.enterHouse(record.id, house.id)) retireModel(animal)
+        continue
+      }
+      animal.setHomeTrip({ x: house.doorX, z: house.doorZ })
+      goingIn.set(record.id, { houseId: house.id, since: nowSeconds })
+      continue
+    }
+    if (!houseSpot(trip.houseId)) {
+      cancelTrip(record.id)
+      continue
+    }
+    if (animal.isAtDoor || nowSeconds - trip.since > GOING_IN_TIMEOUT_SECONDS) {
+      // The house may have filled while it walked over; then it tries again next time.
+      if (progress.enterHouse(record.id, trip.houseId)) retireModel(animal)
+      else cancelTrip(record.id)
+    }
+  }
+  if (propCard.isOpen && selectedProp && isHouse(selectedProp.id)) propCard.setResidents(residentsOf(selectedProp))
+}
+
+/** Plural display name for a species row on a house card, e.g. "Geese". */
+function speciesPluralName(species: string): string {
+  const name = animalDisplayName(species)
+  if (species === 'sheep') return name
+  if (species === 'goose') return 'Geese'
+  return `${name}s`
+}
+
+/** The animals inside a house right now. Animals out on the farm belong to no house. */
+function animalsInside(siteId: string): AnimalRecord[] {
+  return progress.all().filter((record) => record.insideId === siteId)
+}
+
+/**
+ * Selling a house sells the animals inside it, at their usual prices. They have
+ * no model while indoors, so each is simply credited and forgotten; anyone out
+ * on the farm is untouched.
+ */
+function sellAnimalsInside(siteId: string): number {
+  let total = 0
+  for (const record of animalsInside(siteId)) {
+    const price = animalSaleValue(record.species as BalloonAnimalId, record.stage)
+    const model = animalById.get(record.id)
+    if (model) retireModel(model)
+    progress.remove(record.id)
+    newbornUntil.delete(record.id)
+    lastHouseOf.delete(record.id)
+    total += price
+  }
+  if (total > 0) salePanel.setWallet(wallet.credit(total))
+  return total
+}
+
+/** What a house's card shows: space in use and who is inside, by species. */
+function residentsOf(selection: { readonly id: PropId; readonly siteId: string }): PropResidents | null {
+  if (!isHouse(selection.id)) return null
+  const inside = animalsInside(selection.siteId)
+  const occupancy = houseOccupancy(selection.siteId, selection.id, progress.all(), HOUSE_CAPACITY)
+  return {
+    capacity: occupancy.capacity,
+    used: occupancy.used,
+    saleCount: inside.length,
+    saleValue: inside.reduce((sum, record) => sum + animalSaleValue(record.species as BalloonAnimalId, record.stage), 0),
+    rows: occupancy.species.map((row) => ({ name: speciesPluralName(row.species), inside: row.inside })),
+  }
+}
+
+// ---------------------------------------------------------------- collisions --
+
+/** Solid prop footprints, rebuilt a few times a second: props move rarely, animals every frame. */
+let collisionBoxes: readonly CollisionBox[] = []
+let collisionBoxesAt = -Infinity
+const COLLISION_BOX_REFRESH_SECONDS = 0.25
+/** An animal's footprint radius as a share of its catalog size (its longest side). */
+const BODY_RADIUS_SHARE = 0.24
+const bodySizeBySpecies = new Map(ANIMAL_CATALOG.map((entry) => [entry.id as string, entry.size]))
+
+/**
+ * Keep walking animals out of houses and other solid props, and out of each
+ * other. Only the animals out on the farm have models, so this never sees more
+ * than the outdoor limit (plus perf-ramp fixtures).
+ */
+function collideAnimals(nowSeconds: number): void {
+  if (mode !== 'farm') return
+  if (nowSeconds - collisionBoxesAt >= COLLISION_BOX_REFRESH_SECONDS) {
+    collisionBoxesAt = nowSeconds
+    collisionBoxes = (gardenProps?.occupancy.placed ?? [])
+      .filter((prop) => prop.id !== 'fence' && propDefinition(prop.id).blocking)
+      .map((prop) => footprintWorldRect(prop.id, prop.cell, prop.rotation))
+  }
+  const walkers: BalloonAnimal[] = []
+  const bodies: CollisionBody[] = []
+  for (const animal of [...animals, ...crowdFixtures]) {
+    if (animal.isFlier || animal.isSold) continue
+    const position = animal.currentPosition
+    walkers.push(animal)
+    bodies.push({
+      x: position.x,
+      z: position.z,
+      radius: (bodySizeBySpecies.get(animal.id) ?? 2) * BODY_RADIUS_SHARE * animal.currentScale,
+      fixed: animal.isSleeping || animal.isCapturing || animal.isRomancing,
+      // On its way in through a door, walking the gate route from the carnival, or
+      // asleep in a bed laid out beside a prop (moving it would wake it to walk back).
+      ghost: animal.isGoingHome || !animal.isAtFarm || animal.isSleeping,
+    })
+  }
+  resolveCollisions(bodies, collisionBoxes)
+  bodies.forEach((body, index) => {
+    const animal = walkers[index]
+    const dx = body.x - animal.currentPosition.x
+    const dz = body.z - animal.currentPosition.z
+    if (dx !== 0 || dz !== 0) animal.nudge(dx, dz)
+  })
 }
 
 // ---------------------------------------------------------------- game modes --
@@ -1236,7 +1382,7 @@ const viewer = createViewerPanel({
 function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }): void {
   propCard.close()
   focusedAnimalId = animal.instanceId
-  refreshAnimalCrowd(performance.now() / 1000, true)
+  refreshAnimalVisibility(performance.now() / 1000, true)
   plantCard.close()
   gardenPlants?.clearSelection()
   const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
@@ -1311,7 +1457,7 @@ function completeAnimalSale(instanceId: string): { balance: number; price: numbe
   if (animalIndex >= 0) animals.splice(animalIndex, 1)
   if (focusedAnimalId === animal.instanceId) focusedAnimalId = null
   animal.dispose()
-  refreshAnimalCrowd(performance.now() / 1000, true)
+  refreshAnimalVisibility(performance.now() / 1000, true)
   farmHomes.delete(animal.instanceId)
   viewerStands.delete(animal.instanceId)
   const balance = wallet.credit(price)
@@ -1371,6 +1517,8 @@ const propCard = createPropCard({
     const sold = selectedProp
     const coins = sold && gardenProps ? gardenProps.sell(sold) : null
     if (!sold || coins === null) return false
+    // A house goes with everyone who lives in it; the card warned about this.
+    if (isHouse(sold.id)) sellAnimalsInside(sold.siteId)
     salePanel.setWallet(wallet.credit(coins))
     const burst = createSellBurst(new THREE.Vector3(sold.anchor.x, sold.anchor.y, sold.anchor.z), coins)
     scene.add(burst.root)
@@ -1402,6 +1550,7 @@ function openPropCardFor(selection: PropSelection): void {
     salePrice: selection.salePrice,
     movable: selection.movable,
     rotatable: selection.rotatable,
+    residents: residentsOf(selection),
   }, { x: ndc.x * ui.viewport.width / 2, y: ndc.y * ui.viewport.height / 2 })
   syncFarmChrome()
 }
@@ -1527,9 +1676,9 @@ function playerDomStats() {
     pointsToNext: base.pointsToNextLevel,
     parcel,
     population: base.population,
-    capacity: base.capacity,
-    eggs: base.eggs,
-    readyEggs: base.readyEggs,
+    outside: base.outside,
+    houseRoom: base.houseRoom,
+    houseUsed: base.houseUsed,
     accomplishments: accomplishments.list(ownedSeedSpecies()),
     recentAccomplishments: accomplishments.recent(),
     levels: playerLevelCards(base.points, base.level),
@@ -1686,9 +1835,11 @@ function captureSave(): SaveGameData {
   const animalPlaces: Record<string, { x: number; z: number; name: string }> = {}
   for (const record of progress.all()) {
     const animal = animalById.get(record.id)
+    // An animal indoors has no model; its place is the door it went in by.
+    const door = record.insideId ? knownDoors.get(record.insideId) : undefined
     animalPlaces[record.id] = {
-      x: animal?.root.position.x ?? 0,
-      z: animal?.root.position.z ?? 0,
+      x: animal?.root.position.x ?? door?.x ?? 0,
+      z: animal?.root.position.z ?? door?.z ?? 0,
       name: animalNames.get(record.id) ?? '',
     }
   }
@@ -1870,7 +2021,6 @@ function applySavedWorld(data: SaveGameData): void {
       if (Number.isFinite(stage) && stage > 0) journalBestStage.set(species, Math.min(4, Math.floor(stage)))
     }
     noteJournalStages()
-    for (const egg of progress.eggs()) createEggVisual(egg)
   })
   section('tools', () => {
     if (data.tools.grassPack === 'tall' && upgrades.owns('tall-grass')) gardenTools?.setGrassPack('tall')
@@ -2032,7 +2182,7 @@ function setMode(next: GameMode): void {
       animal.root.position.copy(viewerStands.get(animal.instanceId)!)
       animal.setDetailedVisible(animal.stage > 0)
     }
-    refreshAnimalCrowd(performance.now() / 1000, true)
+    refreshAnimalVisibility(performance.now() / 1000, true)
     scene.remove(fairground.root)
     focusCamera()
   } else {
@@ -2047,7 +2197,7 @@ function setMode(next: GameMode): void {
       animal.root.position.copy(home.position)
     }
     scene.add(fairground.root)
-    refreshAnimalCrowd(performance.now() / 1000, true)
+    refreshAnimalVisibility(performance.now() / 1000, true)
     focusCamera()
   }
   syncFarmChrome()
@@ -2075,7 +2225,7 @@ function focusCamera(): void {
   camera.lookAt(cameraTarget)
   camera.updateMatrixWorld()
   updateCameraProjection()
-  refreshAnimalCrowd(performance.now() / 1000, true)
+  refreshAnimalVisibility(performance.now() / 1000, true)
 }
 
 /**
@@ -2282,7 +2432,7 @@ function pointerDesign(event: PointerEvent) {
 /**
  * Decide what the pointer looks like.
  *
- * Anything the pointer would act on (an animal, an egg, a prop, the shop door,
+ * Anything the pointer would act on (an animal, a prop, the shop door,
  * a plant's care marker) owns the cursor and the press, whatever tool is armed.
  * That is what lets a seedbag sweep across the lawn without grabbing a
  * neighbour. Otherwise the armed tool or seed owns the pointer over the farm,
@@ -2342,8 +2492,7 @@ function hoverInteractable(clientX: number, clientY: number): boolean {
   if (mode !== 'farm' || menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return false
   if (gardenProps?.placingId) return false
   return Boolean(
-    pickEgg(clientX, clientY)
-    || pickAnimal(clientX, clientY)
+    pickAnimal(clientX, clientY)
     || gardenProps?.propAt(clientX, clientY)
     || gardenProps?.pickShop(clientX, clientY)
     || gardenPlants?.markerKindAt(clientX, clientY)
@@ -2365,9 +2514,7 @@ function hoverTargetAt(clientX: number, clientY: number): { glow: HoverGlowTarge
   if (!pointerActive()) return null
   const animal = pickAnimal(clientX, clientY)
   if (animal) {
-    // A crowd-drawn animal has no detailed root that tracks it, so its last drawn spot is the truth.
-    const entry = lastCrowdEntries.find((candidate) => candidate.id === animal.instanceId)
-    const at = entry ?? animal.root.getWorldPosition(new THREE.Vector3())
+    const at = animal.root.getWorldPosition(new THREE.Vector3())
     const ground = GARDEN_LAWN_Y + (gardenTerrain?.heightAt(at.x, at.z) ?? 0)
     return { glow: { x: at.x, y: ground, z: at.z, radius: HOVER_ANIMAL_RADIUS }, plantId: null }
   }
@@ -2565,22 +2712,6 @@ function orbitPointerDown(event: PointerEvent): void {
       return
     }
     if (!journal.isOpen && !shed.isOpen && !shop.isOpen) {
-      const egg = pickEgg(event.clientX, event.clientY)
-      if (egg) {
-        const hatched = egg.ready ? progress.hatch(egg.id) : null
-        if (hatched?.animalId) {
-          removeEggVisual(egg.id)
-          const record = progress.animal(hatched.animalId)
-          if (record) void createAnimalInstance(record, { x: egg.x, z: egg.z }).then((created) => {
-          created.root.visible = true
-          created.stage = record.stage
-          farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairground.root, position: created.root.position.clone() })
-        })
-        } else {
-          console.info(egg.ready ? 'The garden is at capacity; earn another expansion before hatching.' : 'This egg is still incubating.')
-        }
-        return
-      }
       // A placed prop opens its info card (move, store or sell); then the shop door.
       const propHit = gardenProps?.inspectAt(event.clientX, event.clientY)
       if (propHit) {
@@ -2999,7 +3130,7 @@ interface GardenDebugHarness {
   performanceSamples(): readonly GardenFrameTiming[]
   layout(): Record<string, unknown>
   /** Fire a ticket on demand, for visual checks without playing to the milestone. */
-  notify(kind: 'carnival' | 'farm' | 'resident' | 'egg' | 'plant', subject: string): void
+  notify(kind: 'carnival' | 'farm' | 'resident' | 'birth' | 'plant', subject: string): void
   /** Animal conditions: every rung, whether it is revealed, and live numbers. */
   conditions(): AnimalConditionReport
   /** What the farm currently measures, in square meters. */
@@ -3034,13 +3165,14 @@ interface GardenDebugHarness {
   focusSpecies(species: string, height?: number): void
   /** Current earned progression and next expansion milestone. */
   progression(): { readonly points: number; readonly level: number; readonly pointsToNextLevel: number }
-  rendering(): { readonly animalCount: number; readonly populationLimit: number; readonly crowd: { readonly animalCount: number; readonly instancedAnimals: number; readonly detailedAnimals: number; readonly batches: number; readonly lowPolyTriangles: number } }
-  /** Hatch a ready egg and return the new baby event. */
-  hatch(eggId: number): AnimalLifeEvent | null
+  /** Drawn and tracked animal counts: `outside` have a model, `drawn` are on screen right now. */
+  rendering(): { readonly population: number; readonly outside: number; readonly drawn: number; readonly crowdFixtures: number; readonly houseRoom: number; readonly houseUsed: number }
+  /** Every placed house with its residents, split into indoors and out. */
+  houses(): readonly Record<string, unknown>[]
   /** Advance the herd and garden progression without simulating browser time. */
   simulate(seconds: number, steps?: number): AnimalConditionReport
-  /** Build deterministic render-load fixtures without changing shipped farm progression. */
-  crowdStressTest(count?: number): { readonly count: number; readonly renderCalls: number; readonly triangles: number; readonly crowd: AnimalCrowdStats }
+  /** Stand n real animal models on the lawn, render once, and report draw calls and triangles. The fixtures stay until clearCrowd. */
+  crowdStressTest(count?: number): Promise<{ readonly count: number; readonly renderCalls: number; readonly triangles: number }>
   /** One-line usage for every harness command, so agents stop rediscovering this surface. */
   help(): Record<string, string>
   /**
@@ -3048,9 +3180,9 @@ interface GardenDebugHarness {
    * Unlike crowdStressTest (one render, then restore), this keeps the load on
    * screen so scripted ramps can sample sustained frame times.
    */
-  setCrowd(count?: number): { readonly count: number; readonly crowd: AnimalCrowdStats }
+  setCrowd(count?: number): Promise<{ readonly count: number }>
   /** Remove live crowd fixtures and restore the real herd. */
-  clearCrowd(): { readonly count: number; readonly crowd: AnimalCrowdStats }
+  clearCrowd(): { readonly count: number }
 
   /** Snapshot the current terrain, water and active parcel dimensions. */
   gardenReport(): { readonly bounds: { readonly halfWidth: number; readonly halfDepth: number }; readonly terrain: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number }; readonly water: { readonly cols: number; readonly rows: number; readonly originX: number; readonly originZ: number } }
@@ -3439,8 +3571,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       gardenWater?.settle()
       gardenWaterMesh?.markDirty()
       gardenWaterMesh?.update(performance.now() * 0.001)
-      crowdFixtureEntries = []
-      refreshAnimalCrowd(performance.now() / 1000, true)
+      clearCrowdFixtures()
+      refreshAnimalVisibility(performance.now() / 1000, true)
     },
     waterSummary: () => gardenWater?.summary() ?? null,
     selectTool: (tool) => selectGardenTool(tool),
@@ -3467,19 +3599,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       focusedAnimalId = animal.instanceId
   // Resetting the stage still replays the model's capture transition.
       const id = animal.instanceId
-      const lifeRecord = progress.animal(id)
-      if (lifeRecord?.paired && lifeRecord.partnerId) {
-        progress.setStage(lifeRecord.partnerId, 0)
-        const partnerModel = animalById.get(lifeRecord.partnerId)
-        if (partnerModel) partnerModel.stage = 0
-      }
-      if (target < 4) animal.setRomancing(false)
       handleAnimalLifeEvents(progress.setStage(id, target))
       animal.stage = target
       animal.setDetailedVisible(target > 0)
       // One more tick so a settled animal is reflected in the resident set the
       // next species is judged against.
-      refreshAnimalCrowd(performance.now() / 1000, true)
+      refreshAnimalVisibility(performance.now() / 1000, true)
       return reportConditions()
     },
     sowGrass: (x, z, radius, pack) => {
@@ -3515,7 +3640,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     },
     advance: (steps = 1, secondsPerStep = 1 / 30) => {
       for (let step = 0; step < steps; step += 1) {
-        const events = progress.tick({ farm: currentFarmSnapshot(), expansionLevel: fairground.farmExpansion?.state.level ?? 0 }, secondsPerStep)
+        const events = progress.tick(animalLifeSnapshot(), secondsPerStep)
         handleAnimalLifeEvents(events)
       }
       return reportConditions()
@@ -3538,18 +3663,20 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       popsInFlight.length = 0
       predationLedger.clear()
       owlHunt.reset()
-      for (const eggId of [...eggVisuals.keys()]) removeEggVisual(eggId)
       animalById.clear()
       for (const burst of sellBursts) {
         scene.remove(burst.root)
         burst.dispose()
       }
       sellBursts.length = 0
-      crowdFixtureEntries = []
+      clearCrowdFixtures()
       focusedAnimalId = null
-      animalCrowd.update([], new Set(), performance.now() / 1000)
-      crowdStats = animalCrowd.stats()
-      lastCrowdRefreshAt = 0
+      goingIn.clear()
+      newbornUntil.clear()
+      lastHouseOf.clear()
+      outdoorRoster = new Set()
+      lastRosterAt = -Infinity
+      lastVisibilityRefreshAt = 0
       animalNames.clear()
       farmHomes.clear()
       viewerStands.clear()
@@ -3609,64 +3736,44 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       updateCameraProjection()
     },
     progression: () => ({ points: progression.points, level: progression.level, pointsToNextLevel: progression.pointsToNextLevel }),
-    rendering: () => ({ animalCount: animals.filter((animal) => !animal.isSold).length, populationLimit: animalPopulationLimit, crowd: { ...crowdStats } }),
-    crowdStressTest: (requestedCount = animalPopulationLimit) => {
-      const fixtures = makeCrowdFixtures(requestedCount)
-      const count = fixtures.length
-      const nowSeconds = performance.now() / 1000
+    rendering: () => {
+      const housing = progress.housing()
+      return {
+        population: progress.all().filter((record) => record.stage > 0).length,
+        outside: animals.filter((animal) => !animal.isSold && (progress.animal(animal.instanceId)?.stage ?? 0) > 0).length,
+        drawn: shownAnimalCount,
+        crowdFixtures: crowdFixtures.length,
+        houseRoom: housing.capacity,
+        houseUsed: housing.used,
+      }
+    },
+    houses: () => houseSpots.map((house) => {
+      return { ...house, residents: residentsOf({ id: house.prop, siteId: house.id }) }
+    }),
+    crowdStressTest: async (requestedCount = OUTDOOR_LIMITS.total) => {
       if (mode !== 'farm') throw new Error('Crowd stress tests can run only while the farm scene is active')
-      const savedHalfHeight = viewHalfHeight
-      const savedTarget = cameraTarget.clone()
-      const savedPosition = camera.position.clone()
-      const savedQuaternion = camera.quaternion.clone()
-      const savedProjection = camera.projectionMatrix.clone()
-      const savedProjectionInverse = camera.projectionMatrixInverse.clone()
+      const count = await setCrowdFixtures(requestedCount)
+      focusCamera()
       const previousAutoReset = renderer.info.autoReset
       try {
         renderer.info.autoReset = true
         renderer.info.reset()
-        viewHalfHeight = Math.max(viewHalfHeight, 35)
-        updateCameraProjection()
-        cameraTarget.set(0, GARDEN_LAWN_Y + 0.6, 0)
-        camera.position.set(35, 34, 47)
-        camera.lookAt(cameraTarget)
-        camera.updateMatrixWorld(true)
-        animalCrowd.setVisible(true)
-        animalCrowd.update(fixtures, new Set(), nowSeconds)
         renderer.render(scene, camera)
-        return {
-          count,
-          renderCalls: renderer.info.render.calls,
-          triangles: renderer.info.render.triangles,
-          crowd: animalCrowd.stats(),
-        }
+        return { count, renderCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles }
       } finally {
-        viewHalfHeight = savedHalfHeight
-        cameraTarget.copy(savedTarget)
-        camera.position.copy(savedPosition)
-        camera.quaternion.copy(savedQuaternion)
-        camera.projectionMatrix.copy(savedProjection)
-        camera.projectionMatrixInverse.copy(savedProjectionInverse)
-        camera.updateMatrixWorld(true)
         renderer.info.autoReset = previousAutoReset
-        animalCrowd.setVisible(mode === 'farm')
-        refreshAnimalCrowd(nowSeconds, true)
         renderer.info.reset()
       }
     },
-    setCrowd: (requestedCount = animalPopulationLimit) => {
+    setCrowd: async (requestedCount = OUTDOOR_LIMITS.total) => {
       if (mode !== 'farm') throw new Error('Crowd fixtures can run only while the farm scene is active')
-      crowdFixtureEntries = makeCrowdFixtures(requestedCount)
+      const count = await setCrowdFixtures(requestedCount)
       focusCamera()
-      refreshAnimalCrowd(performance.now() / 1000, true)
-      crowdStats = animalCrowd.stats()
-      return { count: crowdFixtureEntries.length, crowd: { ...crowdStats } }
+      return { count }
     },
     clearCrowd: () => {
-      crowdFixtureEntries = []
-      refreshAnimalCrowd(performance.now() / 1000, true)
-      crowdStats = animalCrowd.stats()
-      return { count: 0, crowd: { ...crowdStats } }
+      clearCrowdFixtures()
+      return { count: 0 }
     },
     help: () => ({
       state: 'Snapshot: mode, menu, camera, tools, water, herd summary.',
@@ -3694,12 +3801,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       carnivalReport: 'carnivalReport() — inspect close attraction identities and migration phases.',
       progression: 'Points, level, next expansion milestone.',
       'selectTool / projectGardenPoint': 'Arm a tool; project garden meters to canvas pixels for pointer tests.',
-      'animalReport / rendering': 'Herd list; live counts + crowd stats.',
-      hatch: 'Hatch a ready egg by id.',
+      'animalReport / rendering': 'Herd list; population, animals outside, models drawn, beds.',
+      houses: 'Every placed house with beds used and residents in or out, by species.',
       'grantPoints / grantSeeds': 'Jump progression level / stock the seed shed without playing.',
       'grantCoins / shop / buy / placeProp / placeFence / propCounts': 'Wallet + prop placement without UI clicks.',
-      crowdStressTest: 'crowdStressTest(n) — one render of n fixtures; returns calls/tris. Restores after.',
-      'setCrowd / clearCrowd': 'setCrowd(n) keeps n fixtures live for sustained ramps; clearCrowd restores.',
+      crowdStressTest: 'crowdStressTest(n) — stand n real animal models up and render once; returns calls/tris.',
+      'setCrowd / clearCrowd': 'setCrowd(n) keeps n real animal models live for sustained ramps; clearCrowd removes them.',
       'scenarios / runScenario / holdTime': 'scenarios() lists saved test states; runScenario(id) jumps into one; ?scenario=id does it on load; holdTime(bool) freezes the clock.',
       performanceSamples: 'Per-frame work/interval splits. Basis for every perf scenario; see TESTING.md.',
     }),
@@ -3707,12 +3814,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       if (!Number.isFinite(seconds) || seconds < 0 || !Number.isFinite(steps) || steps < 1) return reportConditions()
       const dt = seconds / Math.floor(steps)
       for (let step = 0; step < Math.floor(steps); step += 1) {
-        const events = progress.tick({
-          farm: currentFarmSnapshot(),
-          expansionLevel: fairground.farmExpansion?.state.level ?? 0,
-          positions: Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }])),
-        }, dt)
+        const events = progress.tick(animalLifeSnapshot(), dt)
         handleAnimalLifeEvents(events)
+        updateHousing(performance.now() / 1000)
       }
       return reportConditions()
     },
@@ -3817,19 +3921,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
         })
       }
       return surfaces
-    },
-    hatch: (eggId) => {
-      const egg = progress.eggs().find((entry) => entry.id === eggId)
-      if (!egg) return null
-      const event = progress.hatch(eggId)
-      if (event) removeEggVisual(eggId)
-      const record = event?.animalId ? progress.animal(event.animalId) : undefined
-      if (record) void createAnimalInstance(record, { x: egg.x, z: egg.z }).then((created) => {
-        created.stage = record.stage
-        created.setDetailedVisible(true)
-        farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairground.root, position: created.root.position.clone() })
-      })
-      return event
     },
     camera: () => cameraReport(),
     advanceTour: (seconds) => {
@@ -4036,6 +4127,8 @@ function frame(now: number): void {
   updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
+  crowdFixtures.forEach((fixture) => fixture.update(delta))
+  collideAnimals(now / 1000)
   if (!menu.isOpen && !salePanel.isOpen) updateOwlHunt(delta)
   updateSleepers()
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
@@ -4058,7 +4151,7 @@ function frame(now: number): void {
       if (stand) animal.root.position.copy(stand)
     }
   }
-  refreshAnimalCrowd(now / 1000)
+  refreshAnimalVisibility(now / 1000)
   refreshHover(now / 1000, delta)
   const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0

@@ -1,29 +1,33 @@
 import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, isNightOnly, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
 import { requirementMet, type FarmSnapshot, type RequirementStatus } from './animal-progress'
 import { farmMetric } from './farm-state'
+import { freeRoomFor, HOUSE_CAPACITY, houseAccepts, houseWithRoom, occupantsByHouse, OUTDOOR_LIMITS, type HouseSite } from './animal-housing'
 import type { ProgressAction } from './farm-progression'
 
 export interface SpeciesAnimalTuning {
   readonly visitDelaySeconds?: number
   readonly enterFarmSeconds?: number
-  readonly romanceChance?: number
-  readonly romanceCooldownSeconds?: number
-  readonly eggIncubationSeconds?: number
+  /** Seconds between births for one breeding pair with room in a house. */
+  readonly breedIntervalSeconds?: number
   readonly babyDurationSeconds?: number
-  readonly courtshipSeconds?: number
 }
 
 export interface AnimalLifeConfig {
   readonly visitDelaySeconds: number
   readonly enterFarmSeconds: number
   readonly arrivalIntervalSeconds: number
-  readonly baseResidentCapacity: number
-  readonly residentsPerExpansion: number
+  /**
+   * Animals of one species the farm keeps out in the open. Anyone past this
+   * needs room in a house.
+   */
+  readonly unhousedPerSpecies: number
+  /** Animals each house holds. */
+  readonly houseCapacity: number
+  /** Hard ceiling on tracked animal records, a guard against runaway breeding. */
   readonly maximumPopulation: number
-  readonly romanceChance: number
-  readonly romanceCooldownSeconds: number
-  readonly courtshipSeconds: number
-  readonly eggIncubationSeconds: number
+  readonly breedIntervalSeconds: number
+  /** Breeding speeds up with more pairs, up to this many at once. */
+  readonly maxBreedingPairs: number
   readonly babyDurationSeconds: number
   readonly maxNewVisitorsPerTick: number
   readonly adultScale: number
@@ -34,13 +38,11 @@ export const ANIMAL_LIFE_CONFIG: AnimalLifeConfig = {
   visitDelaySeconds: 10,
   enterFarmSeconds: 3,
   arrivalIntervalSeconds: 24,
-  baseResidentCapacity: 6,
-  residentsPerExpansion: 3,
-  maximumPopulation: 50,
-  romanceChance: 0.28,
-  romanceCooldownSeconds: 180,
-  courtshipSeconds: 3.5,
-  eggIncubationSeconds: 60,
+  unhousedPerSpecies: OUTDOOR_LIMITS.perSpecies,
+  houseCapacity: HOUSE_CAPACITY,
+  maximumPopulation: 400,
+  breedIntervalSeconds: 150,
+  maxBreedingPairs: 3,
   babyDurationSeconds: 60,
   maxNewVisitorsPerTick: 1,
   adultScale: 1,
@@ -51,36 +53,26 @@ export interface AnimalRecord {
   readonly species: string
   readonly stage: AnimalStage
   readonly elapsed: number
-  readonly paired: boolean
-  readonly partnerId: string | null
-  readonly romancing: boolean
+  /** The house it is inside right now, or null when it is out on the farm. */
+  readonly insideId: string | null
   readonly appearance: 'wild' | 'standard'
   readonly heartEyes: boolean
   readonly invited: boolean
   readonly baby: boolean
   readonly ageSeconds: number
   readonly growth: number
-  readonly romanceCooldown: number
   readonly parentIds: readonly string[]
   readonly adultScale: number
 }
 
-export interface EggRecord {
-  readonly id: number
-  readonly species: string
-  readonly x: number
-  readonly z: number
-  readonly incubation: number
-  readonly ready: boolean
-  readonly incubationProgress: number
-}
-
 export interface AnimalLifeEvent {
-  readonly kind: 'arriveCarnival' | 'enterFarm' | 'settle' | 'fallInLove' | 'courtship' | 'courtshipEnd' | 'layEgg' | 'hatch' | 'growUp'
+  readonly kind: 'arriveCarnival' | 'enterFarm' | 'settle' | 'fallInLove' | 'birth' | 'growUp'
   readonly animalId?: string
-  readonly partnerId?: string
+  /** For a birth: the two parents. */
+  readonly parentIds?: readonly string[]
+  /** For a birth: the house the baby was born in. */
+  readonly houseId?: string
   readonly species: string
-  readonly eggId?: number
   readonly stage?: AnimalStage
   readonly action?: ProgressAction
 }
@@ -89,9 +81,21 @@ export interface AnimalLifeSnapshot {
   readonly farm: FarmSnapshot
   readonly expansionLevel: number
   readonly positions?: Readonly<Record<string, { readonly x: number; readonly z: number }>>
+  /** Houses standing on the farm. Missing means none. */
+  readonly houses?: readonly HouseSite[]
 }
 
-/** One animal as saved: the whole mutable record, including a courtship in progress. */
+export interface HousingReport {
+  /** Room across every house, and how many animals are inside. */
+  readonly capacity: number
+  readonly used: number
+}
+
+/**
+ * One animal as saved: the whole mutable record. `inside` says it was indoors.
+ * House ids are rebuilt every session, so the caller puts it back into a house
+ * of its kind after loading rather than the sim trusting an old id.
+ */
 export interface SavedAnimal {
   readonly id: string
   readonly species: string
@@ -100,31 +104,19 @@ export interface SavedAnimal {
   readonly invited: boolean
   readonly baby: boolean
   readonly ageSeconds: number
-  readonly romanceCooldown: number
   readonly parentIds: readonly string[]
-  readonly paired: boolean
-  readonly courtshipPartnerId: string | null
-  readonly courtshipRemaining: number
-  readonly courtshipSuccessful: boolean
+  readonly inside?: boolean
 }
 
-export interface SavedEgg {
-  readonly id: number
-  readonly species: string
-  readonly x: number
-  readonly z: number
-  readonly incubation: number
-  readonly parentIds: readonly string[]
-}
-
-/** Everything `createAnimalLife` needs to carry on exactly where a farm left off. */
+/**
+ * Everything `createAnimalLife` needs to carry on where a farm left off. Saves
+ * from before houses also carry eggs and courtships; those fields are ignored.
+ */
 export interface AnimalLifeState {
   readonly animals: readonly SavedAnimal[]
-  readonly eggs: readonly SavedEgg[]
   readonly discovered: readonly string[]
   readonly pendingVisitors: readonly string[]
   readonly nextAnimalId: number
-  readonly nextEggId: number
   readonly arrivalElapsed: number
 }
 
@@ -137,15 +129,23 @@ export interface AnimalLife {
   all(): readonly AnimalRecord[]
   /** Add a tracked animal record, used by deterministic load/scale harnesses. */
   add(species: string, stage?: AnimalStage, baby?: boolean): AnimalRecord | null
-  eggs(): readonly EggRecord[]
   animal(id: string): AnimalRecord | undefined
   statusOf(id: string): readonly RequirementStatus[]
   tick(snapshot: AnimalLifeSnapshot, deltaSeconds: number): readonly AnimalLifeEvent[]
   setStage(id: string, stage: AnimalStage): readonly AnimalLifeEvent[]
   discover(species: string): readonly AnimalLifeEvent[]
-  hatch(eggId: number): AnimalLifeEvent | null
   remove(id: string): AnimalRecord | null
-  capacity(expansionLevel: number): number
+  /** Room across every house, and how many animals are inside. */
+  housing(): HousingReport
+  /** Whether a species could take one more animal: a spare place outdoors or room in a house. */
+  hasRoomFor(species: string): boolean
+  /**
+   * Take an animal indoors. Refused for a visitor, a house that is gone or does
+   * not take its species, or a full house.
+   */
+  enterHouse(id: string, houseId: string): boolean
+  /** Bring an animal back out onto the farm. */
+  leaveHouse(id: string): void
   reset(): void
   /** A plain-data copy of the whole simulation, for saving. */
   exportState(): AnimalLifeState
@@ -165,45 +165,28 @@ interface MutableAnimal {
   invited: boolean
   baby: boolean
   ageSeconds: number
-  romanceCooldown: number
   parentIds: readonly string[]
-  paired: boolean
-  courtshipPartnerId: string | null
-  courtshipRemaining: number
-  courtshipSuccessful: boolean
-}
-
-interface MutableEgg {
-  id: number
-  species: string
-  x: number
-  z: number
-  incubation: number
-  parentIds: readonly string[]
+  insideId: string | null
 }
 
 export function createAnimalLife(speciesIds: readonly string[], options: AnimalLifeOptions = {}): AnimalLife {
   const config: AnimalLifeConfig = { ...ANIMAL_LIFE_CONFIG, ...options.config }
-  const random = options.random ?? Math.random
   const animals = new Map<string, MutableAnimal>()
-  const eggs = new Map<number, MutableEgg>()
   const discovered = new Set<string>()
   const pendingVisitors: string[] = []
   let nextAnimalId = 1
-  let nextEggId = 1
   let arrivalElapsed = 0
   let lastSnapshot: AnimalLifeSnapshot | null = null
-  const clampedChance = Math.max(0, Math.min(1, config.romanceChance))
-  const inFlightAnimalIds = new Set<string>()
+  let houses: readonly HouseSite[] = []
+  /** Seconds each species has spent ready to breed since its last birth. */
+  const breedElapsed = new Map<string, number>()
+  let nextParent = 0
 
   function tuningFor(species: string): Required<SpeciesAnimalTuning> {
     return {
       visitDelaySeconds: config.species?.[species]?.visitDelaySeconds ?? config.visitDelaySeconds,
       enterFarmSeconds: config.species?.[species]?.enterFarmSeconds ?? config.enterFarmSeconds,
-      romanceChance: Math.max(0, Math.min(1, config.species?.[species]?.romanceChance ?? config.romanceChance)),
-      romanceCooldownSeconds: config.species?.[species]?.romanceCooldownSeconds ?? config.romanceCooldownSeconds,
-      courtshipSeconds: config.species?.[species]?.courtshipSeconds ?? config.courtshipSeconds,
-      eggIncubationSeconds: config.species?.[species]?.eggIncubationSeconds ?? config.eggIncubationSeconds,
+      breedIntervalSeconds: config.species?.[species]?.breedIntervalSeconds ?? config.breedIntervalSeconds,
       babyDurationSeconds: config.species?.[species]?.babyDurationSeconds ?? config.babyDurationSeconds,
     }
   }
@@ -218,12 +201,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       invited: stage >= 2,
       baby,
       ageSeconds: 0,
-      romanceCooldown: 0,
       parentIds,
-      paired: false,
-      courtshipPartnerId: null,
-      courtshipRemaining: 0,
-      courtshipSuccessful: false,
+      insideId: null,
     }
     animals.set(id, animal)
     return animal
@@ -236,16 +215,13 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       species: animal.species,
       stage: animal.stage,
       elapsed: animal.elapsed,
-      paired: animal.paired,
-      partnerId: animal.courtshipPartnerId,
-      romancing: animal.courtshipPartnerId !== null,
+      insideId: animal.insideId,
       appearance: stageAppearance(animal.stage),
       heartEyes: stageHasHeartEyes(animal.stage),
       invited: animal.invited,
       baby: animal.baby,
       ageSeconds: animal.ageSeconds,
       growth,
-      romanceCooldown: animal.romanceCooldown,
       parentIds: animal.parentIds,
       adultScale: config.adultScale,
     }
@@ -263,26 +239,68 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     }
   }
 
-  function populationCount(): number {
-    return [...animals.values()].filter((animal) => animal.stage > 0).length + eggs.size
-  }
-
   function hasPopulationSlot(): boolean {
-    return trackedCount() < config.maximumPopulation
-  }
-
-  function trackedCount(): number {
-    return animals.size + eggs.size
+    return animals.size < config.maximumPopulation
   }
 
   function populationBySpecies(species: string): number {
     return [...animals.values()].filter((animal) => animal.species === species && animal.stage > 0).length
   }
 
+  function occupancy(): ReadonlyMap<string, number> {
+    return occupantsByHouse([...animals.values()])
+  }
 
-  function capacity(level: number): number {
-    return Math.min(config.maximumPopulation,
-      config.baseResidentCapacity + Math.max(0, Math.floor(level)) * config.residentsPerExpansion)
+  /** An animal whose house was sold or stored is back out on the farm. */
+  function evictFromMissingHouses(): void {
+    const standing = new Map(houses.map((house) => [house.id, house]))
+    for (const animal of animals.values()) {
+      if (!animal.insideId) continue
+      const house = standing.get(animal.insideId)
+      if (!house || !houseAccepts(house.prop, animal.species)) animal.insideId = null
+    }
+  }
+
+  function hasRoomFor(species: string): boolean {
+    if (!hasPopulationSlot()) return false
+    let outdoors = 0
+    for (const animal of animals.values()) {
+      if (animal.species === species && animal.stage > 0 && !animal.insideId) outdoors += 1
+    }
+    return outdoors < config.unhousedPerSpecies || freeRoomFor(species, houses, occupancy(), config.houseCapacity) > 0
+  }
+
+  /**
+   * Births. A species breeds while it has two adults that love the farm and a
+   * house with room; with more pairs it breeds faster. The baby is born
+   * indoors, in the emptiest house that takes its species.
+   */
+  function breed(dt: number, events: AnimalLifeEvent[]): void {
+    const adultsBySpecies = new Map<string, MutableAnimal[]>()
+    for (const animal of animals.values()) {
+      if (animal.baby || animal.stage < 4) continue
+      const list = adultsBySpecies.get(animal.species) ?? []
+      list.push(animal)
+      adultsBySpecies.set(animal.species, list)
+    }
+    for (const species of speciesIds) {
+      const adults = adultsBySpecies.get(species) ?? []
+      const pairs = Math.min(config.maxBreedingPairs, Math.floor(adults.length / 2))
+      const house = pairs > 0 && hasPopulationSlot() ? houseWithRoom(species, houses, occupancy(), config.houseCapacity) : null
+      if (!house) continue
+      const elapsed = (breedElapsed.get(species) ?? 0) + dt * pairs
+      if (elapsed < tuningFor(species).breedIntervalSeconds) {
+        breedElapsed.set(species, elapsed)
+        continue
+      }
+      breedElapsed.set(species, 0)
+      const first = adults[nextParent % adults.length]
+      const second = adults[(nextParent + 1) % adults.length]
+      nextParent += 1
+      const baby = newAnimal(species, 3, true, [first.id, second.id])
+      baby.insideId = house.id
+      events.push({ kind: 'birth', animalId: baby.id, parentIds: [first.id, second.id], houseId: house.id, species, action: 'breedSpecies' })
+    }
   }
 
   for (const species of speciesIds.slice(0, config.maximumPopulation)) newAnimal(species, 0)
@@ -305,7 +323,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     for (const species of speciesIds) {
       const hasResident = [...animals.values()].some((animal) => animal.species === species && !animal.baby && animal.stage >= 3)
       const homeRequirement = getSpeciesConditions(species)[2]?.requirement
-      if (!hasResident || !requirementMet(homeRequirement, farm)) continue
+      if (!hasResident || !requirementMet(homeRequirement, farm) || !hasRoomFor(species)) continue
       if (populationBySpecies(species) >= Math.max(2, 2 + Math.floor((lastSnapshot?.expansionLevel ?? 0) / 2))) continue
       pendingVisitors.push(species)
       return
@@ -314,11 +332,6 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
 
   const api: AnimalLife = {
     all: () => [...animals.values()].map(view),
-    eggs: () => [...eggs.values()].map((egg) => {
-      const duration = Math.max(0, tuningFor(egg.species).eggIncubationSeconds)
-      const incubationProgress = duration === 0 ? 1 : Math.min(1, egg.incubation / duration)
-      return { ...egg, ready: incubationProgress >= 1, incubationProgress }
-    }),
     animal: (id) => { const entry = animals.get(id); return entry ? view(entry) : undefined },
     add(species, stage = 0, baby = false) {
       if (!speciesIds.includes(species) || !hasPopulationSlot()) return null
@@ -345,7 +358,24 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         }
       })
     },
-    capacity,
+    housing() {
+      const used = [...animals.values()].filter((animal) => animal.insideId).length
+      return { capacity: houses.length * config.houseCapacity, used }
+    },
+    hasRoomFor,
+    enterHouse(id, houseId) {
+      const animal = animals.get(id)
+      const house = houses.find((entry) => entry.id === houseId)
+      if (!animal || !house || animal.stage < 3 || !houseAccepts(house.prop, animal.species)) return false
+      if (animal.insideId === houseId) return true
+      if ((occupancy().get(houseId) ?? 0) >= config.houseCapacity) return false
+      animal.insideId = houseId
+      return true
+    },
+    leaveHouse(id) {
+      const animal = animals.get(id)
+      if (animal) animal.insideId = null
+    },
     discover(species) {
       if (!speciesIds.includes(species) || discovered.has(species)) return []
       discovered.add(species)
@@ -359,42 +389,23 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       eventsFor(animal, stage, events, false)
       return events
     },
-    hatch(eggId) {
-      const egg = eggs.get(eggId)
-      if (!egg || egg.incubation < tuningFor(egg.species).eggIncubationSeconds
-        || populationCount() > capacity(lastSnapshot?.expansionLevel ?? 0)) return null
-      eggs.delete(eggId)
-      const baby = newAnimal(egg.species, 3, true, egg.parentIds)
-      baby.ageSeconds = 0
-      return { kind: 'hatch', animalId: baby.id, species: baby.species, eggId }
-    },
     remove(id) {
       const animal = animals.get(id)
       if (!animal) return null
-      if (animal.courtshipPartnerId) {
-        const partner = animals.get(animal.courtshipPartnerId)
-        if (partner) {
-          partner.courtshipPartnerId = null
-          partner.courtshipRemaining = 0
-          partner.paired = false
-        }
-        inFlightAnimalIds.delete(animal.id)
-        inFlightAnimalIds.delete(animal.courtshipPartnerId)
-      }
       animals.delete(id)
       // Selling (or losing) the last of a species must not end its visits for
       // good. Discovery is a one-time unlock, and repeat guests only come for a
       // species that already has a resident, so without this the farm would
       // never see another cow after the first one left.
       const speciesLeft = [...animals.values()].some((other) => other.species === animal.species && other.stage > 0)
-        || [...eggs.values()].some((egg) => egg.species === animal.species)
       if (animal.stage > 0 && !speciesLeft && !pendingVisitors.includes(animal.species)) pendingVisitors.push(animal.species)
       return view(animal)
     },
     reset() {
       animals.clear()
-      eggs.clear()
-      inFlightAnimalIds.clear()
+      breedElapsed.clear()
+      houses = []
+      nextParent = 0
       discovered.clear()
       pendingVisitors.length = 0
       for (const species of CARNIVAL_STARTERS) {
@@ -404,19 +415,26 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         }
       }
       nextAnimalId = 1
-      nextEggId = 1
       arrivalElapsed = 0
       for (const species of speciesIds.slice(0, config.maximumPopulation)) newAnimal(species, 0)
       lastSnapshot = null
     },
     exportState() {
       return {
-        animals: [...animals.values()].map((animal) => ({ ...animal, parentIds: [...animal.parentIds] })),
-        eggs: [...eggs.values()].map((egg) => ({ ...egg, parentIds: [...egg.parentIds] })),
+        animals: [...animals.values()].map((animal) => ({
+          id: animal.id,
+          species: animal.species,
+          stage: animal.stage,
+          elapsed: animal.elapsed,
+          invited: animal.invited,
+          baby: animal.baby,
+          ageSeconds: animal.ageSeconds,
+          parentIds: [...animal.parentIds],
+          inside: animal.insideId !== null,
+        })),
         discovered: [...discovered],
         pendingVisitors: [...pendingVisitors],
         nextAnimalId,
-        nextEggId,
         arrivalElapsed,
       }
     },
@@ -425,8 +443,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       const known = (species: unknown): species is string => typeof species === 'string' && speciesIds.includes(species)
       const ids = (value: unknown): string[] => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
       animals.clear()
-      eggs.clear()
-      inFlightAnimalIds.clear()
+      breedElapsed.clear()
       discovered.clear()
       pendingVisitors.length = 0
       let highestAnimal = 0
@@ -441,57 +458,27 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           invited: Boolean(saved.invited) || stage >= 2,
           baby: Boolean(saved.baby),
           ageSeconds: Math.max(0, finite(saved.ageSeconds)),
-          romanceCooldown: Math.max(0, finite(saved.romanceCooldown)),
           parentIds: ids(saved.parentIds),
-          paired: Boolean(saved.paired),
-          courtshipPartnerId: typeof saved.courtshipPartnerId === 'string' ? saved.courtshipPartnerId : null,
-          courtshipRemaining: Math.max(0, finite(saved.courtshipRemaining)),
-          courtshipSuccessful: Boolean(saved.courtshipSuccessful),
+          // Back indoors once the caller knows this session's houses.
+          insideId: null,
         })
         highestAnimal = Math.max(highestAnimal, Number(saved.id.replace(/^animal-/, '')) || 0)
-      }
-      // A courtship needs both partners. If one did not survive loading, the
-      // other goes back to being single instead of waiting on a ghost.
-      for (const animal of animals.values()) {
-        if (animal.courtshipPartnerId === null) continue
-        const partner = animals.get(animal.courtshipPartnerId)
-        if (partner && partner.courtshipPartnerId === animal.id) {
-          inFlightAnimalIds.add(animal.id)
-        } else {
-          animal.courtshipPartnerId = null
-          animal.courtshipRemaining = 0
-          animal.paired = false
-        }
-      }
-      let highestEgg = 0
-      for (const saved of state.eggs) {
-        if (!known(saved.species) || !Number.isFinite(saved.id) || eggs.has(saved.id)) continue
-        eggs.set(saved.id, {
-          id: saved.id,
-          species: saved.species,
-          x: finite(saved.x),
-          z: finite(saved.z),
-          incubation: Math.max(0, finite(saved.incubation)),
-          parentIds: ids(saved.parentIds),
-        })
-        highestEgg = Math.max(highestEgg, saved.id)
       }
       for (const species of state.discovered) if (known(species)) discovered.add(species)
       for (const species of state.pendingVisitors) if (known(species)) pendingVisitors.push(species)
       nextAnimalId = Math.max(highestAnimal + 1, Math.floor(finite(state.nextAnimalId, 1)))
-      nextEggId = Math.max(highestEgg + 1, Math.floor(finite(state.nextEggId, 1)))
       arrivalElapsed = Math.max(0, finite(state.arrivalElapsed))
       lastSnapshot = null
     },
     tick(snapshot, deltaSeconds) {
       lastSnapshot = snapshot
+      houses = snapshot.houses ?? []
+      evictFromMissingHouses()
       const dt = Number.isFinite(deltaSeconds) ? Math.max(0, deltaSeconds) : 0
       const stageDt = Math.min(0.25, dt)
       const events: AnimalLifeEvent[] = []
       arrivalElapsed += dt
       queueEligibleGuests(snapshot.farm)
-      const residentCapacity = capacity(snapshot.expansionLevel)
-      const capacitySlots = Math.max(0, residentCapacity - populationCount())
       // Day visitors and the night shift are paced separately: an owl should not
       // wait behind a cow that is still looking for grass, because they never share a sky.
       // Only a visitor that is about to step inside holds the queue; one still waiting on
@@ -504,14 +491,14 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         return Math.max(0, 1 + Math.floor(snapshot.expansionLevel / 2) - visitorsOnShift(nightShift))
       }
       const interval = config.arrivalIntervalSeconds / Math.max(1, 1 + snapshot.expansionLevel * 0.35)
-      if (capacitySlots > 0 && pendingVisitors.length === 0 && arrivalElapsed >= interval) addRepeatGuest(snapshot.farm)
+      if (pendingVisitors.length === 0 && arrivalElapsed >= interval) addRepeatGuest(snapshot.farm)
       // Every species keeps to its own shift: owls turn up after dark, everything
       // else by day. A species whose shift is not on waits in the queue rather
       // than blocking it. A snapshot that does not say (older tests) allows both.
       const darkNow = snapshot.farm.night
       const onShift = (species: string): boolean => darkNow === undefined || isNightOnly(species) === darkNow
-      const arrivingIndex = pendingVisitors.findIndex((species) => onShift(species) && pacingFor(species) > 0)
-      if (capacitySlots > 0 && arrivingIndex >= 0 && arrivalElapsed >= interval) {
+      const arrivingIndex = pendingVisitors.findIndex((species) => onShift(species) && pacingFor(species) > 0 && hasRoomFor(species))
+      if (arrivingIndex >= 0 && arrivalElapsed >= interval) {
         const species = pendingVisitors.splice(arrivingIndex, 1)[0]
         let arrival = [...animals.values()].find((animal) => animal.species === species && animal.stage === 0)
         if (!arrival && hasPopulationSlot()) arrival = newAnimal(species, 0)
@@ -535,9 +522,6 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           }
           continue
         }
-        const previousCooldown = animal.romanceCooldown
-        animal.romanceCooldown = Math.max(0, animal.romanceCooldown - stageDt)
-        if (previousCooldown > 0 && animal.romanceCooldown === 0) animal.paired = false
         if (animal.stage >= 1 && animal.stage < 4) {
           animal.elapsed += stageDt
           const next = getSpeciesConditions(animal.species)[animal.stage]
@@ -549,94 +533,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         }
       }
 
-      const eligible = [...animals.values()].filter((animal) => !animal.baby && animal.stage >= 4 && !animal.paired && !animal.courtshipPartnerId && animal.romanceCooldown <= 0 && !inFlightAnimalIds.has(animal.id))
-      const eligibleBySpecies = new Map<string, MutableAnimal[]>()
-      for (const animal of eligible) {
-        const sameSpecies = eligibleBySpecies.get(animal.species) ?? []
-        sameSpecies.push(animal)
-        eligibleBySpecies.set(animal.species, sameSpecies)
-      }
-      const used = new Set<string>()
-      const cellSize = 12
-      for (const sameSpecies of eligibleBySpecies.values()) {
-        const buckets = new Map<string, MutableAnimal[]>()
-        const positions = new Map<string, { x: number; z: number }>()
-        sameSpecies.forEach((animal, index) => {
-          const position = snapshot.positions?.[animal.id] ?? { x: index * 0.5, z: 0 }
-          positions.set(animal.id, position)
-          const key = `${Math.floor(position.x / cellSize)},${Math.floor(position.z / cellSize)}`
-          const bucket = buckets.get(key) ?? []
-          bucket.push(animal)
-          buckets.set(key, bucket)
-        })
-        for (const first of sameSpecies) {
-          if (used.has(first.id)) continue
-          const firstPosition = positions.get(first.id)!
-          const cellX = Math.floor(firstPosition.x / cellSize)
-          const cellZ = Math.floor(firstPosition.z / cellSize)
-          let second: MutableAnimal | undefined
-          for (let offsetX = -1; offsetX <= 1 && !second; offsetX += 1) {
-            for (let offsetZ = -1; offsetZ <= 1 && !second; offsetZ += 1) {
-              second = (buckets.get(`${cellX + offsetX},${cellZ + offsetZ}`) ?? []).find((other) => {
-                if (other.id === first.id || used.has(other.id)) return false
-                const position = positions.get(other.id)!
-                return Math.hypot(position.x - firstPosition.x, position.z - firstPosition.z) <= cellSize
-              })
-            }
-          }
-          if (!second) continue
-          used.add(first.id); used.add(second.id)
-          inFlightAnimalIds.add(first.id)
-          inFlightAnimalIds.add(second.id)
-          const chance = Math.min(clampedChance, tuningFor(first.species).romanceChance)
-          const roll = Math.max(0, Math.min(1 - Number.EPSILON, random()))
-          const duration = Math.max(0, tuningFor(first.species).courtshipSeconds)
-          first.courtshipPartnerId = second.id
-          first.courtshipRemaining = duration
-          first.courtshipSuccessful = roll < chance
-          second.courtshipPartnerId = first.id
-          second.courtshipRemaining = duration
-          second.courtshipSuccessful = first.courtshipSuccessful
-          events.push({ kind: 'courtship', animalId: first.id, partnerId: second.id, species: first.species })
-        }
-      }
-
-      for (const first of animals.values()) {
-        const secondId = first.courtshipPartnerId
-        if (!secondId || first.id > secondId) continue
-        const second = animals.get(secondId)
-        if (first.courtshipRemaining > 0) first.courtshipRemaining = Math.max(0, first.courtshipRemaining - stageDt)
-        if (second) second.courtshipRemaining = first.courtshipRemaining
-        if (first.courtshipRemaining > 0) continue
-        inFlightAnimalIds.delete(first.id)
-        inFlightAnimalIds.delete(secondId)
-        first.courtshipPartnerId = null
-        first.paired = true
-        first.romanceCooldown = tuningFor(first.species).romanceCooldownSeconds
-        if (second) {
-          second.courtshipPartnerId = null
-          second.paired = true
-          second.romanceCooldown = tuningFor(second.species).romanceCooldownSeconds
-        }
-        if (first.courtshipSuccessful && second && populationCount() < capacity(snapshot.expansionLevel)
-          && hasPopulationSlot()) {
-          const firstPosition = snapshot.positions?.[first.id] ?? { x: 0, z: 0 }
-          const secondPosition = snapshot.positions?.[second.id] ?? firstPosition
-          const egg: MutableEgg = {
-            id: nextEggId++, species: first.species,
-            x: (firstPosition.x + secondPosition.x) / 2,
-            z: (firstPosition.z + secondPosition.z) / 2,
-            incubation: 0, parentIds: [first.id, second.id],
-          }
-          eggs.set(egg.id, egg)
-          events.push({ kind: 'layEgg', animalId: first.id, partnerId: second.id, species: first.species, eggId: egg.id, action: 'breedSpecies' })
-        } else {
-          first.paired = false
-          if (second) second.paired = false
-          events.push({ kind: 'courtshipEnd', animalId: first.id, partnerId: secondId, species: first.species })
-        }
-      }
-      for (const egg of eggs.values()) egg.incubation += stageDt
+      breed(stageDt, events)
       return events
     },
   }

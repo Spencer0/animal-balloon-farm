@@ -3,7 +3,7 @@ import { holdDay, openFarm } from './farm'
 
 export const sleepingByDumpster: Scenario = {
   id: 'raccoon/sleeping-by-dumpster',
-  description: 'Daytime, a garbage can and a dumpster. The resident raccoon curls up beside the dumpster, its house, not the can.',
+  description: 'Daytime, a garbage can and a dumpster. The dumpster is its house, so the resident raccoon walks in to sleep.',
   async run(d) {
     await openFarm(d, { cans: 1, dumpsters: 1 })
     d.addAnimal('raccoon', 3)
