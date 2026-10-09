@@ -45,6 +45,7 @@
 }
 
 .op-switch {
+  box-sizing: border-box;
   position: relative;
   flex: none;
   width: 64px;
@@ -63,10 +64,12 @@
 
 .op-knob {
   position: absolute;
-  top: 2px;
+  top: 50%;
   left: 2px;
+  box-sizing: border-box;
   width: 24px;
   height: 24px;
+  margin-top: -12px;
   border-radius: 50%;
   background: #fffdf6;
   border: 2px solid #6b4a33;
