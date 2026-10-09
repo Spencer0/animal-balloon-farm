@@ -16,7 +16,7 @@ export interface GardenPointerDown extends GardenPointerMove {
 }
 
 export interface GardenToolDebugState {
-  readonly selectedTool: GardenToolId
+  readonly selectedTool: GardenToolId | null
   readonly cursorVisible: boolean
   readonly cursor: { readonly x: number; readonly y: number; readonly z: number } | null
   readonly isPointerDown: boolean
@@ -51,7 +51,7 @@ export interface GardenToolDebugState {
 
 export interface GardenTools {
   readonly root: THREE.Group
-  readonly selectedTool: GardenToolId
+  readonly selectedTool: GardenToolId | null
   /**
    * Whether the in-world brush ring is on screen. The UI layer reads this to
    * decide between hiding the OS pointer (the ring *is* the pointer) and
@@ -77,7 +77,11 @@ export interface GardenTools {
    * marks the real mouse while the ring marks where the tool works.
    */
   readonly strokeHeld: boolean
-  selectTool(id: GardenToolId): void
+  selectTool(id: GardenToolId | null): void
+  /** While suspended (Shift, or a press that belongs to a farm object), the tool draws no ring and paints nothing. */
+  setSuspended(suspended: boolean): void
+  /** Whether the pointer is over the lawn, the only place an armed tool acts. */
+  overLawn(event: GardenPointerMove): boolean
   /** Which seed pack the grass seeder holds: blue short lawn or green tall meadow. */
   readonly grassPack: GrassPack
   setGrassPack(pack: GrassPack): void
@@ -324,12 +328,13 @@ export function createGardenTools(
   const ndc = new THREE.Vector2()
   const cursor = new THREE.Group()
   const toolModels: Record<GardenToolId, THREE.Group> = {
-    hand: createGardenToolModel('hand'),
     grass: createGardenToolModel('grass', 'short'),
     shovel: createGardenToolModel('shovel'),
     water: createGardenToolModel('water'),
   }
-  let selectedTool: GardenToolId = 'hand'
+  // Null means no tool is armed: the pointer is in charge.
+  let selectedTool: GardenToolId | null = null
+  let suspended = false
   let grassPack: GrassPack = 'short'
   let tallGrassBlocked: ((x: number, z: number) => boolean) | null = null
   const brushLevels = new Map<GardenToolId, number>()
@@ -341,7 +346,7 @@ export function createGardenTools(
   let lastGrassSpawnMaxY = 0
 
   function brushLevelIndex(): number {
-    return brushLevels.get(selectedTool) ?? 1
+    return (selectedTool ? brushLevels.get(selectedTool) : undefined) ?? 1
   }
 
   function brushRadius(): number {
@@ -581,8 +586,6 @@ export function createGardenTools(
     model.visible = false
     cursor.add(model)
   }
-  toolModels.hand.visible = true
-  toolModels.grass.visible = false
 
   function pointerRay(event: GardenPointerMove): boolean {
     const bounds = canvas.getBoundingClientRect()
@@ -937,7 +940,7 @@ export function createGardenTools(
     cursorVisible = true
     cursor.position.set(position.x, position.y + 0.008, position.z)
     cursor.scale.setScalar(brushRadius())
-    toolModels[selectedTool].scale.setScalar(1 / brushRadius())
+    if (selectedTool) toolModels[selectedTool].scale.setScalar(1 / brushRadius())
     cursor.visible = true
     return position
   }
@@ -998,7 +1001,7 @@ export function createGardenTools(
 
   return {
     root,
-    get selectedTool(): GardenToolId { return selectedTool },
+    get selectedTool(): GardenToolId | null { return selectedTool },
     get cursorVisible(): boolean { return cursorVisible },
     get strokeHeld(): boolean { return isPointerDown && activeAction !== null },
     get seederLevel(): number { return seederLevel },
@@ -1041,10 +1044,27 @@ export function createGardenTools(
       return found ? 'short' : 'none'
     },
     setTallGrassBlocker(blocked): void { tallGrassBlocked = blocked },
+    overLawn(event): boolean {
+      if (!pointerRay(event)) return false
+      const position = floorPosition()
+      return !!position && insideGarden(position.x, position.z, getActiveBounds())
+    },
+    setSuspended(value): void {
+      suspended = value
+      if (!value) return
+      cursor.visible = false
+      cursorVisible = false
+      actionGlow.visible = false
+    },
     selectTool(id): void {
-      if (!GARDEN_TOOLS.some((tool) => tool.id === id)) return
+      if (id !== null && !GARDEN_TOOLS.some((tool) => tool.id === id)) return
       if (selectedTool === id) return
       selectedTool = id
+      // The brush ring belongs to the tool that drew it. Hide it now instead of
+      // leaving it on screen until the pointer next moves.
+      cursor.visible = false
+      cursorVisible = false
+      actionGlow.visible = false
       hoverTint = id === 'water' ? '#77c9d5'
         : id === 'shovel' ? '#d9a06b'
           : id === 'grass' ? '#b7d97a'
@@ -1052,6 +1072,7 @@ export function createGardenTools(
       for (const [key, model] of Object.entries(toolModels)) model.visible = key === id
     },
     cycleBrushSize(): void {
+      if (!selectedTool) return
       brushLevels.set(selectedTool, (brushLevelIndex() + 1) % BRUSH_SIZE_LEVELS.length)
       sizePop = SIZE_POP_SECONDS
     },
@@ -1073,7 +1094,7 @@ export function createGardenTools(
       }
     },
     pointerMove(event): void {
-      if (plantingMode || selectedTool === 'hand') {
+      if (plantingMode || selectedTool === null || suspended) {
         cursor.visible = false
         cursorVisible = false
         actionGlow.visible = false
@@ -1132,7 +1153,7 @@ export function createGardenTools(
     pointerDown(event): boolean {
       if (plantingMode) return false
       if (event.button !== 0 && event.button !== 1 && event.button !== 2) return false
-      if (selectedTool === 'hand') return false
+      if (selectedTool === null || suspended) return false
       const position = updateCursorPosition(event)
       if (!position) return false
       if (selectedTool === 'shovel') {

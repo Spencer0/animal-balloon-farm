@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { GRASS_PACKS, type GrassPack } from '../game/tool-unlocks'
 
-export type GardenToolId = 'hand' | 'grass' | 'shovel' | 'water'
+export type GardenToolId = 'grass' | 'shovel' | 'water'
 
 export interface GardenToolDefinition {
   readonly id: GardenToolId
@@ -16,25 +16,19 @@ export interface GardenToolDefinition {
 
 export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
   {
-    id: 'hand', hotkey: '1', label: 'Hand', subtitle: 'Select and interact',
-    description: 'A gentle hand for meeting the garden and its animals.',
-    note: 'Click a plant or animal to learn about it. Care for plants and choose seeds with this tool.',
-    tint: '#e9c58e', accent: '#f3dfb0',
-  },
-  {
-    id: 'grass', hotkey: '2', label: 'Grass Seeder', subtitle: 'Blue for a lawn, green for a meadow',
+    id: 'grass', hotkey: '1', label: 'Grass Seeder', subtitle: 'Blue for a lawn, green for a meadow',
     description: 'A burlap sack of seed for turning bare soil into a soft patch of meadow.',
     note: 'Hold and drag to sow grass. Right-click to gently trim it back. Press E to swap packs once Pip sells you the tall one.',
     tint: '#b7d97a', accent: '#f3d78a',
   },
   {
-    id: 'shovel', hotkey: '3', label: 'Shovel', subtitle: 'Lift, turn, and tidy the soil',
+    id: 'shovel', hotkey: '2', label: 'Shovel', subtitle: 'Lift, turn, and tidy the soil',
     description: 'A sturdy garden shovel for digging up a planting spot and moving soil around.',
     note: 'Click the ground to dig a hole, then drop a seed or a friend right into it.',
     tint: '#d9a06b', accent: '#e8c78f',
   },
   {
-    id: 'water', hotkey: '4', label: 'Water Bucket', subtitle: 'Pour a puddle, or bail it away',
+    id: 'water', hotkey: '3', label: 'Water Bucket', subtitle: 'Pour a puddle, or bail it away',
     description: 'A little water goes where the garden dips, settling into a still, level pond.',
     note: 'Hold left-click to pour. Hold right-click to drain.',
     tint: '#77c9d5', accent: '#b3edf0',
@@ -42,54 +36,11 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
 ]
 
 export function createGardenToolModel(id: GardenToolId, pack: GrassPack = 'short'): THREE.Group {
-  if (id === 'hand') return createHandModel()
   if (id === 'shovel') return createShovelModel()
   if (id === 'water') return createWaterBucketModel()
   return createGrassSeederModel(pack)
 }
 
-function createHandModel(): THREE.Group {
-  const model = new THREE.Group()
-  model.name = 'Hand interact tool'
-  const skin = new THREE.MeshStandardMaterial({ color: '#efc894', roughness: 0.56 })
-  const cuff = new THREE.MeshStandardMaterial({ color: '#7eaa78', roughness: 0.62 })
-  const palm = new THREE.Mesh(new THREE.SphereGeometry(0.34, 20, 14), skin)
-  palm.scale.set(0.86, 1.08, 0.38)
-  palm.position.set(0, 0.05, 0)
-  model.add(palm)
-  const fingerSpecs = [
-    { x: -0.23, y: 0.43, length: 0.39, tilt: -0.17 },
-    { x: -0.08, y: 0.48, length: 0.47, tilt: -0.05 },
-    { x: 0.08, y: 0.47, length: 0.44, tilt: 0.05 },
-    { x: 0.23, y: 0.39, length: 0.35, tilt: 0.16 },
-  ]
-  for (const finger of fingerSpecs) {
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, finger.length, 4, 8), skin)
-    mesh.position.set(finger.x, finger.y, 0)
-    mesh.rotation.z = finger.tilt
-    model.add(mesh)
-  }
-  const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.22, 4, 8), skin)
-  thumb.position.set(-0.31, 0.04, 0.015)
-  thumb.rotation.z = -0.88
-  model.add(thumb)
-  const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.25, 0.25, 20), cuff)
-  sleeve.position.set(0, -0.31, 0)
-  model.add(sleeve)
-  model.traverse((object) => {
-    if (object instanceof THREE.Mesh) {
-      object.castShadow = true
-      object.receiveShadow = true
-    }
-  })
-  return model
-}
-
-/**
- * Recolour a seeder model's sack for the pack in hand: blue for short grass,
- * green for tall. Only the sack changes; the twine, sprout and spilled seed
- * keep their colours so the two packs read as one tool.
- */
 export function tintSeedPack(model: THREE.Object3D, pack: GrassPack): void {
   const sack = model.userData.packMaterials as { body: THREE.MeshStandardMaterial; shade: THREE.MeshStandardMaterial; light: THREE.MeshStandardMaterial } | undefined
   if (!sack) return

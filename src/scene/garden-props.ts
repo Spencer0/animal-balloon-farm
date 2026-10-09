@@ -4,6 +4,7 @@ import { containsGardenPoint, GARDEN_LAWN_Y } from './fairground'
 import type { GardenBounds } from '../game/farm-expansion'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
+import type { HoverGlowTarget } from './hover-glow'
 import { createShopBuild, type ShopBuild, type ShopBuildReport } from './shop-build'
 import {
   createPropInventory,
@@ -122,6 +123,8 @@ export interface GardenProps {
   placeFence(fromX: number, fromZ: number, toX: number, toZ: number): PropPlacementOutcome
   /** Hand tool: return a placed prop to the inventory. */
   pickUpAt(clientX: number, clientY: number): PropId | null
+  /** The placed prop under the pointer, read-only; null when nothing is hit. */
+  propAt(clientX: number, clientY: number): HoverGlowTarget | null
   /** `farmerLevel` drives the shop's build, which starts once the farmer reaches level 2. */
   update(deltaSeconds: number, farmerLevel?: number): void
   report(): PropReport
@@ -713,6 +716,24 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     else if (hoverPoint) updatePreview()
   }
 
+  /** Read-only twin of pickUpAt: the placed prop under the pointer, and the ground it stands on. */
+  function propAt(clientX: number, clientY: number): HoverGlowTarget | null {
+    if (!pointerRay({ clientX, clientY })) return null
+    for (const prop of occupancy.placed) {
+      if (prop.id === 'fence') continue
+      const visual = visualByProp.get(prop)
+      if (!visual) continue
+      const meshes: THREE.Mesh[] = []
+      visual.object.traverse((object) => { if (object instanceof THREE.Mesh) meshes.push(object) })
+      if (meshes.length === 0 || raycaster.intersectObjects(meshes, false).length === 0) continue
+      const box = new THREE.Box3().setFromObject(visual.object)
+      const center = box.getCenter(new THREE.Vector3())
+      const size = box.getSize(new THREE.Vector3())
+      return { x: center.x, y: box.min.y, z: center.z, radius: Math.max(size.x, size.z) / 2 }
+    }
+    return null
+  }
+
   function pickUpAt(clientX: number, clientY: number): PropId | null {
     if (!pointerRay({ clientX, clientY })) return null
     const candidates = occupancy.placed.filter((prop) => prop.id !== 'fence')
@@ -875,6 +896,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     placeProp,
     placeFence,
     pickUpAt,
+    propAt,
     update(deltaSeconds: number, farmerLevel = 0): void {
       if (fencesDirty) rebuildFences()
       syncVisuals()

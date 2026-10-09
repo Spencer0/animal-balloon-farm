@@ -59,6 +59,7 @@ import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
 import { setCursor } from './ui/ui-cursor'
+import { createHoverGlow, type HoverGlowTarget } from './scene/hover-glow'
 import type { DesignPoint } from './ui/ui-viewport'
 import { createViewerPanel } from './ui/viewer-panel'
 import { createNotificationPanel } from './ui/notification-panel'
@@ -301,6 +302,7 @@ function refreshAnimalCrowd(nowSeconds: number, force = false): void {
   for (const fixture of crowdFixtureEntries) entries.push(fixture)
   animalCrowd.setVisible(mode === 'farm')
   animalCrowd.update(entries, actuallyDetailedIds, nowSeconds)
+  lastCrowdEntries = entries
   crowdStats = animalCrowd.stats()
 }
 
@@ -525,6 +527,8 @@ const animalPopulationLimit = ANIMAL_LIFE_CONFIG.maximumPopulation
 const animalCrowd = createAnimalCrowdRenderer(fairground.root)
 let focusedAnimalId: string | null = null
 let crowdStats = animalCrowd.stats()
+/** Where every visible animal was drawn this refresh, so the hover glow can sit under it. */
+let lastCrowdEntries: readonly AnimalCrowdEntry[] = []
 /**
  * Predator and prey. The owl's flight is stepped by `owlHunt` (which wraps the
  * pure sim in game/predator.ts); every chicken it takes is tallied in the ledger,
@@ -1043,8 +1047,8 @@ function plantDisplayName(species: string): string {
   return PLANT_CATALOG.find((entry) => entry.id === species)?.name ?? species
 }
 const toolsHud = createToolsHud(
-  gardenTools?.selectedTool ?? 'hand',
-  (id: GardenToolId) => selectGardenTool(id),
+  gardenTools?.selectedTool ?? null,
+  (id: GardenToolId | null) => selectGardenTool(id),
   window.innerWidth,
   window.innerHeight,
 )
@@ -1230,9 +1234,9 @@ const shedDom: ShedDomPanel = createShedDomPanel({
   onPlant: (species: PlantId) => {
     if (!gardenPlants) return
     shed.close()
-    // Planting, watering and pruning all ride on the Hand tool. Hand it back
-    // before arming the seed, or the click lands on a farm tool and is lost.
-    if (toolsHud.selectedTool !== 'hand') selectGardenTool('hand')
+    // Planting, watering and pruning need no tool. Put any tool down before
+    // arming the seed, or the click lands on a farm tool and is lost.
+    if (toolsHud.selectedTool !== null) selectGardenTool(null)
     gardenTools?.setPlantingMode(true)
     gardenPlants.selectSpecies(species)
     shed.setPlacementActive(true)
@@ -1243,7 +1247,7 @@ const shedDom: ShedDomPanel = createShedDomPanel({
   onPlace: (id: PropId) => {
     if (!gardenProps) return
     shed.close()
-    if (toolsHud.selectedTool !== 'hand') selectGardenTool('hand')
+    if (toolsHud.selectedTool !== null) selectGardenTool(null)
     gardenProps.beginPlacement(id)
     gardenPlants?.cancelPlacement()
     gardenTools?.setPlantingMode(false)
@@ -1547,21 +1551,24 @@ journalDom.setConditionsSource(journalConditionsSource)
 const lastPointerClient = { x: -1, y: -1 }
 for (const panel of panels) ui.add(panel)
 
-function selectGardenTool(id: GardenToolId): void {
+function selectGardenTool(id: GardenToolId | null): void {
   endCameraTour(true)
   gardenPlants?.cancelPlacement()
   gardenProps?.cancelPlacement()
   shed.setPlacementActive(false)
   gardenTools?.setPlantingMode(false)
   if (gardenTools) {
-    // Tapping the active tool's hotkey again cycles its brush size rather than
-    // re-selecting what is already selected. Hand has no brush size to cycle.
-    if (gardenTools.selectedTool === id && id !== 'hand') gardenTools.cycleBrushSize()
+    // Tapping the active tool's key again cycles its brush size rather than
+    // re-selecting what is already selected.
+    if (gardenTools.selectedTool === id && id !== null) gardenTools.cycleBrushSize()
     else if (gardenTools.selectedTool !== id) gardenTools.selectTool(id)
   }
   toolsHud.setSelectedTool(id)
-  shed.setInteractEnabled(id === 'hand')
+  shed.setInteractEnabled(id === null)
   syncFarmChrome()
+  // Re-resolve the pointer now: a tool switch changes what it should look like,
+  // and the next pointer move may be a while away.
+  refreshCursor()
 }
 
 function handleMenuChoice(choice: MenuChoice): void {
@@ -1669,7 +1676,7 @@ function syncFarmChrome(): void {
   const playerOpen = playerDom.isOpen
   toolsHud.setVisible(farmOnly && !journal.isOpen && !shedOpen && !salePanel.isOpen && !shopOpen && !gardenProps?.placingId && !playerOpen)
   shed.setVisible(false)
-  shed.setInteractEnabled(toolsHud.selectedTool === 'hand')
+  shed.setInteractEnabled(toolsHud.selectedTool === null)
   journal.setLauncherVisible(false)
   balloon.setVisible(farmOnly)
   clockCalendarHud.setVisible(farmOnly)
@@ -1714,10 +1721,46 @@ const tourLookAt = new THREE.Vector3()
 const tourDesiredLookAt = new THREE.Vector3()
 const tourOffset = new THREE.Vector3()
 
-/** The tools that edit the farm. Hand selects; it never digs. */
+/** Shift holds the pointer: while it is down nothing is armed, so presses and hovers act on the farm. */
+let shiftHeld = false
+
+function setShiftHeld(held: boolean): void {
+  if (shiftHeld === held) return
+  shiftHeld = held
+  refreshCursor()
+  // Releasing Shift brings the brush ring back straight away, not on the next move.
+  if (isWorldToolActive() && lastPointerClient.x >= 0) gardenTools?.pointerMove({ clientX: lastPointerClient.x, clientY: lastPointerClient.y })
+}
+
+/** No tool is armed, so the pointer is in charge. */
+function noToolArmed(): boolean {
+  return toolsHud.selectedTool === null
+}
+
+/** Whether the pointer is over the lawn, where an armed tool or seed acts. */
+function pointerOverLawn(): boolean {
+  return gardenTools?.overLawn({ clientX: lastPointerClient.x, clientY: lastPointerClient.y }) ?? false
+}
+
+/**
+ * The pointer is in charge: Shift is down, or nothing is armed, or the pointer
+ * is off the lawn. A tool or seed only claims the pointer over the lawn, so
+ * everything else on the farm stays clickable without holding Shift.
+ */
+function pointerActive(): boolean {
+  if (shiftHeld) return true
+  const armed = !noToolArmed() || !!gardenPlants?.selectedSpecies
+  return !armed || !pointerOverLawn()
+}
+
+/** A seed is on the cursor, over the lawn, and Shift is not holding it back. */
+function plantingArmed(): boolean {
+  return !shiftHeld && noToolArmed() && !!gardenPlants?.selectedSpecies && pointerOverLawn()
+}
+
+/** A farm tool is armed, over the lawn, and Shift is not holding it back. */
 function isWorldToolActive(): boolean {
-  const tool = toolsHud.selectedTool
-  return tool === 'grass' || tool === 'shovel' || tool === 'water'
+  return !shiftHeld && toolsHud.selectedTool !== null && pointerOverLawn()
 }
 
 function beginCameraTour(seed = Math.floor(Math.random() * 0xffffffff)): boolean {
@@ -1822,20 +1865,22 @@ function pointerDesign(event: PointerEvent) {
 /**
  * Decide what the pointer looks like.
  *
- * The farm's brush ring is drawn in the world and hides the OS pointer, so it
- * wins outright. Otherwise the topmost panel under the pointer gets to choose,
- * and anything that has not asked for something specific -- including the
- * Blender-authored props, which have no cursor to give -- gets the hand.
+ * Anything the pointer would act on (an animal, an egg, a prop, the shop door,
+ * a plant's care marker) owns the cursor and the press, whatever tool is armed.
+ * That is what lets a seedbag sweep across the lawn without grabbing a
+ * neighbour. Otherwise the armed tool or seed owns the pointer over the farm,
+ * and everything else gets the balloon arrow.
  */
 function updateCursor(point: DesignPoint | null): void {
   if (!point) {
     setCursor('idle', gameCanvas)
     return
   }
-  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen) {
-    setCursor('plant', gameCanvas)
-    return
-  }
+  const farmOpen = mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen
+  const overFarm = farmOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
+  // Only pointer mode (Shift, or nothing armed) lets farm objects claim the pointer.
+  const interactive = overFarm && pointerActive() && hoverInteractable(lastPointerClient.x, lastPointerClient.y)
+  syncWorldTool(interactive)
   for (const panel of [...panels].sort((a, b) => b.order - a.order)) {
     const kind = panel.cursor?.(point as DesignPoint)
     if (kind) {
@@ -1843,42 +1888,100 @@ function updateCursor(point: DesignPoint | null): void {
       return
     }
   }
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen) {
-    const markerKind = gardenPlants?.markerKindAt(lastPointerClient.x, lastPointerClient.y)
+  if (overFarm) {
+    const markerKind = pointerActive() ? gardenPlants?.markerKindAt(lastPointerClient.x, lastPointerClient.y) : null
     if (markerKind) {
-      setCursor(toolsHud.selectedTool === 'hand'
-        ? markerKind === 'water' ? 'water' : markerKind === 'prune' ? 'prune' : 'point'
-        : 'idle', gameCanvas)
+      setCursor(markerKind === 'water' ? 'water' : markerKind === 'prune' ? 'prune' : 'point', gameCanvas)
       return
     }
-
-    if (gardenPlants?.selectedSpecies && gardenPlants.previewVisible) {
-      setCursor('plant', gameCanvas)
-      return
-    }
-  }
-  if (toolsHud.selectedTool !== 'hand' && !gardenPlants?.selectedSpecies && gardenTools?.cursorVisible && mode === 'farm' && !menu.isOpen && !journal.isOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)) {
-    // A tool stroke lags the pointer by design (drag speed cap), so the OS
-    // pointer stays visible mid-stroke: it marks the real mouse while the
-    // ring marks where the tool actually works. Without it the mouse goes
-    // invisible mid-drag and flies off the screen.
-    if (gardenTools?.strokeHeld) {
+    if (interactive) {
       setCursor('point', gameCanvas)
       return
     }
-    setCursor('hidden', gameCanvas)
-    return
-  }
-  // The Hand tool is the pointer: anything it can open, hatch or open the door
-  // of gets the excited bee, and bare ground keeps the resting one.
-  if (toolsHud.selectedTool === 'hand' && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen
-    && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
-    && (pickEgg(lastPointerClient.x, lastPointerClient.y) || pickAnimal(lastPointerClient.x, lastPointerClient.y)
-      || gardenProps?.pickShop(lastPointerClient.x, lastPointerClient.y))) {
-    setCursor('point', gameCanvas)
-    return
+    if (plantingArmed()) {
+      setCursor('plant', gameCanvas)
+      return
+    }
+    if (isWorldToolActive()) {
+      // A tool stroke lags the pointer by design (drag speed cap), so the OS
+      // pointer stays visible mid-stroke: it marks the real mouse while the
+      // ring marks where the tool actually works. Without it the mouse goes
+      // invisible mid-drag and flies off the screen.
+      setCursor(gardenTools?.strokeHeld ? 'point' : 'hidden', gameCanvas)
+      return
+    }
   }
   setCursor('idle', gameCanvas)
+}
+
+/** Keeps the brush ring off while the pointer is on a farm object or Shift holds it. A stroke in progress keeps its ring. */
+function syncWorldTool(interactive: boolean): void {
+  if (toolPointer !== null) return
+  gardenTools?.setSuspended(shiftHeld || interactive)
+}
+
+/** Whether a press here belongs to a farm object rather than to the armed tool or seed. */
+function hoverInteractable(clientX: number, clientY: number): boolean {
+  if (mode !== 'farm' || menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return false
+  if (gardenProps?.placingId) return false
+  return Boolean(
+    pickEgg(clientX, clientY)
+    || pickAnimal(clientX, clientY)
+    || gardenProps?.propAt(clientX, clientY)
+    || gardenProps?.pickShop(clientX, clientY)
+    || gardenPlants?.markerKindAt(clientX, clientY)
+  )
+}
+
+// ---------------------------------------------------------------- hover glow --
+
+/** The soft light under whatever the pointer would act on. */
+const hoverGlow = createHoverGlow()
+scene.add(hoverGlow.root)
+const HOVER_ANIMAL_RADIUS = 0.9
+let hoverPlantId: number | null = null
+let lastHoverRefreshAt = -Infinity
+const HOVER_REFRESH_SECONDS = 1 / 12
+
+/** What the pointer would act on under it, and where to glow for it. Only pointer mode glows. */
+function hoverTargetAt(clientX: number, clientY: number): { glow: HoverGlowTarget; plantId: number | null } | null {
+  if (!pointerActive()) return null
+  const animal = pickAnimal(clientX, clientY)
+  if (animal) {
+    // A crowd-drawn animal has no detailed root that tracks it, so its last drawn spot is the truth.
+    const entry = lastCrowdEntries.find((candidate) => candidate.id === animal.instanceId)
+    const at = entry ?? animal.root.getWorldPosition(new THREE.Vector3())
+    const ground = GARDEN_LAWN_Y + (gardenTerrain?.heightAt(at.x, at.z) ?? 0)
+    return { glow: { x: at.x, y: ground, z: at.z, radius: HOVER_ANIMAL_RADIUS }, plantId: null }
+  }
+  const prop = gardenProps?.propAt(clientX, clientY) ?? null
+  if (prop) return { glow: prop, plantId: null }
+  const plant = gardenPlants?.plantAt(clientX, clientY) ?? null
+  if (plant) return { glow: plant, plantId: plant.instanceId }
+  return null
+}
+
+/** The glow only shows over the farm, with nothing else on top and no press in progress. */
+function hoverAllowed(): boolean {
+  return mode === 'farm' && pointerWasSeen
+    && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !viewer.isOpen && !salePanel.isOpen
+    && !gardenProps?.placingId
+    && dragPointer === null && toolPointer === null
+    && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
+}
+
+function refreshHover(nowSeconds: number, deltaSeconds: number): void {
+  hoverGlow.update(deltaSeconds, nowSeconds)
+  if (nowSeconds - lastHoverRefreshAt < HOVER_REFRESH_SECONDS) return
+  lastHoverRefreshAt = nowSeconds
+  const target = hoverAllowed() ? hoverTargetAt(lastPointerClient.x, lastPointerClient.y) : null
+  if (target) hoverGlow.show(target.glow)
+  else hoverGlow.hide()
+  const plantId = target?.plantId ?? null
+  if (plantId !== hoverPlantId) {
+    hoverPlantId = plantId
+    gardenPlants?.setHoveredPlant(plantId)
+  }
 }
 
 function uiPointerDown(event: PointerEvent): boolean {
@@ -2029,8 +2132,9 @@ function applyExpansionCameraShake(deltaSeconds: number, elapsedSeconds: number)
 function orbitPointerDown(event: PointerEvent): void {
   if (uiPointerDown(event)) return
   if (menu.isOpen || mode === 'viewer') return
-  const selectedTool = gardenTools?.selectedTool ?? 'hand'
-  if (event.button === 0 && selectedTool === 'hand' && !isOverGameHUD(event.clientX, event.clientY)) {
+  // A press on a farm object goes to the object, whatever tool is armed.
+  const onObject = !isOverGameHUD(event.clientX, event.clientY) && pointerActive() && hoverInteractable(event.clientX, event.clientY)
+  if (event.button === 0 && (pointerActive() || onObject) && !isOverGameHUD(event.clientX, event.clientY)) {
     // Placement owns the click outright while a prop is on the ghost.
     if (gardenProps?.placingId) {
       event.preventDefault()
@@ -2058,8 +2162,8 @@ function orbitPointerDown(event: PointerEvent): void {
         }
         return
       }
-      // Hand-tool pick-up first, then the shop door. Both are the same grab the
-      // sale panel already trained the player to make.
+      // Pick-up first, then the shop door. Both are the same grab the sale
+      // panel already trained the player to make.
       if (gardenProps?.pickUpAt(event.clientX, event.clientY)) {
         shedDom.refresh()
         syncFarmChrome()
@@ -2100,7 +2204,7 @@ function orbitPointerDown(event: PointerEvent): void {
   if (salePanel.isOpen) {
     salePanel.close()
   }
-  if (event.button === 0 && selectedTool === 'hand' && !journal.isOpen && !shed.isOpen && !shop.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
+  if (event.button === 0 && pointerActive() && !onObject && !journal.isOpen && !shed.isOpen && !shop.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
     event.preventDefault()
     if (!gardenPlants.selectedSpecies) {
       shed.setPlacementActive(false)
@@ -2111,10 +2215,10 @@ function orbitPointerDown(event: PointerEvent): void {
     return
   }
   if (event.button === 0 && event.detail >= 2) return
-  // Middle click levels with the shovel. With the Hand tool, left-drag orbits
+  // Middle click levels with the shovel. With no tool armed, left-drag orbits
   // the farm and right-drag pans it; the farm tools keep their own buttons.
   if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
-  if (event.button === 2 && isWorldToolActive() && !isOverGameHUD(event.clientX, event.clientY) && gardenTools?.pointerDown(event)) {
+  if (event.button === 2 && isWorldToolActive() && !onObject && !isOverGameHUD(event.clientX, event.clientY) && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
@@ -2127,13 +2231,13 @@ function orbitPointerDown(event: PointerEvent): void {
     event.preventDefault()
     return
   }
-  if (event.button === 0 && isWorldToolActive() && gardenTools?.pointerDown(event)) {
+  if (event.button === 0 && isWorldToolActive() && !onObject && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
     return
   }
-  if (event.button === 1 && isWorldToolActive() && gardenTools?.pointerDown(event)) {
+  if (event.button === 1 && isWorldToolActive() && !onObject && gardenTools?.pointerDown(event)) {
     event.preventDefault()
     toolPointer = event.pointerId
     if (!gardenDebugMode && event.isTrusted && gameCanvas.isConnected) gameCanvas.setPointerCapture(event.pointerId)
@@ -2150,10 +2254,10 @@ function orbitPointerDown(event: PointerEvent): void {
 
 function orbitPointerMove(event: PointerEvent): void {
   if (uiPointerMove(event)) return
-  if (gardenProps?.placingId) gardenProps.pointerMove(event)
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove(event)
-  if (isWorldToolActive()) gardenTools?.pointerMove(event)
   updateCursor(pointerDesign(event))
+  if (gardenProps?.placingId) gardenProps.pointerMove(event)
+  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants?.pointerMove(event)
+  if (isWorldToolActive()) gardenTools?.pointerMove(event)
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
   const dx = event.clientX - previousPointer.x
   const dy = event.clientY - previousPointer.y
@@ -2241,6 +2345,7 @@ function toolHotkey(event: KeyboardEvent): string {
 const PAN_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright']
 
 function handleKeyDown(event: KeyboardEvent): void {
+  if (event.key === 'Shift') setShiftHeld(true)
   if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
     const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event))
     if (tool) {
@@ -2281,11 +2386,6 @@ function handleKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  if (key === '1') {
-    event.preventDefault()
-    selectGardenTool('hand')
-    return
-  }
   if (event.key === 'Escape' && cameraTour) {
     // Escape leaves the tour before it means anything else, so a tour ends
     // where it started instead of dropping the player into the menu.
@@ -2322,6 +2422,7 @@ function handleKeyDown(event: KeyboardEvent): void {
 }
 
 function handleKeyUp(event: KeyboardEvent): void {
+  if (event.key === 'Shift') setShiftHeld(false)
   pressedKeys.delete(event.key.toLowerCase())
   if (menu.isOpen || journal.isOpen) return
   if (!isTextInputTarget(event.target) && ['arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(event.key.toLowerCase())) {
@@ -2345,6 +2446,7 @@ function handleWindowPointerMove(event: PointerEvent): void {
 
 function handleWindowBlur(): void {
   pressedKeys.clear()
+  setShiftHeld(false)
   pointerWasSeen = false
 }
 
@@ -3502,6 +3604,7 @@ function frame(now: number): void {
     }
   }
   refreshAnimalCrowd(now / 1000)
+  refreshHover(now / 1000, delta)
   const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   // A farm expansion moves the editable parcel edge; re-solve ponds only when
@@ -3557,7 +3660,7 @@ function frame(now: number): void {
   updateCameraPan(delta)
   applyExpansionCameraShake(delta, now / 1000)
   if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
-    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && toolsHud.selectedTool === 'hand') gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
+    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
     gardenProps?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
     if (isWorldToolActive()) gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
   } else {

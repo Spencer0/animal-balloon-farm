@@ -33,11 +33,12 @@ const SELECTED_SCALE = 1.3
 const IDLE_SCALE = 0.7
 
 export interface ToolsHud extends UIPanel {
-  readonly selectedTool: GardenToolId
+  /** Null while no tool is armed: the pointer is in charge. */
+  readonly selectedTool: GardenToolId | null
   readonly isVisible: boolean
   setVisible(visible: boolean): void
-  selectTool(id: GardenToolId): void
-  setSelectedTool(id: GardenToolId): void
+  selectTool(id: GardenToolId | null): void
+  setSelectedTool(id: GardenToolId | null): void
   /** Show the pack in the seeder's hand; `canSwap` reveals the E chip once the tall pack is owned. */
   setGrassPack(pack: GrassPack, canSwap: boolean): void
 }
@@ -90,8 +91,8 @@ interface ToolSlot {
 }
 
 export function createToolsHud(
-  initialTool: GardenToolId,
-  onSelect: (id: GardenToolId) => void,
+  initialTool: GardenToolId | null,
+  onSelect: (id: GardenToolId | null) => void,
   cssWidth: number,
   cssHeight: number,
 ): ToolsHud {
@@ -177,7 +178,7 @@ export function createToolsHud(
   let selected = initialTool
   let visible = true
 
-  function select(id: GardenToolId): void {
+  function select(id: GardenToolId | null): void {
     selected = id
     onSelect(id)
   }
@@ -238,16 +239,16 @@ export function createToolsHud(
     object,
     // Sits under everything: the journal and the menu both draw over the farm.
     order: 5,
-    get selectedTool(): GardenToolId {
+    get selectedTool(): GardenToolId | null {
       return selected
     },
     get isVisible(): boolean { return visible },
     setVisible(next): void { visible = next; object.visible = next },
-    selectTool(id: GardenToolId): void {
+    selectTool(id: GardenToolId | null): void {
       select(id)
     },
-    setSelectedTool(id: GardenToolId): void {
-      if (GARDEN_TOOLS.some((tool) => tool.id === id)) selected = id
+    setSelectedTool(id: GardenToolId | null): void {
+      if (id === null || GARDEN_TOOLS.some((tool) => tool.id === id)) selected = id
     },
     pointerDown(point: DesignPoint, event: PointerEvent): boolean {
       if (!visible) return false
@@ -255,7 +256,8 @@ export function createToolsHud(
       if (!slot) return false
       event.preventDefault()
       slot.press = 1
-      select(slot.id)
+      // Pressing the armed tool again puts it down, which hands the pointer back.
+      select(slot.id === selected ? null : slot.id)
       return true
     },
     pointerMove(point: DesignPoint): boolean {
