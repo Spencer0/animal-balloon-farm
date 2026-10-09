@@ -128,6 +128,26 @@ export interface PlantSimulation {
   remove(instanceId: number): GardenPlant | null
   resolveCare(instanceId: number, care: PlantCare): boolean
   tick(deltaSeconds: number): void
+  /** Seeds in the shed and every plant in the ground, for saving. */
+  exportState(): PlantSimulationState
+  /** Replace the garden with a saved one; unknown species and bad numbers are dropped. */
+  importState(state: PlantSimulationState): void
+}
+
+export interface SavedPlant {
+  readonly instanceId: number
+  readonly species: PlantId
+  readonly x: number
+  readonly z: number
+  readonly growth: number
+  readonly careNeeded: PlantCare | null
+  readonly stopsDone: number
+}
+
+export interface PlantSimulationState {
+  readonly seeds: Readonly<Record<string, number>>
+  readonly plants: readonly SavedPlant[]
+  readonly nextInstanceId: number
 }
 
 interface MutablePlant {
@@ -232,6 +252,35 @@ export function createPlantSimulation(): PlantSimulation {
       plant.careNeeded = null
       plant.stopsDone += 1
       return true
+    },
+    exportState(): PlantSimulationState {
+      return {
+        seeds: Object.fromEntries(seedCounts),
+        plants: plants.map(({ instanceId, species, x, z, growth, careNeeded, stopsDone }) => ({ instanceId, species, x, z, growth, careNeeded, stopsDone })),
+        nextInstanceId,
+      }
+    },
+    importState(state): void {
+      const finite = (value: unknown, fallback = 0): number => (typeof value === 'number' && Number.isFinite(value) ? value : fallback)
+      for (const { id } of PLANT_CATALOG) seedCounts.set(id, Math.max(0, Math.floor(finite(state.seeds[id]))))
+      plants.length = 0
+      let highest = 0
+      for (const saved of state.plants) {
+        const definition = SPECIES_BY_ID.get(saved.species)
+        if (!definition || !Number.isFinite(saved.instanceId) || plants.some((plant) => plant.instanceId === saved.instanceId)) continue
+        const growth = Math.max(0, Math.min(1, finite(saved.growth)))
+        plants.push({
+          instanceId: saved.instanceId,
+          species: saved.species,
+          x: finite(saved.x),
+          z: finite(saved.z),
+          growth,
+          careNeeded: growth < 1 && (saved.careNeeded === 'water' || saved.careNeeded === 'prune') ? saved.careNeeded : null,
+          stopsDone: Math.max(0, Math.min(definition.care.length, Math.floor(finite(saved.stopsDone)))),
+        })
+        highest = Math.max(highest, saved.instanceId)
+      }
+      nextInstanceId = Math.max(highest + 1, Math.floor(finite(state.nextInstanceId, 1)))
     },
     tick(deltaSeconds): void {
       const delta = Number.isFinite(deltaSeconds) ? Math.max(0, deltaSeconds) : 0

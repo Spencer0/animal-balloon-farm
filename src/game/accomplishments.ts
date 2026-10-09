@@ -113,6 +113,10 @@ export interface AccomplishmentTracker {
   list(seedsOwned: ReadonlySet<string>): AccomplishmentRow[];
   recent(limit?: number): readonly AccomplishmentDef[];
   reset(): void;
+  /** Accomplished ids in the order they were earned, for saving. */
+  exportState(): readonly string[];
+  /** Replace progress with saved ids; ids no longer in the catalog are dropped. */
+  importState(ids: readonly string[]): void;
 }
 
 export function createAccomplishmentTracker(defs: readonly AccomplishmentDef[] = []): AccomplishmentTracker {
@@ -176,6 +180,19 @@ export function createAccomplishmentTracker(defs: readonly AccomplishmentDef[] =
     reset(): void {
       done.clear();
       order.length = 0;
+    },
+    exportState(): readonly string[] {
+      return [...order];
+    },
+    importState(ids: readonly string[]): void {
+      done.clear();
+      order.length = 0;
+      for (const id of ids) {
+        if (typeof id === 'string' && byId.has(id) && !done.has(id)) {
+          done.add(id);
+          order.push(id);
+        }
+      }
     },
   };
 }

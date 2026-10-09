@@ -100,6 +100,8 @@ export interface FarmExpansion {
   readonly progress: number
   expand(): FarmExpansionStart | null
   update(deltaSeconds: number): void
+  /** Jump straight to a parcel level with no reveal animation, for loading a save. */
+  restoreLevel(level: number): number
 }
 
 /**
@@ -192,5 +194,15 @@ export function createFarmExpansion(config: FarmExpansionConfig = FARM_EXPANSION
       }
     },
     update,
+    restoreLevel(saved: number): number {
+      const wanted = Number.isFinite(saved) ? Math.floor(saved) : 0
+      level = stableConfig.steps.length === 0 ? 0 : Math.max(0, Math.min(stableConfig.maximumLevel, wanted))
+      targetBounds = farmBoundsAtLevel(level, stableConfig)
+      fromBounds = targetBounds
+      bounds = targetBounds
+      elapsed = stableConfig.durationSeconds
+      progress = 1
+      return level
+    },
   }
 }

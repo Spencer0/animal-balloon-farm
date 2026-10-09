@@ -35,6 +35,8 @@ export interface PredationLedger {
   eaten(preySpecies: string): number
   readonly totals: Readonly<Record<string, number>>
   clear(): void
+  /** Put a saved tally back; counts that are not whole non-negative numbers are dropped. */
+  restore(totals: Readonly<Record<string, number>>): void
 }
 
 export function createPredationLedger(): PredationLedger {
@@ -48,6 +50,12 @@ export function createPredationLedger(): PredationLedger {
     eaten: (preySpecies) => counts.get(preySpecies) ?? 0,
     get totals(): Readonly<Record<string, number>> { return Object.fromEntries(counts) },
     clear() { counts.clear() },
+    restore(totals) {
+      counts.clear()
+      for (const [species, count] of Object.entries(totals)) {
+        if (Number.isFinite(count) && count > 0) counts.set(species, Math.floor(count))
+      }
+    },
   }
 }
 

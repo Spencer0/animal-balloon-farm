@@ -826,6 +826,9 @@ export function createFairground(initialElapsedDays = 0): Fairground {
     update(delta) {
       progression.update(delta)
     },
+    restoreLevel(level) {
+      return progression.restoreLevel(level)
+    },
   }
   const close = new THREE.Group()
   close.name = 'Layer 1 · authored close carnival · removable'

@@ -37,6 +37,15 @@ export interface ProgressLedger {
   awardPoints(key: string, points: number): number
   pointsForNextExpansion(level?: number): number
   reset(): void
+  /** Points and the one-time awards already handed out, for saving. */
+  exportState(): ProgressLedgerState
+  /** Put a saved ledger back. Bad numbers load as zero. */
+  importState(state: ProgressLedgerState): void
+}
+
+export interface ProgressLedgerState {
+  readonly points: number
+  readonly awarded: readonly string[]
 }
 
 export function createProgressLedger(config: ProgressionConfig = PROGRESSION_CONFIG): ProgressLedger {
@@ -78,6 +87,14 @@ export function createProgressLedger(config: ProgressionConfig = PROGRESSION_CON
     reset() {
       points = 0
       awarded.clear()
+    },
+    exportState() {
+      return { points, awarded: [...awarded] }
+    },
+    importState(state) {
+      points = Number.isFinite(state.points) ? Math.max(0, Math.floor(state.points)) : 0
+      awarded.clear()
+      for (const key of state.awarded) if (typeof key === 'string') awarded.add(key)
     },
   }
   return ledger
