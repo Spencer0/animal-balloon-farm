@@ -3,7 +3,7 @@
  *
  * Two flavours, matching the two ways the farm talks to the player:
  *
- *   routine    everyday route news (a resident moves in, an egg is laid, a
+ *   routine    everyday route news (a resident moves in, a baby is born, a
  *              plant finishes growing). It never pops up; it lands in the
  *              postbox behind a badge count, for the player to read at
  *              leisure.
@@ -26,17 +26,17 @@
  * lets the whole mechanic be verified from a node test.
  */
 
-export type SpeciesMilestone = 'carnival' | 'farm' | 'resident' | 'egg'
+export type SpeciesMilestone = 'carnival' | 'farm' | 'resident' | 'birth'
 
 export type NotificationKind =
   | 'resident'
-  | 'egg'
+  | 'birth'
   | 'plantGrown'
   | 'accomplishment'
   | 'firstCarnival'
   | 'firstFarm'
   | 'firstResident'
-  | 'firstEgg'
+  | 'firstBirth'
 
 export interface NotificationCopy {
   readonly title: string
@@ -51,8 +51,8 @@ export function notificationCopy(kind: NotificationKind, subject: string): Notif
   switch (kind) {
     case 'resident':
       return { title: `${subject} moved in!`, detail: 'A new resident joins the farm.' }
-    case 'egg':
-      return { title: `${subject} laid an egg!`, detail: 'Something is incubating.' }
+    case 'birth':
+      return { title: `${subject} had a baby!`, detail: 'Born indoors. Watch the door of its house.' }
     case 'plantGrown':
       return { title: `${subject} is fully grown!`, detail: 'Fresh from the soil.' }
     case 'accomplishment':
@@ -63,8 +63,8 @@ export function notificationCopy(kind: NotificationKind, subject: string): Notif
       return { title: 'A first visit to the farm!', detail: `${subject} wandered in for the very first time.` }
     case 'firstResident':
       return { title: 'A first resident!', detail: `The first ${subject} called the farm home.` }
-    case 'firstEgg':
-      return { title: 'A first egg!', detail: `The first ${subject} egg was laid.` }
+    case 'firstBirth':
+      return { title: 'A first baby!', detail: `The first ${subject} baby was born on the farm.` }
   }
 }
 
@@ -117,18 +117,18 @@ const MILESTONE_FIRST_KIND: Readonly<Record<SpeciesMilestone, NotificationKind>>
   carnival: 'firstCarnival',
   farm: 'firstFarm',
   resident: 'firstResident',
-  egg: 'firstEgg',
+  birth: 'firstBirth',
 }
 
 const MILESTONE_ROUTINE_KIND: Readonly<Record<SpeciesMilestone, NotificationKind | null>> = {
   carnival: null,
   farm: null,
   resident: 'resident',
-  egg: 'egg',
+  birth: 'birth',
 }
 
 function isSpotlightKind(kind: NotificationKind): boolean {
-  return kind === 'accomplishment' || kind === 'firstCarnival' || kind === 'firstFarm' || kind === 'firstResident' || kind === 'firstEgg'
+  return kind === 'accomplishment' || kind === 'firstCarnival' || kind === 'firstFarm' || kind === 'firstResident' || kind === 'firstBirth'
 }
 
 export interface NotificationCenter {
@@ -174,7 +174,7 @@ export function createNotificationCenter(options: NotificationCenterOptions = {}
 
   /**
    * File a ticket. A repeat of something already sitting in the postbox
-   * unread updates nothing -- five eggs in a minute is one letter, not five.
+   * unread updates nothing -- five births in a minute is one letter, not five.
    */
   function file(kind: NotificationKind, subject: string, detail?: string): LedgerEntry {
     const copy = notificationCopy(kind, subject)

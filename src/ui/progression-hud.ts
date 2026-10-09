@@ -7,10 +7,13 @@ export interface ProgressionHudState {
   readonly points: number
   readonly level: number
   readonly pointsToNextLevel: number
+  /** Every animal on the farm and at the carnival, indoors or out. */
   readonly population: number
-  readonly capacity: number
-  readonly eggs: number
-  readonly readyEggs: number
+  /** How many are out on the farm right now; the rest are in their houses. */
+  readonly outside: number
+  /** Room across every house, and how many animals are inside. */
+  readonly houseRoom: number
+  readonly houseUsed: number
 }
 
 export interface ProgressionHud extends UIPanel {
@@ -69,10 +72,7 @@ export function createProgressionHud(width: number, height: number): Progression
     context.textAlign = 'left'
     context.fillStyle = UI_THEME.inkSoft
     context.font = '14px Georgia, "Times New Roman", serif'
-    const eggCopy = state.readyEggs > 0
-      ? `${state.readyEggs} ready to hatch`
-      : state.eggs > 0 ? `${state.eggs} ${state.eggs === 1 ? 'egg' : 'eggs'} incubating` : 'No eggs yet'
-    context.fillText(`Residents & visitors  ${state.population}/${state.capacity}   ·   ${eggCopy}`, 20, 101)
+    context.fillText(`Animals ${state.population} (${state.outside} outside)   ·   Indoors ${state.houseUsed}/${state.houseRoom}`, 20, 101)
     context.restore()
     texture.needsUpdate = true
   }
@@ -83,7 +83,7 @@ export function createProgressionHud(width: number, height: number): Progression
     object,
     order: 6,
     setState(state): void {
-      const nextSignature = `${state.points}|${state.level}|${state.pointsToNextLevel}|${state.population}|${state.capacity}|${state.eggs}|${state.readyEggs}`
+      const nextSignature = `${state.points}|${state.level}|${state.pointsToNextLevel}|${state.population}|${state.outside}|${state.houseRoom}|${state.houseUsed}`
       if (nextSignature === signature) return
       signature = nextSignature
       draw(state)

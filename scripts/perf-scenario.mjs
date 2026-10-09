@@ -332,7 +332,6 @@ async function runCrowdRamp(cdp, options) {
       count,
       renderCalls: snapshot.renderCalls,
       triangles: snapshot.triangles,
-      crowd: snapshot.crowd,
       timing,
       withinBudget: withinWork && withinInterval,
     });
@@ -345,7 +344,7 @@ async function runCrowdRamp(cdp, options) {
     : gateSingle(floor.timing, { minFps: options.minFps, minSamples: 30 }).pass
       ? { pass: true, reason: `floor (${floor.count} animals) holds; curve suggests ~${recommendedAnimals} animals` }
       : { pass: false, reason: `floor (${floor.count} animals) already over budget` };
-  return { scenario: 'crowd-ramp', description: 'Sustained instanced-crowd load curve.', viewport, ramp: options.ramp, steps, recommendedAnimals, gate };
+  return { scenario: 'crowd-ramp', description: 'Sustained load curve of real animal models (the farm draws at most 40).', viewport, ramp: options.ramp, steps, recommendedAnimals, gate };
 }
 
 /**
@@ -377,12 +376,12 @@ if (invokedDirectly) {
       console.log('       --scenario crowd-ramp --ramp 10,20,30,40,50 [--settleMs 1200] [--sampleMs 1500] [--minFps 0]');
       console.log('Scenarios:');
       for (const [name, scenario] of Object.entries(SCENARIOS)) console.log(`  ${name}: ${scenario.description}`);
-      console.log('  crowd-ramp: Sustained instanced-crowd load curve.');
+      console.log('  crowd-ramp: Sustained load curve of real animal models (the farm draws at most 40).');
       return;
     }
     if (options.list) {
       for (const [name, scenario] of Object.entries(SCENARIOS)) console.log(`${name}: ${scenario.description}`);
-      console.log('crowd-ramp: Sustained instanced-crowd load curve.');
+      console.log('crowd-ramp: Sustained load curve of real animal models (the farm draws at most 40).');
       return;
     }
     const result = await runScenario(options.scenario, options);

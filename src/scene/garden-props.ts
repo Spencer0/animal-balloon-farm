@@ -5,6 +5,7 @@ import type { GardenBounds } from '../game/farm-expansion'
 import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
 import type { HoverGlowTarget } from './hover-glow'
+import { isHouse } from '../game/animal-housing'
 import { createShopBuild, type ShopBuild, type ShopBuildReport } from './shop-build'
 import {
   createPropInventory,
@@ -67,6 +68,18 @@ export interface PropSelection {
   readonly rotatable: boolean
   /** World point just above the prop, for pinning the card beside it. */
   readonly anchor: { readonly x: number; readonly y: number; readonly z: number }
+  /** Stable id of this placed prop; it survives a move. */
+  readonly siteId: string
+}
+
+/** A placed animal house, and the spot in front of its door. */
+export interface HouseSpot {
+  readonly id: string
+  readonly prop: PropId
+  readonly x: number
+  readonly z: number
+  readonly doorX: number
+  readonly doorZ: number
 }
 
 export interface PropReport {
@@ -130,6 +143,8 @@ export interface GardenProps {
   propCounts(): Readonly<Record<string, number>>
   /** World centres of every placed prop of one id, e.g. the garbage cans a raccoon sleeps beside. */
   placements(id: PropId): readonly { readonly x: number; readonly z: number }[]
+  /** Every placed animal house. A house lifted mid-move still counts, where it stood. */
+  houses(): readonly HouseSpot[]
   readonly placingId: PropId | null
   /** True while a placed prop is lifted and riding the ghost. */
   readonly moving: boolean
@@ -578,6 +593,17 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   let placingId: PropId | null = null
   /** A placed prop lifted off the farm and riding the ghost; null for a fresh placement. */
   let moving: PlacedProp | null = null
+  /** Stable ids for placed props, carried across a move so residents keep their beds. */
+  const siteIds = new WeakMap<PlacedProp, string>()
+  let nextSiteId = 1
+  function siteIdOf(prop: PlacedProp): string {
+    let id = siteIds.get(prop)
+    if (!id) {
+      id = `${prop.id}-${nextSiteId++}`
+      siteIds.set(prop, id)
+    }
+    return id
+  }
   let rotation = 0
   let hoverPoint: THREE.Vector3 | null = null
   let fenceAnchor: LatticeVertex | null = null
@@ -785,6 +811,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       return { ok: false, failure: 'out-of-stock' }
     }
     const placed = placedCellProp(id, cell, rot)
+    if (lifted) siteIds.set(placed, siteIdOf(lifted))
     occupancy.add(placed)
     addVisual(placed)
     fencesDirty = true
@@ -959,6 +986,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       movable: def.kind === 'cell',
       rotatable: def.rotatable,
       anchor,
+      siteId: siteIdOf(prop),
     }
   }
 
@@ -1120,6 +1148,24 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     return counts
   }
 
+  function houses(): readonly HouseSpot[] {
+    const owned = moving ? [...occupancy.placed, moving] : occupancy.placed
+    return owned.filter((prop) => isHouse(prop.id)).map((prop) => {
+      const centre = footprintCenterWorld(prop.id, prop.cell, prop.rotation)
+      // Every house model faces local +Z; a quarter turn about +Y swings that to (sin, cos).
+      const yaw = quarterTurns(prop.rotation)
+      const reach = propDefinition(prop.id).footprint.depth * PROP_LATTICE_CELL / 2 + 0.6
+      return {
+        id: siteIdOf(prop),
+        prop: prop.id,
+        x: centre.x,
+        z: centre.z,
+        doorX: centre.x + Math.sin(yaw) * reach,
+        doorZ: centre.z + Math.cos(yaw) * reach,
+      }
+    })
+  }
+
   function placements(id: PropId): readonly { readonly x: number; readonly z: number }[] {
     return occupancy.placed.filter((prop) => prop.id === id).map((prop) => {
       const centre = footprintCenterWorld(prop.id, prop.cell, prop.rotation)
@@ -1151,6 +1197,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     roosts,
     propCounts,
     placements,
+    houses,
     get placingId() { return placingId },
     get moving() { return moving !== null },
     get rotation() { return rotation },

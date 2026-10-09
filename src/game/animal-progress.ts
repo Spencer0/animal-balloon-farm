@@ -107,10 +107,11 @@ export interface AnimalProgress {
 export function requirementMet(requirement: ConditionRequirement | null, farm: FarmSnapshot): boolean {
   if (!requirement) return true
   if (requirement.kind === 'residentSpecies') {
-    return farm.residentSpecies.has(requirement.species ?? '')
+    if (!farm.residentSpecies.has(requirement.species ?? '')) return false
+  } else {
+    const target = requirement.amount ?? 0
+    if (farmMetric(farm.state, requirement.kind, requirement.species) < target) return false
   }
-  const target = requirement.amount ?? 0
-  if (farmMetric(farm.state, requirement.kind, requirement.species) < target) return false
   return (requirement.and ?? []).every((also) => requirementMet(also, farm))
 }
 

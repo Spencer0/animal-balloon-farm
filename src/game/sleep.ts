@@ -62,8 +62,8 @@ export function pickAnchor(anchors: readonly BedPoint[], occupancy: readonly num
 /**
  * What each night species sleeps beside by day, most preferred first, and how far from the
  * prop's centre a bed is (the animal's half-length plus the prop's reach). A species that is not
- * listed, or whose props are not placed, sleeps where it stands. A house goes first: a later
- * feature will move sleepers *inside* it, and this table is where that would be keyed.
+ * listed, or whose props are not placed, sleeps where it stands. A night animal with room in its
+ * house (see animal-housing.ts) sleeps indoors instead; this is for one that has none.
  */
 export const SLEEP_PROPS: Readonly<Record<string, readonly { readonly prop: string; readonly radius: number }[]>> = {
   raccoon: [

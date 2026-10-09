@@ -36,6 +36,10 @@ PROPS = [
     ("oak", "assets/props/oak.glb"),
     ("garbage-can", "assets/props/garbage-can.glb"),
     ("dumpster", "assets/props/dumpster.glb"),
+    ("goose-house", "assets/props/goose-house.glb"),
+    ("sty", "assets/props/sty.glb"),
+    ("frog-house", "assets/props/frog-house.glb"),
+    ("owl-box", "assets/props/owl-box.glb"),
 ]
 
 

@@ -15,7 +15,7 @@ import { createSurface, fillRoundRect, strokeRoundRect, UI_THEME, withShadow } f
 /**
  * The farm postbox and the center-ring marquee.
  *
- * Routine route news (a resident moves in, an egg is laid, a plant finishes
+ * Routine route news (a resident moves in, a baby is born, a plant finishes
  * growing) never pops up; it lands in the postbox, a mailbox tucked under the
  * progression card with a badge count and a red flag that stands whenever
  * unread mail is waiting. Clicking the mailbox opens the letters, which also
@@ -58,13 +58,13 @@ const FADE_OUT_SPOTLIGHT = 1.1
 
 const DOT_COLORS: Readonly<Record<LedgerEntry['kind'], string>> = {
   resident: UI_THEME.barnRed,
-  egg: '#c98f2e',
+  birth: '#c98f2e',
   plantGrown: UI_THEME.meadow,
   accomplishment: UI_THEME.gilt,
   firstCarnival: UI_THEME.leather,
   firstFarm: UI_THEME.leather,
   firstResident: UI_THEME.leather,
-  firstEgg: UI_THEME.leather,
+  firstBirth: UI_THEME.leather,
 }
 
 function ellipsize(context: CanvasRenderingContext2D, text: string, maxWidth: number): string {

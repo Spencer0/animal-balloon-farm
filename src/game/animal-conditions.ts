@@ -102,6 +102,10 @@ const PROP_PLURALS: Readonly<Record<string, string>> = {
   oak: 'oak trees',
   coop: 'chicken coops',
   barn: 'small barns',
+  'goose-house': 'goose houses',
+  sty: 'pig sties',
+  'frog-house': 'frog houses',
+  'owl-box': 'owl boxes',
   'garbage-can': 'garbage cans',
 }
 
@@ -184,11 +188,15 @@ const CALL_HOME = (kind: 'grassArea' | 'waterArea' | 'flatArea', amount: number,
   result: 'Paints into its own colors. A resident of the farm.',
 })
 
-const LOVE_THE_FARM = (kind: 'grassArea' | 'waterArea' | 'flatArea', amount: number, hint: string, maturity?: number): Omit<StageDefinition, 'stage'> => ({
+/**
+ * The breeding rung. Babies are born indoors, so every species asks for its
+ * house here (see `HOUSE_SPECIES` in animal-housing.ts) alongside its land.
+ */
+const LOVE_THE_FARM = (kind: 'grassArea' | 'waterArea' | 'flatArea', amount: number, hint: string, maturity: number | undefined, house: string): Omit<StageDefinition, 'stage'> => ({
   title: 'Love the farm',
   hint,
-  requirement: { kind, amount, maturity },
-  result: 'Eyes go to hearts. Ready to court and breed.',
+  requirement: { kind, amount, maturity, and: [{ kind: 'propCount', species: house, amount: 1 }] },
+  result: 'Eyes go to hearts. Ready to raise young in its house.',
 })
 
 /**
@@ -207,11 +215,11 @@ const PLANT_HOME = (plant: string, amount: number, hint: string): Omit<StageDefi
   result: 'Paints into its own colors. A resident of the farm.',
 })
 
-const PLANT_LOVE = (plant: string, amount: number, hint: string): Omit<StageDefinition, 'stage'> => ({
+const PLANT_LOVE = (plant: string, amount: number, hint: string, house: string): Omit<StageDefinition, 'stage'> => ({
   title: 'Love the farm',
   hint,
-  requirement: { kind: 'plantCount', species: plant, amount },
-  result: 'Eyes go to hearts. Ready to court and breed.',
+  requirement: { kind: 'plantCount', species: plant, amount, and: [{ kind: 'propCount', species: house, amount: 1 }] },
+  result: 'Eyes go to hearts. Ready to raise young in its house.',
 })
 
 /**
@@ -241,11 +249,11 @@ const REQUIRE_RESIDENT = (species: string, name: string): Omit<StageDefinition, 
   result: 'Paints into its own colors. A resident of the farm.',
 })
 
-const SHARE_LIFE = (species: string, name: string): Omit<StageDefinition, 'stage'> => ({
+const SHARE_LIFE = (species: string, name: string, house: string, houseName: string): Omit<StageDefinition, 'stage'> => ({
   title: 'Love the farm',
-  hint: `Adores its ${name} friend. Likes the farm even more once company is around.`,
-  requirement: { kind: 'residentSpecies', species },
-  result: 'Eyes go to hearts. Ready to court and breed.',
+  hint: `Adores its ${name} friend, and wants a ${houseName} of its own to raise young in.`,
+  requirement: { kind: 'residentSpecies', species, and: [{ kind: 'propCount', species: house, amount: 1 }] },
+  result: 'Eyes go to hearts. Ready to raise young in its house.',
 })
 
 function withStageNumbers(stages: readonly Omit<StageDefinition, 'stage'>[]): readonly StageDefinition[] {
@@ -259,7 +267,7 @@ function withStageNumbers(stages: readonly Omit<StageDefinition, 'stage'>[]): re
  *  - Visits the farm: a flock of three, so a hunt does not empty the yard.
  *  - Stays: five chickens eaten *and* an oak to roost in. This is the stage
  *    that makes predator and prey a mechanic and not just an animation.
- *  - Breeds: a second oak, because owls roost alone, and a flock left to hunt.
+ *  - Breeds: an owl box to nest in, and a flock left to hunt.
  */
 const OWL_CONDITIONS: SpeciesConditions = {
   stages: withStageNumbers([
@@ -283,9 +291,9 @@ const OWL_CONDITIONS: SpeciesConditions = {
     ),
     COUNT_STAGE(
       'Love the farm',
-      'Wants a second oak for a mate to roost in, and a flock of three chickens left to hunt.',
-      { kind: 'propCount', species: 'oak', amount: 2, and: [{ kind: 'residentCount', species: 'chicken', amount: 3 }] },
-      'Eyes go to hearts. Ready to court and breed.',
+      'Wants an owl box to nest in, and a flock of three chickens left to hunt.',
+      { kind: 'propCount', species: 'owl-box', amount: 1, and: [{ kind: 'residentCount', species: 'chicken', amount: 3 }] },
+      'Eyes go to hearts. Ready to raise young in its house.',
     ),
   ]),
 }
@@ -317,7 +325,7 @@ const RACCOON_CONDITIONS: SpeciesConditions = {
       'Love the farm',
       'Wants a dumpster to call home, with the garbage can kept close. It sleeps beside the dumpster.',
       { kind: 'propCount', species: 'dumpster', amount: 1, and: [{ kind: 'propCount', species: 'garbage-can', amount: 1 }] },
-      'Eyes go to hearts. Ready to court and breed.',
+      'Eyes go to hearts. Ready to raise young in its house.',
     ),
   ]),
 }
@@ -340,7 +348,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
         'Love the farm',
         'Wants twice the meadow, and a small barn to raise a calf in.',
         { kind: 'grassArea', amount: 30, maturity: 0.75, and: [{ kind: 'propCount', species: 'barn', amount: 1 }] },
-        'Eyes go to hearts. Ready to court and breed.',
+        'Eyes go to hearts. Ready to raise young in its house.',
       ),
     ]),
   },
@@ -350,7 +358,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       CARNIVAL,
       ENTER_FARM('Sniffs its way in through the gate and starts turning up soil.'),
       REQUIRE_RESIDENT('cow', 'Cow'),
-      SHARE_LIFE('cow', 'Cow'),
+      SHARE_LIFE('cow', 'Cow', 'sty', 'pig sty'),
     ]),
   },
   sheep: {
@@ -365,9 +373,9 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       ),
       COUNT_STAGE(
         'Love the farm',
-        'Wants proper pasture, and clover enough to keep a flock fed.',
-        { kind: 'grassArea', amount: 24, maturity: 0.75, and: [{ kind: 'plantCount', species: 'clover', amount: 4 }] },
-        'Eyes go to hearts. Ready to court and breed.',
+        'Wants proper pasture, clover enough to keep a flock fed, and the barn to raise lambs in.',
+        { kind: 'grassArea', amount: 24, maturity: 0.75, and: [{ kind: 'plantCount', species: 'clover', amount: 4 }, { kind: 'propCount', species: 'barn', amount: 1 }] },
+        'Eyes go to hearts. Ready to raise young in its house.',
       ),
     ]),
   },
@@ -383,9 +391,9 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       ),
       COUNT_STAGE(
         'Love the farm',
-        'Wants a second coop for the nesting boxes, and a bit more lawn to range over.',
-        { kind: 'propCount', species: 'coop', amount: 2, and: [{ kind: 'grassArea', amount: 12, maturity: 0.75 }] },
-        'Eyes go to hearts. Ready to court and breed.',
+        'Wants a bit more lawn to range over, and the coop to raise chicks in.',
+        { kind: 'grassArea', amount: 12, maturity: 0.75, and: [{ kind: 'propCount', species: 'coop', amount: 1 }] },
+        'Eyes go to hearts. Ready to raise young in its house.',
       ),
     ]),
   },
@@ -394,7 +402,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       CARNIVAL,
       ENTER_FARM('Heads straight for the low ground and paddles in.'),
       CALL_HOME('waterArea', 8, 'Wants a proper pool to swim in, not just damp soil.', 0.75),
-      LOVE_THE_FARM('waterArea', 16, 'Wants a bigger pond and plenty of grass at the waterline.', 0.75),
+      LOVE_THE_FARM('waterArea', 16, 'Wants a bigger pond, and a coop to raise ducklings in.', 0.75, 'coop'),
     ]),
   },
   goose: {
@@ -402,7 +410,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       CARNIVAL,
       ENTER_FARM('Waddles in from the tents, inspecting everything.'),
       CALL_HOME('waterArea', 10, 'Wants a deep enough pond to float on.', 0.75),
-      LOVE_THE_FARM('waterArea', 20, 'Wants a proper stretch of water to patrol.', 0.75),
+      LOVE_THE_FARM('waterArea', 20, 'Wants a proper stretch of water to patrol, and a goose house to raise goslings in.', 0.75, 'goose-house'),
     ]),
   },
   owl: OWL_CONDITIONS,
@@ -412,7 +420,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       CARNIVAL,
       ENTER_FARM('Springs over the fence and sits in the mud to listen.'),
       PLANT_HOME('water-lily', 2, 'Wants lily pads to sit on — a couple of grown ones in the pond.'),
-      PLANT_LOVE('water-lily', 4, 'Wants a proper lily pond: twice the pads, and grass along the banks.'),
+      PLANT_LOVE('water-lily', 4, 'Wants a proper lily pond: twice the pads, and a frog house on the bank.', 'frog-house'),
     ]),
   },
 }
@@ -452,7 +460,7 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {
-  return SPECIES_CONDITIONS[species]?.stages ?? withStageNumbers([CARNIVAL, ENTER_FARM('Comes in to look around.'), CALL_HOME('grassArea', 15, 'Wants a meadow.', 0.75), LOVE_THE_FARM('grassArea', 30, 'Wants more meadow.', 0.75)])
+  return SPECIES_CONDITIONS[species]?.stages ?? withStageNumbers([CARNIVAL, ENTER_FARM('Comes in to look around.'), CALL_HOME('grassArea', 15, 'Wants a meadow.', 0.75), LOVE_THE_FARM('grassArea', 30, 'Wants more meadow.', 0.75, 'barn')])
 }
 
 export function stageCount(species: string): number {

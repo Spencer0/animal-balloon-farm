@@ -12,6 +12,7 @@
 import type { Wallet } from './sales'
 
 export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak' | 'garbage-can' | 'dumpster'
+  | 'goose-house' | 'sty' | 'frog-house' | 'owl-box'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -98,7 +99,7 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     id: 'coop',
     name: 'Chicken Coop',
     description: 'A roomy wooden coop with warm nesting boxes.',
-    blurb: 'Chickens will not settle for good without one, and a second helps them raise chicks.',
+    blurb: 'Home to chickens and ducks: room for ten, and chicks and ducklings are born inside.',
     color: '#c96f4a',
     price: 90,
     footprint: { width: 2, depth: 2 },
@@ -112,7 +113,7 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     id: 'barn',
     name: 'Small Barn',
     description: 'A little red barn with a hayloft.',
-    blurb: 'Cows and sheep want a roof of their own. Sheep need one to settle; cows to raise calves.',
+    blurb: 'Home to cows and sheep: room for ten, and calves and lambs are born inside.',
     color: '#b8503f',
     price: 110,
     footprint: { width: 2, depth: 2 },
@@ -154,7 +155,7 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     id: 'dumpster',
     name: 'Dumpster',
     description: 'A battered steel dumpster, lids thrown open and heaped with bags.',
-    blurb: 'A raccoon\'s home. It will not raise a family without one.',
+    blurb: 'A raccoon\'s home: room for ten, and kits are born inside.',
     color: '#868b8e',
     price: 120,
     footprint: { width: 2, depth: 1 },
@@ -164,10 +165,66 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     blocking: true,
     modelUrl: 'assets/props/dumpster.glb',
   },
+  'goose-house': {
+    id: 'goose-house',
+    name: 'Goose House',
+    description: 'A low A-frame shed with a wide door and a ramp down to the water.',
+    blurb: 'Home to geese: room for ten, and goslings are born inside. Geese like it near the pond.',
+    color: '#e0c48a',
+    price: 100,
+    footprint: { width: 2, depth: 2 },
+    size: 3.8,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/goose-house.glb',
+  },
+  sty: {
+    id: 'sty',
+    name: 'Pig Sty',
+    description: 'A snug lean-to shelter beside a fenced mud wallow.',
+    blurb: 'Home to pigs: room for ten, and piglets are born inside.',
+    color: '#d98b8f',
+    price: 95,
+    footprint: { width: 2, depth: 2 },
+    size: 4,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/sty.glb',
+  },
+  'frog-house': {
+    id: 'frog-house',
+    name: 'Frog House',
+    description: 'A hollow stump with a little round door, ringed with lily pads.',
+    blurb: 'Home to frogs: room for ten, and froglets are born inside. Best on the bank of a pond.',
+    color: '#8bb35c',
+    price: 70,
+    footprint: { width: 1, depth: 1 },
+    size: 2,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/frog-house.glb',
+  },
+  'owl-box': {
+    id: 'owl-box',
+    name: 'Owl Box',
+    description: 'A peaked nest box with a round entrance, up on a tall post.',
+    blurb: 'Home to owls: room for ten, and owlets are born inside.',
+    color: '#a9774b',
+    price: 80,
+    footprint: { width: 1, depth: 1 },
+    size: 3.2,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/owl-box.glb',
+  },
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'oak', 'garbage-can', 'dumpster']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'sty', 'goose-house', 'frog-house', 'oak', 'owl-box', 'garbage-can', 'dumpster']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -199,6 +256,10 @@ const PROP_CATEGORY: Readonly<Record<PropId, string>> = {
   oak: 'Tree',
   'garbage-can': 'Utility',
   dumpster: 'Shelter',
+  'goose-house': 'Shelter',
+  sty: 'Shelter',
+  'frog-house': 'Shelter',
+  'owl-box': 'Shelter',
 }
 
 /** Chip copy for the info card, e.g. "Shelter" or "Fence run - 4 sections". */
@@ -224,7 +285,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0, 'goose-house': 0, sty: 0, 'frog-house': 0, 'owl-box': 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0

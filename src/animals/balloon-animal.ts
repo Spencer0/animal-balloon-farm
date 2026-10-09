@@ -122,6 +122,15 @@ export interface BalloonAnimal {
   setSleepSpot(spot: SleepSpot | null): void
   /** True once it has reached its spot and is curled up (not merely on its way there). */
   readonly isSleeping: boolean
+  /**
+   * Walk to a house door to go indoors, or carry on wandering when null. Takes
+   * priority over sleeping. A flier ignores it: it is simply shown or hidden.
+   */
+  setHomeTrip(door: { readonly x: number; readonly z: number } | null): void
+  /** True once it has reached the door it was sent to. */
+  readonly isAtDoor: boolean
+  /** Stand at a point, e.g. a house door it has just stepped out of, and wander from there. */
+  placeAt(x: number, z: number): void
   readonly isLoose: boolean
   /** The look currently worn; residency is gated on actually walking inside. */
   readonly appearance: AnimalAppearance
@@ -441,6 +450,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let alarmed = false
   let flightRate = 1
   let sleepSpot: SleepSpot | null = null
+  let homeTrip: { readonly x: number; readonly z: number } | null = null
+  let atDoor = false
   let sleepBlend = 0
   let asleep = false
   const sleepFacing = new THREE.Quaternion()
@@ -854,6 +865,25 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get flightVisible(): boolean { return flightVisible },
     get isAlarmed(): boolean { return alarmed },
     get isSleeping(): boolean { return asleep },
+    get isAtDoor(): boolean { return atDoor },
+    setHomeTrip(door): void {
+      if (options.flier) return
+      homeTrip = door
+      atDoor = false
+    },
+    placeAt(x: number, z: number): void {
+      if (options.flier) return
+      travelRoute = null
+      wrapper.position.x = x
+      wrapper.position.z = z
+      if (options.groundSampler) {
+        groundYCurrent = options.groundY + options.groundSampler(x, z)
+        wrapper.position.y = groundYCurrent
+      }
+      paused = 0
+      nextDecision = 0
+      wrapper.updateMatrixWorld(true)
+    },
     setSleepSpot(spot: SleepSpot | null): void {
       if (options.flier) return
       sleepSpot = spot
@@ -1015,6 +1045,28 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         posePivot.rotation.y = pivotBaseRotation.y + Math.sin(romanceSeconds * 7.5) * 0.3
         posePivot.position.y = pivotBasePosition.y + Math.sin(romanceSeconds * 15) * 0.11
         if (detailActive) loaded?.mixer.update(delta)
+        return
+      }
+      if (homeTrip) {
+        direction.set(homeTrip.x - wrapper.position.x, 0, homeTrip.z - wrapper.position.z)
+        const distance = direction.length()
+        if (distance > 0.25) {
+          direction.normalize()
+          const facing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
+          wrapper.quaternion.slerp(facing, 1 - Math.exp(-4.5 * delta))
+          wrapper.position.addScaledVector(direction, Math.min(options.speed * delta, distance))
+          setAnimation('WALK', 0.24)
+        } else {
+          atDoor = true
+          setAnimation('IDLE', 0.3)
+        }
+        if (detailActive) loaded?.mixer.update(delta)
+        if (options.groundSampler) {
+          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
+          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
+          wrapper.position.y = groundYCurrent
+        }
+        wrapper.updateMatrixWorld(true)
         return
       }
       if (sleepSpot) {

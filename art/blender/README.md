@@ -171,3 +171,17 @@ The building is authored facing Blender `-Y`, so it lands in Three.js facing `+Z
 ```powershell
 blender --background --factory-startup --python art/blender/chicken_coop.py
 ```
+
+## Animal houses: sty, goose house, frog house, owl box
+
+- Authoring script: [`animal_houses.py`](animal_houses.py)
+- Outputs per house: `../../public/assets/props/<id>.blend`, `<id>-review.png`, `<id>.glb` for `goose-house`, `sty`, `frog-house` and `owl-box`
+
+Run from the repository root:
+
+```powershell
+blender --background --factory-startup --python art/blender/animal_houses.py
+blender --background --factory-startup --python art/blender/animal_houses.py -- sty owl-box
+```
+
+With no names it rebuilds all four. Each house shares the coop's palette (cream boards, teal trim, terracotta roofs) and faces its door toward -Y (glTF +Z): the game walks animals to that side of the footprint to go in and out. The coop and barn keep their own scripts. After a rebuild, refresh the shop icons with `prop_thumbs.py -- <id>`.

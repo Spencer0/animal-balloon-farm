@@ -14,7 +14,7 @@ const { createNotificationCenter, notificationCopy, relativeTimeLabel } = notifi
 
 test('copy names the subject on every ticket', () => {
   assert.match(notificationCopy('resident', 'Pig').title, /Pig/)
-  assert.match(notificationCopy('egg', 'Duck').title, /Duck/)
+  assert.match(notificationCopy('birth', 'Duck').title, /Duck/)
   assert.match(notificationCopy('plantGrown', 'Clover').title, /Clover/)
   assert.match(notificationCopy('firstResident', 'Pig').detail, /Pig/)
 })
@@ -42,8 +42,8 @@ test('first milestone per species is a spotlight on stage, repeats file routine 
 
 test('milestone memory is per species', () => {
   const center = createNotificationCenter()
-  center.pushMilestone('egg', 'Duck')
-  const other = center.pushMilestone('egg', 'Goose')
+  center.pushMilestone('birth', 'Duck')
+  const other = center.pushMilestone('birth', 'Goose')
   assert.ok(other)
   assert.equal(other.spotlight, true)
 })
@@ -62,22 +62,22 @@ test('repeat mail does not stack while an unread copy sits in the postbox', () =
 test('spotlights expire after their lifetime and the queue promotes', () => {
   const center = createNotificationCenter({ spotlightLifetime: 4 })
   center.pushMilestone('resident', 'Pig')
-  center.pushMilestone('egg', 'Duck')
+  center.pushMilestone('birth', 'Duck')
   assert.equal(center.visible()[0].kind, 'firstResident')
   assert.equal(center.queuedCount(), 1)
   center.tick(4)
-  assert.equal(center.visible()[0].kind, 'firstEgg')
+  assert.equal(center.visible()[0].kind, 'firstBirth')
   assert.equal(center.entryState(center.visible()[0].id), 'unread')
 })
 
 test('dismissing the marquee files it as read and promotes the queue', () => {
   const center = createNotificationCenter()
   const first = center.pushMilestone('resident', 'Pig')
-  center.pushMilestone('egg', 'Duck')
+  center.pushMilestone('birth', 'Duck')
   assert.equal(center.dismiss(first.id + 1000), false)
   assert.equal(center.dismiss(first.id), true)
   assert.equal(center.entryState(first.id), 'read')
-  assert.equal(center.visible()[0].kind, 'firstEgg')
+  assert.equal(center.visible()[0].kind, 'firstBirth')
 })
 
 test('unread count clears when the postbox is opened', () => {

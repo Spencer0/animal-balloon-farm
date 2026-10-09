@@ -1,7 +1,7 @@
 import { pause, type ScenarioHarness } from '../types'
 
 /** The farm every owl scenario starts from: roomy enough to hold a flock and an owl. */
-export async function openFarm(d: ScenarioHarness, options: { readonly level?: number; readonly chickens: number; readonly oaks?: number }): Promise<void> {
+export async function openFarm(d: ScenarioHarness, options: { readonly level?: number; readonly chickens: number; readonly oaks?: number; readonly owlBox?: boolean }): Promise<void> {
   d.closeMenu()
   d.grantCoins(2000)
   d.expandFarm(options.level ?? 2)
@@ -12,6 +12,11 @@ export async function openFarm(d: ScenarioHarness, options: { readonly level?: n
   for (let index = 0; index < oaks; index += 1) {
     d.buy('oak')
     d.placeProp('oak', spots[index][0], spots[index][1], 0)
+  }
+  // The owl's house: breeding needs room in one.
+  if (options.owlBox) {
+    d.buy('owl-box')
+    d.placeProp('owl-box', 2, 1, 0)
   }
   // Animals and the oak model load asynchronously; give them a moment to exist.
   await pause(1500)
