@@ -20,6 +20,11 @@ import { assertViewport, openDebugPage, summarizeTiming, withSession } from './c
 
 const DEFAULT_MIN_FPS = 60;
 const DEFAULT_MIN_SAMPLES = 60;
+// Samples are frame-driven, not clock-driven: on a software-rendered machine a
+// frame can take ~0.7s, so a fixed 2s window would collect 3 frames and gate on
+// noise. Keep sampling past the window until the frame count is met, capped here.
+const MAX_SAMPLE_MS = 60_000;
+const CROWD_MIN_SAMPLES = 30;
 
 const PRELUDE = `
   const debug = window.__gardenDebug;
@@ -32,12 +37,12 @@ const PRELUDE = `
     clientX: x, clientY: y, pointerId: 77, button, bubbles: true,
     buttons: type === 'pointerup' ? 0 : 1, isPrimary: true,
   }));
-  const collectNewSamples = async (durationMs) => {
+  const collectNewSamples = async (durationMs, minSamples = 0) => {
     const samples = [];
     const intervals = [];
     const start = performance.now();
     let sampledFrameNumber = -1;
-    while (performance.now() - start < durationMs) {
+    while ((performance.now() - start < durationMs || samples.length < minSamples) && performance.now() - start < ${MAX_SAMPLE_MS}) {
       await waitFrames(1);
       const latest = debug.performanceSamples().at(-1);
       if (latest && latest.frameNumber !== sampledFrameNumber && latest.intervalMs > 0) {
@@ -54,7 +59,8 @@ const GRASS_FIXTURE = `
   debug.closeMenu();
   debug.focusGarden();
   debug.clearGarden();
-  debug.digPond(0, 0, 2.5);
+  debug.digAt(0, 0, 2.5, -1);
+  debug.digAt(0, 0, 2.5, -1);
   debug.pourAt(0, 0, 2.2, 1.4);
   for (const x of [-4, 0, 4]) {
     for (const z of [-4, 0, 4]) debug.sowGrass(x, z, 2.8);
@@ -89,8 +95,8 @@ const SCENARIOS = {
       const duration = 2200;
       const start = performance.now();
       let sampledFrameNumber = -1;
-      while (performance.now() - start < duration) {
-        const t = (performance.now() - start) / duration;
+      while (performance.now() - start < duration || (samples.length < ${DEFAULT_MIN_SAMPLES} && performance.now() - start < ${MAX_SAMPLE_MS})) {
+        const t = Math.min(1, (performance.now() - start) / duration);
         pointer('pointermove', startPoint.x + (endPoint.x - startPoint.x) * t, startPoint.y + (endPoint.y - startPoint.y) * t);
         await waitFrames(1);
         const latest = debug.performanceSamples().at(-1);
@@ -135,7 +141,7 @@ const SCENARIOS = {
     await waitFrames(10);
     let collected = { samples: [], intervals: [] };
     try {
-      collected = await collectNewSamples(2200);
+      collected = await collectNewSamples(2200, ${DEFAULT_MIN_SAMPLES});
     } finally {
       pointer('pointerup', point.x, point.y);
     }
@@ -163,18 +169,20 @@ const SCENARIOS = {
     debug.closeMenu();
     debug.focusGarden();
     debug.clearGarden();
-    debug.digPond(0, 0, 2.5);
+    debug.digAt(0, 0, 2.5, -1);
+    debug.digAt(0, 0, 2.5, -1);
     debug.pourAt(0, 0, 2.2, 1.4);
     for (const x of [-4, 0, 4]) {
       for (const z of [-4, 0, 4]) debug.sowGrass(x, z, 2.8);
     }
+    debug.grantSeeds(4);
     const lily = debug.plant('water-lily', 0.5, 0.5);
     const clover = debug.plant('clover', -3, 2);
     const poppy = debug.plant('poppy', 3, -2);
     if (!lily || lily.ok === false) throw new Error('Lily planting failed: ' + JSON.stringify(lily));
     const before = debug.farmState().tallGrassArea ?? 0;
     debug.growPlants(6, 2);
-    const collected = await collectNewSamples(2000);
+    const collected = await collectNewSamples(2000, ${DEFAULT_MIN_SAMPLES});
     await waitFrames(3);
     return {
       kind: 'plant',
@@ -202,7 +210,7 @@ const SCENARIOS = {
     debug.sowGrass(0, 0, 2.8);
     const before = debug.gardenReport().bounds.halfWidth;
     debug.expandFarm(2);
-    const collected = await collectNewSamples(2500);
+    const collected = await collectNewSamples(2500, 30);
     await waitFrames(3);
     return {
       kind: 'expand',
@@ -305,7 +313,7 @@ async function runCrowdRamp(cdp, options) {
       const intervals = [];
       const start = performance.now();
       let n = -1;
-      while (performance.now() - start < ${options.sampleMs}) {
+      while (performance.now() - start < ${options.sampleMs} || (samples.length < ${CROWD_MIN_SAMPLES} && performance.now() - start < ${MAX_SAMPLE_MS})) {
         await waitFrames(1);
         const latest = debug.performanceSamples().at(-1);
         if (latest && latest.frameNumber !== n && latest.intervalMs > 0) {

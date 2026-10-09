@@ -14,6 +14,10 @@
    Use `scripts/screenshot.mjs` (1280x720 JPEG), with output outside the repo.
    Take one screenshot per state change, never in a loop, and never fullPage on
    the game canvas. Oversized images break the agent thread.
+   Before calling any game change done, run `npm run gate` (tests, production
+   no-test-code check, and CPU stress budgets; see TESTING.md). It needs Chrome.
+   If it fails, fix the change or measure and justify a new budget. Never
+   loosen a check to get green.
 4. **Open a live preview for Spencer.** When work is ready to look at, start
    the worktree's dev server (`PORT=<port> npm run dev`, with a port no other
    worktree uses) and open its URL in the in-app browser so Spencer can play
