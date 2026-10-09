@@ -143,6 +143,29 @@ test('a snake stalks a still mouse, lunges and catches it, then digests', () => 
   assert.equal(hunter.cooldown > 30, true)
 })
 
+test('a lunge lands even though the collision pass keeps the snake and mouse a body-width apart', async () => {
+  // The bug this guards: catches were measured centre to centre, closer than
+  // the collision pass ever lets two animals stand, so every lunge stalled.
+  const collision = await load('src/game/animal-collision.ts')
+  const hunter = hunt.createGroundHunter()
+  hunter.cooldown = 0
+  const snake = { x: 0, z: 0, radius: 2.8 * 0.24 }
+  const mouse = { id: 'm1', species: 'mouse', x: 4, z: 0, targetable: true, radius: 1.6 * 0.24 }
+  const events = []
+  for (let t = 0; t < 10 && !events.some((event) => event.kind === 'catch'); t += 0.05) {
+    const step = hunt.stepGroundHunter(hunter, { x: snake.x, z: snake.z, reach: 2.8 * 0.42, huntAllowed: true, prey: [mouse], preyCounts: { mouse: 4 } }, 0.05)
+    events.push(...step.events)
+    if (step.pursuit) {
+      const dx = step.pursuit.x - snake.x
+      const distance = Math.abs(dx)
+      if (distance > 1e-6) snake.x += Math.sign(dx) * Math.min(distance, 0.75 * step.pursuit.speedScale * 0.05)
+    }
+    const bodies = [snake, mouse]
+    collision.resolveCollisions(bodies, [])
+  }
+  assert.deepEqual(events.map((event) => event.kind), ['stalk', 'strike', 'catch'])
+})
+
 test('a snake leaves the last breeding pair alone, and ignores prey out of sight', () => {
   const hunter = hunt.createGroundHunter()
   hunter.cooldown = 0

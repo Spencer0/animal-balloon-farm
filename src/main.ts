@@ -909,6 +909,8 @@ function updateOwlHunt(deltaSeconds: number): void {
  * or a resident) hunts; prey is any adult mouse or rat out on the farm, and a
  * species down to its breeding pair is left alone.
  */
+const SNAKE_MOUTH_SHARE = 0.42
+
 function updateSnakeHunt(deltaSeconds: number): void {
   if (mode === 'viewer') return
   const prey = PREY_OF.snake ?? []
@@ -917,7 +919,9 @@ function updateSnakeHunt(deltaSeconds: number): void {
     .map((animal) => {
       const record = progress.animal(animal.instanceId)
       const busy = animal.isCapturing || animal.isRomancing || animal.isResidencyPending || animal.isGoingHome
-      return { animal, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy) }
+      // `size` is the model's length, so the mouth sits a little under half of it ahead of the centre.
+      const reach = (bodySizeBySpecies.get('snake') ?? 2.8) * SNAKE_MOUTH_SHARE * animal.currentScale
+      return { animal, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy), reach }
     })
   if (snakes.length === 0) return
   const quarry = animals
@@ -3913,8 +3917,13 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     runScenario: async (name) => (await import('../dev/scenarios/index')).runScenario(name, debugHarness),
     stepHunt: (seconds, secondsPerStep = 1 / 30) => {
       const steps = Math.max(0, Math.round(seconds / secondsPerStep))
+      // Mirror the frame loop, collisions included: a hunt that only works
+      // without them (animals passing through each other) is not a hunt.
+      let simulatedSeconds = performance.now() / 1000
       for (let step = 0; step < steps; step += 1) {
+        simulatedSeconds += secondsPerStep
         animals.forEach((animal) => animal.update(secondsPerStep))
+        collideAnimals(simulatedSeconds)
         updateOwlHunt(secondsPerStep)
         updateSnakeHunt(secondsPerStep)
       }

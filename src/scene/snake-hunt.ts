@@ -17,6 +17,8 @@ export interface HuntSnake {
   readonly animal: BalloonAnimal
   /** Visitors and residents on the farm hunt; a snake out at the carnival does not. */
   readonly huntAllowed: boolean
+  /** How far ahead of its centre its mouth is, in metres. */
+  readonly reach: number
 }
 
 export interface SnakeHuntContext {
@@ -89,6 +91,7 @@ export function createSnakeHunt(): SnakeHunt {
           x: snake.animal.currentPosition.x,
           z: snake.animal.currentPosition.z,
           huntAllowed: snake.huntAllowed,
+          reach: snake.reach,
           prey: views,
           preyCounts: context.preyCounts,
         }, deltaSeconds)

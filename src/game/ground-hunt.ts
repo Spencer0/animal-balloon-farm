@@ -40,6 +40,13 @@ export interface GroundHuntWorld {
   /** Where the snake is now. */
   readonly x: number
   readonly z: number
+  /**
+   * How far ahead of its centre the snake's mouth is. Distances to prey are
+   * measured from the mouth, not the centre: the collision pass keeps two
+   * animals' centres a body-width apart, so a catch measured centre to centre
+   * could never land.
+   */
+  readonly reach?: number
   /** Whether this snake may hunt (a visitor or resident on the farm may; a carnival snake may not). */
   readonly huntAllowed: boolean
   readonly prey: readonly GroundPreyView[]
@@ -76,13 +83,14 @@ export const SNAKE_TUNING = {
   sightRadius: 7,
   /** Creeping pace, as a multiple of the snake's walking speed. Slower than a walking mouse. */
   stalkSpeedScale: 1.6,
-  /** Close enough to lunge. */
+  /** Close enough to lunge, from the mouth. */
   strikeDistance: 1.5,
   /** The lunge, as a multiple of walking speed: faster than a panicking mouse, but only briefly. */
   strikeSpeedScale: 6.5,
   /** A lunge that has not landed by now has missed. */
   strikeSeconds: 0.8,
-  catchDistance: 0.6,
+  /** Mouth to prey at the catch. Well short of where the collision pass would hold them apart. */
+  catchDistance: 0.35,
   /** A stalk that has not closed in by now is given up. */
   giveUpSeconds: 14,
   /** Seconds between hunts once a catch is made. */
@@ -132,7 +140,9 @@ export function stepGroundHunter(hunter: GroundHunter, world: GroundHuntWorld, d
   hunter.cooldown = Math.max(0, hunter.cooldown - dt)
 
   const target = hunter.preyId ? world.prey.find((entry) => entry.id === hunter.preyId) : undefined
-  const distanceTo = (prey: GroundPreyView): number => Math.hypot(prey.x - world.x, prey.z - world.z)
+  const reach = Math.max(0, world.reach ?? 0)
+  /** Mouth to prey: the snake faces what it hunts, so its mouth is `reach` nearer than its centre. */
+  const distanceTo = (prey: GroundPreyView): number => Math.max(0, Math.hypot(prey.x - world.x, prey.z - world.z) - reach)
 
   switch (hunter.phase) {
     case 'roam': {
