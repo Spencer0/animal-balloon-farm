@@ -35,8 +35,8 @@ import { resolveCollisions, type CollisionBody, type CollisionBox } from './game
 import { shopUnlocked } from './game/shop-construction'
 import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { GARDEN_TOOLS, type GardenToolId } from './scene/garden-tool-art'
-import { createCameraTour, type CameraTour, type CameraTourSubject } from './game/camera-tour'
-import { cameraPanStep } from './game/camera-rig'
+import type { CameraTourSubject } from './game/camera-tour'
+import { createFarmCamera } from './scene/farm-camera'
 import { createUILayer, routePointer, type UIPanel } from './ui/ui-layer'
 import { advanceClock, calendarOf, createDayNightClock, formatCalendarDate, phaseOf, setTimeOfDay, skipToNext } from './game/day-night'
 import { createDayNightRig } from './scene/day-night-rig'
@@ -120,40 +120,27 @@ declare const __GARDEN_DEBUG__: boolean
 
 const pageParams = new URLSearchParams(window.location.search)
 const gardenDebugMode = __GARDEN_DEBUG__ && pageParams.has('gardenDebug')
-const normalViewHeight = 43
-/**
- * The viewer looks at a small stage, so it zooms right in. The farm keeps its
- * own wide framing because the whole fairground has to fit on screen.
- */
-const viewerViewHeight = 26
-/**
- * Close-up framing for the solo review booth (a single-species VIEWER_CAST):
- * the whole point is judging one model, so it fills the frame.
- */
-const singleModelViewHeight = 6.5
-/**
- * How far below the stage the viewer's look-at point sits, in world units.
- * Lowering it lifts the stage up the screen so the animal tray along the
- * bottom does not cover the animals' feet.
- */
-const viewerTargetY = -4.7
-
-const cameraTarget = new THREE.Vector3(0, 1.25, 0)
-const aspect = window.innerWidth / Math.max(1, window.innerHeight)
-const viewHeight = normalViewHeight
-const camera = new THREE.OrthographicCamera(
-  -(viewHeight * aspect) / 2,
-  (viewHeight * aspect) / 2,
-  viewHeight / 2,
-  -viewHeight / 2,
-  0.1,
-  720,
-)
-// Orthographic distance does not change framing. Keep the eye far enough back
-// that the bottom rays stay above ground at maximum zoom and shallow tilt.
-const initialOffset = new THREE.Vector3(35, 34, 47).multiplyScalar(2)
-camera.position.copy(cameraTarget).add(initialOffset)
-camera.lookAt(cameraTarget)
+// The farm camera owns the orthographic view and every way it moves (see
+// scene/farm-camera.ts). The aliases below keep the call sites reading as before.
+const farmCamera = createFarmCamera({
+  renderer,
+  inViewer: () => mode === 'viewer',
+  menuDrifting: () => menu.isOpen && mode === 'farm',
+  tourBlocked: () => mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen,
+  viewerFocusStand: () => viewerFocusStand,
+  tourSubjects: () => tourSubjects(),
+  onReframed: () => refreshAnimalVisibility(performance.now() / 1000, true),
+  onTourStart: () => { dragPointer = null; dragMode = null },
+})
+const camera = farmCamera.camera
+const cameraTarget = farmCamera.target
+const focusCamera = farmCamera.focus
+const updateCameraProjection = farmCamera.updateProjection
+const frameAt = farmCamera.frameAt
+const beginCameraTour = (seed?: number): boolean => farmCamera.beginTour(seed)
+const endCameraTour = (restore: boolean): void => farmCamera.endTour(restore)
+const resetCameraToStart = farmCamera.resetToStart
+const updateCameraTour = farmCamera.updateTour
 
 const ambient = new THREE.HemisphereLight('#fff0ce', '#70975c', 1.85)
 scene.add(ambient)
@@ -1357,10 +1344,6 @@ type GameMode = 'farm' | 'viewer'
 let mode: GameMode = 'farm'
 let viewerStage: ReturnType<typeof createCaptureShowcaseStage> | null = null
 
-const targetOffset = new THREE.Vector3()
-const viewDirection = new THREE.Vector3().subVectors(camera.position, cameraTarget).normalize()
-let cameraDistance = initialOffset.length()
-let viewHalfHeight = viewHeight / 2
 let dragPointer: number | null = null
 let toolPointer: number | null = null
 let previousPointer = { x: 0, y: 0 }
@@ -1369,22 +1352,13 @@ const pressedKeys = new Set<string>()
 let pointerPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
 let pointerWasSeen = false
 const CAMERA_EDGE_MARGIN = 34
-const CAMERA_BASE_SPEED = 12
-const CAMERA_MAX_SPEED = 27
-const CAMERA_MIN_ZOOM = 1.25
-const CAMERA_MAX_ZOOM = 34
 
-const cameraShakeOffset = new THREE.Vector3()
-const CAMERA_SHAKE_DURATION = 0.82
-const CAMERA_SHAKE_AMPLITUDE = 0.38
-let expansionFeedbackSeconds = 0
-let expansionFeedbackStrength = 0
 
 // ------------------------------------------------------------------- UI layer --
 
 const ui = createUILayer()
 const performanceOverlay = __GARDEN_DEBUG__ && gardenDebugMode && !pageParams.has('nohud') ? createPerformanceOverlay() : null
-const frameTimer = __GARDEN_DEBUG__ && gardenDebugMode ? createFrameTimer(renderer, () => normalViewHeight / (viewHalfHeight * 2)) : null
+const frameTimer = __GARDEN_DEBUG__ && gardenDebugMode ? createFrameTimer(renderer, () => farmCamera.zoom) : null
 ui.resize(window.innerWidth, window.innerHeight)
 
 const journal = createJournalPanel(window.innerWidth, window.innerHeight, (isJournalOpen) => {
@@ -2327,30 +2301,6 @@ function setMode(next: GameMode): void {
   updateCameraProjection()
 }
 
-function focusCamera(): void {
-  targetOffset.set(0, 0, 0)
-  if (mode === 'viewer' && viewerFocusStand) {
-    // Solo review booth: frame just the staged plinth so the model under
-    // review fills the frame. The look-at point sits below the plinth for the
-    // same reason as the wide shot — the tray along the bottom must clear the
-    // model's feet.
-    cameraTarget.set(viewerFocusStand.x, viewerFocusStand.y - 0.8, viewerFocusStand.z)
-    viewHalfHeight = singleModelViewHeight / 2
-  } else {
-    // The viewer's UI is a tray along the bottom, so the stage is framed a little
-    // high: look at a point under it and the animals ride above the tray.
-    cameraTarget.set(0, mode === 'viewer' ? viewerTargetY : 1.25, 0)
-    viewHalfHeight = (mode === 'viewer' ? viewerViewHeight : normalViewHeight) / 2
-  }
-  camera.position.copy(cameraTarget).add(initialOffset)
-  viewDirection.copy(initialOffset).normalize()
-  cameraDistance = initialOffset.length()
-  camera.lookAt(cameraTarget)
-  camera.updateMatrixWorld()
-  updateCameraProjection()
-  refreshAnimalVisibility(performance.now() / 1000, true)
-}
-
 /**
  * The tool bar and the journal launcher belong to the farm. While the main menu
  * is up they used to stay on screen underneath it, so the menu's button row was
@@ -2384,32 +2334,6 @@ if (lastPointerClient.x < 0) {
   setCursor('idle', gameCanvas)
 }
 
-// ------------------------------------------------------------- camera tool --
-// The farm's own moves (edge pan, WASD, wheel zoom) are always available. The
-// camera tool adds an explicit framing mode on top:
-//   left-drag    orbits the view around whatever it is looking at,
-//   right-click  runs a cinematic tour over the farm,
-//   middle-click returns to the opening shot.
-// The tour saves the view it replaced, so leaving it puts the player back
-// exactly where they were rather than somewhere along the tour route.
-
-interface SavedCameraView {
-  readonly target: THREE.Vector3
-  readonly position: THREE.Vector3
-  readonly direction: THREE.Vector3
-  readonly halfHeight: number
-  readonly distance: number
-}
-
-let cameraTour: CameraTour | null = null
-let cameraTourSeed = 0
-let savedCameraView: SavedCameraView | null = null
-/** The tour's live orbit, eased onto the sequencer's angle so a tour glides. */
-let tourAngle = 0
-let tourPhi = 1
-const tourLookAt = new THREE.Vector3()
-const tourDesiredLookAt = new THREE.Vector3()
-const tourOffset = new THREE.Vector3()
 
 /** Shift holds the pointer: while it is down nothing is armed, so presses and hovers act on the farm. */
 let shiftHeld = false
@@ -2453,53 +2377,6 @@ function isWorldToolActive(): boolean {
   return !shiftHeld && toolsHud.selectedTool !== null && pointerOverLawn()
 }
 
-function beginCameraTour(seed = Math.floor(Math.random() * 0xffffffff)): boolean {
-  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) return false
-  savedCameraView = {
-    target: cameraTarget.clone(),
-    position: camera.position.clone(),
-    direction: viewDirection.clone(),
-    halfHeight: viewHalfHeight,
-    distance: cameraDistance,
-  }
-  cameraTourSeed = seed >>> 0
-  cameraTour = createCameraTour(cameraTourSeed)
-  tourLookAt.copy(cameraTarget)
-  // Start the orbit where the player is already looking, so the tour swings
-  // into place instead of cutting to a fresh angle.
-  const openingOffset = new THREE.Vector3().subVectors(camera.position, cameraTarget)
-  const openingRadius = Math.max(1e-6, openingOffset.length())
-  tourAngle = Math.atan2(openingOffset.x, openingOffset.z)
-  tourPhi = THREE.MathUtils.clamp(Math.acos(THREE.MathUtils.clamp(openingOffset.y / openingRadius, -1, 1)), 0.36, 1.17)
-  // A tour owns the camera outright, so a half-finished drag must not fight it.
-  dragPointer = null
-  dragMode = null
-  return true
-}
-
-/** Leave the tour. `restore` puts back the framing the tour interrupted. */
-function endCameraTour(restore: boolean): void {
-  if (!cameraTour) return
-  cameraTour = null
-  if (restore && savedCameraView) {
-    cameraTarget.copy(savedCameraView.target)
-    camera.position.copy(savedCameraView.position)
-    viewDirection.copy(savedCameraView.direction)
-    viewHalfHeight = savedCameraView.halfHeight
-    cameraDistance = savedCameraView.distance
-    camera.lookAt(cameraTarget)
-    camera.updateMatrixWorld()
-    updateCameraProjection()
-  }
-  savedCameraView = null
-}
-
-/** Snap back to the opening shot: the framing the farm starts the game with. */
-function resetCameraToStart(): void {
-  endCameraTour(false)
-  focusCamera()
-}
-
 /** Who the tour could pin to: every animal still living at the farm. */
 function tourSubjects(): CameraTourSubject[] {
   return animals
@@ -2510,40 +2387,6 @@ function tourSubjects(): CameraTourSubject[] {
       y: +animal.root.position.y.toFixed(3),
       z: +animal.root.position.z.toFixed(3),
     }))
-}
-
-function updateCameraTour(deltaSeconds: number): void {
-  if (!cameraTour) return
-  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) {
-    endCameraTour(true)
-    return
-  }
-  const shot = cameraTour.tick(deltaSeconds, tourSubjects())
-  if (shot.subject) tourDesiredLookAt.set(shot.subject.x, shot.lookAtHeight, shot.subject.z)
-  else tourDesiredLookAt.set(0, shot.lookAtHeight, 0)
-  // Exponential easing: fast enough to keep up with a walking animal, slow
-  // enough that a shot change reads as a glide instead of a cut.
-  const blend = 1 - Math.exp(-deltaSeconds * 2.1)
-  tourLookAt.lerp(tourDesiredLookAt, blend)
-  viewHalfHeight += (shot.viewHeight / 2 - viewHalfHeight) * blend
-  // Ease along the short way round the circle, so a tour opening from the
-  // player's angle and a shot swap both read as a swing, not a cut.
-  const angleDelta = Math.atan2(Math.sin(shot.orbitAngle - tourAngle), Math.cos(shot.orbitAngle - tourAngle))
-  tourAngle += angleDelta * blend
-  // A breath of vertical drift, so the orbit reads as hand-held rather than
-  // turntable-exact.
-  const targetPhi = THREE.MathUtils.clamp(0.92 + Math.sin(performance.now() * 0.00021) * 0.045, 0.36, 1.17)
-  tourPhi += (targetPhi - tourPhi) * blend
-  tourOffset.setFromSphericalCoords(cameraDistance, tourPhi, tourAngle)
-  // Keep the shared look-at in sync: the expansion shake and the debug
-  // harness both read `cameraTarget`, so a tour that only aimed the camera
-  // would have been yanked back to the old target by either of them.
-  cameraTarget.copy(tourLookAt)
-  camera.position.copy(cameraTarget).add(tourOffset)
-  viewDirection.copy(tourOffset).normalize()
-  camera.lookAt(cameraTarget)
-  camera.updateMatrixWorld()
-  updateCameraProjection()
 }
 
 // -------------------------------------------------------------------- input --
@@ -2736,7 +2579,7 @@ function updateCameraPan(deltaSeconds: number): void {
     - Number(pressedKeys.has('s') || pressedKeys.has('arrowdown'))
   let edgeStrength = 0
 
-  if (cameraTour) {
+  if (farmCamera.tour) {
     // A key takes the camera back from the tour; a mouse resting near the edge
     // does not, or the tour would end the moment the pointer drifted.
     if (Math.abs(horizontal) + Math.abs(vertical) < 0.001) return
@@ -2772,49 +2615,7 @@ function updateCameraPan(deltaSeconds: number): void {
     vertical /= inputLength
   }
 
-  const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
-  cameraRight.y = 0
-  cameraRight.normalize()
-  const cameraForward = new THREE.Vector3().subVectors(cameraTarget, camera.position)
-  cameraForward.y = 0
-  cameraForward.normalize()
-  const direction = cameraRight.multiplyScalar(horizontal).addScaledVector(cameraForward, vertical)
-  if (direction.lengthSq() < 0.0001) return
-  direction.normalize()
-  const zoomScale = viewHalfHeight / (normalViewHeight / 2)
-  const speed = THREE.MathUtils.lerp(CAMERA_BASE_SPEED, CAMERA_MAX_SPEED, edgeStrength) * zoomScale
-  const movement = direction.multiplyScalar(speed * deltaSeconds)
-  cameraTarget.add(movement)
-  camera.position.add(movement)
-  camera.lookAt(cameraTarget)
-  camera.updateMatrixWorld()
-}
-
-function removePreviousCameraShake(): void {
-  if (cameraShakeOffset.lengthSq() === 0) return
-  camera.position.sub(cameraShakeOffset)
-  cameraTarget.sub(cameraShakeOffset)
-  cameraShakeOffset.set(0, 0, 0)
-}
-
-function applyExpansionCameraShake(deltaSeconds: number, elapsedSeconds: number): void {
-  if (expansionFeedbackSeconds <= 0) {
-    expansionFeedbackSeconds = 0
-    expansionFeedbackStrength = 0
-    return
-  }
-  expansionFeedbackSeconds = Math.max(0, expansionFeedbackSeconds - deltaSeconds)
-  const envelope = expansionFeedbackSeconds / CAMERA_SHAKE_DURATION
-  const amplitude = CAMERA_SHAKE_AMPLITUDE * expansionFeedbackStrength * envelope * envelope
-  cameraShakeOffset.set(
-    (Math.sin(elapsedSeconds * 51) + Math.sin(elapsedSeconds * 31 + 1.7) * 0.45) * amplitude,
-    Math.sin(elapsedSeconds * 43 + 0.6) * amplitude * 0.16,
-    (Math.cos(elapsedSeconds * 47 + 0.3) + Math.sin(elapsedSeconds * 29) * 0.35) * amplitude,
-  )
-  camera.position.add(cameraShakeOffset)
-  cameraTarget.add(cameraShakeOffset)
-  camera.lookAt(cameraTarget)
-  camera.updateMatrixWorld()
+  farmCamera.moveAlongGround(horizontal, vertical, edgeStrength, deltaSeconds)
 }
 
 function orbitPointerDown(event: PointerEvent): void {
@@ -2938,30 +2739,10 @@ function orbitPointerMove(event: PointerEvent): void {
   const dy = event.clientY - previousPointer.y
   previousPointer = { x: event.clientX, y: event.clientY }
   if (dragMode === 'pan') {
-    const cameraRight = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
-    const cameraUp = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1)
-    const panScale = viewHalfHeight / Math.max(1, window.innerHeight)
-    // Per-move delta only: `cameraPanStep` is deliberately stateless. The old
-    // version accumulated into a shared offset, so every pan move re-applied
-    // all the previous ones and the camera accelerated away.
-    const step = cameraPanStep(cameraRight, cameraUp, dx, dy, panScale)
-    targetOffset.set(step.x, step.y, step.z)
-    cameraTarget.add(targetOffset)
-    camera.position.copy(cameraTarget).addScaledVector(viewDirection, cameraDistance)
-    camera.lookAt(cameraTarget)
-    camera.updateMatrixWorld()
+    farmCamera.dragPan(dx, dy)
     return
   }
-
-  const offset = new THREE.Vector3().subVectors(camera.position, cameraTarget)
-  const spherical = new THREE.Spherical().setFromVector3(offset)
-  spherical.theta -= dx * 0.0048
-  spherical.phi = THREE.MathUtils.clamp(spherical.phi + dy * 0.0032, 0.36, 1.17)
-  offset.setFromSpherical(spherical)
-  viewDirection.copy(offset).normalize()
-  camera.position.copy(cameraTarget).add(offset)
-  camera.lookAt(cameraTarget)
-  camera.updateMatrixWorld()
+  farmCamera.dragOrbit(dx, dy)
 }
 
 function orbitPointerUp(event: PointerEvent): void {
@@ -2999,10 +2780,7 @@ function handleZoom(event: WheelEvent): void {
     }
   }
   event.preventDefault()
-  // Zooming takes the camera back from a running tour at its current pose.
-  if (cameraTour) endCameraTour(false)
-  viewHalfHeight = THREE.MathUtils.clamp(viewHalfHeight * Math.exp(event.deltaY * 0.001), CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM)
-  updateCameraProjection()
+  farmCamera.zoomBy(event.deltaY)
 }
 
 function isTextInputTarget(target: EventTarget | null): boolean {
@@ -3062,7 +2840,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  if (event.key === 'Escape' && cameraTour) {
+  if (event.key === 'Escape' && farmCamera.tour) {
     // Escape leaves the tour before it means anything else, so a tour ends
     // where it started instead of dropping the player into the menu.
     event.preventDefault()
@@ -3139,34 +2917,6 @@ function handleCanvasLeave(): void {
   // Keep painting when the pointer merely slips off the canvas edge mid-hold.
   if (!toolPointer) gardenTools?.pointerLeave()
   gardenPlants?.pointerLeave()
-}
-
-function updateCameraProjection(): void {
-  const width = window.innerWidth
-  const height = window.innerHeight
-  const currentAspect = width / Math.max(1, height)
-  camera.left = -(viewHalfHeight * currentAspect)
-  camera.right = viewHalfHeight * currentAspect
-  camera.top = viewHalfHeight
-  camera.bottom = -viewHalfHeight
-  camera.updateProjectionMatrix()
-  renderer.setSize(width, height)
-}
-
-/**
- * Point the camera at a spot and hold it there. Shared by the harness verbs:
- * framing a species and framing a pond are the same camera move, and one copy
- * keeps the two from drifting apart.
- */
-function frameAt(target: THREE.Vector3, height: number): void {
-  cameraTarget.copy(target)
-  viewHalfHeight = height / 2
-  camera.position.copy(cameraTarget).add(initialOffset)
-  viewDirection.copy(initialOffset).normalize()
-  cameraDistance = initialOffset.length()
-  camera.lookAt(cameraTarget)
-  camera.updateMatrixWorld()
-  updateCameraProjection()
 }
 
 gameCanvas.addEventListener('pointerdown', orbitPointerDown)
@@ -3464,12 +3214,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     mode,
     target: { x: +cameraTarget.x.toFixed(3), y: +cameraTarget.y.toFixed(3), z: +cameraTarget.z.toFixed(3) },
     position: { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) },
-    viewHeight: +(viewHalfHeight * 2).toFixed(3),
+    viewHeight: +(farmCamera.viewHalfHeight * 2).toFixed(3),
     tour: {
-      active: cameraTour !== null,
-      seed: cameraTourSeed,
-      view: cameraTour?.view ?? null,
-      subject: cameraTour?.subjectId ?? null,
+      active: farmCamera.tour !== null,
+      seed: farmCamera.tourSeed,
+      view: farmCamera.tour?.view ?? null,
+      subject: farmCamera.tour?.subjectId ?? null,
     },
   })
   let scenarioList: Record<string, string> = {}
@@ -3672,20 +3422,13 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       const target = new THREE.Vector3(x, GARDEN_LAWN_Y + 1.1, z)
       const azimuth = THREE.MathUtils.degToRad(azimuthDegrees)
       const elevation = THREE.MathUtils.degToRad(elevationDegrees)
-      const distance = initialOffset.length()
+      const distance = farmCamera.openingDistance
       const offset = new THREE.Vector3(
         Math.sin(azimuth) * Math.cos(elevation),
         Math.sin(elevation),
         Math.cos(azimuth) * Math.cos(elevation),
       ).multiplyScalar(distance)
-      cameraTarget.copy(target)
-      viewHalfHeight = height / 2
-      camera.position.copy(cameraTarget).add(offset)
-      viewDirection.copy(offset).normalize()
-      cameraDistance = distance
-      camera.lookAt(cameraTarget)
-      camera.updateMatrixWorld()
-      updateCameraProjection()
+      farmCamera.frameFrom(target, height, offset)
     },
     progression: () => ({ points: progression.points, level: progression.level, pointsToNextLevel: progression.pointsToNextLevel }),
     rendering: () => {
@@ -4027,25 +3770,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
  * are standing in front of, which is the whole point of drawing the menu over
  * the live farm rather than replacing it.
  */
-let menuDrift = 0
-const menuDriftBase = new THREE.Vector3()
-const menuDriftOffset = new THREE.Vector3()
-const worldUp = new THREE.Vector3(0, 1, 0)
-
-function updateMenuDrift(delta: number, elapsed: number): void {
-  const target = menu.isOpen && mode === 'farm' ? 1 : 0
-  const previous = menuDrift
-  menuDrift += (target - menuDrift) * (1 - Math.exp(-delta * 1.1))
-  if (Math.abs(target - menuDrift) < 0.001) menuDrift = target
-  if (menuDrift === 0 && previous === 0) return
-  if (previous === 0) menuDriftBase.copy(camera.position).sub(cameraTarget)
-  if (menuDrift === 0) return
-  const angle = Math.sin(elapsed * 0.085) * 0.075 * menuDrift
-  menuDriftOffset.copy(menuDriftBase).applyAxisAngle(worldUp, angle)
-  camera.position.copy(cameraTarget).add(menuDriftOffset)
-  camera.lookAt(cameraTarget)
-  camera.updateMatrixWorld()
-}
 
 // --------------------------------------------------------------- render loop --
 
@@ -4067,7 +3791,7 @@ function frame(now: number): void {
   const delta = Math.min(0.05, Math.max(0, (now - previousTime) / 1000))
   previousTime = now
   let stageStartedAt = workStartedAt
-  removePreviousCameraShake()
+  farmCamera.removeShake()
   if (!clockHeld) advanceClock(dayNightClock, delta)
   tickAutosave(delta)
   dayNightRig.update(dayNightClock.timeOfDay)
@@ -4089,7 +3813,7 @@ function frame(now: number): void {
   const expansionBoundsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   viewerStage?.update(delta)
-  updateMenuDrift(delta, now / 1000)
+  farmCamera.updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
@@ -4142,8 +3866,7 @@ function frame(now: number): void {
   if (fairground.farmExpansion) {
     if (expansionLevel > lastExpansionLevel) {
       lastExpansionLevel = expansionLevel
-      expansionFeedbackSeconds = CAMERA_SHAKE_DURATION
-      expansionFeedbackStrength = 1
+      farmCamera.shakeForExpansion()
     }
   }
   gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
@@ -4174,7 +3897,7 @@ function frame(now: number): void {
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   updateCameraPan(delta)
-  applyExpansionCameraShake(delta, now / 1000)
+  farmCamera.applyShake(delta, now / 1000)
   if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
     if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
     gardenProps?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
