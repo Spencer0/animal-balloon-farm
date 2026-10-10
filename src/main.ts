@@ -11,6 +11,8 @@ import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker, type AccomplishmentDef, type AccomplishmentStage } from './game/accomplishments'
 import {
   createUpgradeLedger,
+  LEGACY_FREE_UPGRADES,
+  ownsGardenTool,
   purchasePropAtLevel,
   purchaseUpgrade,
   upgradeQuote,
@@ -20,11 +22,12 @@ import {
   type UpgradeId,
 } from './game/tool-unlocks'
 import { type FarmSnapshot } from './game/animal-progress'
-import { farmMetric, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
-import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind, type AnimalStage } from './game/animal-conditions'
+import { farmMetric, measureDirtShare, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
+import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, hasOwnMetricUnit, setResidencyOverride, type AnimalStage } from './game/animal-conditions'
 import { createGardenTools, ICE_SNOW_THRESHOLD, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField, WATER_MIN_RENDER_DEPTH } from './game/garden-water'
+import { containsFarmPoint } from './game/farm-footprint'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps, type HouseSpot, type PropSelection } from './scene/garden-props'
@@ -58,6 +61,7 @@ import { createAnimalCard } from './ui/animal-card'
 import { createPropCard, type PropResidents } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { createPopBurst, type PopBurst } from './scene/pop-burst'
+import { createDeflateEffect } from './scene/deflate-effect'
 import { createOwlHunt, type HuntOwl } from './scene/owl-hunt'
 import { createSnakeHunt } from './scene/snake-hunt'
 import { PREY_OF } from './game/predator'
@@ -694,9 +698,17 @@ function measureFarm(): FarmState {
   lastFarmState = {
     ...measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts()),
     meadowArea: currentMeadowArea(),
+    terrainShares: {
+      dirt: measureDirtShare(
+        lawn,
+        (x, z) => (gardenWater?.depthAt(x, z) ?? 0) >= WATER_MIN_RENDER_DEPTH,
+        (x, z) => containsFarmPoint(x, z, activeGardenBounds()),
+      ),
+    },
     residentCounts: residentCounts(),
     preyEaten: predationLedger.totals,
     propCounts: gardenProps?.propCounts() ?? {},
+    toolsOwned: Object.fromEntries(GARDEN_TOOLS.map((tool) => [tool.id, ownsGardenTool(upgrades, tool.id)])),
   }
   return lastFarmState
 }
@@ -784,6 +796,21 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
       console.info(`[Animal Balloon Farm] a ${event.species} was born in ${event.houseId}`)
     }
     if (event.kind === 'growUp' && animal) animal.setGrowth(1)
+    if (event.kind === 'unsettle' && animal) {
+      const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
+      notificationPanel.notifyAccomplishment(`${name} is losing helium`, 'The farm no longer suits it. Put things back before it goes flat.')
+      console.info(`[Animal Balloon Farm] ${event.species} unsettled: the farm no longer suits it`)
+    }
+    if (event.kind === 'resettle' && animal) {
+      const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
+      notificationPanel.notifyAccomplishment(`${name} is topping up again`, 'The farm suits it once more.')
+    }
+    if (event.kind === 'deflate' && animal) {
+      const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
+      popAnimal(animal, 'deflate')
+      notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'The farm stopped suiting it, and it slowly went flat.')
+      console.info(`[Animal Balloon Farm] ${event.species} popped: the farm stopped suiting it`)
+    }
   }
 }
 
@@ -809,8 +836,12 @@ function handlePredatorCatch(hunter: string, prey: BalloonAnimal, roll?: number)
   console.info(`[Animal Balloon Farm] ${hunter} caught ${prey.id} (${total} eaten)`)
 }
 
-/** Take an animal out of the farm and play its pop; the effect disposes the model when done. */
-function popAnimal(prey: BalloonAnimal): void {
+/**
+ * Take an animal out of the farm and play its death; the effect disposes the
+ * model when done. `bang` is for being caught: it swells and pops. `deflate`
+ * is for running out of helium: it hisses, sags flat, and shrinks away.
+ */
+function popAnimal(prey: BalloonAnimal, style: 'bang' | 'deflate' = 'bang'): void {
   const catalog = ANIMAL_CATALOG.find((entry) => entry.id === prey.id)
   const at = prey.root.getWorldPosition(new THREE.Vector3())
   progress.remove(prey.instanceId)
@@ -824,7 +855,11 @@ function popAnimal(prey: BalloonAnimal): void {
   }
   farmHomes.delete(prey.instanceId)
   prey.setAlarmed(false)
-  const burst = createPopBurst({
+  const burst = style === 'deflate' ? createDeflateEffect({
+    position: new THREE.Vector3(at.x, at.y, at.z),
+    height: (catalog?.size ?? 1.8) * 0.42,
+    animal: prey.hasDetailedModel ? prey.root : null,
+  }) : createPopBurst({
     position: new THREE.Vector3(at.x, at.y, at.z),
     color: catalog?.color ?? '#f6c94d',
     accent: prey.id === 'chicken' ? '#e65b69' : '#fff0d0',
@@ -882,7 +917,7 @@ function updateOwlHunt(deltaSeconds: number): void {
   for (const caught of result.catches) handlePredatorCatch('owl', caught.prey)
   for (const owl of result.deflated) {
     const name = animalNames.get(owl.instanceId) ?? preyLabel(owl.id)
-    popAnimal(owl)
+    popAnimal(owl, 'deflate')
     notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'Without an oak to roost on, an owl slowly deflates.')
     console.info(`[Animal Balloon Farm] ${owl.id} popped: out of helium`)
   }
@@ -1050,8 +1085,10 @@ function updateAnimalProgress(deltaSeconds: number): void {
   for (const record of progress.all()) {
     const animal = animalById.get(record.id)
     if (!animal || animal.isSold) continue
-    animal.setGrowth(record.growth * record.adultScale)
+    // A leaking balloon visibly sags: it shrinks toward just over half size at flat.
+    animal.setGrowth(record.growth * record.adultScale * (0.55 + 0.45 * record.helium))
   }
+  if (focusedAnimalId) animalCard.setHelium(progress.animal(focusedAnimalId)?.helium ?? 1)
   updateHousing(performance.now() / 1000)
   // No appearance is applied from the event list here: `animal.stage = event.stage`
   // already routes the promotion through the model's residency gate, which keeps
@@ -1407,21 +1444,27 @@ const toolsHud = createToolsHud(
   window.innerHeight,
 )
 
+function toolIsOwned(id: GardenToolId): boolean {
+  return ownsGardenTool(upgrades, id)
+}
+
+/**
+ * The tool bar shows what the farmer owns: the seed bag from the start, and the
+ * shovel, the bucket and the Snower once Pip has sold them. A tool put away
+ * because it is not owned (a reset, a load) is deselected so the pointer is
+ * handed back.
+ */
+function syncOwnedTools(): void {
+  const owned = GARDEN_TOOLS.map((tool) => tool.id).filter(toolIsOwned)
+  toolsHud.setOwnedTools(owned)
+  const armed = gardenTools?.selectedTool ?? null
+  if (armed !== null && !toolIsOwned(armed)) selectGardenTool(null)
+}
+
 /** Put the seeder's pack in the tool bar, and show the E chip once there is a second one. */
 function syncGrassPack(): void {
   toolsHud.setGrassPack(gardenTools?.grassPack ?? 'short', upgrades.owns('tall-grass'))
   syncOwnedTools()
-}
-
-/** The Snower is bought at Pip's shop: it takes its tool slot and number key once owned, and not before. */
-function syncOwnedTools(): void {
-  toolsHud.setOwnedTools(upgrades.owns('snower') ? ['snower'] : [])
-  // Starting over or loading a farm without it must not leave it in hand.
-  if (!upgrades.owns('snower') && toolsHud.selectedTool === 'snower') selectGardenTool(null)
-}
-
-function toolIsOwned(id: GardenToolId): boolean {
-  return id !== 'snower' || upgrades.owns('snower')
 }
 
 /** E with the seed bag out swaps the blue lawn pack and the green meadow pack. */
@@ -1447,6 +1490,7 @@ gardenTools?.setTallGrassBlocker((x, z) => {
   return coverPatches.some((patch) => (patch.x - x) ** 2 + (patch.z - z) ** 2 < GROUND_COVER_GRASS_RADIUS ** 2)
 })
 
+syncOwnedTools()
 syncGrassPack()
 
 const menu = createMenuDomPanel({
@@ -1487,6 +1531,7 @@ function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; se
     stage,
     price: animalSaleValue(animal.id, stage),
     sellable,
+    helium: progress.animal(animal.instanceId)?.helium ?? 1,
   }, anchor)
   syncFarmChrome()
 }
@@ -1697,10 +1742,13 @@ function buyUpgrade(id: UpgradeId): { ok: boolean; text: string } {
     refreshShopUi()
     return { ok: true, text: 'Deed signed -- a new strip of land opens up.' }
   }
+  syncOwnedTools()
   syncGrassPack()
   refreshShopUi()
   // Pip hands it over in a little film; the shop is waiting when it ends.
   startToolFilm(id)
+  if (id === 'shovel') return { ok: true, text: 'The shovel is yours. Press 2 to pick it up.' }
+  if (id === 'water-bucket') return { ok: true, text: 'The bucket is yours. Press 3 to pick it up.' }
   if (id === 'snower') return { ok: true, text: 'The Snower is yours. Press 4 to take it out: hold left-click to blow snow, right-click to melt it.' }
   return { ok: true, text: 'The green pack is yours. Press E with the seed bag out to swap packs.' }
 }
@@ -2090,7 +2138,9 @@ function applySavedWorld(data: SaveGameData): void {
   section('purse and progress', () => {
     wallet.restore(data.coins)
     progression.importState(data.progression)
-    for (const id of UPGRADE_ORDER) upgrades.set(id, data.upgrades[id] ?? 0)
+    // A save from before the shop sold the shovel and the bucket has no entry for
+    // them: that farmer had both, so they keep them. A new save names every upgrade.
+    for (const id of UPGRADE_ORDER) upgrades.set(id, data.upgrades[id] ?? (LEGACY_FREE_UPGRADES.includes(id) ? 1 : 0))
     accomplishments.importState(data.accomplishments)
     predationLedger.restore(data.preyEaten)
   })
@@ -2110,6 +2160,7 @@ function applySavedWorld(data: SaveGameData): void {
   })
   section('tools', () => {
     if (data.tools.grassPack === 'tall' && upgrades.owns('tall-grass')) gardenTools?.setGrassPack('tall')
+    syncOwnedTools()
     syncGrassPack()
     salePanel.setWallet(wallet.balance)
     refreshShopUi()
@@ -2156,7 +2207,7 @@ const journalConditionsSource: JournalConditionSource = {
         // A social condition has no area to meter, so name the friend instead.
         const wantsSpecies = requirement?.kind === 'residentSpecies' ? requirement.species : undefined
         const revealed = definition.stage <= stage + 1
-        const labelled = isCountKind(requirement?.kind)
+        const labelled = hasOwnMetricUnit(requirement?.kind)
         return {
           stage: definition.stage,
           title: definition.title,
@@ -2199,8 +2250,13 @@ journalDom.setConditionsSource(journalConditionsSource)
 const lastPointerClient = { x: -1, y: -1 }
 for (const panel of panels) ui.add(panel)
 
-function selectGardenTool(id: GardenToolId | null): void {
-  if (id !== null && !toolIsOwned(id)) return
+/**
+ * Arm a garden tool. A tool the farmer has not bought stays out of the bar and
+ * cannot be armed; the debug harness passes `force` to arm one anyway, the same
+ * way `grantCoins` skips earning.
+ */
+function selectGardenTool(id: GardenToolId | null, force = false): void {
+  if (id !== null && !force && !toolIsOwned(id)) return
   endCameraTour(true)
   gardenPlants?.cancelPlacement()
   gardenProps?.cancelPlacement()
@@ -3337,6 +3393,8 @@ interface GardenDebugHarness {
   runScenario(name: string): Promise<string>
   /** Set every owl's helium, 0..1, to test the deflate-and-pop without a two-minute wait. */
   setOwlHelium(level: number): void
+  /** Set the helium, 0..1, of every animal of one species, to watch it deflate without a two-minute wait. */
+  setHelium(species: string, level: number): number
   /** Make the owls and snakes hunt as soon as they can, instead of waiting out the cooldown. */
   hurryHunt(): void
   /** Step the owl and snake hunts and any pops forward without waiting on rendered frames. */
@@ -3394,7 +3452,9 @@ interface GardenDebugHarness {
   player(): unknown
   /** Buy one prop from the shared wallet. Skips the farmer-level gate, like grantCoins skips earning. */
   buy(id: string): unknown
-  /** Buy a shop upgrade ('tall-grass' | 'land-deed') through the same rules as the Upgrades tab. */
+  /** Make a species lose helium when its home requirement stops being met (true), stop (false), or restore its catalog rule (null). */
+  holdResidency(species: string, holds: boolean | null): void
+  /** Buy a shop upgrade ('shovel' | 'water-bucket' | 'tall-grass' | 'land-deed') through the same rules as the Upgrades tab. */
   buyUpgrade(id: string): { readonly ok: boolean; readonly text: string }
   /** Upgrades owned, farmer level, and what the shop would charge for each next one. */
   upgrades(): Record<string, unknown>
@@ -3730,7 +3790,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       refreshAnimalVisibility(performance.now() / 1000, true)
     },
     waterSummary: () => gardenWater?.summary() ?? null,
-    selectTool: (tool) => selectGardenTool(tool),
+    selectTool: (tool) => selectGardenTool(tool, true),
+    holdResidency: (species, holds) => { setResidencyOverride(species, holds) },
     clock: () => ({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: formatCalendarDate(calendarOf(dayNightClock.elapsedDays)), elapsedDays: dayNightClock.elapsedDays }),
     setTimeOfDay: (time) => { setTimeOfDay(dayNightClock, time) },
     skipToMorning: () => { skipToNext(dayNightClock, 0.32) },
@@ -3812,6 +3873,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       remeasureMeadow()
       upgrades.reset()
       gardenTools?.setGrassPack('short')
+      syncOwnedTools()
       syncGrassPack()
       progress.reset()
       progression.reset()
@@ -3862,6 +3924,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       appearance: animal.appearance,
       heartEyes: animal.heartEyeCount > 0,
       heartCount: animal.heartEyeCount,
+      helium: progress.animal(animal.instanceId)?.helium ?? 1,
       x: +animal.root.position.x.toFixed(2),
       z: +animal.root.position.z.toFixed(2),
       loose: isLoose(animal.instanceId),
@@ -4001,6 +4064,15 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       snakeHunt.hurry()
     },
     setOwlHelium: (level) => owlHunt.setHelium(level),
+    setHelium: (species, level) => {
+      let changed = 0
+      for (const record of progress.all()) {
+        if (record.species !== species || record.stage < 3) continue
+        progress.setHelium(record.id, level)
+        changed += 1
+      }
+      return changed
+    },
     holdTime: (hold) => { clockHeld = hold },
     scenarios: () => scenarioList,
     runScenario: async (name) => (await import('../dev/scenarios/index')).runScenario(name, debugHarness),

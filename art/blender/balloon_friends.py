@@ -238,6 +238,18 @@ def materials(animal):
         base["mask"] = mat("RAT · sleepy lid slate", "#5d5763", .24, .01, .48)
         base["whisker"] = mat("RAT · pale whiskers", "#efe9e4", .3, 0, .2)
         base["collar"] = mat("RAT · moonlight-violet bell ribbon", "#8e74c2", .24, .04, .46)
+    elif animal.lower() == "mole":
+        base["body"] = mat("MOLE · velvet-charcoal balloon fur", "#5b5663", .30, .02, .46)
+        base["wool"] = mat("MOLE · deep charcoal leg balloons", "#4c4755", .31, .015, .44)
+        base["face"] = mat("MOLE · slate face balloon", "#6a6572", .27, .02, .48)
+        base["belly"] = mat("MOLE · dove-grey belly", "#a19ba6", .28, .01, .48)
+        base["muzzle"] = mat("MOLE · rosy snout", "#f0a4ae", .22, .01, .46)
+        base["inner"] = mat("MOLE · soft rose cheeks", "#e996a3", .24, .01, .44)
+        base["pink"] = mat("MOLE · pink nose and digging paws", "#f2a3ad", .23, .01, .44)
+        base["hoof"] = base["pink"]
+        base["claw"] = mat("MOLE · cream digging claws", "#fff1d6", .25, 0, .4)
+        base["whisker"] = mat("MOLE · pale whiskers", "#efe9ee", .3, 0, .2)
+        base["collar"] = mat("MOLE · clover-green bell ribbon", "#79b45a", .24, .05, .46)
     elif animal.lower() == "snake":
         base["body"] = mat("SNAKE · meadow-emerald balloon scales", "#3f9e6e", .22, .02, .60)
         base["head"] = mat("SNAKE · bright emerald head balloon", "#48ab78", .21, .02, .62)
@@ -1247,6 +1259,34 @@ def make_rat():
     export_asset(root, "rat", texcoords=False)
 
 
+def make_mole():
+    m = materials("MOLE")
+    root = pivot("BALLOON MOLE · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_mole"
+    root["description"] = "Velvet-charcoal balloon mole with a long rosy snout and big pink digging paws"
+    body = pivot("MOLE RIG · barrel body", (0, 0, 1.15), root)
+    head = pivot("MOLE RIG · snouted head", (.74, 0, .22), body)
+    neck = pivot("MOLE RIG · soft neck", (.47, 0, .05), body)
+    # A fat cigar of a body: a mole is nearly as round as it is long.
+    sphere("MOLE · plump charcoal balloon body", (-.04, 0, 0), (1.04, .74, .66), m["body"], body, 48, 32)
+    sphere("MOLE · broad shoulder balloon", (.40, 0, .02), (.56, .58, .54), m["body"], body, 36, 24)
+    sphere("MOLE · dove-grey belly", (.06, 0, -.34), (.74, .52, .34), m["belly"], body, 36, 24)
+    sphere("MOLE · neck ruff", (0, 0, 0), (.46, .46, .46), m["body"], neck)
+    ears = add_rodent_head(head, m, "mole", ear_size=.13, snout_length=.26)
+    bell = add_collar(body, neck, m, "MOLE")
+    tail = add_rodent_tail(body, m, "mole", length=.5, lift=.12)
+    positions, legs, paws = make_legs(root, body, m, "MOLE", connected=True)
+    # The giveaway: big pink spade paws on the front legs, three cream claws each.
+    for paw, label in ((paws[0], "near"), (paws[1], "far")):
+        paw.scale = (2.5, 2.3, 1.35)
+        side = -1 if label == "near" else 1
+        for claw in range(4):
+            sphere(f"MOLE · {label} digging claw {claw}", (.115, side * (claw - 1.5) * .052, -.062), (.085, .024, .026), m["claw"], paw, 14, 10)
+    animate("mole", body, head, neck, ears, tail, legs, paws, bell, positions, forward_gait=True, body_z=1.15, leg_anchor=-.45)
+    portrait("mole", m)
+    export_asset(root, "mole")
+
+
 SNAKE_SEGMENTS = 13
 SNAKE_SPACING = .27
 
@@ -1359,7 +1399,7 @@ def reset_scene():
                 collection.remove(block)
 
 
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon, "mouse": make_mouse, "rat": make_rat, "snake": make_snake}
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon, "mouse": make_mouse, "rat": make_rat, "mole": make_mole, "snake": make_snake}
 arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
 invalid = [value for value in requested if value not in MAKERS]

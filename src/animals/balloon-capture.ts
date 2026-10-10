@@ -16,6 +16,7 @@ const PAINT_PALETTES: Record<BalloonAnimalId, readonly [string, string]> = {
   mouse: ['#c99a6b', '#f0a3b0'],
   rat: ['#7b7480', '#dd8f9c'],
   snake: ['#3f9e6e', '#2a7650'],
+  mole: ['#5b5663', '#f2a3ad'],
 }
 
 export interface CapturePose {
@@ -254,6 +255,15 @@ function captureGesture(id: BalloonAnimalId, time: number, duration: number): Ca
         pitch: active * (-0.1 + Math.sin(time * 3.4) * 0.08),
         roll: Math.sin(time * 2.7) * 0.05 * active,
         yaw: Math.sin(time * 2.2) * 0.18 * active,
+      }
+    case 'mole':
+      // Short, stubborn digs: nose down, paws scrabbling, a shake of the head.
+      return {
+        fill,
+        lift: active * (0.01 + Math.max(0, Math.sin(time * 7.2)) * 0.05),
+        pitch: active * (0.12 + Math.sin(time * 7.2) * 0.1),
+        roll: Math.sin(time * 4.6) * 0.07 * active,
+        yaw: Math.sin(time * 3.8) * 0.2 * active,
       }
     case 'snake':
       // Stays low and sways: no hop, a slow side-to-side weave.

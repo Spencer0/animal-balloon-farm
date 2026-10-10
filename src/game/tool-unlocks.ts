@@ -59,7 +59,7 @@ export const GRASS_PACKS: Readonly<Record<GrassPack, GrassPackDefinition>> = {
 /** Coins for the Snower at Pip's shop. */
 export const SNOWER_PRICE = 250
 
-export type UpgradeId = 'tall-grass' | 'snower' | 'land-deed'
+export type UpgradeId = 'shovel' | 'water-bucket' | 'tall-grass' | 'snower' | 'land-deed'
 
 export interface UpgradeDefinition {
   readonly id: UpgradeId
@@ -77,9 +77,47 @@ export interface UpgradeDefinition {
 /** The first land deed asks for farmer level 1; each later parcel asks for one more. */
 export const LAND_DEED_LIMIT = 15
 
-export const UPGRADE_ORDER: readonly UpgradeId[] = ['tall-grass', 'snower', 'land-deed']
+export const UPGRADE_ORDER: readonly UpgradeId[] = ['shovel', 'water-bucket', 'tall-grass', 'snower', 'land-deed']
+
+/**
+ * The garden tools the shop sells. A new farmer starts with the seed bag alone;
+ * the shovel and the bucket are bought, so digging and ponds are a decision
+ * and not a given. Keyed by upgrade; the value is the tool's id on the bar.
+ */
+export const TOOL_UPGRADES: Readonly<Partial<Record<UpgradeId, string>>> = {
+  shovel: 'shovel',
+  'water-bucket': 'water',
+  snower: 'snower',
+}
+
+/** Upgrades older saves had for free, before the shop sold them. A save with no entry for one keeps it. */
+export const LEGACY_FREE_UPGRADES: readonly UpgradeId[] = ['shovel', 'water-bucket']
+
+/** The seed bag is the starter kit; every other tool has to be bought. */
+export function ownsGardenTool(ledger: UpgradeLedger, tool: string): boolean {
+  const upgrade = (Object.keys(TOOL_UPGRADES) as UpgradeId[]).find((id) => TOOL_UPGRADES[id] === tool)
+  return upgrade === undefined || ledger.owns(upgrade)
+}
 
 export const UPGRADE_CATALOG: Readonly<Record<UpgradeId, UpgradeDefinition>> = {
+  shovel: {
+    id: 'shovel',
+    name: 'Shovel',
+    blurb: 'Dig holes for seeds and friends, dig a basin for a pond, or bare the ground back to dirt. Press 2 to pick it up.',
+    color: '#d9a06b',
+    maxOwned: 1,
+    price: () => 15,
+    unlockLevel: () => 0,
+  },
+  'water-bucket': {
+    id: 'water-bucket',
+    name: 'Water Bucket',
+    blurb: 'Pour a puddle where the ground dips, or bail it away. Ponds are what ducks, geese and frogs are after. Press 3 to pick it up.',
+    color: '#77c9d5',
+    maxOwned: 1,
+    price: () => 30,
+    unlockLevel: () => 0,
+  },
   'tall-grass': {
     id: 'tall-grass',
     name: 'Tall Grass Seed Pack',
@@ -205,6 +243,7 @@ export const PROP_UNLOCK_LEVEL: Readonly<Record<PropId, number>> = {
   'owl-box': 3,
   'hollow-log': 2,
   'rock-pile': 3,
+  molehill: 1,
 }
 
 export function propUnlockLevel(id: PropId): number {

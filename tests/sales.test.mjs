@@ -64,5 +64,6 @@ test('sale prices are fixed by plant and animal species', () => {
     mouse: 10,
     rat: 16,
     snake: 26,
+    mole: 18,
   })
 })

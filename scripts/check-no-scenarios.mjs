@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveOutdir } from './outdir.mjs';
 
 export const PROD_OUTDIR = '.gate/prod';
-const MARKERS = ['owl/hunt-now', 'owl/ready-to-settle', 'raccoon/sleeping-by-can', 'meadow/tall-grass-garden', 'scenario ready:', 'runScenario', '__gardenDebug'];
+const MARKERS = ['owl/hunt-now', 'owl/ready-to-settle', 'raccoon/sleeping-by-can', 'meadow/tall-grass-garden', 'mole/going-flat', 'scenario ready:', 'runScenario', '__gardenDebug'];
 
 /**
  * @param {string} outdir

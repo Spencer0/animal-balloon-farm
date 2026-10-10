@@ -11,7 +11,7 @@
 /** The first stage that counts as settled. Matches `canSellAnimal` in sales. */
 export const RESIDENT_STAGE = 3;
 
-/** Helium has no depletion mechanic yet, so the meter is always full. */
+/** A balloon that has lost nothing reads full. */
 export const HELIUM_LEVEL = 1;
 
 /** Status word written beside the Helium meter. */
@@ -20,14 +20,14 @@ export const HELIUM_STATUS = 'helium';
 /** Longest display name the card accepts when renaming. */
 export const MAX_NAME_LENGTH = 24;
 
-/** The Helium meter reads full until a depletion mechanic exists. */
-export function heliumLevel(): number {
-  return HELIUM_LEVEL;
+/** The Helium meter's fill, 0..1. Only a resident whose farm stopped suiting it ever reads below full. */
+export function heliumLevel(level: number = HELIUM_LEVEL): number {
+  return Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : HELIUM_LEVEL;
 }
 
-/** The status word beside the Helium meter. */
-export function heliumStatus(): string {
-  return HELIUM_STATUS;
+/** The status word beside the Helium meter: a leaking balloon says so. */
+export function heliumStatus(level: number = HELIUM_LEVEL): string {
+  return heliumLevel(level) < HELIUM_LEVEL ? 'leaking' : HELIUM_STATUS;
 }
 
 export type AnimalStageGroup = 'Visitor' | 'Resident';

@@ -73,6 +73,24 @@ export interface ToolUnlockFilm {
 }
 
 export const TOOL_UNLOCK_FILMS: Readonly<Record<ToolUnlockId, ToolUnlockFilm>> = {
+  shovel: {
+    id: 'shovel',
+    tool: 'shovel',
+    title: 'The Shovel',
+    titleSpoken: 'La Pelle',
+    cheer: 'Time to dig in!',
+    cheerSpoken: 'Au travail, on creuse !',
+    grip: { offset: [0, -0.09, 0], rotation: [Math.PI / 2, 0, 0], scale: 0.44 },
+  },
+  'water-bucket': {
+    id: 'water-bucket',
+    tool: 'water',
+    title: 'The Water Bucket',
+    titleSpoken: 'Le Seau d’eau',
+    cheer: 'A pond of my very own!',
+    cheerSpoken: 'Une mare rien qu’à moi !',
+    grip: { offset: [0, -0.09, 0], rotation: [Math.PI, 0, 0], scale: 0.44 },
+  },
   'tall-grass': {
     id: 'tall-grass',
     tool: 'grass',
