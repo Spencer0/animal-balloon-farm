@@ -1,7 +1,5 @@
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
-import { VIEWER_CAST } from '../animals/animal-catalog'
-import { SHOWCASE_ANIMALS } from '../scene/capture-showcase'
 import type { FarmCamera } from '../scene/farm-camera'
 import { GARDEN_LAWN_Y, type Fairground } from '../scene/fairground'
 import { FARM_EXPANSION_CONFIG, type GardenBounds } from '../game/farm-expansion'
@@ -37,8 +35,6 @@ import type { createGardenWaterMesh } from '../scene/garden-water-mesh'
 import type { createJournalPanel } from '../ui/journal-panel'
 import type { createNotificationPanel } from '../ui/notification-panel'
 import type { createNotificationDomPanel } from '../ui/notification-dom'
-import type { createMenuPanel } from '../ui/menu-panel'
-import type { createViewerPanel } from '../ui/viewer-panel'
 import type { createSalePanel } from '../ui/sale-panel'
 import type { createAnimalCard } from '../ui/animal-card'
 import type { createShedPanel } from '../ui/shed-panel'
@@ -46,7 +42,6 @@ import type { createPlantCard } from '../ui/plant-card'
 import type { createPlayerDomPanel } from '../ui/player-dom'
 import type { createBalloonPanel } from '../ui/balloon-panel'
 
-type GameMode = 'farm' | 'viewer'
 
 declare global {
   interface Window {
@@ -59,9 +54,14 @@ interface GardenDebugHarness {
   state(): unknown
   focusGarden(): void
   openMenu(): void
+  /** Lay (or, negative, lift) a disc of snow in garden meters; returns the snow now lying. */
+  blowSnow(x: number, z: number, radius: number, amount?: number): { snowArea: number; frostedBlades: number }
+  /** Stand an ice crystal ('ice') or snowball ('ball') on snow already lying there. */
+  snowFeature(kind: 'ice' | 'ball', x: number, z: number): boolean
   openJournal(): void
+  /** Start the intro cutscene, hold it at a moment (or resume it), and report what it shows. */
+  intro(seconds?: number): unknown
   closeMenu(): void
-  openViewer(): void
   /**
    * Open the animal info card for an instance or species id. A preview
    * forces the rendered stage/sellable so states the live ladder cannot
@@ -244,7 +244,6 @@ interface GardenDebugHarness {
 
 /** Where the farm camera is pointing, and what the tour is doing with it. */
 interface CameraDebugReport {
-  readonly mode: GameMode
   readonly target: { readonly x: number; readonly y: number; readonly z: number }
   readonly position: { readonly x: number; readonly y: number; readonly z: number }
   readonly viewHeight: number
@@ -304,7 +303,6 @@ export interface GardenHarnessDeps {
   readonly gardenTools: GardenTools | null
   readonly gardenPlants: () => GardenPlants | null
   readonly gardenProps: () => GardenProps | null
-  readonly mode: () => 'farm' | 'viewer'
   readonly shownAnimalCount: () => number
   readonly houseSpots: () => readonly { readonly id: string; readonly prop: string; readonly x: number; readonly z: number; readonly doorX: number; readonly doorZ: number }[]
   readonly gardenBounds: () => GardenBounds
@@ -331,7 +329,6 @@ export interface GardenHarnessDeps {
   readonly clearCrowdFixtures: () => void
   readonly setCrowdFixtures: (count: number) => Promise<number>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
-  readonly viewerStands: Map<string, THREE.Vector3>
   readonly createAnimalInstance: (record: AnimalRecord, position?: { x: number; z: number }, emerging?: boolean) => Promise<BalloonAnimal>
   readonly maturePlantCounts: () => Record<string, number>
   readonly remeasureMeadow: () => void
@@ -358,8 +355,7 @@ export interface GardenHarnessDeps {
   readonly knownMaturePlants: Set<number>
   readonly syncGrassPack: () => void
   readonly swapGrassPack: () => boolean
-  readonly menu: ReturnType<typeof createMenuPanel>
-  readonly viewer: ReturnType<typeof createViewerPanel>
+  readonly menu: { readonly isOpen: boolean; open(): void; close(): void }
   readonly openAnimalCardFor: (animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }) => void
   readonly salePanel: ReturnType<typeof createSalePanel>
   readonly sellBursts: SellBurst[]
@@ -377,8 +373,8 @@ export interface GardenHarnessDeps {
   readonly openPlantCardFor: (plant: import('../game/plants').GardenPlant) => void
   readonly panels: readonly UIPanel[]
   readonly selectGardenTool: (id: import('../scene/garden-tool-art').GardenToolId | null) => void
-  readonly setMode: (next: 'farm' | 'viewer') => void
   readonly syncFarmChrome: () => void
+  readonly intro: (seconds?: number) => unknown
 }
 
 export function installGardenHarness(deps: GardenHarnessDeps): void {
@@ -418,7 +414,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     crowdFixtures,
     clearCrowdFixtures,
     farmHomes,
-    viewerStands,
     createAnimalInstance,
     upgrades,
     maturePlantCounts,
@@ -447,7 +442,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     syncGrassPack,
     swapGrassPack,
     menu,
-    viewer,
     openAnimalCardFor,
     salePanel,
     sellBursts,
@@ -465,7 +459,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     openPlantCardFor,
     panels,
     selectGardenTool,
-    setMode,
     syncFarmChrome,
     setCrowdFixtures,
   } = deps
@@ -495,7 +488,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
 
 
   const cameraReport = (): CameraDebugReport => ({
-    mode: deps.mode(),
     target: { x: +cameraTarget.x.toFixed(3), y: +cameraTarget.y.toFixed(3), z: +cameraTarget.z.toFixed(3) },
     position: { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) },
     viewHeight: +(farmCamera.viewHalfHeight * 2).toFixed(3),
@@ -510,11 +502,16 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
   void import('../../dev/scenarios/index').then((module) => { scenarioList = module.listScenarios() })
   const debugHarness: GardenDebugHarness = {
     enabled: true,
+    intro: (seconds) => deps.intro(seconds),
+    snowFeature: (kind, x, z) => gardenTools?.placeSnowFeature(kind, x, z) ?? false,
+    blowSnow: (x, z, radius, amount) => {
+      gardenTools?.blowSnowDisc(x, z, radius, amount ?? 1)
+      const tools = gardenTools?.debugState()
+      return { snowArea: tools?.snowArea ?? 0, frostedBlades: tools?.frostedBlades ?? 0 }
+    },
     state: () => ({
-      mode: deps.mode(),
-      menuOpen: menu.isOpen,
+        menuOpen: menu.isOpen,
       journalOpen: journal.isOpen,
-      viewerOpen: viewer.isOpen,
       shopOpen: shop.isOpen,
       shedOpen: shed.isOpen,
       placing: deps.gardenProps()?.placingId ?? null,
@@ -525,7 +522,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     openMenu: () => menu.open(),
     closeMenu: () => menu.close(),
     openJournal: () => journal.open(),
-    openViewer: () => setMode('viewer'),
     digAt: (x, z, radius, amount) => {
       if (!gardenTerrain || !gardenWater) return 0
       const changed = gardenTerrain.splat(x, z, radius, amount)
@@ -664,14 +660,9 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       deps.resetVisibilityClock()
       animalNames.clear()
       farmHomes.clear()
-      viewerStands.clear()
       void Promise.all(progress.all().map((record) => createAnimalInstance(record))).then((created) => {
         for (const animal of created) {
           farmHomes.set(animal.instanceId, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
-          if (VIEWER_CAST.includes(animal.id)) {
-            const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
-            viewerStands.set(animal.instanceId, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-          }
         }
       })
       measureFarm()
@@ -729,7 +720,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       return { ...house, residents: residentsOf({ id: house.prop as PropId, siteId: house.id }) }
     }),
     crowdStressTest: async (requestedCount = OUTDOOR_LIMITS.total) => {
-      if (deps.mode() !== 'farm') throw new Error('Crowd stress tests can run only while the farm scene is active')
       const count = await setCrowdFixtures(requestedCount)
       focusCamera()
       const previousAutoReset = renderer.info.autoReset
@@ -744,7 +734,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       }
     },
     setCrowd: async (requestedCount = OUTDOOR_LIMITS.total) => {
-      if (deps.mode() !== 'farm') throw new Error('Crowd fixtures can run only while the farm scene is active')
       const count = await setCrowdFixtures(requestedCount)
       focusCamera()
       return { count }
@@ -754,14 +743,14 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       return { count: 0 }
     },
     help: () => ({
-      state: 'Snapshot: mode: deps.mode(), menu, camera, tools, water, herd summary.',
+      state: 'Snapshot: menu, camera, tools, water, herd summary.',
       help: 'This table: one-line usage for every harness command.',
       focusGarden: 'Frame the whole garden. Run before pointer scenarios.',
       focusPoint: 'focusPoint(x, z, height?) — frame a habitat, e.g. a pond.',
       focusSpecies: 'focusSpecies(species, height?) — close-up for model review.',
       frameAngle: 'frameAngle(x, z, height, azimuthDeg, elevationDeg) — low side-on view; scripts/angle-sheet.mjs uses it.',
       resetCamera: 'Back to the opening shot.',
-      'openMenu / closeMenu / openJournal / openViewer': 'Drive the menu without clicks.',
+      'openMenu / closeMenu / openJournal': 'Drive the menu without clicks.',
       layout: 'Every UI panel rect — use instead of screenshots for layout checks.',
       camera: 'Camera pose + tour state. advanceTour(seconds) steps the cinematic.',
       'startTour / endTour': 'Deterministic tour on a fixed seed for review passes.',

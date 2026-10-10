@@ -12,10 +12,12 @@ export interface FarmMeasureDeps {
   readonly gardenProps: () => { propCounts(): Record<string, number> } | null
   readonly residentCounts: () => Record<string, number>
   readonly preyEaten: () => Record<string, number>
+  /** Visible pond cells that are frozen solid: they are not water to drink or paddle in. */
+  readonly frozenWaterCells: () => number
 }
 
 export function createFarmMeasure(deps: FarmMeasureDeps) {
-  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, preyEaten } = deps
+  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, preyEaten, frozenWaterCells } = deps
   // ------------------------------------------------------- farm measurement --
 
   /**
@@ -68,7 +70,7 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
   function currentWaterSample(): WaterSample | null {
     if (!gardenWater) return null
     const summary = gardenWater.summary()
-    return { visibleWetCells: summary.visibleWetCells, cellSize: gardenWater.cellSize }
+    return { visibleWetCells: Math.max(0, summary.visibleWetCells - frozenWaterCells()), cellSize: gardenWater.cellSize }
   }
 
   /**

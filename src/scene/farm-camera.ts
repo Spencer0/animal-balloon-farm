@@ -4,22 +4,6 @@ import { cameraPanStep } from '../game/camera-rig'
 
 /** The farm's opening framing, in world units of view height. */
 export const NORMAL_VIEW_HEIGHT = 43
-/**
- * The viewer looks at a small stage, so it zooms right in. The farm keeps its
- * own wide framing because the whole fairground has to fit on screen.
- */
-const VIEWER_VIEW_HEIGHT = 26
-/**
- * Close-up framing for the solo review booth (a single-species VIEWER_CAST):
- * the whole point is judging one model, so it fills the frame.
- */
-const SINGLE_MODEL_VIEW_HEIGHT = 6.5
-/**
- * How far below the stage the viewer's look-at point sits, in world units.
- * Lowering it lifts the stage up the screen so the animal tray along the
- * bottom does not cover the animals' feet.
- */
-const VIEWER_TARGET_Y = -4.7
 const CAMERA_BASE_SPEED = 12
 const CAMERA_MAX_SPEED = 27
 const CAMERA_MIN_ZOOM = 1.25
@@ -29,14 +13,10 @@ const CAMERA_SHAKE_AMPLITUDE = 0.38
 
 export interface FarmCameraContext {
   readonly renderer: THREE.WebGLRenderer
-  /** Whether the viewer booth is up rather than the farm. */
-  readonly inViewer: () => boolean
   /** The main menu is over the farm, so the camera drifts. */
   readonly menuDrifting: () => boolean
   /** Something is on screen that a cinematic tour must not run under. */
   readonly tourBlocked: () => boolean
-  /** The solo review booth's plinth, when VIEWER_CAST stages a single species. */
-  readonly viewerFocusStand: () => THREE.Vector3 | null
   /** Who the tour could pin to. */
   readonly tourSubjects: () => CameraTourSubject[]
   /** The framing jumped, so the herd's on-screen set needs a fresh look. */
@@ -169,21 +149,8 @@ export function createFarmCamera(context: FarmCameraContext): FarmCamera {
 
   function focusCamera(): void {
     targetOffset.set(0, 0, 0)
-    const viewer = context.inViewer()
-    const stand = context.viewerFocusStand()
-    if (viewer && stand) {
-      // Solo review booth: frame just the staged plinth so the model under
-      // review fills the frame. The look-at point sits below the plinth for the
-      // same reason as the wide shot — the tray along the bottom must clear the
-      // model's feet.
-      cameraTarget.set(stand.x, stand.y - 0.8, stand.z)
-      viewHalfHeight = SINGLE_MODEL_VIEW_HEIGHT / 2
-    } else {
-      // The viewer's UI is a tray along the bottom, so the stage is framed a little
-      // high: look at a point under it and the animals ride above the tray.
-      cameraTarget.set(0, viewer ? VIEWER_TARGET_Y : 1.25, 0)
-      viewHalfHeight = (viewer ? VIEWER_VIEW_HEIGHT : NORMAL_VIEW_HEIGHT) / 2
-    }
+    cameraTarget.set(0, 1.25, 0)
+    viewHalfHeight = NORMAL_VIEW_HEIGHT / 2
     camera.position.copy(cameraTarget).add(initialOffset)
     viewDirection.copy(initialOffset).normalize()
     cameraDistance = initialOffset.length()

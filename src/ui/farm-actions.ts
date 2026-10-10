@@ -49,7 +49,6 @@ export interface FarmActionsDeps {
   readonly animalById: Map<string, BalloonAnimal>
   readonly animalNames: Map<string, string>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
-  readonly viewerStands: Map<string, THREE.Vector3>
   readonly sellBursts: SellBurst[]
   readonly getFocusedAnimal: () => string | null
   readonly setFocusedAnimal: (id: string | null) => void
@@ -64,7 +63,7 @@ export interface FarmActionsDeps {
 }
 
 export function createFarmActions(deps: FarmActionsDeps) {
-  const { camera, ui, scene, animalCard, propCard, plantCard, salePanel, shed, shedDom, shop, balloon, wallet, upgrades, progression, progress, accomplishments, fairground, gardenPlants, gardenProps, gardenTools, animals, animalById, animalNames, farmHomes, viewerStands, sellBursts, getFocusedAnimal, setFocusedAnimal, setSelectedProp, refreshAnimalVisibility, residentsOf, saveSoon, syncGrassPack, syncFarmChrome, progressionHudState, ownedSeedSpecies } = deps
+  const { camera, ui, scene, animalCard, propCard, plantCard, salePanel, shed, shedDom, shop, balloon, wallet, upgrades, progression, progress, accomplishments, fairground, gardenPlants, gardenProps, gardenTools, animals, animalById, animalNames, farmHomes, sellBursts, getFocusedAnimal, setFocusedAnimal, setSelectedProp, refreshAnimalVisibility, residentsOf, saveSoon, syncGrassPack, syncFarmChrome, progressionHudState, ownedSeedSpecies } = deps
   /**
    * Opens the animal info card for a live animal. Shared by the farm click
    * and the garden-debug harness so the card stays verifiable headlessly.
@@ -121,7 +120,6 @@ export function createFarmActions(deps: FarmActionsDeps) {
     animal.dispose()
     refreshAnimalVisibility(performance.now() / 1000, true)
     farmHomes.delete(animal.instanceId)
-    viewerStands.delete(animal.instanceId)
     const balance = wallet.credit(price)
     salePanel.setWallet(balance)
     saveSoon()
@@ -180,6 +178,7 @@ export function createFarmActions(deps: FarmActionsDeps) {
     }
     syncGrassPack()
     refreshShopUi()
+    if (id === 'snower') return { ok: true, text: 'The Snower is yours. Press 4 to take it out: hold left-click to blow snow, right-click to melt it.' }
     return { ok: true, text: 'The green pack is yours. Press E with the seed bag out to swap packs.' }
   }
 

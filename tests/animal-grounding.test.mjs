@@ -41,14 +41,8 @@ function assemble(gltf) {
   return { wrapper, pivot, modelRoot, mixer, measureMinY }
 }
 
-// These walk cycles float. The test sat outside `npm test` until the suite moved
-// to a glob, so it caught them late. `todo` keeps the failure visible in the
-// report without failing CI; delete an entry once its clip is fixed in Blender.
-const KNOWN_FLOATING = new Set(['balloon-raccoon.glb', 'balloon-rat.glb'])
-
 for (const name of models) {
-  const todo = KNOWN_FLOATING.has(name) ? 'WALK floats ~0.5 above the lowest pose' : undefined
-  test(`${name}: feet stay on the ground at every point of every clip`, { todo }, async () => {
+  test(`${name}: feet stay on the ground at every point of every clip`, async () => {
     const gltf = await loadGlb(`${ANIMAL_DIR}/${name}`)
     const { pivot, modelRoot, mixer, measureMinY } = assemble(gltf)
     pivot.position.y -= lowestClipPoseY(modelRoot, mixer, gltf.animations, measureMinY)

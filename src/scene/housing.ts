@@ -16,7 +16,6 @@ export interface HousingDeps {
   readonly animals: BalloonAnimal[]
   readonly animalById: Map<string, BalloonAnimal>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
-  readonly viewerStands: Map<string, THREE.Vector3>
   readonly goingIn: Map<string, { readonly houseId: string; readonly since: number }>
   readonly newbornUntil: Map<string, number>
   readonly knownDoors: Map<string, { readonly x: number; readonly z: number }>
@@ -30,7 +29,6 @@ export interface HousingDeps {
   readonly createAnimalInstance: (record: AnimalRecord, position?: { x: number; z: number }, emerging?: boolean) => Promise<BalloonAnimal>
   readonly animalCreations: Map<string, Promise<BalloonAnimal>>
   readonly refreshAnimalVisibility: (nowSeconds: number, force?: boolean) => void
-  readonly mode: () => 'farm' | 'viewer'
   readonly dayNightClock: { readonly timeOfDay: number }
   readonly getSelectedProp: () => { readonly id: PropId; readonly siteId: string } | null
   readonly propCard: { readonly isOpen: boolean; setResidents(residents: PropResidents | null): void }
@@ -42,14 +40,13 @@ export interface HousingDeps {
 }
 
 export function createHousing(deps: HousingDeps) {
-  const { progress, animalCreations, animals, animalById, farmHomes, viewerStands, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, mode, dayNightClock, getSelectedProp, propCard, creditCoins, animalDisplayName, bodySizeBySpecies, crowdFixtures, gardenProps } = deps
+  const { progress, animalCreations, animals, animalById, farmHomes, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, dayNightClock, getSelectedProp, propCard, creditCoins, animalDisplayName, bodySizeBySpecies, crowdFixtures, gardenProps } = deps
   /**
    * Night animals sleep by day: a resident curls up beside a garbage can, anything else
    * where it stands. Everyone wakes at dusk. Beds are chosen once per sleep so the
    * animal is not shuffled about as other animals settle.
    */
   function updateSleepers(): void {
-    if (mode() === 'viewer') return
     const night = isNightTime(dayNightClock.timeOfDay)
     // Each night species sleeps by the first prop on its SLEEP_PROPS list that is placed (a house
     // before a can); with none, or no entry, it sleeps where it stands.
@@ -142,7 +139,6 @@ export function createHousing(deps: HousingDeps) {
     const index = animals.indexOf(animal)
     if (index >= 0) animals.splice(index, 1)
     farmHomes.delete(animal.instanceId)
-    viewerStands.delete(animal.instanceId)
     sleepBeds.delete(animal.instanceId)
     animal.dispose()
   }
@@ -192,7 +188,6 @@ export function createHousing(deps: HousingDeps) {
   }
 
   function updateHousing(nowSeconds: number): void {
-    if (mode() !== 'farm') return
     for (const house of houseSpots) knownDoors.set(house.id, { x: house.doorX, z: house.doorZ })
     for (const [id, until] of newbornUntil) if (until <= nowSeconds || !progress.animal(id)) newbornUntil.delete(id)
     restoreSavedIndoors(nowSeconds)
@@ -327,7 +322,6 @@ export function createHousing(deps: HousingDeps) {
    * than the outdoor limit (plus perf-ramp fixtures).
    */
   function collideAnimals(nowSeconds: number): void {
-    if (mode() !== 'farm') return
     if (nowSeconds - collisionBoxesAt >= COLLISION_BOX_REFRESH_SECONDS) {
       collisionBoxesAt = nowSeconds
       collisionBoxes = (gardenProps()?.occupancy.placed ?? [])

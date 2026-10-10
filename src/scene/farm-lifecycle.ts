@@ -1,8 +1,6 @@
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
-import { VIEWER_CAST } from '../animals/animal-catalog'
 import { PLANT_CATALOG } from '../game/plants'
-import { SHOWCASE_ANIMALS } from './capture-showcase'
 import { GARDEN_LAWN_Y } from './fairground'
 import type { GardenPlants } from './garden-plants'
 import type { GardenProps, HouseSpot } from './garden-props'
@@ -21,11 +19,9 @@ export interface FarmLifecycleDeps {
   readonly animals: BalloonAnimal[]
   readonly animalById: Map<string, BalloonAnimal>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
-  readonly viewerStands: Map<string, THREE.Vector3>
   readonly newbornUntil: Map<string, number>
   readonly NEWBORN_SHOW_SECONDS: number
   readonly getFocusedAnimal: () => string | null
-  readonly mode: () => 'farm' | 'viewer'
   readonly menuOpen: () => boolean
   readonly salePanelOpen: () => boolean
   readonly gardenProps: () => GardenProps | null
@@ -45,7 +41,7 @@ export interface FarmLifecycleDeps {
 }
 
 export function createFarmLifecycle(deps: FarmLifecycleDeps) {
-  const { progress, progression, accomplishments, notificationPanel, animals, animalById, farmHomes, viewerStands, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, mode, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarm, dayNightClock, createAnimalInstance, carnivalSpawnFor, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
+  const { progress, progression, accomplishments, notificationPanel, animals, animalById, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarm, dayNightClock, createAnimalInstance, carnivalSpawnFor, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
   /**
    * Advance every animal one step and play whatever transition it earned.
    *
@@ -120,10 +116,6 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
         const record = progress.animal(event.animalId)
         if (record) void createAnimalInstance(record).then((created) => {
           farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairgroundRoot, position: created.root.position.clone() })
-          if (VIEWER_CAST.includes(created.id)) {
-            const [x, z] = SHOWCASE_ANIMALS[created.id].spawn
-            viewerStands.set(created.instanceId, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-          }
         })
       }
       if (event.kind === 'birth' && event.animalId) {
@@ -151,7 +143,7 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
   }
 
   function updateAnimalProgress(deltaSeconds: number): void {
-    if (mode() === 'viewer' || menuOpen() || salePanelOpen()) return
+    if (menuOpen() || salePanelOpen()) return
     const events = progress.tick(animalLifeSnapshot(), deltaSeconds)
     handleAnimalLifeEvents(events)
     noteJournalStages()

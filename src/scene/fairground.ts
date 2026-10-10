@@ -4,6 +4,7 @@ import type { CarnivalKind } from '../game/carnival-migration'
 import { createCarnivalSchedule, placeOutsideFarm } from '../game/carnival-schedule'
 import { createCarnivalBackdrop } from './carnival-backdrop'
 import { createCarnivalDressing } from './carnival-dressing'
+import { applyGroundVariation, createGroundVariationBounds } from './ground-variation'
 import { createFarmExpansion, FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS, type FarmExpansion, type GardenBounds } from '../game/farm-expansion'
 
 export const GARDEN_BOUNDS: GardenBounds = FARM_EXPANSION_CONFIG.startBounds
@@ -879,6 +880,11 @@ export function createFairground(initialElapsedDays = 0): Fairground {
     carnivalProps.push({ id, kind: category, group, radius, scale: group.scale.clone(), rotation: group.rotation.clone(), packingCrate })
   }
 
+  // Shared with every ground shader so one update retargets the dust fade as
+  // the farm grows; the gravel gets its own fixed copy (it is authored in the
+  // starter plot's space and scaled with the farm).
+  const groundBounds=createGroundVariationBounds(farmExpansion.state.bounds)
+  const apronBounds=createGroundVariationBounds(GARDEN_BOUNDS)
   const far=makeGrassTexture(37,'#7ba95d','#466f49')
   far.repeat.set(90,90)
   // Meadow and outer lawn are ring planes with the garden cut out, so deep
@@ -886,12 +892,15 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   // The cutout hugs the plot it surrounds and is rebuilt as the plot grows, so
   // these planes never sit underneath soil the farm has already revealed.
   const meadow=new THREE.Mesh(groundPlaneGeometry(520,520,farmExpansion.state.bounds),new THREE.MeshStandardMaterial({color:'#a7ba6d',map:far,roughness:1,side:THREE.DoubleSide}))
+  // No ground variation here: the outer lawn above has the same footprint and
+  // hides this plane completely, so shading it too would only double the cost.
   meadow.position.y=-.22
   meadow.receiveShadow=true
   root.add(meadow)
   const outerTexture=makeGrassTexture(73,'#88bb69','#578e53')
   outerTexture.repeat.set(18,14)
   const outer=new THREE.Mesh(groundPlaneGeometry(520,520,farmExpansion.state.bounds),new THREE.MeshStandardMaterial({color:'#b8c99b',map:outerTexture,roughness:1,side:THREE.DoubleSide}))
+  applyGroundVariation(outer.material as THREE.MeshStandardMaterial,{kind:'meadow',bounds:groundBounds})
   outer.position.y=-.13
   outer.receiveShadow=true
   root.add(outer)
@@ -900,7 +909,10 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   // buildable bounds. The old cutaway plinth that ringed it is gone, so the step
   // out of the apron lands on meadow grass rather than a slab of bare dirt.
 
+  // Transparent so its outer rim can dissolve into the meadow's dust fade.
   const pathMat=standard('#d4bb83',.92)
+  pathMat.transparent=true
+  applyGroundVariation(pathMat,{kind:'gravel',bounds:apronBounds,localSpace:true})
   // The ivory boundary is the level-one build limit. The revealed gravel apron is outside it.
   const apronShape = new THREE.Shape(gardenHolePath(1.1).getPoints().reverse())
   apronShape.holes.push(gardenHolePath(0.18))
@@ -924,6 +936,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   // is a transparent paint layer that only turns green where the seeder works.
   const soil=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false,roughness:1}))
   soil.material.map!.repeat.set(6,4)
+  applyGroundVariation(soil.material,{kind:'soil',bounds:groundBounds})
   soil.rotation.x=-Math.PI/2
   soil.position.y=.012
   soil.name='Starter garden soil'
@@ -935,6 +948,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
 
   const lawn=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0'),roughness:.96}))
   lawn.material.map!.repeat.set(7,5)
+  applyGroundVariation(lawn.material,{kind:'lawn',bounds:groundBounds})
   lawn.rotation.x=-Math.PI/2
   lawn.position.y=GARDEN_LAWN_Y
   lawn.name='Starter garden · growable level-one footprint'
@@ -1126,6 +1140,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
       })
       farmExpansion.update(delta)
       const state=farmExpansion.state
+      groundBounds.set(state.bounds)
       const scaleX=state.bounds.halfWidth/GARDEN_BOUNDS.halfWidth
       const scaleZ=state.bounds.halfDepth/GARDEN_BOUNDS.halfDepth
       // The apron, boundary tubes and their stakes share the plot's scale so the

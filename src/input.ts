@@ -16,14 +16,12 @@ export interface FarmInputDeps {
   readonly ui: { readonly viewport: { toDesign(x: number, y: number, rect: DOMRect): DesignPoint | null; readonly width: number; readonly height: number } }
   readonly panels: readonly UIPanel[]
   readonly gardenDebugMode: boolean
-  readonly mode: () => 'farm' | 'viewer'
   readonly setFocusedAnimal: (id: string | null) => void
   readonly gardenPlants: () => GardenPlants | null
   readonly gardenProps: () => GardenProps | null
   readonly gardenTools: GardenTools | null
   readonly menu: { readonly isOpen: boolean; open(): void; close(): void }
   readonly journal: { readonly isOpen: boolean; open(): void; close(): void; setOpen?(open: boolean): void }
-  readonly viewer: { readonly isOpen: boolean }
   readonly shed: { readonly isOpen: boolean; contains(point: DesignPoint): boolean; setPlacementActive(on: boolean): void; setInteractEnabled(on: boolean): void; open(): void; close(): void }
   readonly shedDom: { refresh(): void }
   readonly shop: { readonly isOpen: boolean; setOpen(open: boolean): void; refresh(): void }
@@ -44,6 +42,7 @@ export interface FarmInputDeps {
   readonly terrainHeightAt: (x: number, z: number) => number
   readonly endCameraTour: (restore: boolean) => void
   readonly hoverGlow: ReturnType<typeof createHoverGlow>
+  readonly toolIsOwned: (id: import('./scene/garden-tool-art').GardenToolId) => boolean
 }
 
 export interface FarmInput {
@@ -65,7 +64,7 @@ export interface FarmInput {
 export function createFarmInput(deps: FarmInputDeps): FarmInput {
   const gardenPlants = (): GardenPlants | null => deps.gardenPlants()
   const gardenProps = (): GardenProps | null => deps.gardenProps()
-  const { canvas: gameCanvas, gardenDebugMode, ui, panels, gardenTools, menu, journal, viewer, shed, shedDom, shop, salePanel, animalCard, propCard, plantCard, toolsHud, farmCamera, hoverGlow, pickAnimal, openAnimalCardFor, openPropCardFor, openPlantCardFor, selectGardenTool, swapGrassPack, syncFarmChrome, refreshShopUi, endCameraTour } = deps
+  const { canvas: gameCanvas, gardenDebugMode, ui, panels, gardenTools, menu, journal, shed, shedDom, shop, salePanel, animalCard, propCard, plantCard, toolsHud, farmCamera, hoverGlow, pickAnimal, openAnimalCardFor, openPropCardFor, openPlantCardFor, selectGardenTool, swapGrassPack, syncFarmChrome, refreshShopUi, endCameraTour } = deps
 
   let dragPointer: number | null = null
   let toolPointer: number | null = null
@@ -140,7 +139,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
       setCursor('idle', gameCanvas)
       return
     }
-    const farmOpen = deps.mode() === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen
+    const farmOpen = !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen
     const overFarm = farmOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
     // Only pointer mode (Shift, or nothing armed) lets farm objects claim the pointer.
     const interactive = overFarm && pointerActive() && hoverInteractable(lastPointerClient.x, lastPointerClient.y)
@@ -186,7 +185,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
 
   /** Whether a press here belongs to a farm object rather than to the armed tool or seed. */
   function hoverInteractable(clientX: number, clientY: number): boolean {
-    if (deps.mode() !== 'farm' || menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return false
+    if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return false
     if (gardenProps()?.placingId) return false
     return Boolean(
       pickAnimal(clientX, clientY)
@@ -222,8 +221,8 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
 
   /** The glow only shows over the farm, with nothing else on top and no press in progress. */
   function hoverAllowed(): boolean {
-    return deps.mode() === 'farm' && pointerWasSeen
-      && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !viewer.isOpen && !salePanel.isOpen
+    return pointerWasSeen
+      && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !salePanel.isOpen
       && !gardenProps()?.placingId
       && dragPointer === null && toolPointer === null
       && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
@@ -288,7 +287,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
    * rectangle is measured in device pixels.
    */
   function isOverGameHUD(clientX: number, clientY: number): boolean {
-    if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen || deps.mode() === 'viewer') return true
+    if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return true
     const point = ui.viewport.toDesign(clientX, clientY, gameCanvas.getBoundingClientRect())
     return Boolean(point && (
       (toolsHud.isVisible && toolsHud.hitTest?.(point))
@@ -301,7 +300,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
   }
 
   function updateCameraPan(deltaSeconds: number): void {
-    if (deps.mode() !== 'farm' || menu.isOpen || deltaSeconds <= 0) return
+    if (menu.isOpen || deltaSeconds <= 0) return
     let horizontal = Number(pressedKeys.has('d') || pressedKeys.has('arrowright'))
       - Number(pressedKeys.has('a') || pressedKeys.has('arrowleft'))
     let vertical = Number(pressedKeys.has('w') || pressedKeys.has('arrowup'))
@@ -349,7 +348,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
 
   function orbitPointerDown(event: PointerEvent): void {
     if (uiPointerDown(event)) return
-    if (menu.isOpen || deps.mode() === 'viewer') return
+    if (menu.isOpen) return
     // A press on a farm object goes to the object, whatever tool is armed.
     const onObject = !isOverGameHUD(event.clientX, event.clientY) && pointerActive() && hoverInteractable(event.clientX, event.clientY)
     if (event.button === 0 && (pointerActive() || onObject) && !isOverGameHUD(event.clientX, event.clientY)) {
@@ -409,7 +408,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
       salePanel.close()
     }
     // Plant mode owns the lawn press, so an armed seed plants without Shift.
-    if (event.button === 0 && (pointerActive() || plantingArmed()) && !onObject && !journal.isOpen && !shed.isOpen && !shop.isOpen && deps.mode() === 'farm' && gardenPlants()?.pointerDown(event)) {
+    if (event.button === 0 && (pointerActive() || plantingArmed()) && !onObject && !journal.isOpen && !shed.isOpen && !shop.isOpen && gardenPlants()?.pointerDown(event)) {
       event.preventDefault()
       if (!gardenPlants()!.selectedSpecies) {
         shed.setPlacementActive(false)
@@ -461,7 +460,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
     if (uiPointerMove(event)) return
     updateCursor(pointerDesign(event))
     if (gardenProps()?.placingId) gardenProps()!.pointerMove(event)
-    if (deps.mode() === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants()?.pointerMove(event)
+    if (!menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants()?.pointerMove(event)
     if (isWorldToolActive()) gardenTools?.pointerMove(event)
     if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
     const dx = event.clientX - previousPointer.x
@@ -529,8 +528,8 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
 
   function handleKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Shift') setShiftHeld(true)
-    if (gardenPlants()?.selectedSpecies && deps.mode() === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
-      const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event))
+    if (gardenPlants()?.selectedSpecies && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
+      const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event) && deps.toolIsOwned(entry.id))
       if (tool) {
         event.preventDefault()
         selectGardenTool(tool.id)
@@ -565,7 +564,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
       return
     }
     const key = event.key.toLowerCase()
-    if (key === 'e' && !event.repeat && deps.mode() === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && swapGrassPack()) {
+    if (key === 'e' && !event.repeat && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && swapGrassPack()) {
       event.preventDefault()
       return
     }
@@ -589,7 +588,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
       event.preventDefault()
       return
     }
-    if (event.key === 'Escape' && !menu.isOpen && deps.mode() === 'farm' && !journal.isOpen) {
+    if (event.key === 'Escape' && !menu.isOpen && !journal.isOpen) {
       if (gardenPlants()?.selectedSpecies) {
         gardenPlants()!.cancelPlacement()
         shed.setPlacementActive(false)
@@ -679,7 +678,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
     refreshHover,
     followPointer(): void {
       if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
-        if (deps.mode() === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) deps.gardenPlants()?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
+        if (!menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) deps.gardenPlants()?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
         deps.gardenProps()?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
         if (isWorldToolActive()) gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
       } else {

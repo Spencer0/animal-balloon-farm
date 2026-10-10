@@ -1,9 +1,7 @@
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from '../animals/balloon-animal'
-import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST } from '../animals/animal-catalog'
-import { SHOWCASE_ANIMALS } from './capture-showcase'
+import { getAnimalSceneOptions, ANIMAL_CATALOG } from '../animals/animal-catalog'
 import { clearOfFarmBounds } from '../game/animal-travel'
-import { GARDEN_LAWN_Y } from './fairground'
 import type { GardenTerrain } from './garden-terrain'
 import type { AnimalRecord, createAnimalLife } from '../game/animal-life'
 import type { GardenBounds } from '../game/farm-expansion'
@@ -23,14 +21,11 @@ export interface HerdDeps {
   readonly animalPopulationLimit: number
   readonly animalCreations: Map<string, Promise<BalloonAnimal>>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
-  readonly viewerStands: Map<string, THREE.Vector3>
   readonly crowdFixtures: BalloonAnimal[]
-  readonly mode: () => 'farm' | 'viewer'
-  readonly getViewerCastAnimals: () => BalloonAnimal[]
 }
 
 export function createHerd(deps: HerdDeps) {
-  const { camera, gameCanvas, fairgroundRoot, gardenTerrain, activeGardenBounds, progress, isLoose, animals, animalById, animalNames, generatedAnimalNames, animalPopulationLimit, animalCreations, farmHomes, viewerStands, crowdFixtures, mode, getViewerCastAnimals } = deps
+  const { camera, gameCanvas, fairgroundRoot, gardenTerrain, activeGardenBounds, progress, isLoose, animals, animalById, animalNames, generatedAnimalNames, animalPopulationLimit, animalCreations, farmHomes, crowdFixtures } = deps
   const worldRaycaster = new THREE.Raycaster()
   const worldPointer = new THREE.Vector2()
 
@@ -61,7 +56,6 @@ export function createHerd(deps: HerdDeps) {
     lastVisibilityRefreshAt = nowSeconds
     camera.updateMatrixWorld()
     const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
-    const activeInViewer = new Set(getViewerCastAnimals().map((animal) => animal.instanceId))
     let shown = 0
     for (const animal of animals) {
       const record = progress.animal(animal.instanceId)
@@ -72,12 +66,6 @@ export function createHerd(deps: HerdDeps) {
       // A flier is away by day.
       if (animal.isFlier && !animal.flightVisible) {
         animal.setDetailedVisible(false)
-        continue
-      }
-      if (mode() === 'viewer') {
-        const cast = activeInViewer.has(animal.instanceId)
-        animal.setDetailedVisible(cast)
-        if (cast) shown += 1
         continue
       }
       const size = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)?.size ?? 2
@@ -121,7 +109,7 @@ export function createHerd(deps: HerdDeps) {
     const count = Math.max(0, Math.min(CROWD_FIXTURE_LIMIT, Math.floor(requestedCount)))
     if (crowdFixtures.length === count) return count
     clearCrowdFixtures()
-    const walkers = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
+    const walkers = getAnimalSceneOptions(gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
       .filter((entry) => !entry.flier)
     const created = await Promise.all(Array.from({ length: count }, (_, index) => {
       const options = walkers[index % walkers.length]
@@ -168,7 +156,7 @@ export function createHerd(deps: HerdDeps) {
 
   async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }, emerging = false): Promise<BalloonAnimal> {
     if (animals.length + animalCreations.size >= animalPopulationLimit && !animalById.has(record.id)) return Promise.reject(new Error(`The farm is at its ${animalPopulationLimit}-animal limit`))
-    const options = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
+    const options = getAnimalSceneOptions(gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
       .find((entry) => entry.id === record.species)
     if (!options) throw new Error(`Missing scene options for animal ${record.species}`)
     const takenNames = new Set(animalNames.values())
@@ -193,10 +181,6 @@ export function createHerd(deps: HerdDeps) {
     animalById.set(record.id, animal)
     animals.push(animal)
     farmHomes.set(record.id, { parent: animal.root.parent ?? fairgroundRoot, position: animal.root.position.clone() })
-    if (VIEWER_CAST.includes(animal.id)) {
-      const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
-      viewerStands.set(record.id, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-    }
     const latest = progress.animal(record.id)
     if (!latest) {
       animal.dispose()

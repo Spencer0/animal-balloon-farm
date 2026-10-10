@@ -54,12 +54,11 @@ export interface FarmSaveDeps {
   readonly salePanel: { setWallet(balance: number): void }
   readonly notificationPanel: { notifyAccomplishment(title: string, detail: string): void }
   readonly menuOpen: () => boolean
-  readonly mode: () => 'farm' | 'viewer'
   readonly syncFarmChrome: () => void
 }
 
 export function createFarmSave(deps: FarmSaveDeps) {
-  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, mode, syncFarmChrome } = deps
+  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome } = deps
   /** Seconds of play in this farm, across every session that has carried it. */
   let playSeconds = loadedSave?.playSeconds ?? 0
 
@@ -176,7 +175,7 @@ export function createFarmSave(deps: FarmSaveDeps) {
   }
 
   function tickAutosave(deltaSeconds: number): void {
-    if (!hasEntered || menuOpen() || mode() !== 'farm') return
+    if (!hasEntered || menuOpen()) return
     playSeconds += deltaSeconds
     secondsSinceSave += deltaSeconds
     saveSoonIn -= deltaSeconds

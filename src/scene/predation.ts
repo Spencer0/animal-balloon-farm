@@ -20,11 +20,9 @@ export interface PredationDeps {
   readonly animalById: Map<string, BalloonAnimal>
   readonly animalNames: Map<string, string>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
-  readonly viewerStands: Map<string, THREE.Vector3>
   readonly goingIn: Map<string, { readonly houseId: string; readonly since: number }>
   readonly getFocusedAnimal: () => string | null
   readonly setFocusedAnimal: (id: string | null) => void
-  readonly mode: () => 'farm' | 'viewer'
   readonly houses: () => readonly HouseSpot[]
   readonly gardenProps: () => GardenProps | null
   readonly animalCard: { close(): void }
@@ -40,7 +38,7 @@ export interface PredationDeps {
 }
 
 export function createPredation(deps: PredationDeps) {
-  const { fairgroundRoot, lawnY, scene, progress, animals, animalById, animalNames, farmHomes, viewerStands, goingIn, getFocusedAnimal, setFocusedAnimal, mode, houses, gardenProps, animalCard, syncFarmChrome, notificationPanel, refreshAnimalVisibility, carnivalSpawnFor, activeGardenBounds, residentCounts, bodySizeBySpecies, speciesPluralName, dayNightClock } = deps
+  const { fairgroundRoot, lawnY, scene, progress, animals, animalById, animalNames, farmHomes, goingIn, getFocusedAnimal, setFocusedAnimal, houses, gardenProps, animalCard, syncFarmChrome, notificationPanel, refreshAnimalVisibility, carnivalSpawnFor, activeGardenBounds, residentCounts, bodySizeBySpecies, speciesPluralName, dayNightClock } = deps
   /**
    * Predator and prey. The owl's flight is stepped by `owlHunt` (which wraps the
    * pure sim in game/predator.ts); every chicken it takes is tallied in the ledger,
@@ -88,7 +86,6 @@ export function createPredation(deps: PredationDeps) {
       syncFarmChrome()
     }
     farmHomes.delete(prey.instanceId)
-    viewerStands.delete(prey.instanceId)
     prey.setAlarmed(false)
     const burst = createPopBurst({
       position: new THREE.Vector3(at.x, at.y, at.z),
@@ -110,7 +107,6 @@ export function createPredation(deps: PredationDeps) {
       animal.dispose()
       popsInFlight.splice(index, 1)
     }
-    if (mode() === 'viewer') return
     const owlAnimals = animals.filter((animal) => animal.isFlier && !animal.isSold)
     if (owlAnimals.length === 0) return
     const roosts = gardenProps()?.roosts() ?? []
@@ -163,7 +159,6 @@ export function createPredation(deps: PredationDeps) {
   const SNAKE_MOUTH_SHARE = 0.42
 
   function updateSnakeHunt(deltaSeconds: number): void {
-    if (mode() === 'viewer') return
     const prey = PREY_OF.snake ?? []
     const snakes = animals
       .filter((animal) => animal.id === 'snake' && !animal.isSold)
