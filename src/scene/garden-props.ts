@@ -1336,8 +1336,6 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
 
 // ------------------------------------------------------------------ helpers --
 
-export const GARDEN_PROP_LATTICE = PROP_LATTICE_CELL
-
 interface ReasonSurface {
   readonly canvas: HTMLCanvasElement
   readonly context: CanvasRenderingContext2D

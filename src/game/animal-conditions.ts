@@ -23,9 +23,6 @@ import { PLANT_CATALOG } from './plants'
 
 export type AnimalStage = 0 | 1 | 2 | 3 | 4
 
-export const FIRST_STAGE = 1
-export const LAST_STAGE = 4
-
 /** One measurable thing the farm can be asked to provide. */
 export type ConditionKind =
   | 'grassArea'
@@ -566,16 +563,8 @@ export function getSpeciesConditions(species: string): readonly StageDefinition[
   return SPECIES_CONDITIONS[species]?.stages ?? withStageNumbers([CARNIVAL, ENTER_FARM('Comes in to look around.'), CALL_HOME('grassArea', 15, 'Wants a meadow.', 0.75), LOVE_THE_FARM('grassArea', 30, 'Wants more meadow.', 0.75, 'barn')])
 }
 
-export function stageCount(species: string): number {
-  return getSpeciesConditions(species).length
-}
-
 export function stageDefinition(species: string, stage: AnimalStage): StageDefinition | null {
   return getSpeciesConditions(species).find((entry) => entry.stage === stage) ?? null
-}
-
-export function stageTitle(species: string, stage: AnimalStage): string {
-  return stageDefinition(species, stage)?.title ?? 'Unknown'
 }
 
 /** The wild look covers stages 1-2; standard covers 3-4. */
