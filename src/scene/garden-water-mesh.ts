@@ -23,6 +23,11 @@ export interface GardenWaterMesh {
   syncBounds(bounds: GardenBounds): void
   /** Force a rebuild on the next update (e.g. after a garden re-reveal). */
   markDirty(): void
+  /**
+   * Where the pond is frozen, 0 (open water) to 1 (solid ice). The scene wires it
+   * to the snow lying on the lawn; the surface turns milky and opaque there.
+   */
+  setIce(iceAt: ((x: number, z: number) => number) | null): void
   dispose(): void
 }
 
@@ -56,6 +61,15 @@ export function createGardenWaterMesh(
 
   let dirty = true
   let hasVisibleWater = false
+  let iceAt: ((x: number, z: number) => number) | null = null
+  // Ice is the water colour times a per-vertex multiplier, so a frozen vertex
+  // carries the ratio that turns the teal material into pale ice.
+  const iceTarget = new THREE.Color('#d6eefa')
+  const iceMultiplier = new THREE.Vector3(
+    iceTarget.r / Math.max(0.001, material.color.r),
+    iceTarget.g / Math.max(0.001, material.color.g),
+    iceTarget.b / Math.max(0.001, material.color.b),
+  )
 
   function hideWater(): void {
     if (hasVisibleWater) {
@@ -133,11 +147,23 @@ export function createGardenWaterMesh(
           const minimumDepthFade = THREE.MathUtils.smoothstep(depth, 0.015, 0.08)
           alpha = wet * bankFade * minimumDepthFade * Math.min(1, 0.62 + Math.max(0, depth) * 0.5)
         }
-        if (positionArray[positionOffset + 2] !== localHeight || colorArray[colorOffset + 3] !== alpha) changed = true
+        let red = 1
+        let green = 1
+        let blue = 1
+        const ice = alpha > 0 && iceAt ? THREE.MathUtils.clamp(iceAt(worldX, worldZ), 0, 1) : 0
+        if (ice > 0) {
+          red += (iceMultiplier.x - 1) * ice
+          green += (iceMultiplier.y - 1) * ice
+          blue += (iceMultiplier.z - 1) * ice
+          // Ice is a lid: nearly opaque, and it holds its shape to the bank.
+          alpha += (Math.max(alpha, 0.9) - alpha) * ice
+        }
+        if (positionArray[positionOffset + 2] !== localHeight || colorArray[colorOffset + 3] !== alpha
+          || colorArray[colorOffset] !== red) changed = true
         positionArray[positionOffset + 2] = localHeight
-        colorArray[colorOffset] = 1
-        colorArray[colorOffset + 1] = 1
-        colorArray[colorOffset + 2] = 1
+        colorArray[colorOffset] = red
+        colorArray[colorOffset + 1] = green
+        colorArray[colorOffset + 2] = blue
         colorArray[colorOffset + 3] = alpha
       }
     }
@@ -168,6 +194,10 @@ export function createGardenWaterMesh(
       dirty = true
     },
     markDirty(): void { dirty = true },
+    setIce(next): void {
+      iceAt = next
+      dirty = true
+    },
     update,
     dispose(): void {
       geometry.dispose()

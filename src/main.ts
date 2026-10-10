@@ -23,9 +23,9 @@ import { type FarmSnapshot } from './game/animal-progress'
 import { farmMetric, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
 import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind, type AnimalStage } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
-import { createGardenTools, type GardenTools } from './scene/garden-tools'
+import { createGardenTools, ICE_SNOW_THRESHOLD, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
-import { createGardenWaterField } from './game/garden-water'
+import { createGardenWaterField, WATER_MIN_RENDER_DEPTH } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps, type HouseSpot, type PropSelection } from './scene/garden-props'
@@ -224,6 +224,7 @@ const gardenWater = gardenTerrain
   : null
 const gardenWaterMesh = gardenTerrain && gardenWater  ? createGardenWaterMesh(gardenTerrain, gardenWater, activeGardenBounds)
   : null
+let lastSnowRevision = -1
 if (gardenWaterMesh) {
   scene.add(gardenWaterMesh.mesh)
   gardenWaterMesh.update(0)
@@ -240,6 +241,8 @@ const gardenTools: GardenTools | null = fairground.gardenSurface && fairground.g
     )
   : null
 if (gardenTools) scene.add(gardenTools.root)
+// Snow over water is ice; the pond surface asks the lawn how much snow lies on it.
+gardenWaterMesh?.setIce(iceAt)
 const worldRaycaster = new THREE.Raycaster()
 const worldPointer = new THREE.Vector2()
 function pickAnimal(clientX: number, clientY: number): BalloonAnimal | null {
@@ -644,10 +647,31 @@ function currentTerrainSample(): TerrainSample | null {
 /** The last measured farm, kept so the journal and harness can read it. */
 let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {}, residentCounts: {}, preyEaten: {}, propCounts: {} }
 
+/** 0 open water .. 1 solid ice: water under snow is frozen over. */
+function iceAt(x: number, z: number): number {
+  const snow = gardenTools?.snowAt(x, z) ?? 0
+  return Math.min(1, Math.max(0, (snow - 0.25) / (ICE_SNOW_THRESHOLD - 0.25)))
+}
+
+/** Visible pond cells that are frozen solid; ice is not a place to drink or paddle. */
+function frozenWaterCells(): number {
+  if (!gardenWater || !gardenTools || gardenTools.snowArea() <= 0) return 0
+  const { cellSize, originX, originZ, gridCols } = gardenWater
+  let frozen = 0
+  for (const cell of gardenWater.wetCells()) {
+    const gx = cell % gridCols
+    const gz = (cell - gx) / gridCols
+    const x = originX + (gx + 0.5) * cellSize
+    const z = originZ + (gz + 0.5) * cellSize
+    if (gardenWater.depthAt(x, z) >= WATER_MIN_RENDER_DEPTH && gardenTools.snowAt(x, z) >= ICE_SNOW_THRESHOLD) frozen += 1
+  }
+  return frozen
+}
+
 function currentWaterSample(): WaterSample | null {
   if (!gardenWater) return null
   const summary = gardenWater.summary()
-  return { visibleWetCells: summary.visibleWetCells, cellSize: gardenWater.cellSize }
+  return { visibleWetCells: Math.max(0, summary.visibleWetCells - frozenWaterCells()), cellSize: gardenWater.cellSize }
 }
 
 /**
@@ -1441,6 +1465,18 @@ const toolsHud = createToolsHud(
 /** Put the seeder's pack in the tool bar, and show the E chip once there is a second one. */
 function syncGrassPack(): void {
   toolsHud.setGrassPack(gardenTools?.grassPack ?? 'short', upgrades.owns('tall-grass'))
+  syncOwnedTools()
+}
+
+/** The Snower is bought at Pip's shop: it takes its tool slot and number key once owned, and not before. */
+function syncOwnedTools(): void {
+  toolsHud.setOwnedTools(upgrades.owns('snower') ? ['snower'] : [])
+  // Starting over or loading a farm without it must not leave it in hand.
+  if (!upgrades.owns('snower') && toolsHud.selectedTool === 'snower') selectGardenTool(null)
+}
+
+function toolIsOwned(id: GardenToolId): boolean {
+  return id !== 'snower' || upgrades.owns('snower')
 }
 
 /** E with the seed bag out swaps the blue lawn pack and the green meadow pack. */
@@ -1735,6 +1771,7 @@ function buyUpgrade(id: UpgradeId): { ok: boolean; text: string } {
   }
   syncGrassPack()
   refreshShopUi()
+  if (id === 'snower') return { ok: true, text: 'The Snower is yours. Press 4 to take it out: hold left-click to blow snow, right-click to melt it.' }
   return { ok: true, text: 'The green pack is yours. Press E with the seed bag out to swap packs.' }
 }
 
@@ -2233,6 +2270,7 @@ const lastPointerClient = { x: -1, y: -1 }
 for (const panel of panels) ui.add(panel)
 
 function selectGardenTool(id: GardenToolId | null): void {
+  if (id !== null && !toolIsOwned(id)) return
   endCameraTour(true)
   gardenPlants?.cancelPlacement()
   gardenProps?.cancelPlacement()
@@ -3021,7 +3059,7 @@ const PAN_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arro
 function handleKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Shift') setShiftHeld(true)
   if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
-    const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event))
+    const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event) && toolIsOwned(entry.id))
     if (tool) {
       event.preventDefault()
       selectGardenTool(tool.id)
@@ -3263,6 +3301,10 @@ interface GardenDebugHarness {
   setStage(species: string, stage: number): AnimalConditionReport
   /** Sow a disc of grass, in the same units the cow's 15 m2 is measured in. */
   sowGrass(x: number, z: number, radius: number, pack?: 'short' | 'tall'): FarmState
+  /** Lay (or, negative, lift) a disc of snow in garden meters; returns the snow now lying. */
+  blowSnow(x: number, z: number, radius: number, amount?: number): { snowArea: number; frostedBlades: number }
+  /** Stand an ice crystal ('ice') or snowball ('ball') on snow already lying there. */
+  snowFeature(kind: 'ice' | 'ball', x: number, z: number): boolean
   /** Dig a pond of the given radius, which is what the water conditions want. */
   digPond(x: number, z: number, radius: number): FarmState
   /**
@@ -3735,6 +3777,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       remeasureMeadow()
       return measureFarm()
     },
+    snowFeature: (kind, x, z) => gardenTools?.placeSnowFeature(kind, x, z) ?? false,
+    blowSnow: (x, z, radius, amount) => {
+      gardenTools?.blowSnowDisc(x, z, radius, amount ?? 1)
+      const tools = gardenTools?.debugState()
+      return { snowArea: tools?.snowArea ?? 0, frostedBlades: tools?.frostedBlades ?? 0 }
+    },
     digPond: (x, z, radius) => {
       gardenTools?.digBasin(x, z, radius, -1.1)
       return measureFarm()
@@ -3923,6 +3971,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       resetConditions: 'Forget everything: clears garden, herd, fixtures, progression, upgrades.',
       'upgrades / buyUpgrade / awardPoints / swapPack / stepTools': 'Farmer level, shop upgrades (tall grass pack, land deeds), and the E pack swap.',
       'sowGrass / digPond / digAt / pourAt / clearGarden': 'Terrain + water fixtures in garden meters.',
+      blowSnow: 'blowSnow(x, z, radius, amount?) — lay a disc of snow (negative amount melts it).',
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
       expandFarm: 'expandFarm(level) — reveal parcels without earning them.',
@@ -4314,6 +4363,10 @@ function frame(now: number): void {
     }
   }
   gardenTools?.update(delta)
+  if (gardenTools && gardenTools.snowRevision !== lastSnowRevision) {
+    lastSnowRevision = gardenTools.snowRevision
+    gardenWaterMesh?.markDirty()
+  }
   if (gardenWaterMesh && (gardenWater?.dirty || gardenWaterMesh.dirty)) {
     gardenWaterMesh.update(now * 0.001)
   }
