@@ -389,6 +389,9 @@ const IGNORED_MATERIAL_KEYS = new Set(['uuid', 'name', 'id', 'version', 'userDat
 /** Every setting that affects how a material draws, so look-alike materials compare equal. */
 function materialSignature(material: THREE.Material): string {
   const record = material as unknown as Record<string, unknown>
+  // A shader hook (ground variation, the paint reveal) can make two otherwise
+  // identical materials draw differently, so such a material matches only itself.
+  if (Object.hasOwn(material, 'onBeforeCompile') || Object.hasOwn(material, 'customProgramCacheKey')) return material.uuid
   const parts = [material.type]
   for (const key of Object.keys(record).sort()) {
     if (IGNORED_MATERIAL_KEYS.has(key)) continue
