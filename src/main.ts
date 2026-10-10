@@ -6,10 +6,10 @@ import { isHouse } from './game/animal-housing'
 import { createHousing } from './scene/housing'
 import type { Bed } from './game/sleep'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairground'
-import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent, type AnimalLifeSnapshot } from './game/animal-life'
+import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord } from './game/animal-life'
 import { clearOfFarmBounds } from './game/animal-travel'
 import { createProgressLedger } from './game/farm-progression'
-import { buildAccomplishmentCatalog, createAccomplishmentTracker, type AccomplishmentDef, type AccomplishmentStage } from './game/accomplishments'
+import { buildAccomplishmentCatalog, createAccomplishmentTracker } from './game/accomplishments'
 import {
   createUpgradeLedger,
   purchasePropAtLevel,
@@ -18,10 +18,10 @@ import {
   UPGRADE_CATALOG,
   type UpgradeId,
 } from './game/tool-unlocks'
-import { type FarmSnapshot } from './game/animal-progress'
 import { farmMetric } from './game/farm-state'
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
+import { createFarmLifecycle } from './scene/farm-lifecycle'
 import { PROP_CATALOG, type PropId } from './game/farm-props'
 import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
@@ -56,7 +56,6 @@ import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
 import { createPropCard } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
-import { isNightTime } from './game/predator'
 import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
@@ -580,95 +579,11 @@ function residentCounts(): Record<string, number> {
 
 
 
-/**
- * Advance every animal one step and play whatever transition it earned.
- *
- * This is the only place the scene learns that a condition was met, and it
- * does so by setting `animal.stage` -- the animal then runs its own reveal.
- * Keeping the event handling here means `balloon-animal.ts` never has to know
- * that a condition system exists. */
-function progressionHudState() {
-  const housing = progress.housing()
-  return {
-    points: progression.points,
-    level: progression.level,
-    pointsToNextLevel: progression.pointsToNextLevel,
-    population: progress.all().filter((animal) => animal.stage > 0).length,
-    outside: animals.filter((animal) => !animal.isSold && (progress.animal(animal.instanceId)?.stage ?? 0) > 0).length,
-    houseRoom: housing.capacity,
-    houseUsed: housing.used,
-  }
-}
 
-function currentFarmSnapshot(): FarmSnapshot {
-  const residentSpecies = new Set(progress.all()
-    .filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold)
-    .map((entry) => entry.species))
-  return { state: measureFarm(), residentSpecies, night: isNightTime(dayNightClock.timeOfDay) }
-}
 
-function accomplishmentStageForKind(kind: AnimalLifeEvent['kind']): AccomplishmentStage | null {
-  if (kind === 'arriveCarnival') return 'appear'
-  if (kind === 'enterFarm') return 'visit'
-  if (kind === 'settle') return 'live'
-  if (kind === 'fallInLove') return 'breed'
-  return null
-}
 
-function unlockAccomplishment(def: AccomplishmentDef): void {
-  progression.awardPoints(def.id, def.points)
-  notificationPanel.notifyAccomplishment(def.title + ' · +' + def.points + ' pts', def.detail)
-}
 
-function ownedSeedSpecies(): ReadonlySet<string> {
-  const owned = new Set<string>()
-  for (const entry of PLANT_CATALOG) {
-    if ((gardenPlants?.simulation.seedsFor(entry.id) ?? 0) > 0) owned.add(entry.id)
-  }
-  for (const plant of gardenPlants?.simulation.plants ?? []) owned.add(plant.species)
-  return owned
-}
 
-function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
-  for (const event of events) {
-    const animal = event.animalId ? animalById.get(event.animalId) : undefined
-    const stage = accomplishmentStageForKind(event.kind)
-    if (stage) {
-      const earned = accomplishments.discoverAnimalStage(event.species, stage)
-      if (earned) unlockAccomplishment(earned)
-    }
-    if (event.stage !== undefined && animal) {
-      animal.stage = event.stage
-      animal.setDetailedVisible(animal.instanceId === focusedAnimalId || animal.isCapturing)
-      if (event.kind === 'arriveCarnival') {
-        const spawn = carnivalSpawnFor(event.species)
-        animal.root.position.set(spawn[0], GARDEN_LAWN_Y, spawn[1])
-      }
-      if (event.kind === 'settle' || event.kind === 'fallInLove') {
-        // Logged here rather than beside the tick so the debug setStage reports
-        // the same thing a live promotion does.
-        console.info(`[Animal Balloon Farm] ${event.species} -> stage ${event.stage}`)
-      }
-    }
-    if (event.kind === 'arriveCarnival' && event.animalId && !animal) {
-      const record = progress.animal(event.animalId)
-      if (record) void createAnimalInstance(record).then((created) => {
-        farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairground.root, position: created.root.position.clone() })
-        if (VIEWER_CAST.includes(created.id)) {
-          const [x, z] = SHOWCASE_ANIMALS[created.id].spawn
-          viewerStands.set(created.instanceId, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-        }
-      })
-    }
-    if (event.kind === 'birth' && event.animalId) {
-      // The baby is born indoors; keeping it in view for a while brings it out of the door.
-      newbornUntil.set(event.animalId, performance.now() / 1000 + NEWBORN_SHOW_SECONDS)
-      notificationPanel.notifyMilestone('birth', animalDisplayName(event.species))
-      console.info(`[Animal Balloon Farm] a ${event.species} was born in ${event.houseId}`)
-    }
-    if (event.kind === 'growUp' && animal) animal.setGrowth(1)
-  }
-}
 
 
 
@@ -683,38 +598,7 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
 const sleepBeds = new Map<string, Bed>()
 
 
-/**
- * Everything the animal sim reads from the scene, in one place. Every tick goes
- * through here: a tick that left out the houses would evict every resident.
- */
-function animalLifeSnapshot(): AnimalLifeSnapshot {
-  setHouses(gardenProps?.houses() ?? [])
-  return {
-    farm: currentFarmSnapshot(),
-    expansionLevel: fairground.farmExpansion?.state.level ?? 0,
-    positions: Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }])),
-    houses: houses().map((house) => ({ id: house.id, prop: house.prop, x: house.x, z: house.z })),
-  }
-}
 
-function updateAnimalProgress(deltaSeconds: number): void {
-  if (mode === 'viewer' || menu.isOpen || salePanel.isOpen) return
-  const events = progress.tick(animalLifeSnapshot(), deltaSeconds)
-  handleAnimalLifeEvents(events)
-  noteJournalStages()
-  for (const record of progress.all()) {
-    const animal = animalById.get(record.id)
-    if (!animal || animal.isSold) continue
-    animal.setGrowth(record.growth * record.adultScale)
-  }
-  updateHousing(performance.now() / 1000)
-  // No appearance is applied from the event list here: `animal.stage = event.stage`
-  // already routes the promotion through the model's residency gate, which keeps
-  // a settle that arrives out at the tents waiting until the walk-in is done.
-  refreshAnimalVisibility(performance.now() / 1000)
-  // Land is no longer handed out for points: farmer level only opens the next
-  // Land Deed at the shop (see game/tool-unlocks.ts), and buying it expands.
-}
 
 // -------------------------------------------------------------------- houses --
 //
@@ -1639,6 +1523,36 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
 })
 window.addEventListener('pagehide', autosave)
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave() })
+const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateAnimalProgress, ownedSeedSpecies, unlockAccomplishment } = createFarmLifecycle({
+  progress,
+  progression,
+  accomplishments,
+  notificationPanel,
+  animals,
+  animalById,
+  farmHomes,
+  viewerStands,
+  newbornUntil,
+  NEWBORN_SHOW_SECONDS,
+  fairgroundRoot: fairground.root,
+  refreshAnimalVisibility,
+  getFocusedAnimal: () => focusedAnimalId,
+  mode: () => mode,
+  menuOpen: () => menu.isOpen,
+  salePanelOpen: () => salePanel.isOpen,
+  gardenProps: () => gardenProps,
+  gardenPlants: () => gardenPlants,
+  expansionLevel: () => fairground.farmExpansion?.state.level ?? 0,
+  houses,
+  setHouses,
+  updateHousing,
+  measureFarm,
+  dayNightClock,
+  createAnimalInstance,
+  carnivalSpawnFor,
+  animalDisplayName,
+  noteJournalStages,
+})
 const hoverGlow = createHoverGlow()
 scene.add(hoverGlow.root)
 const input = createFarmInput({
