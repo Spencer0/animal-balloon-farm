@@ -16,8 +16,9 @@ Pre-production scaffold. The previous Zoo Patrol project has been preserved unde
 
 ## Direction
 
-- Three.js renders the complete game, including menus, HUD, journal, and the Asset Viewer.
-- **No Vite. No HTML/CSS game UI.** `index.html` is only a minimal canvas boot shell.
+- Three.js renders the farm and the world-space HUD (tool bar, balloon). Game panels (journal, shed, shop, farm post, options, player) are DOM overlays in `src/ui/*-dom.ts` + `*-dom.css`, in the Farm Journal look.
+- **No Vite.** `index.html` is a minimal canvas boot shell.
+- The canvas UI kit (`src/ui/ui-theme.ts` and the canvas `*-panel.ts` files) is legacy and being replaced by the DOM panels.
 - The main menu has **Continue** and **Options**. **Resume** belongs to the in-game pause menu.
 - Options includes an in-game **Asset Viewer** for rapid model/material/animation iteration.
 - A Viva Piñata-inspired garden ecosystem—plant, attract, care, home, court, raise, discover—reimagined with original animals and a festive carnival-farm art direction.

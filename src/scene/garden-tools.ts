@@ -1148,9 +1148,10 @@ export function createGardenTools(
           const distanceSquared = dx * dx + dz * dz
           if (distanceSquared > radiusSquared) continue
 
-          // Plateau of full green through most of the disc, easing out only at the
-          // rim so the painted lawn blends into the surrounding dirt smoothly.
-          const weight = 1 - THREE.MathUtils.smoothstep(Math.sqrt(distanceSquared) / radius, 0.6, 1)
+          // Plateau of full green through the middle of the disc, easing out over
+          // the outer two thirds so the lawn edge spans several vertices (the
+          // ground shader rounds it) and blends into the dirt smoothly.
+          const weight = 1 - THREE.MathUtils.smoothstep(Math.sqrt(distanceSquared) / radius, 0.35, 1)
           const before = groundCoverage[vertexIndex]
           const after = THREE.MathUtils.clamp(before + amount * weight, 0, 1)
           if (after === before) continue
