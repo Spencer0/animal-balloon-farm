@@ -38,6 +38,7 @@ import { createFarmCamera } from './scene/farm-camera'
 import { createUILayer, type UIPanel } from './ui/ui-layer'
 import { advanceClock, calendarOf, createDayNightClock, phaseOf } from './game/day-night'
 import { createDayNightRig } from './scene/day-night-rig'
+import { createShadowRefresh } from './scene/shadow-refresh'
 import { weekdayName } from './game/carnival-schedule'
 import { shopSite } from './game/shop-site'
 import { createClockCalendarHud } from './ui/clock-calendar-hud'
@@ -138,11 +139,11 @@ scene.add(ambient)
 const sunlight = new THREE.DirectionalLight('#fff0d6', 3.0)
 sunlight.position.set(-22, 42, 17)
 sunlight.castShadow = true
-sunlight.shadow.mapSize.set(2048, 2048)
-sunlight.shadow.camera.left = -52
-sunlight.shadow.camera.right = 52
-sunlight.shadow.camera.top = 52
-sunlight.shadow.camera.bottom = -52
+sunlight.shadow.mapSize.set(1024, 1024)
+sunlight.shadow.camera.left = -48
+sunlight.shadow.camera.right = 48
+sunlight.shadow.camera.top = 48
+sunlight.shadow.camera.bottom = -48
 sunlight.shadow.camera.near = 0.5
 sunlight.shadow.camera.far = 145
 sunlight.shadow.bias = -0.00028
@@ -150,6 +151,9 @@ sunlight.shadow.normalBias = 0.025
 sunlight.shadow.radius = 5
 sunlight.target.position.set(0, 0, 0)
 scene.add(sunlight, sunlight.target)
+// Casters change only on edits, so the sun's shadow map is drawn on demand (see
+// scene/shadow-refresh.ts) rather than on every frame.
+const shadowRefresh = createShadowRefresh(renderer)
 
 const fill = new THREE.DirectionalLight('#c1edec', 0.82)
 fill.position.set(27, 22, 28)
@@ -335,7 +339,10 @@ if (fairground.gardenSurface && gardenTerrain && gardenWater) {
     water: gardenWater,
     getBounds: activeGardenBounds,
     shop: { ...shopSite(), url: 'assets/buildings/farm-shop.glb', size: 6.4 },
-    onChange: () => refreshShopUi(),
+    onChange: () => {
+      refreshShopUi()
+      shadowRefresh.markDirty()
+    },
   })
   scene.add(gardenProps.root)
 }
@@ -1318,6 +1325,7 @@ function startIntro(): void {
 }
 
 function finishIntro(): void {
+  shadowRefresh.markDirty()
   const cutscene = intro
   if (!cutscene) return
   intro = null
@@ -1351,6 +1359,7 @@ function startToolFilm(id: UpgradeId): void {
 }
 
 function finishToolFilm(): void {
+  shadowRefresh.markDirty()
   const cutscene = toolFilm
   if (!cutscene) return
   toolFilm = null
@@ -1399,6 +1408,7 @@ function controlIntro(seconds?: number): unknown {
       // Draw now: a hidden tab throttles animation frames, and a screenshot
       // taken before the next one would show the previous moment.
       intro.update(0)
+      shadowRefresh.forceNext()
       intro.render()
     }
     Object.defineProperty(window, '__introScenes', { value: intro?.scenes ?? null, configurable: true })
@@ -1411,6 +1421,7 @@ function controlToolFilm(id: string, seconds?: number): unknown {
     if (seconds !== undefined && toolFilm) {
       toolFilm.seek(seconds)
       toolFilm.update(0)
+      shadowRefresh.forceNext()
       toolFilm.render()
     }
     return toolFilm ? { loaded: toolFilm.loaded, ...toolFilm.describe() } : null
@@ -1427,6 +1438,20 @@ window.addEventListener('resize', () => {
 })
 performanceOverlay?.resize(window.innerWidth, window.innerHeight)
 
+/**
+ * Plants change their shadow when they are planted, removed or grow through a
+ * tenth of their size. Growing is a slow ramp, so the key steps in those buckets
+ * instead of every frame. Sway and hover scaling are left out on purpose: they
+ * turn a plant a few degrees or grow it a few percent, too little to show.
+ */
+let lastPlantShadowKey = -1
+let expansionWasAnimating = false
+function plantShadowKey(): number {
+  let key = 0
+  for (const plant of gardenPlants?.simulation.plants ?? []) key += 10000 + Math.floor(plant.growth * 10)
+  return key
+}
+
 function frame(now: number): void {
   fpsCounter.frame(now)
   const intervalMs = previousFrameTimestamp === null ? 0 : now - previousFrameTimestamp
@@ -1437,6 +1462,7 @@ function frame(now: number): void {
   previousTime = now
   if (intro) {
     intro.update(delta)
+    shadowRefresh.forceNext()
     intro.render()
     if (intro.done) finishIntro()
     requestAnimationFrame(frame)
@@ -1444,6 +1470,7 @@ function frame(now: number): void {
   }
   if (toolFilm) {
     toolFilm.update(delta)
+    shadowRefresh.forceNext()
     toolFilm.render()
     if (toolFilm.done) finishToolFilm()
     requestAnimationFrame(frame)
@@ -1455,7 +1482,7 @@ function frame(now: number): void {
   tickAutosave(delta)
   dayNightRig.update(dayNightClock.timeOfDay)
   clockCalendarHud.setState({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: calendarOf(dayNightClock.elapsedDays), weekday: weekdayName(dayNightClock.elapsedDays) })
-  fairground.update(delta, dayNightClock.elapsedDays)
+  const carnivalMoved = fairground.update(delta, dayNightClock.elapsedDays)
   const fairgroundMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   // Avoid the much heavier state snapshot on the animation hot path; retain
@@ -1555,6 +1582,19 @@ function frame(now: number): void {
   farmCamera.applyShake(delta, now / 1000)
   input.followPointer()
   const otherUpdateMs = timingEnabled ? performance.now() - stageStartedAt : 0
+  // Redraw the sun's shadows only when a caster moved, the farm is expanding, the
+  // carnival packed or unpacked, the shop is going up, a plant changed size, or
+  // the sun has swung far enough to matter.
+  const shopBuild = gardenProps?.shopBuildState()
+  // The frame an expansion settles still carries its last moved geometry, so it counts too.
+  if (expansionIsAnimating || expansionWasAnimating || carnivalMoved || (shopBuild?.started && !shopBuild.finished)) shadowRefresh.markDirty()
+  expansionWasAnimating = expansionIsAnimating
+  const plantKey = plantShadowKey()
+  if (plantKey !== lastPlantShadowKey) {
+    lastPlantShadowKey = plantKey
+    shadowRefresh.markDirty()
+  }
+  shadowRefresh.prepare(sunlight.position)
   renderer.info.reset()
   stageStartedAt = timingEnabled ? performance.now() : 0
   renderer.render(scene, camera)
