@@ -63,6 +63,11 @@ If you aren't sure a command meets this bar, don't add it. Ask Spencer.
 Read `ANIMAL_PIPELINE.md` first and use its checklist. It lists the
 registration points that are not compiler-enforced and fail silently.
 
+## Adding a cutscene
+
+Read `CUTSCENE_PIPELINE.md`. A new shop tool gets its unlock film from one
+entry in `TOOL_UNLOCK_FILMS`, with no Blender work.
+
 ## Project rules
 
 - **Rendering:** Three.js renders the farm and the world-space bits of the HUD

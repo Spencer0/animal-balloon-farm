@@ -87,6 +87,9 @@ import {
 import { createNotificationPanel } from './ui/notification-panel'
 import { createNotificationDomPanel } from './ui/notification-dom'
 import { createIntroCutscene, type IntroCutscene } from './scene/intro-cutscene'
+import { createToolUnlockCutscene, type ToolUnlockCutscene } from './scene/tool-unlock-cutscene'
+import { toolUnlockFilmFor } from './game/tool-unlock-script'
+import type { CutscenePlayer } from './scene/cutscene-kit'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
@@ -1742,6 +1745,8 @@ function buyUpgrade(id: UpgradeId): { ok: boolean; text: string } {
   syncOwnedTools()
   syncGrassPack()
   refreshShopUi()
+  // Pip hands it over in a little film; the shop is waiting when it ends.
+  startToolFilm(id)
   if (id === 'shovel') return { ok: true, text: 'The shovel is yours. Press 2 to pick it up.' }
   if (id === 'water-bucket') return { ok: true, text: 'The bucket is yours. Press 3 to pick it up.' }
   if (id === 'snower') return { ok: true, text: 'The Snower is yours. Press 4 to take it out: hold left-click to blow snow, right-click to melt it.' }
@@ -3196,28 +3201,69 @@ function finishIntro(): void {
   handleMenuChoice('enter')
 }
 
+// ------------------------------------------------------- tool-unlock film --
+// Buying a tool at Pip's shop plays a short film of Pip handing it over
+// (scene/tool-unlock-cutscene.ts). The shop stays open underneath, hidden, so
+// the player is back at the counter when it ends. The farm pauses as for the
+// intro.
+
+let toolFilm: ToolUnlockCutscene | null = null
+
+function startToolFilm(id: UpgradeId): void {
+  const film = toolUnlockFilmFor(id)
+  if (!film || intro) return
+  toolFilm?.dispose()
+  const cutscene = createToolUnlockCutscene(renderer, film, window.innerWidth, window.innerHeight)
+  toolFilm = cutscene
+  // Every DOM panel (the shop included) hides while the film owns the screen.
+  document.body.classList.add('film-playing')
+  setCursor('idle', gameCanvas)
+  cutscene.resumeAudio()
+  cutscene.load().catch((error: unknown) => {
+    console.warn('[tool unlock] could not load the cutscene; back to the shop', error)
+    if (toolFilm === cutscene) finishToolFilm()
+  })
+}
+
+function finishToolFilm(): void {
+  const cutscene = toolFilm
+  if (!cutscene) return
+  toolFilm = null
+  cutscene.dispose()
+  document.body.classList.remove('film-playing')
+  previousTime = performance.now()
+}
+
+/** Whichever film is on screen: the intro, or a tool being handed over. */
+function activeFilm(): CutscenePlayer | null {
+  return intro ?? toolFilm
+}
+
 function interceptIntroInput(event: KeyboardEvent | PointerEvent): void {
-  if (!intro) return
+  const film = activeFilm()
+  if (!film) return
   event.stopImmediatePropagation()
   event.preventDefault()
   // After a New Farm reload the film starts without a gesture, so its sound
   // waits for this first press.
-  intro.resumeAudio()
+  film.resumeAudio()
   if (event instanceof KeyboardEvent && event.repeat) return
   const now = performance.now()
   if ((event instanceof KeyboardEvent && event.key === 'Escape') || now < introSkipArmedUntil) {
-    intro.skip()
+    film.skip()
     return
   }
   introSkipArmedUntil = now + INTRO_SKIP_CONFIRM_MS
-  intro.flashSkipHint()
+  film.flashSkipHint()
 }
 
 window.addEventListener('keydown', interceptIntroInput, { capture: true })
 window.addEventListener('pointerdown', interceptIntroInput, { capture: true })
-window.addEventListener('resize', () => intro?.resize(window.innerWidth, window.innerHeight))
+window.addEventListener('resize', () => activeFilm()?.resize(window.innerWidth, window.innerHeight))
 if (bootRequest?.kind === 'new' && introWanted()) startIntro()
 else if (gardenDebugMode && pageParams.has('intro')) startIntro()
+// ?gardenDebug=1&toolFilm=snower plays a tool-unlock film straight away, for watching it.
+else if (gardenDebugMode && pageParams.has('toolFilm')) startToolFilm((pageParams.get('toolFilm') || 'snower') as UpgradeId)
 
 // ------------------------------------------------------------- garden debug --
 
@@ -3255,6 +3301,8 @@ interface GardenDebugHarness {
   skipToMorning(): void
   /** Start the intro cutscene, hold it at a moment (or resume it), and report what it shows. */
   intro(seconds?: number): unknown
+  /** Play the tool-unlock film for a shop upgrade, optionally held at a moment, and report what it shows. */
+  toolFilm(id: string, seconds?: number): unknown
   skipToNight(): void
   /** Jump whole days ahead, e.g. to watch the carnival set up on a Sunday. */
   skipDays(days: number): void
@@ -3699,6 +3747,16 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       }
       Object.defineProperty(window, '__introScenes', { value: intro?.scenes ?? null, configurable: true })
       return intro ? { loaded: intro.loaded, ...intro.describe() } : null
+    },
+    toolFilm: (id, seconds) => {
+      if (!toolFilm || toolFilm.film.id !== id) startToolFilm(id as UpgradeId)
+      toolFilm?.setPaused(seconds !== undefined)
+      if (seconds !== undefined && toolFilm) {
+        toolFilm.seek(seconds)
+        toolFilm.update(0)
+        toolFilm.render()
+      }
+      return toolFilm ? { loaded: toolFilm.loaded, ...toolFilm.describe() } : null
     },
     openMenu: () => menu.open(),
     closeMenu: () => menu.close(),
@@ -4294,6 +4352,13 @@ function frame(now: number): void {
     intro.update(delta)
     intro.render()
     if (intro.done) finishIntro()
+    requestAnimationFrame(frame)
+    return
+  }
+  if (toolFilm) {
+    toolFilm.update(delta)
+    toolFilm.render()
+    if (toolFilm.done) finishToolFilm()
     requestAnimationFrame(frame)
     return
   }

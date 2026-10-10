@@ -456,8 +456,27 @@ def boy_poses():
     return sit, blink, stand
 
 
-def build_boy(m):
-    rig, root, head_center, head_r = build_person("INTRO BOY", m, scale=1.0, shirt=m["white"], sleeve=m["white"],
+def walk_keys():
+    """A looping five-key stroll: hips bob, arms swing against the legs."""
+    walk = []
+    for frame, phase in ((1, 0), (6, 1), (11, 2), (16, 3), (21, 4)):
+        swing = math.cos(phase * math.pi / 2)
+        lift = abs(math.sin(phase * math.pi / 2))
+        walk.append((frame, {
+            "hips": {"loc": (0, 0, .025 * lift - .01), "rot": (0, 0, 5 * swing)},
+            "torso": {"rot": (-4, 2 * swing, -4 * swing)},
+            "head": {"rot": (3, -2 * swing, 3 * swing)},
+            "thigh_L": {"rot": (28 * swing, 0, 0)}, "thigh_R": {"rot": (-28 * swing, 0, 0)},
+            "knee_L": {"rot": (max(0, 34 * -swing) + 6, 0, 0)}, "knee_R": {"rot": (max(0, 34 * swing) + 6, 0, 0)},
+            "shoulder_L": {"rot": (-26 * swing, -6, 0)}, "shoulder_R": {"rot": (26 * swing, 6, 0)},
+            "elbow_L": {"rot": (-24, 0, 0)}, "elbow_R": {"rot": (-24, 0, 0)},
+        }))
+    return walk
+
+
+def build_boy_figure(m, label="INTRO BOY"):
+    """The boy's body, beret and curls, with no clips yet."""
+    rig, root, head_center, head_r = build_person(label, m, scale=1.0, shirt=m["white"], sleeve=m["white"],
                                                   legs=m["navy"], shoe=m["shoe"], hair=m["brown"], stripes=True)
     # Beret and a few chestnut curls peeking out under it.
     beret = pivot("beret", (.02, 0, head_r * .78), head_center, rotation=(6, 14, 0))
@@ -468,6 +487,11 @@ def build_boy(m):
     for index, (x, y, z) in enumerate(((.8, .2, .2), (-.8, .25, .22), (.62, .55, .3), (-.6, .58, .32), (0, .78, .3), (.3, .7, .44), (-.32, .72, .44),
                                        (.45, .85, -.1), (-.45, .85, -.1), (0, .95, -.25), (.7, .5, -.3), (-.7, .5, -.3))):
         sphere(f"curl {index}", (x * head_r, y * head_r, z * head_r), .22 * head_r, m["brown"], head_center, segments=14, rings=8)
+    return rig, root
+
+
+def build_boy(m):
+    rig, root = build_boy_figure(m)
     sit, blink, stand = boy_poses()
 
     rig.clip("IDLE", [
@@ -501,20 +525,7 @@ def build_boy(m):
         (34, merge(sit, turned, shrug, {"head": {"rot": (-6, 10, 36)}, "mouth": {"scale": (.9, 1, 1.2)}})),
         (46, merge(sit, turned, shrug, {"head": {"rot": (-6, 10, 36)}, "mouth": {"scale": (.9, 1, 1.2)}})),
     ])
-    walk = []
-    for frame, phase in ((1, 0), (6, 1), (11, 2), (16, 3), (21, 4)):
-        swing = math.cos(phase * math.pi / 2)
-        lift = abs(math.sin(phase * math.pi / 2))
-        walk.append((frame, {
-            "hips": {"loc": (0, 0, .025 * lift - .01), "rot": (0, 0, 5 * swing)},
-            "torso": {"rot": (-4, 2 * swing, -4 * swing)},
-            "head": {"rot": (3, -2 * swing, 3 * swing)},
-            "thigh_L": {"rot": (28 * swing, 0, 0)}, "thigh_R": {"rot": (-28 * swing, 0, 0)},
-            "knee_L": {"rot": (max(0, 34 * -swing) + 6, 0, 0)}, "knee_R": {"rot": (max(0, 34 * swing) + 6, 0, 0)},
-            "shoulder_L": {"rot": (-26 * swing, -6, 0)}, "shoulder_R": {"rot": (26 * swing, 6, 0)},
-            "elbow_L": {"rot": (-24, 0, 0)}, "elbow_R": {"rot": (-24, 0, 0)},
-        }))
-    rig.clip("WALK", walk)
+    rig.clip("WALK", walk_keys())
     reach = merge(stand, {
         "torso": {"rot": (-12, 0, 0)},
         "shoulder_R": {"rot": (-78, 10, 0)}, "elbow_R": {"rot": (-18, 0, 0)},
@@ -1057,11 +1068,19 @@ def make_kit():
 
 
 MAKERS = {"boy": make_boy, "president": make_president, "studio": make_studio, "room": make_room, "exterior": make_exterior, "kit": make_kit}
-arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-requested = [value.lower() for value in arguments] if arguments else list(MAKERS)
-invalid = [value for value in requested if value not in MAKERS]
-if invalid:
-    raise SystemExit(f"Unknown asset(s): {', '.join(invalid)}. Choose from {', '.join(MAKERS)}.")
-for name in requested:
-    reset_scene()
-    MAKERS[name]()
+
+
+def run(makers):
+    arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    requested = [value.lower() for value in arguments] if arguments else list(makers)
+    invalid = [value for value in requested if value not in makers]
+    if invalid:
+        raise SystemExit(f"Unknown asset(s): {', '.join(invalid)}. Choose from {', '.join(makers)}.")
+    for name in requested:
+        reset_scene()
+        makers[name]()
+
+
+# Other cutscene scripts import this one for its primitives, palette and cast.
+if __name__ == "__main__":
+    run(MAKERS)
