@@ -1,0 +1,114 @@
+/* Garden tool tooltip (DOM, same look as the Farm Journal and the Farm post):
+ * cream paper, chocolate border, dashed tan dividers, terracotta accents.
+ * Paper is translucent so the lawn shows through. The card never takes the
+ * pointer, so it cannot steal the hover that opened it.
+ */
+
+.tt-card {
+  position: fixed;
+  z-index: 30;
+  width: 320px;
+  background: rgba(250, 243, 226, 0.88);
+  border: 3px solid #6b4a33;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(60, 35, 15, 0.35), inset 0 0 0 2px rgba(255, 253, 246, 0.6);
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.12s ease-out, transform 0.12s ease-out;
+}
+
+.tt-card[hidden] {
+  display: none;
+}
+
+.tt-card[data-shown="false"] {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.tt-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(245, 234, 210, 0.92);
+  border-bottom: 3px dashed #b08c5e;
+}
+
+.tt-title {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.tt-key {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8a6749;
+  white-space: nowrap;
+}
+
+.tt-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tt-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.tt-status {
+  margin: 0;
+  padding: 6px 10px;
+  background: #f5ead2;
+  border: 2px solid #b08c5e;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tt-status[data-tone="ready"] {
+  color: #3f6b39;
+}
+
+.tt-status[data-tone="locked"] {
+  color: #8a6749;
+}
+
+.tt-controls {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tt-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.tt-chip {
+  flex: none;
+  min-width: 88px;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  text-align: center;
+  background: #e8d9bd;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  color: #6b4a33;
+  font: 700 12px/1 "Trebuchet MS", Verdana, sans-serif;
+  white-space: nowrap;
+}
