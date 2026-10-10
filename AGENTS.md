@@ -38,6 +38,26 @@
 If unrelated changes appear in the working tree, leave them uncommitted and
 mention them in the summary.
 
+## Command allow list
+
+Spencer keeps Claude Code's allow list in the global settings file,
+`C:\Users\Spencer\.claude\settings.json`, so it applies to every project.
+You may add a command to its `allow` list when it has **zero ability to wipe
+the drive**. In practice that means all of these hold:
+
+- It can't delete, overwrite, or move files outside a git-restorable change.
+- It can't kill processes or change permissions (`taskkill`, `icacls`, `takeown`).
+- It isn't a shell wrapper that could hide a delete inside a string (`cmd`,
+  `powershell`, `bash -c`).
+- Its pattern is narrow. Use `git worktree add:*`, not `git:*`.
+
+Never add `rm`, `rmdir`, `rd`, `del`, `erase`, `Remove-Item`, `robocopy`,
+`taskkill`, `format`, or `diskpart`. Commands that push, merge to `main`,
+remove a worktree, or reset or clean the tree belong on `ask`, not `allow`.
+
+When you add an entry, name it in your final summary and say why it's safe.
+If you aren't sure a command meets this bar, don't add it. Ask Spencer.
+
 ## Adding an animal
 
 Read `ANIMAL_PIPELINE.md` first and use its checklist. It lists the

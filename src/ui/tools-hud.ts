@@ -42,6 +42,12 @@ export interface ToolsHud extends UIPanel {
   setSelectedTool(id: GardenToolId | null): void
   /** Show the pack in the seeder's hand; `canSwap` reveals the E chip once the tall pack is owned. */
   setGrassPack(pack: GrassPack, canSwap: boolean): void
+  /**
+   * Which tools the farmer owns. The seeder, shovel and bucket are always in the
+   * bar; a bought tool (the Snower) takes the next slot and number key once owned.
+   */
+  setOwnedTools(ids: readonly GardenToolId[]): void
+  isToolOwned(id: GardenToolId): boolean
 }
 
 function round(value: number): number {
@@ -178,6 +184,10 @@ export function createToolsHud(
 
   let selected = initialTool
   let visible = true
+  // Bought tools stay out of the bar, and off the keyboard, until they are owned.
+  const BOUGHT_TOOLS: readonly GardenToolId[] = ['snower']
+  const owned = new Set<GardenToolId>(GARDEN_TOOLS.map((tool) => tool.id).filter((id) => !BOUGHT_TOOLS.includes(id)))
+  const shown = (): ToolSlot[] => slots.filter((slot) => owned.has(slot.id))
 
   // The hover tooltip is a DOM card (see tool-tooltip-dom.ts); the bar only
   // reports which tool is hovered and where it sits on screen.
@@ -211,10 +221,12 @@ export function createToolsHud(
   }
 
   function layout(): void {
-    const totalWidth = slots.length * SLOT_WIDTH + (slots.length - 1) * SLOT_GAP
+    const row = shown()
+    for (const slot of slots) slot.holder.visible = owned.has(slot.id)
+    const totalWidth = row.length * SLOT_WIDTH + (row.length - 1) * SLOT_GAP
     const centreY = viewport.bottom + BOTTOM_MARGIN + SLOT_HEIGHT / 2
     const startX = -totalWidth / 2 + SLOT_WIDTH / 2
-    for (const [index, slot] of slots.entries()) {
+    for (const [index, slot] of row.entries()) {
       slot.centreX = startX + index * (SLOT_WIDTH + SLOT_GAP)
       slot.centreY = centreY
       slot.holder.position.set(slot.centreX, slot.centreY, 0)
@@ -228,7 +240,7 @@ export function createToolsHud(
   }
 
   function slotAt(point: DesignPoint): ToolSlot | null {
-    for (const slot of slots) {
+    for (const slot of shown()) {
       if (rectContains(slot.rect, point)) return slot
     }
     return null
@@ -315,13 +327,22 @@ export function createToolsHud(
     keyDown(event: KeyboardEvent): boolean {
       if (!visible || event.altKey || event.ctrlKey || event.metaKey || event.repeat) return false
       const key = event.code === 'Space' ? 'space' : event.key.toLowerCase()
-      const tool = GARDEN_TOOLS.find((item) => item.hotkey === key)
+      const tool = GARDEN_TOOLS.find((item) => item.hotkey === key && owned.has(item.id))
       if (!tool) return false
       event.preventDefault()
       const slot = slots.find((item) => item.id === tool.id)
       if (slot) slot.press = 1
       select(tool.id)
       return true
+    },
+    setOwnedTools(ids: readonly GardenToolId[]): void {
+      owned.clear()
+      for (const tool of GARDEN_TOOLS) if (!BOUGHT_TOOLS.includes(tool.id)) owned.add(tool.id)
+      for (const id of ids) owned.add(id)
+      layout()
+    },
+    isToolOwned(id: GardenToolId): boolean {
+      return owned.has(id)
     },
     setGrassPack(pack: GrassPack, canSwap: boolean): void {
       const grass = slots.find((slot) => slot.id === 'grass')
@@ -348,7 +369,7 @@ export function createToolsHud(
         // its height as a fraction of the window must not drift with aspect.
         barHeightFraction: round(SLOT_HEIGHT / viewport.height),
         firstButton: { ...slots[0].rect },
-        slots: slots.map((slot) => ({ id: slot.id, hotkey: slot.hotkey, ...slot.rect })),
+        slots: shown().map((slot) => ({ id: slot.id, hotkey: slot.hotkey, ...slot.rect })),
       }
     },
     dispose(): void {

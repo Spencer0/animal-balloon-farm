@@ -56,7 +56,10 @@ export const GRASS_PACKS: Readonly<Record<GrassPack, GrassPackDefinition>> = {
 
 // --------------------------------------------------------------------- upgrades --
 
-export type UpgradeId = 'tall-grass' | 'land-deed'
+/** Coins for the Snower at Pip's shop. */
+export const SNOWER_PRICE = 250
+
+export type UpgradeId = 'tall-grass' | 'snower' | 'land-deed'
 
 export interface UpgradeDefinition {
   readonly id: UpgradeId
@@ -74,7 +77,7 @@ export interface UpgradeDefinition {
 /** The first land deed asks for farmer level 1; each later parcel asks for one more. */
 export const LAND_DEED_LIMIT = 15
 
-export const UPGRADE_ORDER: readonly UpgradeId[] = ['tall-grass', 'land-deed']
+export const UPGRADE_ORDER: readonly UpgradeId[] = ['tall-grass', 'snower', 'land-deed']
 
 export const UPGRADE_CATALOG: Readonly<Record<UpgradeId, UpgradeDefinition>> = {
   'tall-grass': {
@@ -84,6 +87,15 @@ export const UPGRADE_CATALOG: Readonly<Record<UpgradeId, UpgradeDefinition>> = {
     color: '#6fb260',
     maxOwned: 1,
     price: () => 40,
+    unlockLevel: () => 1,
+  },
+  snower: {
+    id: 'snower',
+    name: 'Snower',
+    blurb: 'An icy, balloon-powered leaf blower that puffs snow over the lawn instead of leaves. It takes the next free number key (4): hold left-click to blow snow, right-click to melt it away.',
+    color: '#9fd3f2',
+    maxOwned: 1,
+    price: () => SNOWER_PRICE,
     unlockLevel: () => 1,
   },
   'land-deed': {

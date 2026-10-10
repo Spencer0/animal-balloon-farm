@@ -94,6 +94,14 @@ test('an envelope survives a JSON round trip and reads back as ok', () => {
   assert.equal(parsed.envelope.version, save.SAVE_VERSION)
 })
 
+test('a save from before the Snower has no snow and still loads; a broken snow block does not', () => {
+  const grass = { xs: '', zs: '', heights: '', count: 0, paintKeys: '', paintCoverage: '', paintCount: 0 }
+  const withGrass = (extra) => envelopeAt(1, { ...sampleData(), grass: { ...grass, ...extra } })
+  assert.equal(save.parseEnvelope(JSON.stringify(withGrass({}))).ok, true)
+  assert.equal(save.parseEnvelope(JSON.stringify(withGrass({ snowKeys: '', snowCoverage: '', snowCount: 0 }))).ok, true)
+  assert.equal(save.parseEnvelope(JSON.stringify(withGrass({ snowCount: 3 }))).failure, 'malformed')
+})
+
 test('parseEnvelope refuses what it should, and says why', () => {
   assert.deepEqual(save.parseEnvelope(null), { ok: false, failure: 'unreadable' })
   assert.deepEqual(save.parseEnvelope('{nope'), { ok: false, failure: 'unreadable' })
