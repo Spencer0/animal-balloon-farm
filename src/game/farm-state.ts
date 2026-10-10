@@ -29,6 +29,15 @@ export const MAX_PASTURE_DEPRESSION = 0.35
 /** A cell counts as flat when no neighbor rises more than this above it. */
 export const FLAT_MAX_SLOPE = 0.12
 
+/**
+ * A kind of ground, for conditions that ask what share of the farm is covered
+ * by it. Dirt is bare soil; snow is reserved for the winter work, so the
+ * condition and its journal wording need no rewrite when it lands.
+ */
+export type TerrainKind = 'dirt' | 'snow'
+
+export const TERRAIN_KINDS: readonly TerrainKind[] = ['dirt', 'snow']
+
 export interface FarmState {
   readonly tallGrassArea: number
   readonly waterArea: number
@@ -55,6 +64,14 @@ export interface FarmState {
   readonly preyEaten?: Readonly<Record<string, number>>
   /** Placed shop props per prop id, for `propCount` conditions. */
   readonly propCounts?: Readonly<Record<string, number>>
+  /**
+   * Percent (0..100) of the farm's ground each terrain covers, for
+   * `terrainShare` conditions. A share, not an area, so it means the same thing
+   * on a starter plot and on a farm with fifteen deeds.
+   */
+  readonly terrainShares?: Readonly<Partial<Record<TerrainKind, number>>>
+  /** Garden tools the farmer has bought from the shop, by tool id, for `toolOwned` conditions. */
+  readonly toolsOwned?: Readonly<Record<string, boolean>>
 }
 
 export interface LawnSample {
@@ -185,6 +202,39 @@ export function measureMeadow(blades: Iterable<MeadowBlade>, minHeight = MEADOW_
   return round2(cells * cell * cell)
 }
 
+/** Ground paint under this is bare soil; the lawn's own "is it green yet" bar is 0.05. */
+export const DIRT_MAX_COVERAGE = 0.05
+
+/**
+ * Percent of the farm that is bare dirt: farm vertices with no grass paint on
+ * them and no pond over them. The denominator is the farm, so ground the player
+ * has not seeded and has not flooded is what counts, and a deed adds to both
+ * sides at once.
+ *
+ * `inFarm` limits the count to ground inside the fence: the lawn mesh runs on
+ * well past it, and that grass-free apron is not the player's farm. `isWet` is
+ * the pond's own say on a spot; a vertex under water is water, not dirt, even
+ * if no grass ever grew there.
+ */
+export function measureDirtShare(
+  lawn: LawnSample,
+  isWet?: (x: number, z: number) => boolean,
+  inFarm?: (x: number, z: number) => boolean,
+): number {
+  let farm = 0
+  let dirt = 0
+  for (let index = 0; index < lawn.count; index += 1) {
+    const x = lawn.xs[index]
+    const z = lawn.zs[index]
+    if (inFarm && !inFarm(x, z)) continue
+    farm += 1
+    if (lawn.coverage[index] >= DIRT_MAX_COVERAGE) continue
+    if (isWet?.(x, z)) continue
+    dirt += 1
+  }
+  return farm > 0 ? round2((dirt / farm) * 100) : 0
+}
+
 export function measureWater(water: WaterSample | null | undefined): number {
   if (!water) return 0
   const cellArea = water.cellSize * water.cellSize
@@ -252,6 +302,9 @@ export function farmMetric(state: FarmState, kind: string, species?: string): nu
     case 'residentCount': return species ? state.residentCounts?.[species] ?? 0 : 0
     case 'preyEaten': return species ? state.preyEaten?.[species] ?? 0 : 0
     case 'propCount': return species ? state.propCounts?.[species] ?? 0 : 0
+    // The terrain's id rides in `species`, the same way a plant's does.
+    case 'toolOwned': return species && state.toolsOwned?.[species] ? 1 : 0
+    case 'terrainShare': return species ? state.terrainShares?.[species as TerrainKind] ?? 0 : 0
     default: return 0
   }
 }

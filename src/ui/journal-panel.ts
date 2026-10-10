@@ -861,7 +861,7 @@ export function createJournalPanel(
         // A count is written as a whole number with no unit; an area keeps one
         // decimal and its square meters.
         const unit = row.metricUnit ?? ' m²'
-        const current = unit === '' ? row.current.toFixed(0) : row.current.toFixed(1)
+        const current = unit === '' || unit === '%' ? row.current.toFixed(0) : row.current.toFixed(1)
         context.fillText(`${row.metricLabel ?? 'Habitat'} · ${current} / ${row.target.toFixed(0)}${unit}`, left + 18, y + 17)
         y += 24
       } else if (row.waitingOn) {

@@ -55,6 +55,7 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   mouse: { rarity: "Common", traits: ["Seed Nibbler", "Meadow Dweller", "Tiny Pitter-Patter"] },
   rat: { rarity: "Uncommon", traits: ["Scavenger", "Night Shift", "Shares the Log"] },
   snake: { rarity: "Rare", traits: ["Meadow Hunter", "Slithers", "Basks on Rocks"] },
+  mole: { rarity: "Uncommon", traits: ["Digs Deep", "Loves Bare Earth", "Poor Eyesight"] },
 };
 
 const DEFAULT_META: SpeciesMeta = { rarity: "Common", traits: [] };
@@ -91,6 +92,8 @@ function visualForKind(kind: string, species: string | undefined, metricLabel: s
     case "flatArea": return { icon: "open-pasture", label: "Level pasture", isCount: false };
     case "plantCount": return { icon: species === "water-lily" ? "lily-pad" : "sprout", label: metricLabel ?? "Plants", isCount: true };
     case "residentCount": return { icon: "friend-paw", label: metricLabel ?? "Residents", isCount: true };
+    case "toolOwned": return { icon: "open-pasture", label: metricLabel ?? "Tool", isCount: true };
+    case "terrainShare": return { icon: "open-pasture", label: metricLabel ?? "Share of the farm", isCount: true };
     case "propCount": return { icon: "circus-tent", label: metricLabel ?? "Props", isCount: true };
     case "preyEaten": return { icon: "friend-paw", label: metricLabel ?? "Eaten", isCount: true };
     default: return null;

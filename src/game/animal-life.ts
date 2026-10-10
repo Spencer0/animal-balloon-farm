@@ -1,6 +1,7 @@
-import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, isNightOnly, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
+import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, holdsResidency, isNightOnly, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
 import { requirementMet, type FarmSnapshot, type RequirementStatus } from './animal-progress'
 import { farmMetric } from './farm-state'
+import { stepHelium } from './predator'
 import { freeRoomFor, HOUSE_CAPACITY, houseAccepts, houseWithRoom, occupantsByHouse, OUTDOOR_LIMITS, type HouseSite } from './animal-housing'
 import type { ProgressAction } from './farm-progression'
 
@@ -63,10 +64,17 @@ export interface AnimalRecord {
   readonly growth: number
   readonly parentIds: readonly string[]
   readonly adultScale: number
+  /**
+   * 1 = full of helium, 0 = flat. Only a resident whose species holds its
+   * residency ever drops below 1: it drains while the farm no longer suits it.
+   */
+  readonly helium: number
+  /** True while a resident's home requirement is unmet and its helium is leaking. */
+  readonly unsettled: boolean
 }
 
 export interface AnimalLifeEvent {
-  readonly kind: 'arriveCarnival' | 'enterFarm' | 'settle' | 'fallInLove' | 'birth' | 'growUp'
+  readonly kind: 'arriveCarnival' | 'enterFarm' | 'settle' | 'fallInLove' | 'birth' | 'growUp' | 'unsettle' | 'resettle' | 'deflate'
   readonly animalId?: string
   /** For a birth: the two parents. */
   readonly parentIds?: readonly string[]
@@ -106,6 +114,8 @@ export interface SavedAnimal {
   readonly ageSeconds: number
   readonly parentIds: readonly string[]
   readonly inside?: boolean
+  /** Helium left, 0..1; absent in older saves, which read as full. */
+  readonly helium?: number
 }
 
 /**
@@ -135,6 +145,8 @@ export interface AnimalLife {
   setStage(id: string, stage: AnimalStage): readonly AnimalLifeEvent[]
   discover(species: string): readonly AnimalLifeEvent[]
   remove(id: string): AnimalRecord | null
+  /** Set an animal's helium outright, 0..1. The debug harness and the tests use it. */
+  setHelium(id: string, level: number): void
   /** Room across every house, and how many animals are inside. */
   housing(): HousingReport
   /** Whether a species could take one more animal: a spare place outdoors or room in a house. */
@@ -167,6 +179,8 @@ interface MutableAnimal {
   ageSeconds: number
   parentIds: readonly string[]
   insideId: string | null
+  helium: number
+  unsettled: boolean
 }
 
 export function createAnimalLife(speciesIds: readonly string[], options: AnimalLifeOptions = {}): AnimalLife {
@@ -203,6 +217,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       ageSeconds: 0,
       parentIds,
       insideId: null,
+      helium: 1,
+      unsettled: false,
     }
     animals.set(id, animal)
     return animal
@@ -224,6 +240,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       growth,
       parentIds: animal.parentIds,
       adultScale: config.adultScale,
+      helium: animal.helium,
+      unsettled: animal.unsettled,
     }
   }
 
@@ -389,6 +407,10 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       eventsFor(animal, stage, events, false)
       return events
     },
+    setHelium(id, level) {
+      const animal = animals.get(id)
+      if (animal && Number.isFinite(level)) animal.helium = Math.max(0, Math.min(1, level))
+    },
     remove(id) {
       const animal = animals.get(id)
       if (!animal) return null
@@ -431,6 +453,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           ageSeconds: animal.ageSeconds,
           parentIds: [...animal.parentIds],
           inside: animal.insideId !== null,
+          ...(animal.helium < 1 ? { helium: animal.helium } : {}),
         })),
         discovered: [...discovered],
         pendingVisitors: [...pendingVisitors],
@@ -461,6 +484,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           parentIds: ids(saved.parentIds),
           // Back indoors once the caller knows this session's houses.
           insideId: null,
+          helium: Math.max(0, Math.min(1, finite(saved.helium, 1))),
+          unsettled: false,
         })
         highestAnimal = Math.max(highestAnimal, Number(saved.id.replace(/^animal-/, '')) || 0)
       }
@@ -531,6 +556,29 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           else if (animal.stage === 2 && animal.elapsed >= tuning.enterFarmSeconds && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 3, events)
           else if (animal.stage === 3 && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 4, events)
         }
+      }
+
+      // Residents that hold their residency: the farm has to keep suiting them.
+      // Helium drains while it does not and refills (faster) once it does, and a
+      // flat balloon pops. Removing it here also lets its species be seen again.
+      const deflated: MutableAnimal[] = []
+      for (const animal of animals.values()) {
+        if (animal.baby || animal.stage < 3 || !holdsResidency(animal.species)) continue
+        const home = getSpeciesConditions(animal.species)[2]?.requirement ?? null
+        const suited = requirementMet(home, snapshot.farm)
+        animal.helium = stepHelium(animal.helium, !suited, Math.min(dt, 1))
+        if (!suited && !animal.unsettled) {
+          animal.unsettled = true
+          events.push({ kind: 'unsettle', animalId: animal.id, species: animal.species })
+        } else if (suited && animal.unsettled) {
+          animal.unsettled = false
+          events.push({ kind: 'resettle', animalId: animal.id, species: animal.species })
+        }
+        if (animal.helium <= 0) deflated.push(animal)
+      }
+      for (const animal of deflated) {
+        events.push({ kind: 'deflate', animalId: animal.id, species: animal.species })
+        api.remove(animal.id)
       }
 
       breed(stageDt, events)
