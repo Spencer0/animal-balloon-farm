@@ -1,6 +1,6 @@
 import { ANIMAL_CATALOG } from '../animals/animal-catalog'
 import type { createAnimalLife } from '../game/animal-life'
-import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind } from '../game/animal-conditions'
+import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, hasOwnMetricUnit } from '../game/animal-conditions'
 import { farmMetric, type FarmState } from '../game/farm-state'
 import type { JournalConditionSource } from './journal-panel'
 
@@ -36,7 +36,7 @@ export function createJournalConditions(deps: JournalConditionsDeps) {
           // A social condition has no area to meter, so name the friend instead.
           const wantsSpecies = requirement?.kind === 'residentSpecies' ? requirement.species : undefined
           const revealed = definition.stage <= stage + 1
-          const labelled = isCountKind(requirement?.kind)
+          const labelled = hasOwnMetricUnit(requirement?.kind)
           return {
             stage: definition.stage,
             title: definition.title,

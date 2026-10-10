@@ -22,7 +22,7 @@ import { PROP_CATALOG, purchaseProp, type PropId } from '../game/farm-props'
 import { UPGRADE_CATALOG, upgradeQuote, propUnlockLevel, type UpgradeId, type createUpgradeLedger } from '../game/tool-unlocks'
 import { OUTDOOR_LIMITS } from '../game/animal-housing'
 import { phaseOf, formatCalendarDate, calendarOf, setTimeOfDay, skipToNext, type createDayNightClock } from '../game/day-night'
-import type { AnimalStage } from '../game/animal-conditions'
+import { setResidencyOverride, type AnimalStage } from '../game/animal-conditions'
 import type { FarmState } from '../game/farm-state'
 import type { GardenToolId } from '../scene/garden-tool-art'
 import type { ShopBuildReport } from '../scene/shop-build'
@@ -167,6 +167,12 @@ interface GardenDebugHarness {
   runScenario(name: string): Promise<string>
   /** Set every owl's helium, 0..1, to test the deflate-and-pop without a two-minute wait. */
   setOwlHelium(level: number): void
+  /** Set the helium, 0..1, of every animal of one species, to watch it deflate without a two-minute wait. */
+  setHelium(species: string, level: number): number
+  /** Make a species lose helium when its home requirement stops being met (true), stop (false), or restore its catalog rule (null). */
+  holdResidency(species: string, holds: boolean | null): void
+  /** Play the tool-unlock film for a shop upgrade, optionally held at a moment, and report what it shows. */
+  toolFilm(id: string, seconds?: number): unknown
   /** Make the owls and snakes hunt as soon as they can, instead of waiting out the cooldown. */
   hurryHunt(): void
   /** Step the owl and snake hunts and any pops forward without waiting on rendered frames. */
@@ -354,6 +360,8 @@ export interface GardenHarnessDeps {
   readonly notificationDom: ReturnType<typeof createNotificationDomPanel>
   readonly knownMaturePlants: Set<number>
   readonly syncGrassPack: () => void
+  readonly syncOwnedTools: () => void
+  readonly toolFilm: (id: string, seconds?: number) => unknown
   readonly swapGrassPack: () => boolean
   readonly menu: { readonly isOpen: boolean; open(): void; close(): void }
   readonly openAnimalCardFor: (animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }) => void
@@ -372,7 +380,7 @@ export interface GardenHarnessDeps {
   readonly plantCard: ReturnType<typeof createPlantCard>
   readonly openPlantCardFor: (plant: import('../game/plants').GardenPlant) => void
   readonly panels: readonly UIPanel[]
-  readonly selectGardenTool: (id: import('../scene/garden-tool-art').GardenToolId | null) => void
+  readonly selectGardenTool: (id: import('../scene/garden-tool-art').GardenToolId | null, force?: boolean) => void
   readonly syncFarmChrome: () => void
   readonly intro: (seconds?: number) => unknown
 }
@@ -503,6 +511,17 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
   const debugHarness: GardenDebugHarness = {
     enabled: true,
     intro: (seconds) => deps.intro(seconds),
+    toolFilm: (id, seconds) => deps.toolFilm(id, seconds),
+    holdResidency: (species, holds) => { setResidencyOverride(species, holds) },
+    setHelium: (species, level) => {
+      let changed = 0
+      for (const record of deps.progress.all()) {
+        if (record.species !== species || record.stage < 3) continue
+        deps.progress.setHelium(record.id, level)
+        changed += 1
+      }
+      return changed
+    },
     snowFeature: (kind, x, z) => gardenTools?.placeSnowFeature(kind, x, z) ?? false,
     blowSnow: (x, z, radius, amount) => {
       gardenTools?.blowSnowDisc(x, z, radius, amount ?? 1)
@@ -551,7 +570,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       refreshAnimalVisibility(performance.now() / 1000, true)
     },
     waterSummary: () => gardenWater?.summary() ?? null,
-    selectTool: (tool) => selectGardenTool(tool),
+    selectTool: (tool) => selectGardenTool(tool, true),
     clock: () => ({ timeOfDay: dayNightClock.timeOfDay, phase: phaseOf(dayNightClock.timeOfDay), date: formatCalendarDate(calendarOf(dayNightClock.elapsedDays)), elapsedDays: dayNightClock.elapsedDays }),
     setTimeOfDay: (time) => { setTimeOfDay(dayNightClock, time) },
     skipToMorning: () => { skipToNext(dayNightClock, 0.32) },
@@ -627,6 +646,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       remeasureMeadow()
       upgrades.reset()
       gardenTools?.setGrassPack('short')
+      deps.syncOwnedTools()
       syncGrassPack()
       progress.reset()
       progression.reset()
@@ -676,6 +696,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       appearance: animal.appearance,
       heartEyes: animal.heartEyeCount > 0,
       heartCount: animal.heartEyeCount,
+      helium: deps.progress.animal(animal.instanceId)?.helium ?? 1,
       x: +animal.root.position.x.toFixed(2),
       z: +animal.root.position.z.toFixed(2),
       loose: isLoose(animal.instanceId),

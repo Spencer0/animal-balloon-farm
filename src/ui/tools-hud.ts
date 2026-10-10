@@ -43,8 +43,8 @@ export interface ToolsHud extends UIPanel {
   /** Show the pack in the seeder's hand; `canSwap` reveals the E chip once the tall pack is owned. */
   setGrassPack(pack: GrassPack, canSwap: boolean): void
   /**
-   * Which tools the farmer owns. The seeder, shovel and bucket are always in the
-   * bar; a bought tool (the Snower) takes the next slot and number key once owned.
+   * Which bought tools the farmer owns. The seed bag is always in the bar; the
+   * shovel, the bucket and the Snower take the next slot and number key once bought.
    */
   setOwnedTools(ids: readonly GardenToolId[]): void
   isToolOwned(id: GardenToolId): boolean
@@ -185,7 +185,7 @@ export function createToolsHud(
   let selected = initialTool
   let visible = true
   // Bought tools stay out of the bar, and off the keyboard, until they are owned.
-  const BOUGHT_TOOLS: readonly GardenToolId[] = ['snower']
+  const BOUGHT_TOOLS: readonly GardenToolId[] = ['shovel', 'water', 'snower']
   const owned = new Set<GardenToolId>(GARDEN_TOOLS.map((tool) => tool.id).filter((id) => !BOUGHT_TOOLS.includes(id)))
   const shown = (): ToolSlot[] => slots.filter((slot) => owned.has(slot.id))
 

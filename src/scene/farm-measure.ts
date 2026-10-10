@@ -1,5 +1,10 @@
 import * as THREE from 'three'
-import { measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from '../game/farm-state'
+import { measureDirtShare, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from '../game/farm-state'
+import { WATER_MIN_RENDER_DEPTH } from '../game/garden-water'
+import { containsFarmPoint } from '../game/farm-footprint'
+import { ownsGardenTool, type createUpgradeLedger } from '../game/tool-unlocks'
+import { GARDEN_TOOLS } from './garden-tool-art'
+import type { GardenBounds } from '../game/farm-expansion'
 import type { GardenTerrain } from './garden-terrain'
 import type { createGardenWaterField } from '../game/garden-water'
 
@@ -14,10 +19,12 @@ export interface FarmMeasureDeps {
   readonly preyEaten: () => Record<string, number>
   /** Visible pond cells that are frozen solid: they are not water to drink or paddle in. */
   readonly frozenWaterCells: () => number
+  readonly activeGardenBounds: () => GardenBounds
+  readonly upgrades: ReturnType<typeof createUpgradeLedger>
 }
 
 export function createFarmMeasure(deps: FarmMeasureDeps) {
-  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, preyEaten, frozenWaterCells } = deps
+  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, preyEaten, frozenWaterCells, activeGardenBounds, upgrades } = deps
   // ------------------------------------------------------- farm measurement --
 
   /**
@@ -119,8 +126,16 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
       ...measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts()),
       meadowArea: currentMeadowArea(),
       residentCounts: residentCounts(),
+      terrainShares: {
+        dirt: measureDirtShare(
+          lawn,
+          (x, z) => (gardenWater?.depthAt(x, z) ?? 0) >= WATER_MIN_RENDER_DEPTH,
+          (x, z) => containsFarmPoint(x, z, activeGardenBounds()),
+        ),
+      },
       preyEaten: preyEaten(),
       propCounts: gardenProps()?.propCounts() ?? {},
+      toolsOwned: Object.fromEntries(GARDEN_TOOLS.map((tool) => [tool.id, ownsGardenTool(upgrades, tool.id)])),
     }
     return lastFarmState
   }

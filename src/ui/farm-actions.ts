@@ -57,13 +57,15 @@ export interface FarmActionsDeps {
   readonly residentsOf: (selection: PropSelection) => PropResidents | null
   readonly saveSoon: () => void
   readonly syncGrassPack: () => void
+  readonly syncOwnedTools: () => void
+  readonly startToolFilm: (id: UpgradeId) => void
   readonly syncFarmChrome: () => void
   readonly progressionHudState: () => Readonly<Record<string, number>>
   readonly ownedSeedSpecies: () => ReadonlySet<string>
 }
 
 export function createFarmActions(deps: FarmActionsDeps) {
-  const { camera, ui, scene, animalCard, propCard, plantCard, salePanel, shed, shedDom, shop, balloon, wallet, upgrades, progression, progress, accomplishments, fairground, gardenPlants, gardenProps, gardenTools, animals, animalById, animalNames, farmHomes, sellBursts, getFocusedAnimal, setFocusedAnimal, setSelectedProp, refreshAnimalVisibility, residentsOf, saveSoon, syncGrassPack, syncFarmChrome, progressionHudState, ownedSeedSpecies } = deps
+  const { camera, ui, scene, animalCard, propCard, plantCard, salePanel, shed, shedDom, shop, balloon, wallet, upgrades, progression, progress, accomplishments, fairground, gardenPlants, gardenProps, gardenTools, animals, animalById, animalNames, farmHomes, sellBursts, getFocusedAnimal, setFocusedAnimal, setSelectedProp, refreshAnimalVisibility, residentsOf, saveSoon, syncOwnedTools, startToolFilm, syncGrassPack, syncFarmChrome, progressionHudState, ownedSeedSpecies } = deps
   /**
    * Opens the animal info card for a live animal. Shared by the farm click
    * and the garden-debug harness so the card stays verifiable headlessly.
@@ -96,6 +98,7 @@ export function createFarmActions(deps: FarmActionsDeps) {
       stage,
       price: animalSaleValue(animal.id, stage),
       sellable,
+      helium: progress.animal(animal.instanceId)?.helium ?? 1,
     }, anchor)
     syncFarmChrome()
   }
@@ -176,8 +179,13 @@ export function createFarmActions(deps: FarmActionsDeps) {
       refreshShopUi()
       return { ok: true, text: 'Deed signed -- a new strip of land opens up.' }
     }
+    syncOwnedTools()
     syncGrassPack()
     refreshShopUi()
+    // Pip hands it over in a little film; the shop is waiting when it ends.
+    startToolFilm(id)
+    if (id === 'shovel') return { ok: true, text: 'The shovel is yours. Press 2 to pick it up.' }
+    if (id === 'water-bucket') return { ok: true, text: 'The bucket is yours. Press 3 to pick it up.' }
     if (id === 'snower') return { ok: true, text: 'The Snower is yours. Press 4 to take it out: hold left-click to blow snow, right-click to melt it.' }
     return { ok: true, text: 'The green pack is yours. Press E with the seed bag out to swap packs.' }
   }

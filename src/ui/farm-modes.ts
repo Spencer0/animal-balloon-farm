@@ -43,8 +43,8 @@ export interface FarmModesDeps {
 export function createFarmModes(deps: FarmModesDeps) {
   const { menu, salePanel, shed, shop, journal, toolsHud, balloon, clockCalendarHud, notificationDom, playerDom, optionsDom, farmsPanel, markEntered, introWanted, startIntro, gardenTools, gardenPlants, gardenProps, toolIsOwned, endCameraTour, refreshCursor } = deps
 
-  function selectGardenTool(id: GardenToolId | null): void {
-    if (id !== null && !toolIsOwned(id)) return
+  function selectGardenTool(id: GardenToolId | null, force = false): void {
+    if (id !== null && !force && !toolIsOwned(id)) return
     endCameraTour(true)
     gardenPlants()?.cancelPlacement()
     gardenProps()?.cancelPlacement()

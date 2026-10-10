@@ -11,6 +11,7 @@ import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker } from './game/accomplishments'
 import {
   createUpgradeLedger,
+  ownsGardenTool,
   purchasePropAtLevel,
   upgradeQuote,
   type UpgradeId,
@@ -71,6 +72,10 @@ import {
 import { createNotificationPanel } from './ui/notification-panel'
 import { createNotificationDomPanel } from './ui/notification-dom'
 import { createIntroCutscene, type IntroCutscene } from './scene/intro-cutscene'
+import { createToolUnlockCutscene, type ToolUnlockCutscene } from './scene/tool-unlock-cutscene'
+import { toolUnlockFilmFor } from './game/tool-unlock-script'
+import type { CutscenePlayer } from './scene/cutscene-kit'
+import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
@@ -551,21 +556,27 @@ const toolsHud = createToolsHud(
   window.innerHeight,
 )
 
+function toolIsOwned(id: GardenToolId): boolean {
+  return ownsGardenTool(upgrades, id)
+}
+
+/**
+ * The tool bar shows what the farmer owns: the seed bag from the start, and the
+ * shovel, the bucket and the Snower once Pip has sold them. A tool put away
+ * because it is not owned (a reset, a load) is deselected so the pointer is
+ * handed back.
+ */
+function syncOwnedTools(): void {
+  const owned = GARDEN_TOOLS.map((tool) => tool.id).filter(toolIsOwned)
+  toolsHud.setOwnedTools(owned)
+  const armed = gardenTools?.selectedTool ?? null
+  if (armed !== null && !toolIsOwned(armed)) selectGardenTool(null)
+}
+
 /** Put the seeder's pack in the tool bar, and show the E chip once there is a second one. */
 function syncGrassPack(): void {
   toolsHud.setGrassPack(gardenTools?.grassPack ?? 'short', upgrades.owns('tall-grass'))
   syncOwnedTools()
-}
-
-/** The Snower is bought at Pip's shop: it takes its tool slot and number key once owned, and not before. */
-function syncOwnedTools(): void {
-  toolsHud.setOwnedTools(upgrades.owns('snower') ? ['snower'] : [])
-  // Starting over or loading a farm without it must not leave it in hand.
-  if (!upgrades.owns('snower') && toolsHud.selectedTool === 'snower') selectGardenTool(null)
-}
-
-function toolIsOwned(id: GardenToolId): boolean {
-  return id !== 'snower' || upgrades.owns('snower')
 }
 
 /** E with the seed bag out swaps the blue lawn pack and the green meadow pack. */
@@ -591,6 +602,7 @@ gardenTools?.setTallGrassBlocker((x, z) => {
   return coverPatches.some((patch) => (patch.x - x) ** 2 + (patch.z - z) ** 2 < GROUND_COVER_GRASS_RADIUS ** 2)
 })
 
+syncOwnedTools()
 syncGrassPack()
 
 const menu = createMenuDomPanel({
@@ -909,7 +921,7 @@ for (const panel of panels) ui.add(panel)
 
 
 
-const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, updateOwlHunt, updateSnakeHunt } = createPredation({
+const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, updateOwlHunt, updateSnakeHunt, popAnimal } = createPredation({
   fairgroundRoot: fairground.root,
   lawnY: GARDEN_LAWN_Y,
   scene,
@@ -944,6 +956,8 @@ const { measureFarm, remeasureMeadow, maturePlantCounts } = createFarmMeasure({
   residentCounts,
   preyEaten: () => predationLedger.totals,
   frozenWaterCells,
+  activeGardenBounds,
+  upgrades,
 })
 const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimals, updateSleepers } = createHousing({
   progress,
@@ -999,6 +1013,7 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
   setGardenBounds: (bounds) => { currentGardenBounds = bounds },
   setLastExpansionLevel: (level) => { lastExpansionLevel = level },
   remeasureMeadow,
+  syncOwnedTools,
   syncGrassPack,
   refreshShopUi: () => refreshShopUi(),
   noteJournalStages,
@@ -1010,6 +1025,9 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
 window.addEventListener('pagehide', autosave)
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave() })
 const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateAnimalProgress, ownedSeedSpecies, unlockAccomplishment } = createFarmLifecycle({
+  animalNames,
+  popAnimal,
+  animalCard,
   progress,
   progression,
   accomplishments,
@@ -1038,6 +1056,8 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   noteJournalStages,
 })
 const { openAnimalCardFor, completeAnimalSale, openPropCardFor, refreshShopUi, buyUpgrade, playerDomStats, balloonInboxAnchor, openPlantCardFor, syncPlantCard } = createFarmActions({
+  syncOwnedTools,
+  startToolFilm,
   camera,
   ui,
   scene,
@@ -1163,6 +1183,8 @@ window.addEventListener('resize', () => {
 if (__GARDEN_DEBUG__ && gardenDebugMode) {
   installGardenHarness({
     intro: controlIntro,
+    toolFilm: controlToolFilm,
+    syncOwnedTools,
     canvas: gameCanvas,
     wallet,
     pageParams,
@@ -1304,28 +1326,69 @@ function finishIntro(): void {
   handleMenuChoice('enter')
 }
 
+// ------------------------------------------------------- tool-unlock film --
+// Buying a tool at Pip's shop plays a short film of Pip handing it over
+// (scene/tool-unlock-cutscene.ts). The shop stays open underneath, hidden, so
+// the player is back at the counter when it ends. The farm pauses as for the
+// intro.
+
+let toolFilm: ToolUnlockCutscene | null = null
+
+function startToolFilm(id: UpgradeId): void {
+  const film = toolUnlockFilmFor(id)
+  if (!film || intro) return
+  toolFilm?.dispose()
+  const cutscene = createToolUnlockCutscene(renderer, film, window.innerWidth, window.innerHeight)
+  toolFilm = cutscene
+  // Every DOM panel (the shop included) hides while the film owns the screen.
+  document.body.classList.add('film-playing')
+  setCursor('idle', gameCanvas)
+  cutscene.resumeAudio()
+  cutscene.load().catch((error: unknown) => {
+    console.warn('[tool unlock] could not load the cutscene; back to the shop', error)
+    if (toolFilm === cutscene) finishToolFilm()
+  })
+}
+
+function finishToolFilm(): void {
+  const cutscene = toolFilm
+  if (!cutscene) return
+  toolFilm = null
+  cutscene.dispose()
+  document.body.classList.remove('film-playing')
+  previousTime = performance.now()
+}
+
+/** Whichever film is on screen: the intro, or a tool being handed over. */
+function activeFilm(): CutscenePlayer | null {
+  return intro ?? toolFilm
+}
+
 function interceptIntroInput(event: KeyboardEvent | PointerEvent): void {
-  if (!intro) return
+  const film = activeFilm()
+  if (!film) return
   event.stopImmediatePropagation()
   event.preventDefault()
   // After a New Farm reload the film starts without a gesture, so its sound
   // waits for this first press.
-  intro.resumeAudio()
+  film.resumeAudio()
   if (event instanceof KeyboardEvent && event.repeat) return
   const now = performance.now()
   if ((event instanceof KeyboardEvent && event.key === 'Escape') || now < introSkipArmedUntil) {
-    intro.skip()
+    film.skip()
     return
   }
   introSkipArmedUntil = now + INTRO_SKIP_CONFIRM_MS
-  intro.flashSkipHint()
+  film.flashSkipHint()
 }
 
 window.addEventListener('keydown', interceptIntroInput, { capture: true })
 window.addEventListener('pointerdown', interceptIntroInput, { capture: true })
-window.addEventListener('resize', () => intro?.resize(window.innerWidth, window.innerHeight))
+window.addEventListener('resize', () => activeFilm()?.resize(window.innerWidth, window.innerHeight))
 if (bootRequest?.kind === 'new' && introWanted()) startIntro()
 else if (gardenDebugMode && pageParams.has('intro')) startIntro()
+// ?gardenDebug=1&toolFilm=snower plays a tool-unlock film straight away, for watching it.
+else if (gardenDebugMode && pageParams.has('toolFilm')) startToolFilm((pageParams.get('toolFilm') || 'snower') as UpgradeId)
 
 function controlIntro(seconds?: number): unknown {
     if (!intro) startIntro()
@@ -1340,6 +1403,17 @@ function controlIntro(seconds?: number): unknown {
     }
     Object.defineProperty(window, '__introScenes', { value: intro?.scenes ?? null, configurable: true })
     return intro ? { loaded: intro.loaded, ...intro.describe() } : null
+}
+
+function controlToolFilm(id: string, seconds?: number): unknown {
+    if (!toolFilm || toolFilm.film.id !== id) startToolFilm(id as UpgradeId)
+    toolFilm?.setPaused(seconds !== undefined)
+    if (seconds !== undefined && toolFilm) {
+      toolFilm.seek(seconds)
+      toolFilm.update(0)
+      toolFilm.render()
+    }
+    return toolFilm ? { loaded: toolFilm.loaded, ...toolFilm.describe() } : null
 }
 
 // --------------------------------------------------------------- render loop --
@@ -1365,6 +1439,13 @@ function frame(now: number): void {
     intro.update(delta)
     intro.render()
     if (intro.done) finishIntro()
+    requestAnimationFrame(frame)
+    return
+  }
+  if (toolFilm) {
+    toolFilm.update(delta)
+    toolFilm.render()
+    if (toolFilm.done) finishToolFilm()
     requestAnimationFrame(frame)
     return
   }

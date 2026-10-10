@@ -4,6 +4,7 @@ import { ANIMAL_CATALOG } from '../animals/animal-catalog'
 import { createOwlHunt, type HuntOwl } from './owl-hunt'
 import { createSnakeHunt } from './snake-hunt'
 import { createPopBurst, type PopBurst } from './pop-burst'
+import { createDeflateEffect } from './deflate-effect'
 import { createPredationLedger, isNightTime, PREY_OF } from '../game/predator'
 import { HOUSE_CAPACITY, houseWithRoom, occupantsByHouse } from '../game/animal-housing'
 import { propDefinition } from '../game/farm-props'
@@ -73,7 +74,12 @@ export function createPredation(deps: PredationDeps) {
   }
 
   /** Take an animal out of the farm and play its pop; the effect disposes the model when done. */
-  function popAnimal(prey: BalloonAnimal): void {
+  /**
+   * Take an animal out of the farm and play its death; the effect disposes the
+   * model when done. `bang` is for being caught: it swells and pops. `deflate`
+   * is for running out of helium: it hisses, sags flat, and shrinks away.
+   */
+  function popAnimal(prey: BalloonAnimal, style: 'bang' | 'deflate' = 'bang'): void {
     const catalog = ANIMAL_CATALOG.find((entry) => entry.id === prey.id)
     const at = prey.root.getWorldPosition(new THREE.Vector3())
     progress.remove(prey.instanceId)
@@ -87,7 +93,11 @@ export function createPredation(deps: PredationDeps) {
     }
     farmHomes.delete(prey.instanceId)
     prey.setAlarmed(false)
-    const burst = createPopBurst({
+    const burst = style === 'deflate' ? createDeflateEffect({
+      position: new THREE.Vector3(at.x, at.y, at.z),
+      height: (catalog?.size ?? 1.8) * 0.42,
+      animal: prey.hasDetailedModel ? prey.root : null,
+    }) : createPopBurst({
       position: new THREE.Vector3(at.x, at.y, at.z),
       color: catalog?.color ?? '#f6c94d',
       accent: prey.id === 'chicken' ? '#e65b69' : '#fff0d0',
@@ -145,7 +155,7 @@ export function createPredation(deps: PredationDeps) {
     for (const caught of result.catches) handlePredatorCatch('owl', caught.prey)
     for (const owl of result.deflated) {
       const name = animalNames.get(owl.instanceId) ?? preyLabel(owl.id)
-      popAnimal(owl)
+      popAnimal(owl, 'deflate')
       notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'Without an oak to roost on, an owl slowly deflates.')
       console.info(`[Animal Balloon Farm] ${owl.id} popped: out of helium`)
     }
@@ -231,6 +241,7 @@ export function createPredation(deps: PredationDeps) {
 
   return {
     predationLedger,
+    popAnimal,
     owlHunt,
     snakeHunt,
     popsInFlight,

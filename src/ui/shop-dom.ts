@@ -99,7 +99,14 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   /** A drawn icon for the upgrades, so they need no baked art: a sack for seed, a scroll for land. */
   function upgradeIcon(id: UpgradeId, locked: boolean): string {
     const color = UPGRADE_CATALOG[id].color;
-    const body = id === "tall-grass"
+    const body = id === "shovel"
+      ? `<path d="M30 6h4v26h-4z" fill="#8a6f3f"/><path d="M24 6h16" stroke="#8a6f3f" stroke-width="5" stroke-linecap="round"/>` +
+        `<path d="M20 32h24c0 14-5 24-12 26-7-2-12-12-12-26z" fill="${color}"/><path d="M32 36v18" stroke="#fff6dc" stroke-width="2.4" stroke-linecap="round" opacity=".7"/>`
+      : id === "water-bucket"
+      ? `<path d="M16 22h32l-4 32H20z" fill="${color}"/><ellipse cx="32" cy="22" rx="16" ry="5" fill="#b3edf0"/>` +
+        `<path d="M18 22c0-12 28-12 28 0" fill="none" stroke="#6b5a45" stroke-width="3" stroke-linecap="round"/>` +
+        `<path d="M23 34h18M24 43h16" stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".6"/>`
+      : id === "tall-grass"
       ? `<path d="M32 20c-12 2-18 14-16 30 1 6 6 9 16 9s15-3 16-9c2-16-4-28-16-30z" fill="${color}"/>` +
         `<path d="M26 20c2-6 4-9 6-9s4 3 6 9" fill="none" stroke="#8a6f3f" stroke-width="3" stroke-linecap="round"/>` +
         `<path d="M32 50V37m0 4c-4 0-6-3-6-6m6 6c4 0 6-3 6-6" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".85"/>`
@@ -324,6 +331,8 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   });
 
   function onKeyDown(event: KeyboardEvent): void {
+    // A tool-unlock film plays over the open shop; its Escape skips the film.
+    if (document.body.classList.contains("film-playing")) return;
     if (event.key === "Escape" && open) {
       event.stopPropagation();
       callbacks.onClose();

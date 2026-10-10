@@ -48,7 +48,8 @@ function seeded(seed: number): () => number {
   }
 }
 
-export function createIntroAudio(): IntroAudio | null {
+/** `cues` defaults to the intro's; other films pass their own list. */
+export function createIntroAudio(cues: readonly SoundCue[] = SOUND_CUES): IntroAudio | null {
   const AudioContextClass = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AudioContextClass) return null
   const context = new AudioContextClass()
@@ -211,7 +212,7 @@ export function createIntroAudio(): IntroAudio | null {
   }
 
   const scheduled = new Set<string>()
-  const morning = SOUND_CUES.find((cue) => cue.sound === 'morning')
+  const morning = cues.find((cue) => cue.sound === 'morning')
   const morningSchedule = morning ? morningEvents(morning) : []
 
   function play(cue: SoundCue): void {
@@ -229,6 +230,16 @@ export function createIntroAudio(): IntroAudio | null {
         break
       case 'president-voice':
         voice(cue, 210, 0.15, 11)
+        break
+      case 'pip-voice':
+        // Pip is chirpier than the president: higher, quicker syllables.
+        voice(cue, 300, 0.12, 23)
+        break
+      case 'shop-bell':
+        // The bell over the shop door: two bright strikes with a long ring.
+        for (const [offset, note] of [[0, 93], [0.16, 89]] as const) {
+          for (const [ratio, peak] of [[1, 0.07], [2.76, 0.02], [5.4, 0.01]] as const) tone('sine', midiHz(note) * ratio, when + offset, 1.1, peak)
+        }
         break
       case 'boy-voice': {
         // "Pour-quoi?": two syllables, the second lifting into a question.
@@ -314,7 +325,7 @@ export function createIntroAudio(): IntroAudio | null {
     if (context.state === 'closed') return
     filmNow = seconds
     const horizon = seconds + LOOKAHEAD
-    SOUND_CUES.forEach((cue, index) => {
+    cues.forEach((cue, index) => {
       const key = `cue-${index}`
       if (scheduled.has(key) || cue.at > horizon) return
       scheduled.add(key)
@@ -346,7 +357,7 @@ export function createIntroAudio(): IntroAudio | null {
       filmNow = seconds
       lastTime = seconds
       // Anything that starts before `seconds` is marked done, except lasting cues.
-      SOUND_CUES.forEach((cue, index) => { if (cue.at < seconds && !(cue.duration && cue.at + cue.duration > seconds)) scheduled.add(`cue-${index}`) })
+      cues.forEach((cue, index) => { if (cue.at < seconds && !(cue.duration && cue.at + cue.duration > seconds)) scheduled.add(`cue-${index}`) })
       morningSchedule.forEach((event, index) => { if (event.time < seconds) scheduled.add(`morning-${index}`) })
     },
     resume(): void {

@@ -42,6 +42,7 @@ PROPS = [
     ("owl-box", "assets/props/owl-box.glb"),
     ("hollow-log", "assets/props/hollow-log.glb"),
     ("rock-pile", "assets/props/rock-pile.glb"),
+    ("molehill", "assets/props/molehill.glb"),
 ]
 
 

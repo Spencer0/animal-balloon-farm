@@ -37,11 +37,14 @@ export interface FarmLifecycleDeps {
   readonly fairgroundRoot: THREE.Object3D
   readonly refreshAnimalVisibility: (nowSeconds: number, force?: boolean) => void
   readonly animalDisplayName: (species: string) => string
+  readonly animalNames: Map<string, string>
+  readonly popAnimal: (animal: BalloonAnimal, style?: 'bang' | 'deflate') => void
+  readonly animalCard: { setHelium(helium: number): void }
   readonly noteJournalStages: () => void
 }
 
 export function createFarmLifecycle(deps: FarmLifecycleDeps) {
-  const { progress, progression, accomplishments, notificationPanel, animals, animalById, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarm, dayNightClock, createAnimalInstance, carnivalSpawnFor, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
+  const { progress, progression, accomplishments, notificationPanel, animals, animalById, animalNames, popAnimal, animalCard, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarm, dayNightClock, createAnimalInstance, carnivalSpawnFor, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
   /**
    * Advance every animal one step and play whatever transition it earned.
    *
@@ -125,6 +128,21 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
         console.info(`[Animal Balloon Farm] a ${event.species} was born in ${event.houseId}`)
       }
       if (event.kind === 'growUp' && animal) animal.setGrowth(1)
+    if (event.kind === 'unsettle' && animal) {
+      const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
+      notificationPanel.notifyAccomplishment(`${name} is losing helium`, 'The farm no longer suits it. Put things back before it goes flat.')
+      console.info(`[Animal Balloon Farm] ${event.species} unsettled: the farm no longer suits it`)
+    }
+    if (event.kind === 'resettle' && animal) {
+      const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
+      notificationPanel.notifyAccomplishment(`${name} is topping up again`, 'The farm suits it once more.')
+    }
+    if (event.kind === 'deflate' && animal) {
+      const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
+      popAnimal(animal, 'deflate')
+      notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'The farm stopped suiting it, and it slowly went flat.')
+      console.info(`[Animal Balloon Farm] ${event.species} popped: the farm stopped suiting it`)
+    }
     }
   }
 
@@ -150,8 +168,11 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
     for (const record of progress.all()) {
       const animal = animalById.get(record.id)
       if (!animal || animal.isSold) continue
-      animal.setGrowth(record.growth * record.adultScale)
+      // A leaking balloon visibly sags: it shrinks toward just over half size at flat.
+      animal.setGrowth(record.growth * record.adultScale * (0.55 + 0.45 * record.helium))
     }
+    const focused = getFocusedAnimal()
+    if (focused) animalCard.setHelium(progress.animal(focused)?.helium ?? 1)
     updateHousing(performance.now() / 1000)
     // No appearance is applied from the event list here: `animal.stage = event.stage`
     // already routes the promotion through the model's residency gate, which keeps

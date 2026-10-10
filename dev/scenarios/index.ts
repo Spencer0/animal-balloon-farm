@@ -10,6 +10,8 @@ import { breedReady as raccoonBreedReady } from './raccoon/breed-ready'
 import { firstNight as raccoonFirstNight } from './raccoon/first-night'
 import { sleepingByCan } from './raccoon/sleeping-by-can'
 import { sleepingByDumpster } from './raccoon/sleeping-by-dumpster'
+import { aboutToGoFlat, goingFlat } from './mole/going-flat'
+import { readyToSettle as moleReadyToSettle } from './mole/ready-to-settle'
 import { emptyMeadow, snakeHunt, tallGrassGarden, tallGrassNight } from './meadow/tall-grass-garden'
 import { ratsAndRaccoons } from './sleep/rats-and-raccoons'
 
@@ -18,6 +20,7 @@ export const SCENARIOS: readonly Scenario[] = [
   farmer10, firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium,
   raccoonFirstNight, sleepingByCan, sleepingByDumpster, raccoonBreedReady,
   tallGrassGarden, tallGrassNight, emptyMeadow, snakeHunt, ratsAndRaccoons,
+  moleReadyToSettle, goingFlat, aboutToGoFlat,
 ]
 
 /** Accepts `owl/hunt-now` or the bare `hunt-now`, as long as the bare name is unambiguous. */

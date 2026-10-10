@@ -8,7 +8,7 @@ import type { GardenPlants } from '../scene/garden-plants'
 import type { GardenProps } from '../scene/garden-props'
 import { PROP_ORDER } from './farm-props'
 import { shopUnlocked } from './shop-construction'
-import { UPGRADE_ORDER } from './tool-unlocks'
+import { LEGACY_FREE_UPGRADES, UPGRADE_ORDER } from './tool-unlocks'
 import { createFarmsPanel } from '../ui/farms-panel'
 import { createSaveStore, makeEnvelope, packInt16, unpackInt16, type PackedField, type SaveGameData } from './save-game'
 import type { createAnimalLife } from './animal-life'
@@ -48,6 +48,7 @@ export interface FarmSaveDeps {
   readonly setGardenBounds: (bounds: GardenBounds) => void
   readonly setLastExpansionLevel: (level: number) => void
   readonly remeasureMeadow: () => void
+  readonly syncOwnedTools: () => void
   readonly syncGrassPack: () => void
   readonly refreshShopUi: () => void
   readonly noteJournalStages: () => void
@@ -58,7 +59,7 @@ export interface FarmSaveDeps {
 }
 
 export function createFarmSave(deps: FarmSaveDeps) {
-  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome } = deps
+  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncOwnedTools, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome } = deps
   /** Seconds of play in this farm, across every session that has carried it. */
   let playSeconds = loadedSave?.playSeconds ?? 0
 
@@ -261,7 +262,9 @@ export function createFarmSave(deps: FarmSaveDeps) {
     section('purse and progress', () => {
       wallet.restore(data.coins)
       progression.importState(data.progression)
-      for (const id of UPGRADE_ORDER) upgrades.set(id, data.upgrades[id] ?? 0)
+      // A save from before the shop sold the shovel and the bucket has no entry for
+      // them: that farmer had both, so they keep them. A new save names every upgrade.
+      for (const id of UPGRADE_ORDER) upgrades.set(id, data.upgrades[id] ?? (LEGACY_FREE_UPGRADES.includes(id) ? 1 : 0))
       accomplishments.importState(data.accomplishments)
       predationLedger.restore(data.preyEaten)
     })
@@ -281,6 +284,7 @@ export function createFarmSave(deps: FarmSaveDeps) {
     })
     section('tools', () => {
       if (data.tools.grassPack === 'tall' && upgrades.owns('tall-grass')) gardenTools?.setGrassPack('tall')
+      syncOwnedTools()
       syncGrassPack()
       salePanel.setWallet(wallet.balance)
       refreshShopUi()
