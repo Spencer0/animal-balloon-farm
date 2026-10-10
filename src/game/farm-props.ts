@@ -544,13 +544,6 @@ export interface PropSurface {
   contains(x: number, z: number): boolean
 }
 
-/** A flat, dry, unbounded surface -- handy for tests and for the fallback case. */
-export const FLAT_PROP_SURFACE: PropSurface = {
-  heightAt: () => 0,
-  waterAt: () => 0,
-  contains: () => true,
-}
-
 export type PropPlacementFailure =
   | 'out-of-bounds'
   | 'in-water'
