@@ -946,7 +946,7 @@ const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil,
   speciesPluralName: (species) => speciesPluralName(species),
   dayNightClock,
 })
-const { measureFarm, remeasureMeadow, maturePlantCounts } = createFarmMeasure({
+const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = createFarmMeasure({
   gardenSurface: () => fairground.gardenSurface,
   gardenTerrain,
   gardenWater,
@@ -1048,7 +1048,7 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   houses,
   setHouses,
   updateHousing,
-  measureFarm,
+  measureFarmForSim,
   dayNightClock,
   createAnimalInstance,
   carnivalSpawnFor,
@@ -1491,7 +1491,8 @@ function frame(now: number): void {
     sellBursts.splice(burstIndex, 1)
   }
   // The condition ladder runs after the animals have moved, so a settle
-  // triggered this frame is applied against the farm as it is right now.
+  // triggered this frame is applied against the farm as measured, which the
+  // sim refreshes at most once a second (see measureFarmForSim).
   updateAnimalProgress(delta)
   refreshAnimalVisibility(now / 1000)
   input.refreshHover(now / 1000, delta)

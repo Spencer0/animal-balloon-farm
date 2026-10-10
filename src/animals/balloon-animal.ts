@@ -459,6 +459,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let sleepBlend = 0
   let asleep = false
   const sleepFacing = new THREE.Quaternion()
+  // Shared by every walk, chase and wander branch; each one uses it at once, so
+  // one scratch quaternion per animal replaces a fresh allocation per frame.
+  const facingScratch = new THREE.Quaternion()
   const sleepYaw = new THREE.Vector3(0, 1, 0)
   let flightVisible = !options.flier
   const alarmScale = (): number => (alarmed ? 2.2 : 1)
@@ -1056,7 +1059,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           wrapper.position.addScaledVector(romanceDirection, Math.min(options.speed * 0.45 * delta, distance - 1.35))
         }
         if (romanceDirection.lengthSq() > 1e-8) {
-          const facing = new THREE.Quaternion().setFromUnitVectors(modelForward, romanceDirection.normalize())
+          const facing = facingScratch.setFromUnitVectors(modelForward, romanceDirection.normalize())
           wrapper.quaternion.slerp(facing, 1 - Math.exp(-4 * delta))
         }
         if (options.groundSampler) {
@@ -1074,7 +1077,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const distance = direction.length()
         if (distance > 0.25) {
           direction.normalize()
-          const facing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
+          const facing = facingScratch.setFromUnitVectors(modelForward, direction)
           wrapper.quaternion.slerp(facing, 1 - Math.exp(-4.5 * delta))
           wrapper.position.addScaledVector(direction, Math.min(options.speed * homeTripSpeed * delta, distance))
           setAnimation('WALK', 0.24)
@@ -1097,7 +1100,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const speed = options.speed * pursuit.speedScale
         if (speed > 0 && distance > 0.05) {
           direction.normalize()
-          const facing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
+          const facing = facingScratch.setFromUnitVectors(modelForward, direction)
           // A lunge snaps round to face the prey; a stalk turns smoothly.
           wrapper.quaternion.slerp(facing, 1 - Math.exp(-(pursuit.speedScale > 3 ? 14 : 5) * delta))
           wrapper.position.addScaledVector(direction, Math.min(speed * delta, distance))
@@ -1174,7 +1177,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         direction.set(step.position.x - previousPosition.x, 0, step.position.z - previousPosition.z)
         if (direction.lengthSq() > 1e-8) {
           direction.normalize()
-          const targetFacing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
+          const targetFacing = facingScratch.setFromUnitVectors(modelForward, direction)
           wrapper.quaternion.slerp(targetFacing, 1 - Math.exp(-4.5 * delta))
           setAnimation('WALK', 0.24)
         }
@@ -1228,7 +1231,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
             }
           } else {
             direction.normalize()
-            const targetFacing = new THREE.Quaternion().setFromUnitVectors(modelForward, direction)
+            const targetFacing = facingScratch.setFromUnitVectors(modelForward, direction)
             wrapper.quaternion.slerp(targetFacing, 1 - Math.exp(-4.5 * delta))
             wrapper.position.addScaledVector(direction, Math.min(options.speed * alarmScale() * delta, distance))
             setAnimation('WALK', 0.24)

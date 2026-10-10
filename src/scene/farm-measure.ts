@@ -137,11 +137,29 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
       propCounts: gardenProps()?.propCounts() ?? {},
       toolsOwned: Object.fromEntries(GARDEN_TOOLS.map((tool) => [tool.id, ownsGardenTool(upgrades, tool.id)])),
     }
+    lastMeasuredAt = performance.now()
     return lastFarmState
+  }
+
+  /**
+   * The animal sim asks for the farm every frame, but measuring it scans every
+   * lawn vertex and terrain cell, several milliseconds a frame for work that
+   * only changes when the player digs, sows, waters or grows something. So the
+   * sim takes a fresh read at most once a second, the same cadence as the
+   * meadow. Explicit reads (sowing, the journal, the harness) always measure,
+   * and they restart this clock.
+   */
+  const FARM_SIM_REMEASURE_MS = 1000
+  let lastMeasuredAt = Number.NEGATIVE_INFINITY
+
+  function measureFarmForSim(): FarmState {
+    if (performance.now() - lastMeasuredAt < FARM_SIM_REMEASURE_MS) return lastFarmState
+    return measureFarm()
   }
 
   return {
     measureFarm,
+    measureFarmForSim,
     remeasureMeadow,
     maturePlantCounts,
   }
