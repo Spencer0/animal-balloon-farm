@@ -385,7 +385,7 @@ export function createGardenTools(
   onWaterChanged: () => void = () => {},
 ): GardenTools {
   // The pointer used to be hidden outright for the whole canvas, which left the
-  // menu, the journal and the viewer with no cursor at all, and was then
+  // menu and the journal with no cursor at all, and was then
   // restored to the system arrow outside the plot. Both were treating the
   // symptom from in here; the UI layer now owns the cursor end to end and asks
   // `cursorVisible` whether the in-world ring is on screen before hiding it.
