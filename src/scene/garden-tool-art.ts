@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { GRASS_PACKS, type GrassPack } from '../game/tool-unlocks'
 
-export type GardenToolId = 'grass' | 'shovel' | 'water'
+export type GardenToolId = 'grass' | 'shovel' | 'water' | 'snower'
 
 export interface GardenToolDefinition {
   readonly id: GardenToolId
@@ -33,11 +33,18 @@ export const GARDEN_TOOLS: readonly GardenToolDefinition[] = [
     note: 'Hold left-click to pour. Hold right-click to drain.',
     tint: '#77c9d5', accent: '#b3edf0',
   },
+  {
+    id: 'snower', hotkey: '4', label: 'Snower', subtitle: 'An icy balloon leaf blower for snow',
+    description: 'A leaf blower that was left in the freezer and then handed to a balloon: it puffs snow instead of leaves.',
+    note: 'Hold left-click to blow snow over the lawn. Hold right-click to melt it back to grass.',
+    tint: '#cfeaff', accent: '#ffffff',
+  },
 ]
 
 export function createGardenToolModel(id: GardenToolId, pack: GrassPack = 'short'): THREE.Group {
   if (id === 'shovel') return createShovelModel()
   if (id === 'water') return createWaterBucketModel()
+  if (id === 'snower') return createSnowerModel()
   return createGrassSeederModel(pack)
 }
 
@@ -241,6 +248,104 @@ function createShovelModel(): THREE.Group {
     stampLeaf.scale.set(1.3, 0.5, 0.4)
     stampLeaf.rotation.z = side * -0.5
     model.add(stampLeaf)
+  }
+
+  model.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.castShadow = true
+      object.receiveShadow = true
+    }
+  })
+  return model
+}
+
+/**
+ * The Snower: a leaf blower dressed as a party balloon left out in the cold.
+ * A glossy pale-blue balloon is the motor housing, a stripy twisted nozzle
+ * runs out of its knot toward the brush ring (-x, like the shovel's blade), and
+ * a coral loop handle sits on top. Icicles hang from the mouth.
+ */
+function createSnowerModel(): THREE.Group {
+  const model = new THREE.Group()
+  model.name = 'Icy balloon snower'
+
+  const balloon = new THREE.MeshStandardMaterial({ color: '#8fd0f0', roughness: 0.22, metalness: 0.04 })
+  const balloonShade = new THREE.MeshStandardMaterial({ color: '#6fb6dc', roughness: 0.3 })
+  const frost = new THREE.MeshStandardMaterial({ color: '#f4fbff', roughness: 0.45 })
+  const ice = new THREE.MeshStandardMaterial({ color: '#cdeeff', roughness: 0.15, metalness: 0.05, transparent: true, opacity: 0.9 })
+  const coral = new THREE.MeshStandardMaterial({ color: '#f2796b', roughness: 0.3 })
+  const string = new THREE.MeshStandardMaterial({ color: '#f6efe0', roughness: 0.8 })
+
+  // The balloon itself: slightly egg-shaped, tipped over the nozzle.
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 24, 18), balloon)
+  body.name = 'Snower balloon'
+  body.position.set(0.28, 0.5, 0)
+  body.scale.set(1, 1.18, 0.9)
+  model.add(body)
+  const gloss = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), frost)
+  gloss.position.set(0.37, 0.7, 0.16)
+  gloss.scale.set(0.7, 1.3, 0.5)
+  model.add(gloss)
+
+  // Balloon knot where the nozzle leaves the body, with a curly string.
+  const knot = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.12, 12), balloonShade)
+  knot.position.set(0.03, 0.34, 0)
+  knot.rotation.z = Math.PI / 2 + 0.7
+  model.add(knot)
+  const curl = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.012, 6, 16, Math.PI * 1.5), string)
+  curl.position.set(0.12, 0.2, 0.05)
+  curl.rotation.set(0.4, 0.3, 0.8)
+  model.add(curl)
+
+  // Snowflake emblem on the balloon: three crossed bars.
+  for (let index = 0; index < 3; index += 1) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.026, 0.012), frost)
+    bar.position.set(0.28, 0.5, 0.27)
+    bar.rotation.z = (index / 3) * Math.PI
+    model.add(bar)
+  }
+
+  // The nozzle: three striped balloon-twist segments stepping down to the ring.
+  const segments = [
+    { x: -0.06, y: 0.27, length: 0.2, radius: 0.062, material: ice },
+    { x: -0.19, y: 0.19, length: 0.2, radius: 0.058, material: frost },
+    { x: -0.31, y: 0.12, length: 0.2, radius: 0.054, material: ice },
+  ] as const
+  for (const segment of segments) {
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(segment.radius, segment.radius, segment.length, 14), segment.material)
+    tube.position.set(segment.x, segment.y, 0)
+    tube.rotation.z = Math.PI / 2 + 0.55
+    model.add(tube)
+  }
+  const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.022, 8, 18), coral)
+  mouth.name = 'Snower mouth'
+  mouth.position.set(-0.4, 0.07, 0)
+  mouth.rotation.y = Math.PI / 2
+  mouth.rotation.z = 0.55
+  model.add(mouth)
+
+  // Icicles under the mouth.
+  for (const [x, z, height] of [[-0.38, 0.05, 0.11], [-0.43, -0.03, 0.15], [-0.34, -0.05, 0.08]] as const) {
+    const icicle = new THREE.Mesh(new THREE.ConeGeometry(0.018, height, 8), ice)
+    icicle.position.set(x, 0.02 - height / 2 + 0.03, z)
+    icicle.rotation.z = Math.PI
+    model.add(icicle)
+  }
+
+  // Coral loop handle on top, plus a little trigger button.
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.03, 8, 20, Math.PI), coral)
+  handle.position.set(0.3, 0.88, 0)
+  handle.rotation.set(0, 0, 0)
+  model.add(handle)
+  const trigger = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), frost)
+  trigger.position.set(0.3, 0.8, 0)
+  model.add(trigger)
+
+  // A few flakes drifting off the mouth.
+  for (const [x, y, z, size] of [[-0.5, 0.17, 0.04, 0.03], [-0.55, 0.05, -0.04, 0.022], [-0.47, 0.0, 0.07, 0.026]] as const) {
+    const flake = new THREE.Mesh(new THREE.SphereGeometry(size, 8, 6), frost)
+    flake.position.set(x, y, z)
+    model.add(flake)
   }
 
   model.traverse((object) => {

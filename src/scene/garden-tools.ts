@@ -31,7 +31,7 @@ export interface GardenToolDebugState {
   readonly cursor: { readonly x: number; readonly y: number; readonly z: number } | null
   readonly isPointerDown: boolean
   readonly holdSeconds: number
-  readonly activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | null
+  readonly activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | 'snow' | 'melt' | null
   readonly grassBatches: number
   readonly grassBlades: number
   readonly grassCapacity: number
@@ -57,6 +57,17 @@ export interface GardenToolDebugState {
   readonly seederDragMaxSpeed: number
   readonly shovelDragMaxSpeed: number
   readonly waterDragMaxSpeed: number
+  readonly snowerDragMaxSpeed: number
+  /** Lawn vertices carrying snow, and the square meters they stand for. */
+  readonly snowVertices: number
+  /** Instanced snow mounds standing on the lawn (the snow's counterpart of grass blades). */
+  readonly snowMounds: number
+  readonly snowArea: number
+  /** Blades currently frosted white by snow lying under them. */
+  readonly frostedBlades: number
+  /** Ice crystals and snowballs, which only appear when the brush is held still. */
+  readonly iceShards: number
+  readonly snowballs: number
 }
 
 export interface GardenTools {
@@ -110,6 +121,12 @@ export interface GardenTools {
    * every blade, so the caller decides how often to ask.
    */
   meadowArea(): number
+  /** Square meters of lawn under snow (each snowy vertex stands for one lawn cell). */
+  snowArea(): number
+  /** Snow cover 0..1 at a point, blended from the nearby lawn vertices. */
+  snowAt(x: number, z: number): number
+  /** Bumps whenever snow is laid, lifted, loaded or cleared, so ice can be redrawn. */
+  readonly snowRevision: number
   cycleBrushSize(): void
   setPlantingMode(active: boolean): void
   pointerMove(event: GardenPointerMove): void
@@ -137,6 +154,13 @@ export interface GardenTools {
    * per test is not a repeatable loop. Gameplay still grows grass over time.
    */
   sowGrassDisc(x: number, z: number, radius: number, pack?: GrassPack): void
+  /**
+   * Lay a disc of snow at full depth (or lift it, with a negative `amount`),
+   * for the harness: a stroke is slow, and a check wants a known patch.
+   */
+  blowSnowDisc(x: number, z: number, radius: number, amount?: number): void
+  /** Stand an ice crystal or snowball on existing snow (the brush does this on its own after a hold). */
+  placeSnowFeature(kind: 'ice' | 'ball', x: number, z: number): boolean
   /** Dig a flat-bottomed basin, which is what a water condition needs. */
   digBasin(x: number, z: number, radius: number, depth: number): void
   update(deltaSeconds: number): void
@@ -149,6 +173,24 @@ interface GrassBlade {
   readonly tileIndex: number
   mesh: THREE.InstancedMesh
   height: number
+  /** Index into GRASS_COLOR_VALUES: the blade's own green, before any frost. */
+  readonly base: number
+  /** How white the blade is, 0 (its own green) to 1 (snow), from the snow under it. */
+  snow: number
+}
+
+interface SnowFeature {
+  readonly kind: 'ice' | 'ball'
+  readonly x: number
+  readonly z: number
+  /** 0..1 size variation, fixed per feature. */
+  readonly size: number
+  readonly yaw: number
+  readonly tiltX: number
+  readonly tiltZ: number
+  readonly color: number
+  /** 0 just placed .. 1 fully risen. */
+  grow: number
 }
 
 interface GrassBatch {
@@ -240,6 +282,61 @@ const FILL_RISE = 0.4
 const WATER_POUR_RATE = 0.42
 const WATER_DRAIN_RATE = 0.58
 const GROUND_GREEN = new THREE.Color('#6db254')
+const GROUND_SNOW = new THREE.Color('#d9eaf9')
+const BLADE_SNOW = new THREE.Color('#e8f3fd')
+// Snower: a blower, not a brush. Snow builds up quickly where it lingers and
+// melts a touch slower than it falls, so a patch is easy to lay and easy to take back.
+const SNOW_BLOW_PER_SECOND = 1.8
+const SNOW_MELT_PER_SECOND = 1.4
+const SNOW_RADIUS_FACTOR = 0.95
+const SNOW_BLADE_SAMPLE_RADIUS = 0.9
+/** Garden units per second the snower's brush may travel while held down. */
+export const SNOWER_DRAG_MAX_SPEED = 8
+const SNOW_FLAKES = 14
+/**
+ * The snow's answer to a grass blade: small squashed mounds scattered over each
+ * lawn cell. They rise with the snow lying there (so lingering piles it up),
+ * sink as it melts, and are hidden below a thin dusting.
+ */
+const SNOW_TUFTS_PER_VERTEX = 3
+const SNOW_TUFT_MIN_SNOW = 0.08
+const SNOW_TUFT_WIDTH = 0.62
+const SNOW_TUFT_HEIGHT = 0.15
+// Mostly cool blue-whites with the odd bright one, so a drift has shade in it.
+const SNOW_TUFT_COLORS = ['#ffffff', '#eaf3fc', '#d8e9f8', '#c6dff4', '#b8d6ef'].map((color) => new THREE.Color(color))
+/**
+ * Ice shards and snowballs are earned, not derived from depth: hold the Snower
+ * still and, after a second, one ice crystal pushes up; keep holding and the odd
+ * snowball rolls out further afield. Moving the brush starts the wait over.
+ */
+const MAX_SNOW_FEATURES = 120
+const SNOW_DWELL_RADIUS = 0.3
+const ICE_DWELL_SECONDS = 1.0
+const ICE_REPEAT_SECONDS = 3.5
+const SNOWBALL_DWELL_SECONDS = 2.5
+const SNOWBALL_REPEAT_SECONDS = 5
+const SNOW_FEATURE_GROW_SECONDS = 1.6
+const SNOW_FEATURE_SPACING = 0.5
+/** A feature stands only while this much snow lies under it. */
+const SNOW_FEATURE_MIN_SNOW = 0.25
+const ICE_SHARD_COLORS = ['#9fdcf8', '#7cc8f0', '#c4eafc'].map((color) => new THREE.Color(color))
+const SNOWBALL_COLORS = ['#ffffff', '#e6f1fb', '#d3e6f6'].map((color) => new THREE.Color(color))
+/**
+ * Snow kills what it buries. Grass under snow shrinks (a little, plus a share
+ * of its height, so a meadow does not outlast a lawn by much) until it is gone,
+ * and the green paint under it fades, so melting the snow shows bare soil.
+ * Full snow clears a meadow in about six seconds; a thin dusting takes longer.
+ */
+const SNOW_BLIGHT_INTERVAL = 0.2
+/** Any snow at all kills, but a dusting is treated as at least this deep so the edge of a patch does not linger for minutes. */
+const SNOW_BLIGHT_MIN_SNOW = 0.02
+const SNOW_BLIGHT_FLOOR = 0.3
+const SNOW_BLADE_SHRINK_BASE = 0.04
+const SNOW_BLADE_SHRINK_SHARE = 0.35
+const SNOW_BLADE_GONE_HEIGHT = 0.012
+const SNOW_GROUND_FADE_PER_SECOND = 0.25
+/** Snow this deep over standing water turns it to ice. */
+export const ICE_SNOW_THRESHOLD = 0.5
 const GRASS_RANDOM_SEED = 471903
 
 function seededRandom(seed: number): () => number {
@@ -298,6 +395,15 @@ export function createGardenTools(
 
   const grassGeometry = makeGrassGeometry()
   const grassMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.84, metalness: 0.01 })
+  const tuftGeometry = new THREE.SphereGeometry(0.5, 14, 8)
+  const tuftMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, metalness: 0 })
+  const shardGeometry = new THREE.ConeGeometry(0.5, 1, 5)
+  shardGeometry.translate(0, 0.5, 0)
+  const shardMaterial = new THREE.MeshStandardMaterial({
+    color: '#ffffff', roughness: 0.12, metalness: 0.1, flatShading: true, transparent: true, opacity: 0.88,
+  })
+  const snowballGeometry = new THREE.SphereGeometry(0.5, 14, 10)
+  const snowballMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.86, metalness: 0 })
   const grassGroup = new THREE.Group()
   grassGroup.name = 'Hand-painted grass · spatially batched instancing'
   root.add(grassGroup)
@@ -305,9 +411,11 @@ export function createGardenTools(
   let lawnPositions = lawnGeometry.getAttribute('position') as THREE.BufferAttribute
   let lawnColors = lawnGeometry.getAttribute('color') as THREE.BufferAttribute
   let groundCoverage = new Float32Array(lawnColors.count)
+  let groundSnow = new Float32Array(lawnColors.count)
   let lawnVertices: { index: number; x: number; z: number }[] = []
   const lawnCoverageLookup = new Map<string, number[]>()
   const groundPaintAt = new Map<string, number>()
+  const snowPaintAt = new Map<string, number>()
   const paintPositionKey = (x: number, z: number): string => `${Math.round(x * 4)},${Math.round(z * 4)}`
   function rebuildLawnCoverageLookup(): void {
     const nextGeometry = lawn.geometry
@@ -330,6 +438,10 @@ export function createGardenTools(
         nextCoverage[vertex.index] = oldByPosition.get(paintPositionKey(vertex.x, vertex.z)) ?? 0
       }
       groundCoverage = nextCoverage
+      groundSnow = new Float32Array(lawnColors.count)
+      for (const vertex of nextVertices) {
+        groundSnow[vertex.index] = snowPaintAt.get(paintPositionKey(vertex.x, vertex.z)) ?? 0
+      }
       lawnVertices = nextVertices
     }
     lawnCoverageLookup.clear()
@@ -354,6 +466,7 @@ export function createGardenTools(
     grass: createGardenToolModel('grass', 'short'),
     shovel: createGardenToolModel('shovel'),
     water: createGardenToolModel('water'),
+    snower: createGardenToolModel('snower'),
   }
   // Null means no tool is armed: the pointer is in charge.
   let selectedTool: GardenToolId | null = null
@@ -364,6 +477,24 @@ export function createGardenTools(
   let sizePop = 0
   const SIZE_POP_SECONDS = 0.28
   let tallestBladeHeight = 0
+  let snowVertexCount = 0
+  /** Blades with snow lying under them: these shrink away until the snow is lifted. */
+  const snowyBlades = new Set<GrassBlade>()
+  let snowRevision = 0
+  let snowTufts: THREE.InstancedMesh | null = null
+  let iceShards: THREE.InstancedMesh | null = null
+  let snowballs: THREE.InstancedMesh | null = null
+  /** Ice crystals and snowballs standing on the snow, each placed by a held brush. */
+  const snowFeatures: SnowFeature[] = []
+  let dwellAnchor: { x: number; z: number } | null = null
+  let dwellSeconds = 0
+  let nextIceAt = ICE_DWELL_SECONDS
+  let nextBallAt = SNOWBALL_DWELL_SECONDS
+  let tuftSource: typeof lawnVertices | null = null
+  // x offset, z offset, yaw, size per tuft, derived from the vertex so a reload looks the same.
+  let tuftJitter = new Float32Array(0)
+  const tuftObject = new THREE.Object3D()
+  let snowBlightTimer = 0
   // Debug probe: highest blade base Y seen at spawn (catches grass spawning on
   // the flat lawn plane instead of the deformed terrain).
   let lastGrassSpawnMaxY = 0
@@ -394,6 +525,7 @@ export function createGardenTools(
   function strokeDragMaxSpeed(): number {
     if (selectedTool === 'shovel') return levelDragMaxSpeed(SHOVEL_CONFIGS, shovelLevel)
     if (selectedTool === 'water') return levelDragMaxSpeed(WATER_CONFIGS, waterLevel)
+    if (selectedTool === 'snower') return SNOWER_DRAG_MAX_SPEED
     return seederDragMaxSpeed()
   }
 
@@ -432,7 +564,7 @@ export function createGardenTools(
   let cursorVisible = false
   let plantingMode = false
   let isPointerDown = false
-  let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | null = null
+  let activeAction: 'grow' | 'trim' | 'dig' | 'fill' | 'level' | 'pour' | 'drain' | 'snow' | 'melt' | null = null
   let lastPaintPoint: THREE.Vector3 | null = null
   let lastSeedPoint: THREE.Vector3 | null = null
   let seederLevel = 0
@@ -501,6 +633,7 @@ export function createGardenTools(
           if (next <= 0.0005) {
             scale.setScalar(0.0001)
             blade.height = 0
+            snowyBlades.delete(blade)
             cell.splice(cell.indexOf(blade), 1)
             totalGrassBlades -= 1
           } else {
@@ -519,6 +652,11 @@ export function createGardenTools(
   /** Blades and painted ground must follow the deformed surface. */
   function afterTerrainEdit(x: number, z: number, radius: number): void {
     reprojectGrass(x, z, radius + 0.5)
+    refreshTuftsNear(x, z, radius + 0.5)
+    if (snowFeatures.length > 0) {
+      dropBuriedFeatures()
+      writeFeatures()
+    }
     // The ground just moved under whatever water is sitting on it, so the pond
     // has to re-level: digging deepens it, filling it in makes it disappear.
     water?.markTerrainChanged()
@@ -597,6 +735,16 @@ export function createGardenTools(
     cursor.add(ripple)
     waterRipples.push(ripple)
   }
+  // Flakes the snower blows: they stream from its mouth (the tool model sits at
+  // the ring's +x/+z corner) across the disc, and drift up as steam when melting.
+  const flakeGeometry = new THREE.SphereGeometry(0.05, 8, 6)
+  const flakes: THREE.Mesh[] = []
+  for (let index = 0; index < SNOW_FLAKES; index += 1) {
+    const flake = new THREE.Mesh(flakeGeometry, new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0, depthWrite: false }))
+    flake.visible = false
+    cursor.add(flake)
+    flakes.push(flake)
+  }
   for (let index = 0; index < 4; index += 1) {
     const angle = index / 4 * Math.PI * 2
     const pip = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 7), new THREE.MeshBasicMaterial({ color: '#fff3d7' }))
@@ -620,6 +768,364 @@ export function createGardenTools(
 
   function floorPosition(): THREE.Vector3 | null {
     return raycaster.intersectObject(lawn, false)[0]?.point ?? null
+  }
+
+  /**
+   * One vertex of the lawn layer: rgb is the grass tint, shifted toward snow by
+   * the snow lying on it, and alpha is whichever of grass or snow covers more,
+   * so snow blown onto bare soil shows and melting it returns the soil.
+   */
+  function writeLawnColor(index: number): void {
+    const snow = groundSnow[index]
+    const grass = groundCoverage[index]
+    lawnColors.setXYZW(
+      index,
+      GROUND_GREEN.r + (GROUND_SNOW.r - GROUND_GREEN.r) * snow,
+      GROUND_GREEN.g + (GROUND_SNOW.g - GROUND_GREEN.g) * snow,
+      GROUND_GREEN.b + (GROUND_SNOW.b - GROUND_GREEN.b) * snow,
+      Math.max(grass, snow),
+    )
+  }
+
+  function snowAt(x: number, z: number): number {
+    if (snowVertexCount <= 0) return 0
+    const cellX = Math.floor(x / LAWN_VERTEX_SPACING)
+    const cellZ = Math.floor(z / LAWN_VERTEX_SPACING)
+    let sum = 0
+    let weight = 0
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+        const indices = lawnCoverageLookup.get((cellX + offsetX) + ',' + (cellZ + offsetZ))
+        if (!indices) continue
+        for (const index of indices) {
+          const vertex = lawnVertices[index]
+          const distance = Math.hypot(vertex.x - x, vertex.z - z)
+          if (distance >= SNOW_BLADE_SAMPLE_RADIUS) continue
+          const w = 1 - distance / SNOW_BLADE_SAMPLE_RADIUS
+          sum += groundSnow[index] * w
+          weight += w
+        }
+      }
+    }
+    return weight > 0 ? sum / weight : 0
+  }
+
+  const frostColor = new THREE.Color()
+  function paintBladeFrost(blade: GrassBlade, snow: number): void {
+    if (snow > 0.02) snowyBlades.add(blade)
+    else snowyBlades.delete(blade)
+    blade.snow = snow
+    frostColor.copy(GRASS_COLOR_VALUES[blade.base])
+    if (snow > 0.02) frostColor.lerp(BLADE_SNOW, Math.min(1, snow * 1.15))
+    blade.mesh.setColorAt(blade.tileIndex, frostColor)
+  }
+
+  /** Re-tint every blade near a point to the snow now under it. */
+  function frostBlades(x: number, z: number, radius: number): void {
+    const updated = new Set<THREE.InstancedMesh>()
+    const minCellX = Math.floor((x - radius) / GRASS_CELL_SPACING)
+    const maxCellX = Math.floor((x + radius) / GRASS_CELL_SPACING)
+    const minCellZ = Math.floor((z - radius) / GRASS_CELL_SPACING)
+    const maxCellZ = Math.floor((z + radius) / GRASS_CELL_SPACING)
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const cell = occupancy.get(cellX + ',' + cellZ)
+        if (!cell) continue
+        for (const blade of cell) {
+          if (blade.height <= 0) continue
+          const snow = snowAt(blade.x, blade.z)
+          const settled = snow <= 0.02 ? blade.snow <= 0.02 : Math.abs(snow - blade.snow) < 0.03
+          if (settled) continue
+          paintBladeFrost(blade, snow)
+          updated.add(blade.mesh)
+        }
+      }
+    }
+    updated.forEach((mesh) => { if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true })
+  }
+
+  /** Lay (positive) or lift (negative) snow in a disc. Returns vertices changed. */
+  function updateSnow(x: number, z: number, radius: number, amount: number): number {
+    let changes = 0
+    const tufts = amount > 0 ? ensureTufts() : snowTufts
+    const radiusSquared = radius * radius
+    const minCellX = Math.floor((x - radius) / LAWN_VERTEX_SPACING)
+    const maxCellX = Math.floor((x + radius) / LAWN_VERTEX_SPACING)
+    const minCellZ = Math.floor((z - radius) / LAWN_VERTEX_SPACING)
+    const maxCellZ = Math.floor((z + radius) / LAWN_VERTEX_SPACING)
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const vertices = lawnCoverageLookup.get(cellX + ',' + cellZ)
+        if (!vertices) continue
+        for (const vertexIndex of vertices) {
+          const vertex = lawnVertices[vertexIndex]
+          if (!insideGarden(vertex.x, vertex.z, getActiveBounds())) continue
+          const dx = vertex.x - x
+          const dz = vertex.z - z
+          const distanceSquared = dx * dx + dz * dz
+          if (distanceSquared > radiusSquared) continue
+          const weight = 1 - THREE.MathUtils.smoothstep(Math.sqrt(distanceSquared) / radius, 0.6, 1)
+          const before = groundSnow[vertexIndex]
+          const after = THREE.MathUtils.clamp(before + amount * weight, 0, 1)
+          if (after === before) continue
+          if (before <= 0.05 && after > 0.05) snowVertexCount += 1
+          else if (before > 0.05 && after <= 0.05) snowVertexCount -= 1
+          groundSnow[vertexIndex] = after
+          const key = paintPositionKey(vertex.x, vertex.z)
+          if (after < 0.005) snowPaintAt.delete(key)
+          else snowPaintAt.set(key, after)
+          writeLawnColor(vertexIndex)
+          if (tufts) writeTuft(vertexIndex)
+          changes += 1
+        }
+      }
+    }
+    if (changes > 0) {
+      lawnColors.needsUpdate = true
+      if (tufts) flushTufts()
+      if (amount < 0) dropBuriedFeatures()
+      snowRevision += 1
+      frostBlades(x, z, radius + SNOW_BLADE_SAMPLE_RADIUS * 0.5)
+    }
+    return changes
+  }
+
+  /** Build (or rebuild, after the lawn grew) the instanced mounds for every lawn vertex. */
+  function ensureTufts(): THREE.InstancedMesh {
+    if (snowTufts && tuftSource === lawnVertices) return snowTufts
+    if (snowTufts) {
+      root.remove(snowTufts)
+      snowTufts.dispose()
+    }
+    const capacity = Math.max(1, lawnVertices.length * SNOW_TUFTS_PER_VERTEX)
+    const mesh = new THREE.InstancedMesh(tuftGeometry, tuftMaterial, capacity)
+    mesh.name = 'Snow mounds · instanced'
+    mesh.castShadow = false
+    mesh.receiveShadow = true
+    mesh.frustumCulled = false
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    tuftJitter = new Float32Array(capacity * 4)
+    tuftObject.scale.setScalar(0.0001)
+    tuftObject.position.set(0, 0, 0)
+    tuftObject.updateMatrix()
+    for (const vertex of lawnVertices) {
+      const look = seededRandom(Math.imul(Math.round(vertex.x * 100), 83492791) ^ Math.imul(Math.round(vertex.z * 100), 2654435761))
+      for (let k = 0; k < SNOW_TUFTS_PER_VERTEX; k += 1) {
+        const slot = vertex.index * SNOW_TUFTS_PER_VERTEX + k
+        tuftJitter[slot * 4] = (look() - 0.5) * LAWN_VERTEX_SPACING
+        tuftJitter[slot * 4 + 1] = (look() - 0.5) * LAWN_VERTEX_SPACING
+        tuftJitter[slot * 4 + 2] = look() * Math.PI * 2
+        tuftJitter[slot * 4 + 3] = 0.55 + look() * 0.45
+        mesh.setMatrixAt(slot, tuftObject.matrix)
+        mesh.setColorAt(slot, SNOW_TUFT_COLORS[Math.floor(look() * SNOW_TUFT_COLORS.length)])
+      }
+    }
+    snowTufts = mesh
+    tuftSource = lawnVertices
+    root.add(mesh)
+    // Replay any snow already lying on the lawn (a load, or the lawn growing).
+    for (const vertex of lawnVertices) if (groundSnow[vertex.index] > 0) writeTuft(vertex.index)
+    flushTufts()
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    return mesh
+  }
+
+  function flushTufts(): void {
+    if (snowTufts) snowTufts.instanceMatrix.needsUpdate = true
+  }
+
+  /** The ground a mound stands on: the terrain, or the ice over a pond. */
+  function snowGroundAt(x: number, z: number): number {
+    const ground = terrain.heightAt(x, z)
+    if (water && water.depthAt(x, z) > 0.02) return Math.max(ground, water.surfaceAt(x, z))
+    return ground
+  }
+
+  /** Stand one vertex's mounds on the ground, as tall as the snow there is deep. */
+  function writeTuft(vertexIndex: number): void {
+    const mesh = snowTufts
+    if (!mesh) return
+    const vertex = lawnVertices[vertexIndex]
+    const snow = groundSnow[vertexIndex]
+    const show = snow > SNOW_TUFT_MIN_SNOW && insideGarden(vertex.x, vertex.z, getActiveBounds())
+    for (let k = 0; k < SNOW_TUFTS_PER_VERTEX; k += 1) {
+      const slot = vertexIndex * SNOW_TUFTS_PER_VERTEX + k
+      if (!show) {
+        tuftObject.scale.setScalar(0.0001)
+        tuftObject.updateMatrix()
+        mesh.setMatrixAt(slot, tuftObject.matrix)
+        continue
+      }
+      const x = vertex.x + tuftJitter[slot * 4]
+      const z = vertex.z + tuftJitter[slot * 4 + 1]
+      const size = tuftJitter[slot * 4 + 3]
+      // Snow over a pond lies on the ice, not on the bed.
+      const ground = snowGroundAt(x, z)
+      const width = SNOW_TUFT_WIDTH * size * (0.65 + 0.5 * snow)
+      const height = SNOW_TUFT_HEIGHT * size * Math.pow(snow, 0.9)
+      tuftObject.position.set(x, GARDEN_LAWN_Y + 0.009 + ground + height * 0.18, z)
+      tuftObject.rotation.set(0, tuftJitter[slot * 4 + 2], 0)
+      tuftObject.scale.set(width, height, width)
+      tuftObject.updateMatrix()
+      mesh.setMatrixAt(slot, tuftObject.matrix)
+    }
+  }
+
+  /** Create the two small instanced meshes the first time a feature is placed. */
+  function ensureFeatureMeshes(): void {
+    if (iceShards && snowballs) return
+    const make = (geometry: THREE.BufferGeometry, material: THREE.Material, name: string): THREE.InstancedMesh => {
+      const mesh = new THREE.InstancedMesh(geometry, material, MAX_SNOW_FEATURES)
+      mesh.name = name
+      mesh.count = 0
+      mesh.castShadow = false
+      mesh.receiveShadow = true
+      mesh.frustumCulled = false
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+      root.add(mesh)
+      return mesh
+    }
+    iceShards = make(shardGeometry, shardMaterial, 'Ice crystals · instanced')
+    snowballs = make(snowballGeometry, snowballMaterial, 'Snowballs · instanced')
+  }
+
+  /** Rewrite every feature's instance; there are few, so a full pass is cheap. */
+  function writeFeatures(): void {
+    ensureFeatureMeshes()
+    const ice = iceShards as THREE.InstancedMesh
+    const balls = snowballs as THREE.InstancedMesh
+    let iceCount = 0
+    let ballCount = 0
+    for (const feature of snowFeatures) {
+      const ease = 1 - (1 - feature.grow) ** 3
+      const ground = GARDEN_LAWN_Y + 0.009 + snowGroundAt(feature.x, feature.z)
+      tuftObject.rotation.set(0, 0, 0)
+      if (feature.kind === 'ice') {
+        tuftObject.position.set(feature.x, ground + 0.02, feature.z)
+        tuftObject.rotation.set(feature.tiltX, feature.yaw, feature.tiltZ)
+        tuftObject.scale.set(0.12 * feature.size, (0.24 + 0.3 * feature.size) * ease, 0.12 * feature.size)
+        tuftObject.updateMatrix()
+        ice.setMatrixAt(iceCount, tuftObject.matrix)
+        ice.setColorAt(iceCount, ICE_SHARD_COLORS[feature.color % ICE_SHARD_COLORS.length])
+        iceCount += 1
+      } else {
+        const diameter = (0.22 + 0.18 * feature.size) * (0.25 + 0.75 * ease)
+        tuftObject.position.set(feature.x, ground + diameter * 0.32, feature.z)
+        tuftObject.rotation.set(0, feature.yaw, 0)
+        tuftObject.scale.setScalar(diameter)
+        tuftObject.updateMatrix()
+        balls.setMatrixAt(ballCount, tuftObject.matrix)
+        balls.setColorAt(ballCount, SNOWBALL_COLORS[feature.color % SNOWBALL_COLORS.length])
+        ballCount += 1
+      }
+    }
+    ice.count = iceCount
+    balls.count = ballCount
+    ice.instanceMatrix.needsUpdate = true
+    balls.instanceMatrix.needsUpdate = true
+    if (ice.instanceColor) ice.instanceColor.needsUpdate = true
+    if (balls.instanceColor) balls.instanceColor.needsUpdate = true
+  }
+
+  /** Stand a new crystal or snowball; the oldest of its kind makes way at the cap. */
+  function addSnowFeature(kind: 'ice' | 'ball', x: number, z: number, grown = false): boolean {
+    if (!insideGarden(x, z, getActiveBounds()) || snowAt(x, z) < SNOW_FEATURE_MIN_SNOW) return false
+    for (const other of snowFeatures) {
+      if ((other.x - x) ** 2 + (other.z - z) ** 2 < SNOW_FEATURE_SPACING * SNOW_FEATURE_SPACING) return false
+    }
+    // Look comes from where it stands, so a saved feature returns looking the same.
+    const look = seededRandom(Math.imul(Math.round(x * 100), 374761393) ^ Math.imul(Math.round(z * 100), 668265263))
+    const same = snowFeatures.filter((feature) => feature.kind === kind)
+    if (same.length >= MAX_SNOW_FEATURES) snowFeatures.splice(snowFeatures.indexOf(same[0]), 1)
+    snowFeatures.push({
+      kind,
+      x,
+      z,
+      size: 0.5 + look() * 0.5,
+      yaw: look() * Math.PI * 2,
+      tiltX: (look() - 0.5) * 0.7,
+      tiltZ: (look() - 0.5) * 0.7,
+      color: Math.floor(look() * 3),
+      grow: grown ? 1 : 0,
+    })
+    writeFeatures()
+    return true
+  }
+
+  /** Features that have been melted or dug out from under come down with the snow. */
+  function dropBuriedFeatures(): void {
+    let removed = false
+    for (let index = snowFeatures.length - 1; index >= 0; index -= 1) {
+      const feature = snowFeatures[index]
+      if (snowAt(feature.x, feature.z) >= SNOW_FEATURE_MIN_SNOW) continue
+      snowFeatures.splice(index, 1)
+      removed = true
+    }
+    if (removed) writeFeatures()
+  }
+
+  function growFeatures(deltaSeconds: number): void {
+    let growing = false
+    for (const feature of snowFeatures) {
+      if (feature.grow >= 1) continue
+      feature.grow = Math.min(1, feature.grow + deltaSeconds / SNOW_FEATURE_GROW_SECONDS)
+      growing = true
+    }
+    if (growing) writeFeatures()
+  }
+
+  /** Holding the brush still earns an ice crystal after a second, and a snowball a while after. */
+  function trackSnowDwell(x: number, z: number, radius: number, deltaSeconds: number): void {
+    if (!dwellAnchor || Math.hypot(x - dwellAnchor.x, z - dwellAnchor.z) > SNOW_DWELL_RADIUS) {
+      dwellAnchor = { x, z }
+      dwellSeconds = 0
+      nextIceAt = ICE_DWELL_SECONDS
+      nextBallAt = SNOWBALL_DWELL_SECONDS
+      return
+    }
+    dwellSeconds += deltaSeconds
+    const scatter = (reach: number): { x: number; z: number } => {
+      const angle = random() * Math.PI * 2
+      const distance = radius * reach * Math.sqrt(random())
+      return { x: x + Math.cos(angle) * distance, z: z + Math.sin(angle) * distance }
+    }
+    if (dwellSeconds >= nextIceAt) {
+      nextIceAt += ICE_REPEAT_SECONDS
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const at = scatter(0.5)
+        if (addSnowFeature('ice', at.x, at.z)) break
+      }
+    }
+    if (dwellSeconds >= nextBallAt) {
+      nextBallAt += SNOWBALL_REPEAT_SECONDS
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const at = scatter(0.95)
+        if (addSnowFeature('ball', at.x, at.z)) break
+      }
+    }
+  }
+
+  function refreshTuftsNear(x: number, z: number, radius: number): void {
+    if (!snowTufts || snowVertexCount <= 0) return
+    const minCellX = Math.floor((x - radius) / LAWN_VERTEX_SPACING)
+    const maxCellX = Math.floor((x + radius) / LAWN_VERTEX_SPACING)
+    const minCellZ = Math.floor((z - radius) / LAWN_VERTEX_SPACING)
+    const maxCellZ = Math.floor((z + radius) / LAWN_VERTEX_SPACING)
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        for (const index of lawnCoverageLookup.get(cellX + ',' + cellZ) ?? []) {
+          if (groundSnow[index] > SNOW_TUFT_MIN_SNOW) writeTuft(index)
+        }
+      }
+    }
+    flushTufts()
+  }
+
+  function refreshAllTufts(): void {
+    if (groundSnow.every((snow) => snow <= 0) && !snowTufts) return
+    ensureTufts()
+    for (const vertex of lawnVertices) writeTuft(vertex.index)
+    flushTufts()
   }
 
   function updateLawnCoverage(x: number, z: number, radius: number, amount: number): number {
@@ -655,7 +1161,7 @@ export function createGardenTools(
           // RGBA paint layer: rgb is ALWAYS the full grass tint — alpha alone
           // fades the edge. Lerping rgb from white here would leave a pale
           // semi-transparent halo where coverage is partial (paint and trim).
-          lawnColors.setXYZW(vertexIndex, GROUND_GREEN.r, GROUND_GREEN.g, GROUND_GREEN.b, after)
+          writeLawnColor(vertexIndex)
           changes += 1
         }
       }
@@ -766,7 +1272,8 @@ export function createGardenTools(
       const tileIndex = batch.blades.length
       const height = STARTING_BLADE_HEIGHT + random() * 0.025
       const width = 0.62 + random() * 0.62
-      const color = GRASS_COLOR_VALUES[Math.floor(random() * GRASS_COLOR_VALUES.length)]
+      const base = Math.floor(random() * GRASS_COLOR_VALUES.length)
+      const color = GRASS_COLOR_VALUES[base]
       // Seed onto the CURRENT ground surface, not the flat lawn plane, so
       // grass laid on dug/mounded ground sits on the slope instead of
       // clipping under hills or floating over pits.
@@ -779,11 +1286,14 @@ export function createGardenTools(
       batch.mesh.setMatrixAt(tileIndex, dummy.matrix)
       batch.mesh.setColorAt(tileIndex, color)
       batch.mesh.count = tileIndex + 1
-      const blade = { x: xPos, z: zPos, tileIndex, mesh: batch.mesh, height }
+      const blade: GrassBlade = { x: xPos, z: zPos, tileIndex, mesh: batch.mesh, height, base, snow: 0 }
       batch.blades.push(blade)
       cell.push(blade)
       updatedBatches.add(batch)
       totalGrassBlades += 1
+      // Seed sown onto snow comes up frosted too.
+      const lying = snowAt(xPos, zPos)
+      if (lying > 0.02) paintBladeFrost(blade, lying)
       if (totalGrassBlades >= MAX_GRASS_BLADES) break
     }
     for (const batch of updatedBatches) {
@@ -883,6 +1393,7 @@ export function createGardenTools(
           updatedMeshes.add(blade.mesh)
           cell.splice(cellIndex, 1)
           blade.height = 0
+          snowyBlades.delete(blade)
           totalGrassBlades -= 1
           removed += 1
         }
@@ -928,6 +1439,7 @@ export function createGardenTools(
             // Fully shrunk: hide the instance and free its spot for reseeding.
             scale.setScalar(0.0001)
             blade.height = 0
+            snowyBlades.delete(blade)
             cell.splice(cellIndex, 1)
             totalGrassBlades -= 1
           } else {
@@ -971,11 +1483,15 @@ export function createGardenTools(
   function syncSurfaceGeometry(): void {
     rebuildLawnCoverageLookup()
     for (const vertex of lawnVertices) {
-      const coverage = groundPaintAt.get(paintPositionKey(vertex.x, vertex.z)) ?? 0
-      groundCoverage[vertex.index] = coverage
-      lawnColors.setXYZW(vertex.index, GROUND_GREEN.r, GROUND_GREEN.g, GROUND_GREEN.b, coverage)
+      const key = paintPositionKey(vertex.x, vertex.z)
+      groundCoverage[vertex.index] = groundPaintAt.get(key) ?? 0
+      groundSnow[vertex.index] = snowPaintAt.get(key) ?? 0
+      writeLawnColor(vertex.index)
     }
     greenGroundVertices = groundCoverage.filter((coverage) => coverage > 0.05).length
+    snowVertexCount = groundSnow.filter((snow) => snow > 0.05).length
+    snowRevision += 1
+    refreshAllTufts()
     lawnColors.needsUpdate = true
   }
 
@@ -998,13 +1514,88 @@ export function createGardenTools(
     isPointerDown = false
     activeAction = null
     groundCoverage.fill(0)
+    groundSnow.fill(0)
     groundPaintAt.clear()
+    snowPaintAt.clear()
+    snowVertexCount = 0
+    snowyBlades.clear()
+    snowFeatures.length = 0
+    dwellAnchor = null
+    if (iceShards) writeFeatures()
+    snowRevision += 1
+    refreshAllTufts()
     for (let index = 0; index < lawnColors.count; index += 1) {
       lawnColors.setXYZW(index, 1, 1, 1, 0)
     }
     lawnColors.needsUpdate = true
     tallestBladeHeight = 0
     lastGrassSpawnMaxY = 0
+  }
+
+  /** Each lawn vertex stands for one LAWN_VERTEX_SPACING cell of ground. */
+  function snowArea(): number {
+    let weight = 0
+    for (let index = 0; index < groundSnow.length; index += 1) {
+      if (groundSnow[index] > 0.05) weight += groundSnow[index]
+    }
+    return weight * LAWN_VERTEX_SPACING * LAWN_VERTEX_SPACING
+  }
+
+  /** Grass and green ground under snow wither; called on a slow timer. */
+  function blightUnderSnow(deltaSeconds: number): void {
+    if (snowVertexCount <= 0 && snowyBlades.size === 0) return
+    const matrix = new THREE.Matrix4()
+    const position = new THREE.Vector3()
+    const rotation = new THREE.Quaternion()
+    const scale = new THREE.Vector3()
+    const updatedMeshes = new Set<THREE.InstancedMesh>()
+    for (const blade of [...snowyBlades]) {
+      if (blade.height <= 0) {
+        snowyBlades.delete(blade)
+        continue
+      }
+      if (blade.snow < SNOW_BLIGHT_MIN_SNOW) continue
+      const height = blade.height - (SNOW_BLADE_SHRINK_BASE + blade.height * SNOW_BLADE_SHRINK_SHARE) * Math.max(blade.snow, SNOW_BLIGHT_FLOOR) * deltaSeconds
+      blade.mesh.getMatrixAt(blade.tileIndex, matrix)
+      matrix.decompose(position, rotation, scale)
+      if (height <= SNOW_BLADE_GONE_HEIGHT) {
+        scale.setScalar(0.0001)
+        blade.height = 0
+        snowyBlades.delete(blade)
+        const cell = occupancy.get(occupancyCell(blade.x, blade.z))
+        const at = cell ? cell.indexOf(blade) : -1
+        if (cell && at >= 0) cell.splice(at, 1)
+        totalGrassBlades -= 1
+        trimmedBlades += 1
+      } else {
+        scale.y = height
+        blade.height = height
+      }
+      matrix.compose(position, rotation, scale)
+      blade.mesh.setMatrixAt(blade.tileIndex, matrix)
+      updatedMeshes.add(blade.mesh)
+    }
+    updatedMeshes.forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true })
+    let painted = false
+    for (let index = 0; index < groundSnow.length; index += 1) {
+      const snow = groundSnow[index]
+      const before = groundCoverage[index]
+      if (snow < SNOW_BLIGHT_MIN_SNOW || before <= 0) continue
+      const after = Math.max(0, before - SNOW_GROUND_FADE_PER_SECOND * Math.max(snow, SNOW_BLIGHT_FLOOR) * deltaSeconds)
+      if (before > 0.05 && after <= 0.05) greenGroundVertices -= 1
+      groundCoverage[index] = after
+      const vertex = lawnVertices[index]
+      const key = paintPositionKey(vertex.x, vertex.z)
+      if (after < 0.005) {
+        groundCoverage[index] = 0
+        groundPaintAt.delete(key)
+      } else {
+        groundPaintAt.set(key, after)
+      }
+      writeLawnColor(index)
+      painted = true
+    }
+    if (painted) lawnColors.needsUpdate = true
   }
 
   function clearGrass(): void {
@@ -1033,6 +1624,14 @@ export function createGardenTools(
       paintKeys.push(kx, kz)
       paintCoverage.push(coverage)
     }
+    const snowKeys: number[] = []
+    const snowCoverage: number[] = []
+    for (const [key, coverage] of snowPaintAt) {
+      if (coverage < 0.005) continue
+      const [kx, kz] = key.split(',').map(Number)
+      snowKeys.push(kx, kz)
+      snowCoverage.push(coverage)
+    }
     return {
       xs: packInt16(xs, GRASS_POSITION_SCALE),
       zs: packInt16(zs, GRASS_POSITION_SCALE),
@@ -1041,6 +1640,13 @@ export function createGardenTools(
       paintKeys: packInt16(paintKeys, 1),
       paintCoverage: packUint8(paintCoverage, 100),
       paintCount: paintCoverage.length,
+      snowKeys: packInt16(snowKeys, 1),
+      snowCoverage: packUint8(snowCoverage, 100),
+      snowCount: snowCoverage.length,
+      featureXs: packInt16(snowFeatures.map((feature) => feature.x), GRASS_POSITION_SCALE),
+      featureZs: packInt16(snowFeatures.map((feature) => feature.z), GRASS_POSITION_SCALE),
+      featureKinds: packUint8(snowFeatures.map((feature) => (feature.kind === 'ice' ? 0 : 1)), 1),
+      featureCount: snowFeatures.length,
     }
   }
 
@@ -1050,9 +1656,15 @@ export function createGardenTools(
     const heights = unpackUint8(saved.heights, GRASS_HEIGHT_STEPS, saved.count)
     const paintKeys = unpackInt16(saved.paintKeys, 1, saved.paintCount * 2)
     const paintCoverage = unpackUint8(saved.paintCoverage, 100, saved.paintCount)
+    const snowCount = saved.snowCount ?? 0
+    const snowKeys = snowCount > 0 && saved.snowKeys ? unpackInt16(saved.snowKeys, 1, snowCount * 2) : []
+    const snowCoverage = snowCount > 0 && saved.snowCoverage ? unpackUint8(saved.snowCoverage, 100, snowCount) : []
     clearBlades()
     for (let index = 0; index < saved.paintCount; index += 1) {
       groundPaintAt.set(`${paintKeys[index * 2]},${paintKeys[index * 2 + 1]}`, Math.min(1, paintCoverage[index]))
+    }
+    for (let index = 0; index < snowCoverage.length; index += 1) {
+      snowPaintAt.set(`${snowKeys[index * 2]},${snowKeys[index * 2 + 1]}`, Math.min(1, snowCoverage[index]))
     }
     syncSurfaceGeometry()
     const bounds = getActiveBounds()
@@ -1074,7 +1686,8 @@ export function createGardenTools(
       // where it stands, so a reload looks the same every time.
       const look = seededRandom(Math.imul(Math.round(x * 100), 73856093) ^ Math.imul(Math.round(z * 100), 19349663))
       const width = 0.62 + look() * 0.62
-      const color = GRASS_COLOR_VALUES[Math.floor(look() * GRASS_COLOR_VALUES.length)]
+      const base = Math.floor(look() * GRASS_COLOR_VALUES.length)
+      const color = GRASS_COLOR_VALUES[base]
       const tileIndex = batch.blades.length
       dummy.position.set(x, GARDEN_LAWN_Y + 0.009 + terrain.heightAt(x, z), z)
       dummy.rotation.set((look() - 0.5) * 0.12, look() * Math.PI * 2, (look() - 0.5) * 0.12)
@@ -1083,23 +1696,34 @@ export function createGardenTools(
       batch.mesh.setMatrixAt(tileIndex, dummy.matrix)
       batch.mesh.setColorAt(tileIndex, color)
       batch.mesh.count = tileIndex + 1
-      const blade = { x, z, tileIndex, mesh: batch.mesh, height }
+      const blade: GrassBlade = { x, z, tileIndex, mesh: batch.mesh, height, base, snow: 0 }
       batch.blades.push(blade)
       cell.push(blade)
       updatedBatches.add(batch)
       totalGrassBlades += 1
+      const lying = snowAt(x, z)
+      if (lying > 0.02) paintBladeFrost(blade, lying)
       tallestBladeHeight = Math.max(tallestBladeHeight, height)
     }
     for (const batch of updatedBatches) {
       batch.mesh.instanceMatrix.needsUpdate = true
       if (batch.mesh.instanceColor) batch.mesh.instanceColor.needsUpdate = true
     }
+    const featureCount = Math.min(saved.featureCount ?? 0, MAX_SNOW_FEATURES * 2)
+    if (featureCount > 0 && saved.featureXs && saved.featureZs && saved.featureKinds) {
+      const fx = unpackInt16(saved.featureXs, GRASS_POSITION_SCALE, featureCount)
+      const fz = unpackInt16(saved.featureZs, GRASS_POSITION_SCALE, featureCount)
+      const fk = unpackUint8(saved.featureKinds, 1, featureCount)
+      for (let index = 0; index < featureCount; index += 1) {
+        addSnowFeature(fk[index] >= 0.5 ? 'ball' : 'ice', fx[index], fz[index], true)
+      }
+    }
   }
 
   function dispose(): void {
     isPointerDown = false
-    const geometries = new Set<THREE.BufferGeometry>([grassGeometry])
-    const materials = new Set<THREE.Material>([grassMaterial])
+    const geometries = new Set<THREE.BufferGeometry>([grassGeometry, flakeGeometry, tuftGeometry, shardGeometry, snowballGeometry])
+    const materials = new Set<THREE.Material>([grassMaterial, tuftMaterial, shardMaterial, snowballMaterial])
     root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
       geometries.add(object.geometry)
@@ -1155,6 +1779,9 @@ export function createGardenTools(
       return found ? 'short' : 'none'
     },
     setTallGrassBlocker(blocked): void { tallGrassBlocked = blocked },
+    snowArea,
+    snowAt,
+    get snowRevision(): number { return snowRevision },
     meadowArea(): number {
       function* everyBlade(): Generator<MeadowBlade> {
         for (const batch of batches.values()) yield* batch.blades
@@ -1183,6 +1810,7 @@ export function createGardenTools(
       cursorVisible = false
       actionGlow.visible = false
       hoverTint = id === 'water' ? '#77c9d5'
+        : id === 'snower' ? '#cfeaff'
         : id === 'shovel' ? '#d9a06b'
           : id === 'grass' ? '#b7d97a'
               : '#efc894'
@@ -1232,6 +1860,14 @@ export function createGardenTools(
           if (lastSeedPoint) cursor.position.set(lastSeedPoint.x, lastSeedPoint.y + 0.008, lastSeedPoint.z)
         }
         hoverTint = '#d9a06b'
+        return
+      }
+      if (selectedTool === 'snower') {
+        if (activeAction === 'snow' || activeAction === 'melt') {
+          strokeTarget = position.clone()
+          if (lastSeedPoint) cursor.position.set(lastSeedPoint.x, lastSeedPoint.y + 0.008, lastSeedPoint.z)
+        }
+        hoverTint = '#cfeaff'
         return
       }
       if (selectedTool === 'water') {
@@ -1284,6 +1920,19 @@ export function createGardenTools(
         activeAction = event.button === 0 ? 'dig' : event.button === 1 ? 'level' : 'fill'
         return true
       }
+      if (selectedTool === 'snower') {
+        if (event.button !== 0 && event.button !== 2) return false
+        isPointerDown = true
+        lastPaintPoint = position.clone()
+        lastSeedPoint = position.clone()
+        strokeTarget = position.clone()
+        paintTimer = 0
+        actionAccumulator = 0
+        lastPaintDuration = 0
+        activeAction = event.button === 0 ? 'snow' : 'melt'
+        dwellAnchor = null
+        return true
+      }
       if (selectedTool === 'water') {
         if (event.button !== 0 && event.button !== 2) return false
         if (!water) return false
@@ -1315,6 +1964,7 @@ export function createGardenTools(
     },
     pointerUp(): void {
       if (isPointerDown) lastPaintDuration = paintTimer
+      dwellAnchor = null
       isPointerDown = false
       activeAction = null
       lastPaintPoint = null
@@ -1415,6 +2065,13 @@ export function createGardenTools(
         seederDragMaxSpeed: seederDragMaxSpeed(),
         shovelDragMaxSpeed: levelDragMaxSpeed(SHOVEL_CONFIGS, shovelLevel),
         waterDragMaxSpeed: levelDragMaxSpeed(WATER_CONFIGS, waterLevel),
+        snowerDragMaxSpeed: SNOWER_DRAG_MAX_SPEED,
+        snowVertices: snowVertexCount,
+        snowMounds: groundSnow.reduce((sum, snow) => sum + (snow > SNOW_TUFT_MIN_SNOW ? SNOW_TUFTS_PER_VERTEX : 0), 0),
+        snowArea: snowArea(),
+        frostedBlades: snowyBlades.size,
+        iceShards: snowFeatures.filter((feature) => feature.kind === 'ice').length,
+        snowballs: snowFeatures.filter((feature) => feature.kind === 'ball').length,
       }
     },
     clearGrass,
@@ -1452,6 +2109,13 @@ export function createGardenTools(
       // Paint the ground cover in one go so the measured area matches what the
       // player can see.
       updateLawnCoverage(x, z, radius, 1)
+    },
+    placeSnowFeature(kind, x, z) {
+      return addSnowFeature(kind, x, z)
+    },
+    blowSnowDisc(x, z, radius, amount = 1) {
+      if (radius <= 0) return
+      updateSnow(x, z, radius, amount)
     },
     digBasin(x, z, radius, depth) {
       if (!insideGarden(x, z, getActiveBounds()) || radius <= 0) return
@@ -1491,6 +2155,7 @@ export function createGardenTools(
             // and the green paint peels (bare soil shows immediately).
             demolishGrass(x, z, radius + 0.15)
             updateLawnCoverage(x, z, radius * 0.92, -2)
+            updateSnow(x, z, radius * 0.92, -2)
             if (terrain.splat(x, z, radius, DIG_DROP * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
           } else if (activeAction === 'fill') {
             const radius = brushRadius() * FILL_RADIUS_FACTOR
@@ -1498,12 +2163,23 @@ export function createGardenTools(
           } else if (activeAction === 'level') {
             const radius = brushRadius() * LEVEL_RADIUS_FACTOR
             if (terrain.level(x, z, radius, LEVEL_STRENGTH * ACTION_INTERVAL) > 0) afterTerrainEdit(x, z, radius)
+          } else if (activeAction === 'snow') {
+            updateSnow(x, z, brushRadius() * SNOW_RADIUS_FACTOR, SNOW_BLOW_PER_SECOND * ACTION_INTERVAL)
+            trackSnowDwell(x, z, brushRadius(), ACTION_INTERVAL)
+          } else if (activeAction === 'melt') {
+            updateSnow(x, z, brushRadius() * SNOW_RADIUS_FACTOR, -SNOW_MELT_PER_SECOND * ACTION_INTERVAL)
           } else if (activeAction === 'pour' && water) {
             water.pour(x, z, brushRadius(), WATER_POUR_RATE * ACTION_INTERVAL)
           } else if (activeAction === 'drain' && water) {
             water.drain(x, z, brushRadius(), WATER_DRAIN_RATE * ACTION_INTERVAL)
           }
         }
+      }
+      growFeatures(deltaSeconds)
+      snowBlightTimer += deltaSeconds
+      if (snowBlightTimer >= SNOW_BLIGHT_INTERVAL) {
+        blightUnderSnow(snowBlightTimer)
+        snowBlightTimer = 0
       }
       // Water settles on the same 30 Hz cadence as the ground. It is a full
       // priority flood plus pool solve, so it is throttled for the same reason
@@ -1563,6 +2239,8 @@ export function createGardenTools(
         : activeAction === 'fill' ? '#e8c78f'
         : activeAction === 'pour' ? (pourReady ? '#8ce7ef' : '#e0806f')
         : activeAction === 'drain' ? '#5798d3'
+        : activeAction === 'snow' ? '#f2fbff'
+        : activeAction === 'melt' ? '#ffc79a'
         : '#fff3d7')
       const isWaterAction = activeAction === 'pour' || activeAction === 'drain'
       waterRipples.forEach((ripple, index) => {
@@ -1573,11 +2251,34 @@ export function createGardenTools(
         material.opacity = ripple.visible ? 0.08 + Math.max(0, Math.sin(phase)) * 0.42 : 0
         ripple.scale.setScalar(0.72 + (0.5 + 0.5 * Math.sin(phase)) * 0.48)
       })
+      const blowing = cursorVisible && (activeAction === 'snow' || activeAction === 'melt')
+      flakes.forEach((flake, index) => {
+        flake.visible = blowing
+        if (!blowing) return
+        const phase = (time * 1.15 + index / flakes.length) % 1
+        const spread = Math.sin(index * 12.9898) * 0.5
+        const material = flake.material as THREE.MeshBasicMaterial
+        material.opacity = Math.sin(phase * Math.PI) * 0.9
+        if (activeAction === 'snow') {
+          material.color.set('#ffffff')
+          flake.position.set(
+            0.58 * (1 - phase) + spread * 0.9 * phase,
+            0.3 * (1 - phase) + 0.1 + Math.sin(phase * Math.PI) * 0.12,
+            0.5 * (1 - phase) - spread * 0.7 * phase,
+          )
+        } else {
+          material.color.set('#bfe6ff')
+          const angle = index * 2.399
+          flake.position.set(Math.cos(angle) * 0.7 * (0.3 + (index % 3) * 0.3), 0.1 + phase * 0.6, Math.sin(angle) * 0.7 * (0.3 + (index % 3) * 0.3))
+        }
+      })
       ;(cursorShadow.material as THREE.MeshBasicMaterial).opacity = isPointerDown && activeAction === 'grow' ? 0.19 + pulse * 0.1 : 0.14
       // hoverTint is refreshed by pointerMove; re-applying it here keeps a stale
       // hover tint from leaking into later frames.
       outerMaterial.color.set(activeAction === 'pour' ? (pourReady ? '#77e08a' : '#e0604f')
         : activeAction === 'drain' ? '#5798d3'
+        : activeAction === 'snow' ? '#f2fbff'
+        : activeAction === 'melt' ? '#ffc79a'
         : isPointerDown && activeAction === 'trim' ? '#f3b287'
         : hoverTint ?? '#b7d97a')
       cursor.rotation.y = Math.sin(time * 1.6) * 0.026
