@@ -1,13 +1,12 @@
 import './style.css'
 import * as THREE from 'three'
-import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
+import type { BalloonAnimal } from './animals/balloon-animal'
 import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST } from './animals/animal-catalog'
 import { isHouse } from './game/animal-housing'
 import { createHousing } from './scene/housing'
 import type { Bed } from './game/sleep'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairground'
-import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord } from './game/animal-life'
-import { clearOfFarmBounds } from './game/animal-travel'
+import { ANIMAL_LIFE_CONFIG, createAnimalLife } from './game/animal-life'
 import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker } from './game/accomplishments'
 import {
@@ -19,6 +18,7 @@ import {
 import { farmMetric } from './game/farm-state'
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
+import { createHerd } from './scene/herd'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
 import { createFarmActions } from './ui/farm-actions'
 import { PROP_CATALOG, type PropId } from './game/farm-props'
@@ -215,64 +215,7 @@ const gardenTools: GardenTools | null = fairground.gardenSurface && fairground.g
     )
   : null
 if (gardenTools) scene.add(gardenTools.root)
-const worldRaycaster = new THREE.Raycaster()
-const worldPointer = new THREE.Vector2()
-function pickAnimal(clientX: number, clientY: number): BalloonAnimal | null {
-  const rect = gameCanvas.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) return null
-  worldPointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
-  worldRaycaster.setFromCamera(worldPointer, camera)
-  const detailedMeshes = animals.filter((animal) => !animal.isSold && animal.root.visible).flatMap((animal) => {
-    const meshes: THREE.Mesh[] = []
-    animal.root.traverse((object) => { if (object instanceof THREE.Mesh && object.visible) meshes.push(object) })
-    return meshes
-  })
-  const detailedHit = worldRaycaster.intersectObjects(detailedMeshes, false)[0]
-  if (!detailedHit) return null
-  return animals.find((animal) => animal.root === detailedHit.object || animal.root.getObjectById(detailedHit.object.id) !== undefined) ?? null
-}
 
-/**
- * Show every animal that is out on the farm and in view, and hide the rest.
- *
- * Animals indoors have no model in the scene at all (see `updateHousing`), so
- * at most `OUTDOOR_LIMITS.total` are ever drawn and each one gets its full
- * model. Off-screen animals are hidden too, which also stops their mixers.
- */
-function refreshAnimalVisibility(nowSeconds: number, force = false): void {
-  if (!force && nowSeconds - lastVisibilityRefreshAt < 1 / 15) return
-  lastVisibilityRefreshAt = nowSeconds
-  camera.updateMatrixWorld()
-  const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
-  const activeInViewer = new Set(getViewerCastAnimals().map((animal) => animal.instanceId))
-  let shown = 0
-  for (const animal of animals) {
-    const record = progress.animal(animal.instanceId)
-    if (!record || record.stage <= 0 || animal.isSold) {
-      animal.setDetailedVisible(false)
-      continue
-    }
-    // A flier is away by day.
-    if (animal.isFlier && !animal.flightVisible) {
-      animal.setDetailedVisible(false)
-      continue
-    }
-    if (mode === 'viewer') {
-      const cast = activeInViewer.has(animal.instanceId)
-      animal.setDetailedVisible(cast)
-      if (cast) shown += 1
-      continue
-    }
-    const size = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)?.size ?? 2
-    const renderPosition = animal.currentPosition.clone()
-    renderPosition.y += 0.4 * size * animal.currentScale
-    const sphere = new THREE.Sphere(renderPosition, Math.max(1.2, size * animal.currentScale * 0.9))
-    const inView = frustum.intersectsSphere(sphere)
-    animal.setDetailedVisible(inView)
-    if (inView) shown += 1
-  }
-  shownAnimalCount = shown
-}
 
 let gardenPlants: GardenPlants | null = null
 let coverageLookup: ((x: number, z: number) => number) | null = null
@@ -389,21 +332,6 @@ const accomplishments = createAccomplishmentTracker(buildAccomplishmentCatalog(
 /** Stages 0 and 1 live at the carnival; 2 and up are inside the fence. */
 const isLoose = (animalId: string): boolean => progress.animal(animalId)?.stage === 1
 
-/**
- * Where a species first turns up.
- *
- * Carnival spawns were authored around the starter tents. Those tents slide
- * outward as the farm grows, so the spawn has to come with them: otherwise a
- * species would turn up inside the walls of a garden that has already swallowed
- * the spot it was authored at.
- */
-function carnivalSpawnFor(species: string): readonly [number, number] {
-  const bounds = activeGardenBounds()
-  const authored = ANIMAL_CATALOG.find((entry) => entry.id === species)?.carnivalSpawn
-  const base = authored ?? [bounds.halfWidth + 8, 0]
-  const cleared = clearOfFarmBounds({ x: base[0], z: base[1] }, bounds)
-  return [cleared.x, cleared.z]
-}
 
 const generatedAnimalNames = generateAnimalNames(48)
 const animalNames = new Map<string, string>()
@@ -411,112 +339,16 @@ const animalById = new Map<string, BalloonAnimal>()
 const animals: BalloonAnimal[] = []
 const animalPopulationLimit = ANIMAL_LIFE_CONFIG.maximumPopulation
 let focusedAnimalId: string | null = null
-/** How many animal models were drawn at the last visibility refresh. */
-let shownAnimalCount = 0
 /**
  * Real animal models stood on the lawn for sustained load ramps. Empty in
  * normal play; the debug harness fills it via setCrowd and every reset path
  * drains it, so a fixture can never leak into a shipped session.
  */
 const crowdFixtures: BalloonAnimal[] = []
-const CROWD_FIXTURE_LIMIT = 60
-function clearCrowdFixtures(): void {
-  for (const fixture of crowdFixtures) fixture.dispose()
-  crowdFixtures.length = 0
-}
-async function setCrowdFixtures(requestedCount: number): Promise<number> {
-  const count = Math.max(0, Math.min(CROWD_FIXTURE_LIMIT, Math.floor(requestedCount)))
-  if (crowdFixtures.length === count) return count
-  clearCrowdFixtures()
-  const walkers = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
-    .filter((entry) => !entry.flier)
-  const created = await Promise.all(Array.from({ length: count }, (_, index) => {
-    const options = walkers[index % walkers.length]
-    const column = index % 10
-    const row = Math.floor(index / 10)
-    return createBalloonAnimal(fairground.root, {
-      ...options,
-      name: `Crowd ${index}`,
-      instanceId: `crowd-stress-${index}`,
-      stage: 3,
-      appearance: index % 3 === 0 ? 'wild' : 'standard',
-      captureOnClick: false,
-      spawn: [(column - 4.5) * 1.6, (row - 2.5) * 1.6],
-      getGardenBounds: activeGardenBounds,
-    })
-  }))
-  for (const fixture of created) {
-    fixture.setDetailedVisible(true)
-    crowdFixtures.push(fixture)
-  }
-  return count
-}
-let lastVisibilityRefreshAt = 0
 const farmHomes = new Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>()
 const viewerStands = new Map<string, THREE.Vector3>()
 const animalCreations = new Map<string, Promise<BalloonAnimal>>()
-/**
- * Build the model for a tracked animal. `emerging` is for an animal stepping out
- * of its house: it is already a resident, so it appears in its own colours at
- * the door instead of replaying the capture reveal.
- */
-function createAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }, emerging = false): Promise<BalloonAnimal> {
-  const existing = animalById.get(record.id)
-  if (existing) return Promise.resolve(existing)
-  const pending = animalCreations.get(record.id)
-  if (pending) return pending
-  const creation = loadAnimalInstance(record, position, emerging)
-  animalCreations.set(record.id, creation)
-  void creation.then(
-    () => { if (animalCreations.get(record.id) === creation) animalCreations.delete(record.id) },
-    () => { if (animalCreations.get(record.id) === creation) animalCreations.delete(record.id) },
-  )
-  return creation
-}
 
-async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }, emerging = false): Promise<BalloonAnimal> {
-  if (animals.length + animalCreations.size >= animalPopulationLimit && !animalById.has(record.id)) return Promise.reject(new Error(`The farm is at its ${animalPopulationLimit}-animal limit`))
-  const options = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
-    .find((entry) => entry.id === record.species)
-  if (!options) throw new Error(`Missing scene options for animal ${record.species}`)
-  const takenNames = new Set(animalNames.values())
-  const name = animalNames.get(record.id) ?? generatedAnimalNames.find((candidate) => !takenNames.has(candidate)) ?? `${options.name} ${animalNames.size + 1}`
-  animalNames.set(record.id, name)
-  const animal = await createBalloonAnimal(fairground.root, {
-    ...options,
-    name,
-    onDetailedModelReady: () => refreshAnimalVisibility(performance.now() / 1000, true),
-    instanceId: record.id,
-    growthScale: record.growth,
-    stage: emerging ? record.stage : 0,
-    ...(emerging && record.stage >= 3 ? { appearance: 'standard' as const } : {}),
-    captureOnClick: false,
-    spawn: position ? [position.x, position.z] : carnivalSpawnFor(record.species),
-    isLoose: () => isLoose(record.id),
-    getGardenBounds: activeGardenBounds,
-  })
-  animal.stage = record.stage
-  animal.setGrowth(record.growth * record.adultScale)
-  animal.setDetailedVisible(false)
-  animalById.set(record.id, animal)
-  animals.push(animal)
-  farmHomes.set(record.id, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
-  if (VIEWER_CAST.includes(animal.id)) {
-    const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
-    viewerStands.set(record.id, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-  }
-  const latest = progress.animal(record.id)
-  if (!latest) {
-    animal.dispose()
-    return animal
-  }
-  if (latest) {
-    animal.stage = latest.stage
-    animal.setGrowth(latest.growth * latest.adultScale)
-    animal.setDetailedVisible(false)
-  }
-  return animal
-}
 // A loaded farm brings its animals back as they were: same ids, names, stages,
 // growth and places. Their models are built below exactly as a fresh farm's are.
 const savedPlaces = new Map<string, { x: number; z: number }>()
@@ -537,6 +369,26 @@ if (loadedSave) {
     if (saved.inside && progress.animal(saved.id)) savedIndoors.set(saved.id, savedPlaces.get(saved.id) ?? { x: 0, z: 0 })
   }
 }
+const { pickAnimal, refreshAnimalVisibility, carnivalSpawnFor, clearCrowdFixtures, setCrowdFixtures, createAnimalInstance, shownCount, resetVisibilityClock } = createHerd({
+  camera,
+  gameCanvas,
+  fairgroundRoot: fairground.root,
+  gardenTerrain,
+  activeGardenBounds,
+  progress,
+  isLoose,
+  animals,
+  animalById,
+  animalNames,
+  generatedAnimalNames,
+  animalPopulationLimit,
+  animalCreations,
+  farmHomes,
+  viewerStands,
+  crowdFixtures,
+  mode: () => mode,
+  getViewerCastAnimals: () => getViewerCastAnimals(),
+})
 await Promise.all(progress.all()
   .filter((record) => !savedIndoors.has(record.id))
   .map((record) => createAnimalInstance(record, savedPlaces.get(record.id))))
@@ -1505,7 +1357,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     gardenPlants: () => gardenPlants,
     gardenProps: () => gardenProps,
     mode: () => mode,
-    shownAnimalCount: () => shownAnimalCount,
+    shownAnimalCount: () => shownCount(),
     houseSpots: () => houses(),
     gardenBounds: () => currentGardenBounds,
     setGardenBounds: (bounds) => { currentGardenBounds = bounds },
@@ -1514,7 +1366,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     resetRoster: () => {
       resetRoster()
     },
-    resetVisibilityClock: () => { lastVisibilityRefreshAt = 0 },
+    resetVisibilityClock,
     refreshAnimalVisibility,
     plantSurfaceAt,
     progress,
