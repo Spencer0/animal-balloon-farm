@@ -4,8 +4,8 @@ How a new animal gets from "add an X" to a reviewed, playable species. The goal:
 **"Add a new animal X, use the animal pipeline"** and the agent can do the whole thing without
 hand-holding, including any plant, prop or house the animal needs.
 
-Current catalog: **12 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
-snake).
+Current catalog: **13 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
+snake, mole).
 
 **Reference animals.** Copy the closest one instead of starting cold.
 
@@ -43,12 +43,17 @@ from them.
    | **A house** (`propCount` of a house prop) | has somewhere to live; **required** on the breeding rung | barn, coop, sty, goose house, frog house, owl box, dumpster, hollow log, rock pile | a house is a prop, plus a `HOUSE_SPECIES` entry: see *Adding a shop prop (and a house)* |
    | **Terrain** (`grassArea` / `waterArea` / `flatArea`) | needs land, not objects | all | nothing |
    | **Tall meadow** (`meadowArea`) | lives in long grass (the green seed pack), not on a lawn | all | nothing |
-   | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl; mouse, for the snake | see *Predators and fliers* |
+   | **Tool owned** (`toolOwned`) | is lured by the farmer's kit, not the land (the mole comes once the shovel is bought) | `shovel`, `water` (the seed bag is always owned) | add the upgrade to `TOOL_UPGRADES` in `tool-unlocks.ts` |
+| **Terrain share** (`terrainShare`) | needs the farm to *be* a kind of ground, by percent (a mole: 50% dirt to visit, 90% to settle) | `dirt` (bare soil; `snow` is reserved) | add the terrain to `TerrainKind` and measure it in `farm-state.ts` |
+| **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl; mouse, for the snake | see *Predators and fliers* |
 
    A good ladder asks for **something different at each rung** and ends on a house for breeding. The
    raccoon: appears when a cow lives on the farm, settles for a garbage can, breeds at a dumpster.
    Never ask for more than the player can have: a plant requirement above 5 is unreachable (the
    seed supply), and a prop that is not in the shop is unbuyable.
+   **Keeping residency.** Set `holdsResidency: true` on a species' `SPECIES_CONDITIONS` entry and a settled adult only stays
+   while its "Call the farm home" requirement stays met: otherwise it loses helium (about two minutes from full), warns
+   the player, and slowly deflates and vanishes when flat. Meeting the requirement again refills it. Off by default; the owl keeps its own oak rule.
 6. **Anything special.** Flight, hunting, a signature animation. If there is none, it is a plain
    animal and this document covers all of it.
 
@@ -383,7 +388,7 @@ walk to the nearest house of their kind with room and their models are disposed 
 Selling a house sells the animals inside it (the card asks twice); animals out on the farm stay.
 House models face local -Y in Blender (+Z in glTF): the game walks animals to that side of the
 footprint to go in and out. `art/blender/animal_houses.py` builds the sty, goose house, frog house,
-owl box, hollow log (mice and rats) and rock pile (snakes).
+owl box, hollow log (mice and rats), rock pile (snakes) and molehill (moles).
 
 | Where | What | Enforced? |
 |-------|------|-----------|
@@ -405,7 +410,7 @@ owl box, hollow log (mice and rats) and rock pile (snakes).
 `footprint` is fine and rotates (`footprintExtent`). `GardenProps.placements(id)` returns the world
 centre of every placed prop of one id, which is what sleeping uses.
 
-Prices so far: garbage can 45, frog house 70, hollow log 75, owl box 80, rock pile 85, coop 90, sty 95, goose house 100, barn 110,
+Prices so far: molehill 70, garbage can 45, frog house 70, hollow log 75, owl box 80, rock pile 85, coop 90, sty 95, goose house 100, barn 110,
 dumpster 120, oak 140.
 
 Model tips from the raccoon's props: author on `z = 0`, centred in X/Y; do not leave a doorway the
@@ -486,6 +491,10 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 - **Prey** is a resident, adult, on-farm animal that is not mid-capture, courting or waiting to settle.
   The predator will not take the flock below `PREY_FLOOR` (2).
 - **A catch is a removal.** `handlePredatorCatch` forgets the prey from the sim and hands the model to a pop.
+- **Two deaths.** Being caught is the **bang** (`popAnimal(prey)`: swell, ring, shards, scrap). Running out of
+  helium is the **deflate** (`popAnimal(prey, 'deflate')`): it hisses, sags flat, widens, lies there and
+  shrinks away, with puffs of air. Timeline in `src/game/deflate-animation.ts`, meshes in
+  `src/scene/deflate-effect.ts`. It only drives the root scale, so it works on every species with no art.
 - **A ground hunter stalks, then the dice decide.** The snake creeps up (`stalkSpeedScale`) unnoticed.
   Within `strikeDistance` of its mouth it rolls the strike die (`STRIKE_DIE`, a d6, 4+ catches)
   *before* lunging, so each outcome gets its own animation instead of relying on physics:
@@ -520,6 +529,9 @@ shared between animals and no longer resolve.
 | `owl/resident-roosting` | daytime, a resident owl asleep on the oak |
 | `owl/breed-ready` | night, two oaks, an owl box, two owls in love: an owlet is born in the box |
 | `owl/low-helium` | night, a resident owl with no oak and ~15 s of helium |
+| `mole/ready-to-settle` | a bare farm with the shovel bought and a wild mole visiting: it settles at once. Sow a lawn and the journal's dirt bar falls |
+| `mole/about-to-go-flat` | as going-flat but with about 12 s of helium left: watch the hiss, sag and flatten |
+| `mole/going-flat` | a resident mole on a farm that is under 90% dirt: it leaks helium and pops in about two minutes |
 | `raccoon/first-night` | night, a resident cow, a wild raccoon visiting, no garbage can |
 | `raccoon/sleeping-by-can` | day, a resident raccoon that walks to its can and curls up |
 | `raccoon/sleeping-by-dumpster` | day, a can and a dumpster: its house, so it walks in to sleep |
@@ -620,12 +632,12 @@ only the paths you changed.
 4. **Several registrations are string-keyed tables** (the silent list in section 3). Moving `DISCOVERY`,
    `NIGHT_ONLY_SPECIES`, `SLEEP_PROPS` and `SPECIES_META` onto the catalog entry would make a missing
    one a compile error.
-5. **The animal download budget is full.** `npm run assets:budget` caps every animal GLB together at
-   16 MB, and the twelve species use about 15.9 MB. The first nine are 1.3-2.2 MB each; the
-   tall-grass animals are built at `LEAN_DETAIL` (a third of the sphere and curve resolution, no UVs:
-   the animals are untextured) and are 0.2-0.3 MB each with no visible difference at game scale. **Build
-   every new animal lean** (`global DETAIL; DETAIL = LEAN_DETAIL` and `export_asset(..., texcoords=False)`),
-   and rebuild the older ones the same way before the next few species.
+5. **The animal download budget.** `npm run assets:budget` caps every animal GLB together at 50 MB
+   (raised from 16 MB so animals can be built at full detail) and each one at 2.5 MB / 100k triangles.
+   The first nine and the mole are full detail (1.3-2.2 MB each). The tall-grass animals (mouse, rat,
+   snake) are built at `LEAN_DETAIL` (a third of the sphere and curve resolution, no UVs: the animals are
+   untextured) and are 0.2-0.3 MB. Either is fine; new animals default to full detail. A lean/full
+   toggle that ships both is a planned follow-up.
 6. **Capture is 6.8 s per animal** and starts on click, so "Play all" is a parade, not a test.
 7. **A night animal's house cannot be entered yet.** Sleepers lie beside their house; a planned
    feature will have animals sleep inside, with an inside-the-home viewer.

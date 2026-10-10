@@ -38,6 +38,8 @@ export interface ToolsHud extends UIPanel {
   readonly isVisible: boolean
   setVisible(visible: boolean): void
   selectTool(id: GardenToolId | null): void
+  /** Which tools the farmer owns. The rest leave the bar; the owned ones close ranks. */
+  setOwnedTools(ids: readonly GardenToolId[]): void
   setSelectedTool(id: GardenToolId | null): void
   /** Show the pack in the seeder's hand; `canSwap` reveals the E chip once the tall pack is owned. */
   setGrassPack(pack: GrassPack, canSwap: boolean): void
@@ -81,6 +83,7 @@ interface ToolSlot {
   readonly icon: THREE.Group
   readonly badgeMaterial: THREE.MeshBasicMaterial
   readonly model: THREE.Group
+  owned: boolean
   rect: DesignRect
   centreX: number
   centreY: number
@@ -154,6 +157,7 @@ export function createToolsHud(
       icon,
       badgeMaterial,
       model,
+      owned: true,
       rect: { x: 0, y: 0, width: SLOT_WIDTH, height: SLOT_HEIGHT },
       centreX: 0,
       centreY: 0,
@@ -184,10 +188,18 @@ export function createToolsHud(
   }
 
   function layout(): void {
-    const totalWidth = slots.length * SLOT_WIDTH + (slots.length - 1) * SLOT_GAP
+    const shown = slots.filter((slot) => slot.owned)
+    const totalWidth = shown.length * SLOT_WIDTH + Math.max(0, shown.length - 1) * SLOT_GAP
     const centreY = viewport.bottom + BOTTOM_MARGIN + SLOT_HEIGHT / 2
     const startX = -totalWidth / 2 + SLOT_WIDTH / 2
-    for (const [index, slot] of slots.entries()) {
+    for (const slot of slots) {
+      slot.holder.visible = slot.owned
+      // An unowned slot takes no clicks: park its rect where nothing can hit it.
+      if (!slot.owned) {
+        slot.rect = { x: -1e6, y: -1e6, width: 0, height: 0 }
+        continue
+      }
+      const index = shown.indexOf(slot)
       slot.centreX = startX + index * (SLOT_WIDTH + SLOT_GAP)
       slot.centreY = centreY
       slot.holder.position.set(slot.centreX, slot.centreY, 0)
@@ -250,6 +262,11 @@ export function createToolsHud(
     setSelectedTool(id: GardenToolId | null): void {
       if (id === null || GARDEN_TOOLS.some((tool) => tool.id === id)) selected = id
     },
+    setOwnedTools(ids: readonly GardenToolId[]): void {
+      for (const slot of slots) slot.owned = ids.includes(slot.id)
+      if (selected !== null && !ids.includes(selected)) selected = null
+      layout()
+    },
     pointerDown(point: DesignPoint, event: PointerEvent): boolean {
       if (!visible) return false
       const slot = slotAt(point)
@@ -284,7 +301,7 @@ export function createToolsHud(
       if (!visible || event.altKey || event.ctrlKey || event.metaKey || event.repeat) return false
       const key = event.code === 'Space' ? 'space' : event.key.toLowerCase()
       const tool = GARDEN_TOOLS.find((item) => item.hotkey === key)
-      if (!tool) return false
+      if (!tool || !slots.some((item) => item.id === tool.id && item.owned)) return false
       event.preventDefault()
       const slot = slots.find((item) => item.id === tool.id)
       if (slot) slot.press = 1
@@ -309,8 +326,8 @@ export function createToolsHud(
         // The bar is anchored to the bottom edge and sized in design units, so
         // its height as a fraction of the window must not drift with aspect.
         barHeightFraction: round(SLOT_HEIGHT / viewport.height),
-        firstButton: { ...slots[0].rect },
-        slots: slots.map((slot) => ({ id: slot.id, hotkey: slot.hotkey, ...slot.rect })),
+        firstButton: { ...(slots.find((slot) => slot.owned) ?? slots[0]).rect },
+        slots: slots.filter((slot) => slot.owned).map((slot) => ({ id: slot.id, hotkey: slot.hotkey, ...slot.rect })),
       }
     },
     dispose(): void {

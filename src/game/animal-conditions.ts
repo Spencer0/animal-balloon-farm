@@ -41,6 +41,14 @@ export type ConditionKind =
   | 'preyEaten'
   /** How many of a shop prop the player has placed, e.g. an oak tree. */
   | 'propCount'
+  /**
+   * Percent of the whole farm under one terrain (`species` names it: 'dirt').
+   * The only kind measured as a share rather than an amount, so a mole's 90%
+   * is as hard on a big farm as on a small one.
+   */
+  | 'terrainShare'
+  /** Whether the farmer owns a garden tool bought at the shop (`species`: 'shovel' | 'water'). */
+  | 'toolOwned'
 
 export interface ConditionRequirement {
   readonly kind: ConditionKind
@@ -89,8 +97,23 @@ export function conditionMetricLabel(requirement: ConditionRequirement | null): 
     case 'residentCount': return requirement.species ? `Resident ${speciesPlural(requirement.species)}` : null
     case 'preyEaten': return requirement.species ? `${capitalise(speciesPlural(requirement.species))} eaten` : null
     case 'propCount': return requirement.species ? `${capitalise(propPlural(requirement.species))} on the farm` : null
+    case 'toolOwned': return requirement.species ? `${capitalise(toolName(requirement.species))} bought` : null
+    case 'terrainShare': return requirement.species ? `${capitalise(terrainName(requirement.species))} share of the farm` : null
     case 'residentSpecies': return null
   }
+}
+
+const TERRAIN_NAMES: Readonly<Record<string, string>> = {
+  dirt: 'bare dirt',
+  snow: 'snow cover',
+}
+
+function toolName(tool: string): string {
+  return tool === 'water' ? 'water bucket' : tool
+}
+
+function terrainName(terrain: string): string {
+  return TERRAIN_NAMES[terrain] ?? terrain
 }
 
 function capitalise(text: string): string {
@@ -115,6 +138,7 @@ const PROP_PLURALS: Readonly<Record<string, string>> = {
   'garbage-can': 'garbage cans',
   'hollow-log': 'hollow logs',
   'rock-pile': 'rock piles',
+  molehill: 'molehills',
 }
 
 function propPlural(prop: string): string {
@@ -123,7 +147,7 @@ function propPlural(prop: string): string {
 
 /** True for the kinds that are a whole number of things rather than square meters. */
 export function isCountKind(kind: ConditionKind | undefined): boolean {
-  return kind === 'plantCount' || kind === 'residentCount' || kind === 'preyEaten' || kind === 'propCount'
+  return kind === 'plantCount' || kind === 'residentCount' || kind === 'preyEaten' || kind === 'propCount' || kind === 'toolOwned'
 }
 
 /**
@@ -133,7 +157,13 @@ export function isCountKind(kind: ConditionKind | undefined): boolean {
  * of plants and takes no unit at all. "5.0 / 2 m²" of lily pads is nonsense,
  * and the journal is exactly where a player would read it.
  */
+/** True for the kinds whose journal row names what it counts, so it needs its own unit: counts and shares. */
+export function hasOwnMetricUnit(kind: ConditionKind | undefined): boolean {
+  return isCountKind(kind) || kind === 'terrainShare'
+}
+
 export function conditionMetricUnit(requirement: ConditionRequirement | null): string {
+  if (requirement?.kind === 'terrainShare') return '%'
   return isCountKind(requirement?.kind) ? '' : ' m²'
 }
 
@@ -142,6 +172,8 @@ export function conditionMetricUnit(requirement: ConditionRequirement | null): s
  * decimal of square meter.
  */
 export function formatConditionMetric(requirement: ConditionRequirement | null, value: number): string {
+  // A share reads as a whole percent: "62%" of the farm, not "62.4%".
+  if (requirement?.kind === 'terrainShare') return value.toFixed(0)
   return isCountKind(requirement?.kind) ? value.toFixed(0) : value.toFixed(1)
 }
 
@@ -168,6 +200,13 @@ export interface SpeciesConditions {
    * This is how the pig's dependency on a resident cow is expressed.
    */
   readonly requiresResident?: readonly string[]
+  /**
+   * A resident that keeps its place only while its "call the farm home"
+   * requirement stays met. When the farm stops suiting it, the balloon loses
+   * helium, and a flat one pops (see `animal-life.ts`). Without this flag a
+   * resident stays for good once settled, which is how most species behave.
+   */
+  readonly holdsResidency?: boolean
 }
 
 /**
@@ -428,6 +467,47 @@ const SNAKE_CONDITIONS: SpeciesConditions = {
 }
 
 /**
+ * The mole is the first species that wants the farm *bare*: a share of the
+ * whole farm that is dirt, not an area of something grown.
+ *
+ *  - Appears (DISCOVERY): the farmer owns a shovel. A mole comes to see what is
+ *    being dug.
+ *  - Visits the farm: half the farm is dirt.
+ *  - Stays: nine tenths is dirt, and it keeps being. A mole that has settled
+ *    loses helium and pops if the lawn creeps back (`holdsResidency`).
+ *  - Breeds: a molehill to raise pups in, with the farm still nine tenths dirt.
+ */
+const MOLE_CONDITIONS: SpeciesConditions = {
+  holdsResidency: true,
+  stages: withStageNumbers([
+    COUNT_STAGE(
+      'Appear at the carnival',
+      'Hears a shovel somewhere and comes over to see: buy the shovel at the shop.',
+      { kind: 'toolOwned', species: 'shovel', amount: 1 },
+      'Turns up at the carnival in wild balloon red.',
+    ),
+    COUNT_STAGE(
+      'Visit the farm',
+      'Wants bare earth to tunnel through: half the farm should be dirt.',
+      { kind: 'terrainShare', species: 'dirt', amount: 50 },
+      'Noses in through the loam. Still wild, still deciding.',
+    ),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Wants almost nothing but dirt: nine tenths of the farm. It leaves, and goes flat, if the lawn creeps back.',
+      { kind: 'terrainShare', species: 'dirt', amount: 90 },
+      'Paints into its own colors. A resident of the farm, for as long as the farm stays bare.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Wants a molehill to raise pups in, with the farm kept nearly all dirt.',
+      { kind: 'propCount', species: 'molehill', amount: 1, and: [{ kind: 'terrainShare', species: 'dirt', amount: 90 }] },
+      'Eyes go to hearts. Ready to raise young in its house.',
+    ),
+  ]),
+}
+
+/**
  * The test configuration the user asked for, and the shape the rest of the
  * catalog will grow into.
  *
@@ -515,6 +595,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
   mouse: MOUSE_CONDITIONS,
   rat: RAT_CONDITIONS,
   snake: SNAKE_CONDITIONS,
+  mole: MOLE_CONDITIONS,
   frog: {
     stages: withStageNumbers([
       CARNIVAL,
@@ -523,6 +604,22 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
       PLANT_LOVE('water-lily', 4, 'Wants a proper lily pond: twice the pads, and a frog house on the bank.', 'frog-house'),
     ]),
   },
+}
+
+/**
+ * Debug: force a species to hold (or not hold) its residency, so the lapse can
+ * be watched on a species that does not ask for it. `null` clears the override.
+ */
+const residencyOverrides = new Map<string, boolean>()
+
+export function setResidencyOverride(species: string, holds: boolean | null): void {
+  if (holds === null) residencyOverrides.delete(species)
+  else residencyOverrides.set(species, holds)
+}
+
+/** Whether a resident of this species leaves when its home requirement stops being met. */
+export function holdsResidency(species: string): boolean {
+  return residencyOverrides.get(species) ?? SPECIES_CONDITIONS[species]?.holdsResidency === true
 }
 
 /** Species that only come out after dark. They arrive, visit and hunt at night. */
@@ -560,6 +657,7 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
   mouse: { kind: 'meadowArea', amount: 4, description: 'Long grass rustling at the fence line is all a field mouse needs to hear.' },
   rat: { kind: 'residentCount', species: 'mouse', amount: 1, description: 'Where one mouse has settled, a rat is never far behind.' },
   snake: { kind: 'residentCount', species: 'mouse', amount: 2, description: 'Mice in the long grass draw something patient and green.' },
+  mole: { kind: 'toolOwned', species: 'shovel', amount: 1, description: 'The sound of a shovel biting into soil carries a long way underground.' },
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {

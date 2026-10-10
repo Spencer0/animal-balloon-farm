@@ -104,6 +104,12 @@ export const ANIMAL_CATALOG = [
     note: 'It looks like one long twisted balloon, because it is. It loves a sunny rock pile.', color: '#3f9e6e', gesture: 'Flicks its tongue',
     assetUrl: 'assets/animals/balloon-snake.glb', spawn: [-9, -1], carnivalSpawn: [25, -16], showcaseSpawn: [11, -3.2], seed: 9871, size: 2.8, speed: 0.75, bounds: { x: 10.5, z: 6.1 },
   },
+  {
+    id: 'mole', name: 'Mole', label: 'mole', spriteUrl: 'assets/animals/balloon-mole-review.png',
+    subtitle: 'The bare-earth tunneller', description: 'A velvet-charcoal balloon mole with a long rosy snout and big pink digging paws, happiest where there is nothing but fresh dirt.',
+    note: 'It comes to see what the shovel has been up to. Plant too much lawn and it quietly goes flat.', color: '#5b5663', gesture: 'Sniffs the soil',
+    assetUrl: 'assets/animals/balloon-mole.glb', spawn: [1, -2], carnivalSpawn: [19, 14], showcaseSpawn: [-15, 0], seed: 10211, size: 1.7, speed: 0.9, bounds: { x: 10.5, z: 6.1 },
+  },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']

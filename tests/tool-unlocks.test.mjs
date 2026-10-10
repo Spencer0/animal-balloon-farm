@@ -91,7 +91,7 @@ test('a locked prop cannot be bought even with the coins', () => {
 })
 
 test('each farmer level lists what it opens, for the player panel', () => {
-  assert.deepEqual(unlocks.unlocksAtFarmerLevel(0), ['Fence'])
+  assert.deepEqual(unlocks.unlocksAtFarmerLevel(0), ['Shovel', 'Water Bucket', 'Fence'])
   const first = unlocks.unlocksAtFarmerLevel(1)
   for (const name of ['Tall Grass Seed Pack', 'Land deed 1', 'Chicken Coop', 'Small Barn']) assert.ok(first.includes(name), name)
 })

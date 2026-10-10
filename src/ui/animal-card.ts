@@ -28,6 +28,8 @@ export interface AnimalCardTarget {
   readonly price: number
   /** Live `canSell` answer from the animal model. */
   readonly sellable: boolean
+  /** Helium left, 0..1. Absent reads full. */
+  readonly helium?: number
 }
 
 export interface AnimalSaleResult {
@@ -49,6 +51,8 @@ export interface AnimalCardPanel extends UIPanel {
   open(target: AnimalCardTarget, anchor?: DesignPoint): void
   close(): void
   setName(name: string): void
+  /** Keep the Helium meter live while the card is open: redraws only when the level changed. */
+  setHelium(level: number): void
 }
 
 const WIDTH = 380
@@ -258,12 +262,12 @@ export function createAnimalCard(actions: AnimalCardActions, cssWidth: number, c
     context.fillStyle = UI_THEME.inkSoft
     context.font = 'italic 14px Georgia, "Times New Roman", serif'
     context.textAlign = 'right'
-    context.fillText(heliumStatus(), WIDTH - PAD, METER_LABEL_BASELINE)
+    context.fillText(heliumStatus(current.helium), WIDTH - PAD, METER_LABEL_BASELINE)
     context.textAlign = 'left'
     const barWidth = WIDTH - PAD * 2
     fillRoundRect(context, PAD, BAR_Y, barWidth, BAR_HEIGHT, 13, '#e0cda1')
     strokeRoundRect(context, PAD, BAR_Y, barWidth, BAR_HEIGHT, 13, 'rgba(128, 75, 52, .5)', 1.5)
-    const fillWidth = Math.max(BAR_HEIGHT, barWidth * heliumLevel())
+    const fillWidth = Math.max(BAR_HEIGHT, barWidth * heliumLevel(current.helium))
     if (fillWidth > 0) {
       fillRoundRect(context, PAD + 2, BAR_Y + 2, fillWidth - 4, BAR_HEIGHT - 4, 11, verticalGradient(context, 0, BAR_Y, BAR_HEIGHT, [[0, '#7cab66'], [1, '#4c7a45']]))
     }
@@ -331,6 +335,13 @@ export function createAnimalCard(actions: AnimalCardActions, cssWidth: number, c
       card.visible = true
       draw()
       actions.onToggle?.(true)
+    },
+    setHelium(level: number): void {
+      if (!target) return
+      const next = heliumLevel(level)
+      if (Math.abs(heliumLevel(target.helium) - next) < 0.005) return
+      target = { ...target, helium: next }
+      draw()
     },
     close(): void {
       if (!target) return
@@ -475,7 +486,7 @@ export function createAnimalCard(actions: AnimalCardActions, cssWidth: number, c
         sellVisible: target ? target.sellable && target.stage >= RESIDENT_STAGE : null,
         mode: state.mode,
         editing,
-        helium: { level: heliumLevel(), status: heliumStatus() },
+        helium: { level: heliumLevel(target?.helium), status: heliumStatus(target?.helium) },
         card: { x: object.position.x - WIDTH / 2, y: object.position.y - HEIGHT / 2, width: WIDTH, height: HEIGHT },
         sellButton: { ...SELL },
         journalButton: { ...(target?.sellable ? JOURNAL : JOURNAL_WIDE) },
