@@ -12,7 +12,7 @@
 import type { Wallet } from './sales'
 
 export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak' | 'garbage-can' | 'dumpster'
-  | 'goose-house' | 'sty' | 'frog-house' | 'owl-box' | 'hollow-log' | 'rock-pile'
+  | 'goose-house' | 'sty' | 'frog-house' | 'owl-box' | 'hollow-log' | 'rock-pile' | 'molehill'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -249,10 +249,24 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     blocking: true,
     modelUrl: 'assets/props/rock-pile.glb',
   },
+  molehill: {
+    id: 'molehill',
+    name: 'Molehill',
+    description: 'A fresh mound of loam with a round burrow door at the front.',
+    blurb: 'Home to moles: room for ten, and pups are born inside. Moles only stay while the farm is mostly dirt.',
+    color: '#7a5638',
+    price: 70,
+    footprint: { width: 1, depth: 1 },
+    size: 2,
+    kind: 'cell',
+    rotatable: true,
+    blocking: true,
+    modelUrl: 'assets/props/molehill.glb',
+  },
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'sty', 'goose-house', 'frog-house', 'hollow-log', 'oak', 'owl-box', 'rock-pile', 'garbage-can', 'dumpster']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'sty', 'goose-house', 'frog-house', 'hollow-log', 'oak', 'owl-box', 'rock-pile', 'molehill', 'garbage-can', 'dumpster']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -290,6 +304,7 @@ const PROP_CATEGORY: Readonly<Record<PropId, string>> = {
   'owl-box': 'Shelter',
   'hollow-log': 'Shelter',
   'rock-pile': 'Shelter',
+  molehill: 'Shelter',
 }
 
 /** Chip copy for the info card, e.g. "Shelter" or "Fence run - 4 sections". */
@@ -315,7 +330,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0, 'goose-house': 0, sty: 0, 'frog-house': 0, 'owl-box': 0, 'hollow-log': 0, 'rock-pile': 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0, 'goose-house': 0, sty: 0, 'frog-house': 0, 'owl-box': 0, 'hollow-log': 0, 'rock-pile': 0, molehill: 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0

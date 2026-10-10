@@ -4,7 +4,7 @@ Run from repository root:
   blender --background --factory-startup --python art/blender/animal_houses.py
   blender --background --factory-startup --python art/blender/animal_houses.py -- sty owl-box
 
-Regenerates, for each house named after `--` (all six by default):
+Regenerates, for each house named after `--` (all of them by default):
   public/assets/props/<id>.blend, <id>-review.png and <id>.glb
 
 The coop (chicken_coop.py), barn (barn_prop.py) and dumpster have their own
@@ -16,6 +16,7 @@ scripts. These six complete the set, one house per species:
   owl-box      a peaked nest box with a round entrance, up on a tall post
   hollow-log   a fallen hollow log with a knothole door, for mice and rats
   rock-pile    a sun-warmed cairn with a crevice door, for snakes
+  molehill     a fresh dirt mound with a round burrow door, for moles
 
 They share the coop's palette (cream boards, teal trim, terracotta roofs) so the
 farm reads as one set. Authoring frame matches the other props: Z-up, resting on
@@ -576,7 +577,47 @@ def build_rock_pile():
     return root, {"camera": (4.0, -7.0, 3.8), "target": (0, -.05, .45), "ortho": 2.8}
 
 
+# ---------------------------------------------------------------- molehill --
+
+def build_molehill():
+    M = shared_materials("MOLEHILL")
+    M["soil"] = make_material("MOLEHILL · fresh loam", "#7a5638", .95, 0, .0)
+    M["soilDark"] = make_material("MOLEHILL · turned clods", "#5f4128", .95, 0, .0)
+    M["soilLight"] = make_material("MOLEHILL · dry crumbs", "#9a7650", .95, 0, .0)
+    M["worm"] = make_material("MOLEHILL · earthworm", "#e59aa4", .5, 0, .1)
+    M["root"] = make_material("MOLEHILL · pale root", "#e8dcc0", .8, 0, .02)
+    root = pivot("PROP MOLEHILL · export root", (0, 0, 0))
+    root["asset_id"] = "molehill"
+    root["design_size"] = "1 x 1 cell, about 0.9 m tall"
+    root["description"] = "A fresh dirt mound with a round burrow door at the front, for moles"
+
+    # The mound: a tall squat dome of loam on a wider skirt of turned earth.
+    blob("MOLEHILL · skirt", (0, 0, .06), (.95, .9, .12), M["soilDark"], root, 22, 8)
+    blob("MOLEHILL · mound", (0, .04, .38), (.72, .68, .46), M["soil"], root, 22, 14)
+    blob("MOLEHILL · crown", (.08, .1, .66), (.36, .34, .22), M["soilLight"], root, 16, 10)
+    # Clods the mole has pushed up, scattered over the dome and spilling down the sides.
+    for index, (x, y, z, s) in enumerate([(-.45, .28, .44, .13), (.5, .2, .4, .12), (-.2, .5, .52, .11), (.28, .52, .46, .1),
+                                          (-.62, -.12, .22, .1), (.66, -.06, .2, .09), (.02, .62, .34, .1)]):
+        clod = blob(f"MOLEHILL · clod {index}", (x, y, z), (s * 1.15, s, s * .8), M["soilDark" if index % 2 else "soilLight"], root, 10, 7)
+        clod.rotation_euler = (0, 0, index * .7)
+    # The burrow door on the -Y face: a dark round hole under a lip of earth, and a stone step.
+    blob("MOLEHILL · door lip", (0, -.5, .3), (.34, .16, .26), M["soilDark"], root, 16, 10)
+    blob("MOLEHILL · burrow door", (0, -.6, .27), (.2, .075, .23), M["dark"], root, 18, 12)
+    blob("MOLEHILL · door floor", (0, -.76, .05), (.3, .22, .05), M["soilLight"], root, 14, 8)
+    # Two fat worms out in front, for character.
+    for index, (x, y, a) in enumerate([(.42, -.52, .5), (-.5, -.5, -.4)]):
+        worm = blob(f"MOLEHILL · worm {index}", (x, y, .06), (.17, .045, .04), M["worm"], root, 12, 8)
+        worm.rotation_euler = (0, 0, a)
+    # A few grass blades at the foot, so it sits in the lawn it came from.
+    for index, (x, y) in enumerate([(-.85, .3), (.9, .35), (-.6, .8), (.6, .75)]):
+        for blade in range(3):
+            a = blade * 2.1 + index
+            cone(f"MOLEHILL · grass {index}-{blade}", (x + math.cos(a) * .06, y + math.sin(a) * .06, .16), .045, 0, .32 + .08 * (blade % 2), M["grass"], root, 5)
+    return root, {"camera": (3.6, -6.4, 3.4), "target": (0, -.05, .35), "ortho": 2.6}
+
+
 HOUSES = {
+    "molehill": build_molehill,
     "goose-house": build_goose_house,
     "sty": build_sty,
     "frog-house": build_frog_house,

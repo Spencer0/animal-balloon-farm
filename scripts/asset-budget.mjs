@@ -15,8 +15,13 @@ const BUDGETS = [
   { dir: 'public/assets/cursors', maxTris: 25_000, maxKb: 700, label: 'cursor' },
   { dir: 'public/assets/props', maxTris: 8000, maxKb: 400, label: 'prop' },
   { dir: 'public/assets/ui', maxTris: 8000, maxKb: 500, label: 'ui prop' },
+  // The intro film's cast and sets. Loaded only while the cutscene plays (never
+  // during farming), so they are budgeted per scene rather than per crowd.
+  { dir: 'public/assets/cutscenes', maxTris: 50_000, maxKb: 1000, label: 'cutscene' },
 ];
-const MAX_TOTAL_ANIMAL_KB = 16_000;
+// Raised from 16 MB to 50 MB (Oct 2026) so animals can be built at full detail. The per-animal
+// caps above still stand; this total only bounds the whole catalog's download.
+const MAX_TOTAL_ANIMAL_KB = 50_000;
 
 /** @param {string} path */
 async function glbStats(path) {

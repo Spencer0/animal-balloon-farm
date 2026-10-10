@@ -35,6 +35,21 @@ test('the tall pack waits for farmer level 1 and costs coins once', () => {
   assert.equal(unlocks.purchaseUpgrade(wallet, ledger, 'tall-grass', 9).failure, 'maxed')
 })
 
+test('the Snower costs 250 coins, is bought once, and opens at farmer level 1', () => {
+  assert.equal(unlocks.SNOWER_PRICE, 250)
+  assert.ok(unlocks.UPGRADE_ORDER.includes('snower'))
+  const ledger = unlocks.createUpgradeLedger()
+  const wallet = createWallet(300)
+  assert.equal(unlocks.purchaseUpgrade(wallet, ledger, 'snower', 0).failure, 'locked')
+  const bought = unlocks.purchaseUpgrade(wallet, ledger, 'snower', 1)
+  assert.equal(bought.ok, true)
+  assert.equal(bought.price, 250)
+  assert.equal(wallet.balance, 50)
+  assert.ok(ledger.owns('snower'))
+  assert.equal(unlocks.purchaseUpgrade(wallet, ledger, 'snower', 9).failure, 'maxed')
+  assert.ok(unlocks.unlocksAtFarmerLevel(1).includes('Snower'))
+})
+
 test('a purchase needs the coins as well as the level', () => {
   const ledger = unlocks.createUpgradeLedger()
   const wallet = createWallet(5)
@@ -91,7 +106,7 @@ test('a locked prop cannot be bought even with the coins', () => {
 })
 
 test('each farmer level lists what it opens, for the player panel', () => {
-  assert.deepEqual(unlocks.unlocksAtFarmerLevel(0), ['Fence'])
+  assert.deepEqual(unlocks.unlocksAtFarmerLevel(0), ['Shovel', 'Water Bucket', 'Fence'])
   const first = unlocks.unlocksAtFarmerLevel(1)
   for (const name of ['Tall Grass Seed Pack', 'Land deed 1', 'Chicken Coop', 'Small Barn']) assert.ok(first.includes(name), name)
 })

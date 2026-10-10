@@ -20,6 +20,8 @@ export interface ScenarioHarness {
   expandFarm(level: number): number
   addAnimal(species: string, stage?: number): string | null
   buy(id: string): unknown
+  /** Buy a shop upgrade ('shovel' | 'water-bucket' | 'tall-grass' | 'land-deed') by the shop's rules. */
+  buyUpgrade(id: string): { readonly ok: boolean; readonly text: string }
   placeProp(id: string, cellX: number, cellZ: number, rotation?: number): unknown
   /** Sow a disc of full-grown grass: 'short' lawn or 'tall' meadow. */
   sowGrass(x: number, z: number, radius: number, pack?: 'short' | 'tall'): unknown
@@ -33,6 +35,8 @@ export interface ScenarioHarness {
   feedSnake(count: number): unknown
   hurryHunt(): void
   setOwlHelium(level: number): void
+  /** Set the helium (0..1) of every settled animal of a species. Returns how many it changed. */
+  setHelium(species: string, level: number): number
   stepHunt(seconds: number, secondsPerStep?: number): unknown
   focusPoint(x: number, z: number, height?: number): void
   animalReport(): Record<string, unknown>[]

@@ -47,6 +47,7 @@ const PIP_QUOTES = [
   "An oak? Lovely. Mind the night shift; something hoots in those branches.",
   "Blue pack for a tidy lawn, green pack for a meadow. Press E with the bag out to swap.",
   "Land? I know a surveyor. Reach the next farmer level and I will make the introduction.",
+  "The Snower? Balloon on the outside, blizzard on the inside. Press 4 once it is yours.",
 ];
 
 function escapeHtml(text: string): string {
@@ -98,10 +99,24 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   /** A drawn icon for the upgrades, so they need no baked art: a sack for seed, a scroll for land. */
   function upgradeIcon(id: UpgradeId, locked: boolean): string {
     const color = UPGRADE_CATALOG[id].color;
-    const body = id === "tall-grass"
+    const body = id === "shovel"
+      ? `<path d="M30 6h4v26h-4z" fill="#8a6f3f"/><path d="M24 6h16" stroke="#8a6f3f" stroke-width="5" stroke-linecap="round"/>` +
+        `<path d="M20 32h24c0 14-5 24-12 26-7-2-12-12-12-26z" fill="${color}"/><path d="M32 36v18" stroke="#fff6dc" stroke-width="2.4" stroke-linecap="round" opacity=".7"/>`
+      : id === "water-bucket"
+      ? `<path d="M16 22h32l-4 32H20z" fill="${color}"/><ellipse cx="32" cy="22" rx="16" ry="5" fill="#b3edf0"/>` +
+        `<path d="M18 22c0-12 28-12 28 0" fill="none" stroke="#6b5a45" stroke-width="3" stroke-linecap="round"/>` +
+        `<path d="M23 34h18M24 43h16" stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".6"/>`
+      : id === "tall-grass"
       ? `<path d="M32 20c-12 2-18 14-16 30 1 6 6 9 16 9s15-3 16-9c2-16-4-28-16-30z" fill="${color}"/>` +
         `<path d="M26 20c2-6 4-9 6-9s4 3 6 9" fill="none" stroke="#8a6f3f" stroke-width="3" stroke-linecap="round"/>` +
         `<path d="M32 50V37m0 4c-4 0-6-3-6-6m6 6c4 0 6-3 6-6" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".85"/>`
+      : id === "snower"
+      ? `<ellipse cx="38" cy="26" rx="15" ry="17" fill="${color}"/>` +
+        `<path d="M36 41l-4 5 6-1z" fill="#6fb6dc"/>` +
+        `<path d="M33 45L12 52" stroke="#f4fbff" stroke-width="7" stroke-linecap="round"/>` +
+        `<path d="M12 52l-6 3" stroke="#f2796b" stroke-width="6" stroke-linecap="round"/>` +
+        `<path d="M38 17v18M30 21l16 10M46 21L30 31" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>` +
+        `<path d="M32 10c0-4 6-4 6 0" fill="none" stroke="#f2796b" stroke-width="3" stroke-linecap="round"/>`
       : `<rect x="12" y="14" width="40" height="36" rx="5" fill="${color}"/>` +
         `<path d="M19 25h26M19 32h26M19 39h14" stroke="#fff6dc" stroke-width="3" stroke-linecap="round" opacity=".9"/>` +
         `<circle cx="44" cy="42" r="6" fill="#b8503f"/>`;

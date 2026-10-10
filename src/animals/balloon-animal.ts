@@ -48,7 +48,6 @@ export interface BalloonAnimalOptions {
   readonly camera: THREE.Camera
   readonly wandering?: boolean
   readonly captureOnClick?: boolean
-  readonly replayCaptureOnClick?: boolean
   /** Accent tint for this species' non-heart cosmetics; hearts are always pink. */
   readonly eyeColor?: string
   /** Starting rung on the condition ladder. */
@@ -199,6 +198,7 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   mouse: new THREE.MeshStandardMaterial({ color: '#c99a6b', roughness: 0.3, metalness: 0.01 }),
   rat: new THREE.MeshStandardMaterial({ color: '#7b7480', roughness: 0.3, metalness: 0.01 }),
   snake: new THREE.MeshStandardMaterial({ color: '#3f9e6e', roughness: 0.26, metalness: 0.01 }),
+  mole: new THREE.MeshStandardMaterial({ color: '#5b5663', roughness: 0.3, metalness: 0.01 }),
 }
 const HOOF_MATERIAL = new THREE.MeshStandardMaterial({ color: '#76505d', roughness: 0.31 })
 const WILD_BALLOON_COLOR = new THREE.Color('#e53649')
@@ -836,7 +836,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const onPointerDown = (event: PointerEvent): void => {
     if (sold || options.captureOnClick === false || event.button !== 0 || event.detail >= 2
       || options.isPointerBlocked?.(event.clientX, event.clientY)
-      || (captured && !options.replayCaptureOnClick)) return
+      || captured) return
     const bounds = options.canvas.getBoundingClientRect()
     const pointer = new THREE.Vector2(
       ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
@@ -846,7 +846,6 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     raycaster.setFromCamera(pointer, options.camera)
     const hit = raycaster.intersectObjects([wrapper], true)[0]
     if (!hit) return
-    if (captured && options.replayCaptureOnClick) setAppearance('wild')
     if (!beginCapture()) return
     event.preventDefault()
   }
