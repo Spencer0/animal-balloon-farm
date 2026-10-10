@@ -84,6 +84,7 @@ import {
 } from './game/save-game'
 import { createNotificationPanel } from './ui/notification-panel'
 import { createNotificationDomPanel } from './ui/notification-dom'
+import { createIntroCutscene, type IntroCutscene } from './scene/intro-cutscene'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
@@ -185,7 +186,8 @@ scene.add(rim)
 // stray autosave (or an auto-loaded farm) would corrupt a stress measurement.
 const saveEnabled = !gardenDebugMode || pageParams.has('saves')
 const saveStore = createSaveStore(saveEnabled ? browserSaveStorage() : null)
-const startup = saveEnabled ? resolveStartup(saveStore, saveStore.takeBoot()) : { slot: null, envelope: null, notice: null }
+const bootRequest = saveEnabled ? saveStore.takeBoot() : null
+const startup = saveEnabled ? resolveStartup(saveStore, bootRequest) : { slot: null, envelope: null, notice: null }
 const loadedSave = startup.envelope?.data ?? null
 const dayNightClock = createDayNightClock()
 if (loadedSave) {
@@ -2257,6 +2259,11 @@ function handleMenuChoice(choice: MenuChoice): void {
     farmsPanel.open()
     return
   }
+  // A brand-new farm opens with the intro film; the farm itself waits for it.
+  if (choice === 'enter' && !hasEntered && introWanted()) {
+    startIntro()
+    return
+  }
   if (choice === 'enter') hasEntered = true
   if (choice === 'options') {
     // The screen opens over the menu; closing it lands back on the menu.
@@ -3203,6 +3210,68 @@ window.addEventListener('resize', () => {
   balloon.resize(window.innerWidth, window.innerHeight)
 })
 
+// ------------------------------------------------------------- intro film --
+// A fresh farm starts with the intro cutscene (scene/intro-cutscene.ts). While
+// it runs, the farm is neither simulated nor drawn and every key and click
+// belongs to the film: Escape skips, anything else asks to be pressed again.
+
+let intro: IntroCutscene | null = null
+let introPlayed = false
+let introSkipArmedUntil = 0
+const INTRO_SKIP_CONFIRM_MS = 2600
+
+/** Fresh farms only, once a session; the debug harness opts in with ?intro. */
+function introWanted(): boolean {
+  if (introPlayed || loadedSave) return false
+  return !gardenDebugMode || pageParams.has('intro')
+}
+
+function startIntro(): void {
+  if (intro) return
+  introPlayed = true
+  menu.close()
+  const cutscene = createIntroCutscene(renderer, window.innerWidth, window.innerHeight)
+  intro = cutscene
+  setCursor('idle', gameCanvas)
+  cutscene.load().catch((error: unknown) => {
+    // A film that cannot load must never stand between the player and the farm.
+    console.warn('[intro] could not load the cutscene; going straight to the farm', error)
+    if (intro === cutscene) finishIntro()
+  })
+}
+
+function finishIntro(): void {
+  const cutscene = intro
+  if (!cutscene) return
+  intro = null
+  cutscene.dispose()
+  previousTime = performance.now()
+  handleMenuChoice('enter')
+}
+
+function interceptIntroInput(event: KeyboardEvent | PointerEvent): void {
+  if (!intro) return
+  event.stopImmediatePropagation()
+  event.preventDefault()
+  // After a New Farm reload the film starts without a gesture, so its sound
+  // waits for this first press.
+  intro.resumeAudio()
+  if (event instanceof KeyboardEvent && event.repeat) return
+  const now = performance.now()
+  if ((event instanceof KeyboardEvent && event.key === 'Escape') || now < introSkipArmedUntil) {
+    intro.skip()
+    return
+  }
+  introSkipArmedUntil = now + INTRO_SKIP_CONFIRM_MS
+  intro.flashSkipHint()
+}
+
+window.addEventListener('keydown', interceptIntroInput, { capture: true })
+window.addEventListener('pointerdown', interceptIntroInput, { capture: true })
+window.addEventListener('resize', () => intro?.resize(window.innerWidth, window.innerHeight))
+if (bootRequest?.kind === 'new' && introWanted()) startIntro()
+else if (gardenDebugMode && pageParams.has('intro')) startIntro()
+
 // ------------------------------------------------------------- garden debug --
 
 declare global {
@@ -3238,6 +3307,8 @@ interface GardenDebugHarness {
   clock(): { readonly timeOfDay: number; readonly phase: string; readonly date: string; readonly elapsedDays: number }
   setTimeOfDay(time: number): void
   skipToMorning(): void
+  /** Start the intro cutscene, hold it at a moment (or resume it), and report what it shows. */
+  intro(seconds?: number): unknown
   skipToNight(): void
   /** Jump whole days ahead, e.g. to watch the carnival set up on a Sunday. */
   skipDays(days: number): void
@@ -3665,6 +3736,20 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       tools: gardenTools?.debugState() ?? null,
     }),
     focusGarden: focusCamera,
+    intro: (seconds) => {
+      if (!intro) startIntro()
+      // A seek holds the frame for a screenshot; a bare call lets the film run on.
+      intro?.setPaused(seconds !== undefined)
+      if (seconds !== undefined && intro) {
+        intro.seek(seconds)
+        // Draw now: a hidden tab throttles animation frames, and a screenshot
+        // taken before the next one would show the previous moment.
+        intro.update(0)
+        intro.render()
+      }
+      Object.defineProperty(window, '__introScenes', { value: intro?.scenes ?? null, configurable: true })
+      return intro ? { loaded: intro.loaded, ...intro.describe() } : null
+    },
     openMenu: () => menu.open(),
     closeMenu: () => menu.close(),
     openJournal: () => journal.open(),
@@ -4244,6 +4329,13 @@ function frame(now: number): void {
   const workStartedAt = timingEnabled ? performance.now() : 0
   const delta = Math.min(0.05, Math.max(0, (now - previousTime) / 1000))
   previousTime = now
+  if (intro) {
+    intro.update(delta)
+    intro.render()
+    if (intro.done) finishIntro()
+    requestAnimationFrame(frame)
+    return
+  }
   let stageStartedAt = workStartedAt
   removePreviousCameraShake()
   if (!clockHeld) advanceClock(dayNightClock, delta)
