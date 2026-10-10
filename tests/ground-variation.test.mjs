@@ -7,7 +7,7 @@ async function load(entry) {
   return import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 }
 
-const { applyGroundVariation, createGroundVariationBounds } = await load('src/scene/ground-variation.ts')
+const { applyGroundVariation, createGroundVariationBounds, getGroundVariationField, sampleGroundField, GROUND_FIELD_EXTENT } = await load('src/scene/ground-variation.ts')
 const { farmEdgeFactor } = await load('src/game/farm-footprint.ts')
 const THREE = await import('three')
 
@@ -53,16 +53,39 @@ test('program cache keys differ by kind and space so programs are not shared', (
   assert.equal(new Set(keys).size, keys.length)
 })
 
-test('only the gravel feathers its rim and carries pebbles', () => {
+test('each kind compiles in only the effects it needs', () => {
   const bounds = createGroundVariationBounds({ halfWidth: 10, halfDepth: 9 })
-  const gravel = compile({ kind: 'gravel', bounds, localSpace: true }).shader.uniforms
-  const meadow = compile({ kind: 'meadow', bounds }).shader.uniforms
-  assert.equal(gravel.uGvFeather.value, 1)
-  assert.equal(gravel.uGvLocalSpace.value, 1)
-  assert.ok(gravel.uGvParams.value.w > 0)
-  assert.equal(meadow.uGvFeather.value, 0)
-  assert.equal(meadow.uGvParams.value.w, 0)
-  assert.ok(meadow.uGvParams.value.z > 0, 'the meadow fades to dust beside the farm')
+  const defines = (options) => [...compile(options).shader.fragmentShader.matchAll(/#define (GV_\w+)/g)].map((m) => m[1]).sort()
+  assert.deepEqual(defines({ kind: 'meadow', bounds }), ['GV_DISTANCE', 'GV_FIELD'])
+  assert.deepEqual(defines({ kind: 'lawn', bounds }), ['GV_FIELD', 'GV_PAINT'])
+  assert.deepEqual(defines({ kind: 'soil', bounds }), ['GV_FIELD'])
+  assert.deepEqual(defines({ kind: 'gravel', bounds, localSpace: true }), ['GV_DISTANCE', 'GV_FEATHER', 'GV_PEBBLES'])
+  assert.equal(compile({ kind: 'meadow', bounds }).shader.uniforms.uGvParams.value.z > 0, true, 'the meadow fades to dust beside the farm')
+  assert.equal(compile({ kind: 'gravel', bounds, localSpace: true }).shader.uniforms.uGvLocalSpace.value, 1)
+})
+
+test('the baked field is shared, deterministic and in range', () => {
+  const first = getGroundVariationField()
+  assert.equal(getGroundVariationField(), first, 'one texture serves every ground material')
+  assert.equal(first.image.width, 512)
+  const again = sampleGroundField(12.5, -7.25)
+  assert.deepEqual(again, sampleGroundField(12.5, -7.25))
+  for (const value of Object.values(again)) assert.ok(value >= 0 && value <= 1)
+  // Texel (column, row) holds the sample at its world centre: row 0 is z = -extent/2.
+  const texel = GROUND_FIELD_EXTENT / 512
+  const column = 300
+  const row = 100
+  const expected = sampleGroundField((column + 0.5) * texel - GROUND_FIELD_EXTENT / 2, (row + 0.5) * texel - GROUND_FIELD_EXTENT / 2)
+  const offset = (row * 512 + column) * 4
+  assert.equal(first.image.data[offset], Math.round(expected.tone * 255))
+  assert.equal(first.image.data[offset + 1], Math.round(expected.dry * 255))
+  assert.equal(first.image.data[offset + 2], Math.round(expected.lush * 255))
+})
+
+test('the field actually varies across the meadow', () => {
+  const tones = []
+  for (let x = -120; x <= 120; x += 8) tones.push(sampleGroundField(x, 40).tone)
+  assert.ok(Math.max(...tones) - Math.min(...tones) > 0.25, 'tone swings across the meadow')
 })
 
 test('the GLSL edge factor matches the simulation footprint', () => {
