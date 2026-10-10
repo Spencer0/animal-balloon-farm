@@ -1,8 +1,10 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
-import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST, type BalloonAnimalId } from './animals/animal-catalog'
-import { chooseOutdoorRoster, HOUSE_CAPACITY, houseAccepts, houseOccupancy, houseWithRoom, isHouse, occupantsByHouse, type RosterAnimal } from './game/animal-housing'
+import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST } from './animals/animal-catalog'
+import { isHouse } from './game/animal-housing'
+import { createHousing } from './scene/housing'
+import type { Bed } from './game/sleep'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairground'
 import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent, type AnimalLifeSnapshot } from './game/animal-life'
 import { clearOfFarmBounds } from './game/animal-travel'
@@ -27,10 +29,9 @@ import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
-import { createGardenProps, type GardenProps, type HouseSpot, type PropSelection } from './scene/garden-props'
+import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
 import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
-import { footprintWorldRect, PROP_CATALOG, PROP_ORDER, propDefinition, type PropId } from './game/farm-props'
-import { resolveCollisions, type CollisionBody, type CollisionBox } from './game/animal-collision'
+import { PROP_CATALOG, PROP_ORDER, type PropId } from './game/farm-props'
 import { shopUnlocked } from './game/shop-construction'
 import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import type { GardenToolId } from './scene/garden-tool-art'
@@ -54,11 +55,10 @@ import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
-import { createPropCard, type PropResidents } from './ui/prop-card'
+import { createPropCard } from './ui/prop-card'
 import { createSellBurst, type SellBurst } from './ui/sell-burst'
 import { isNightTime } from './game/predator'
 import { createPredation } from './scene/predation'
-import { SLEEP_PROPS, bedBeside, pickAnchor, shouldSleep, type Bed } from './game/sleep'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -689,77 +689,18 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
 /** Where each sleeping night animal lay down, so it keeps its bed all day instead of chasing the nearest can. */
 const sleepBeds = new Map<string, Bed>()
 
-/**
- * Night animals sleep by day: a resident curls up beside a garbage can, anything else
- * where it stands. Everyone wakes at dusk. Beds are chosen once per sleep so the
- * animal is not shuffled about as other animals settle.
- */
-function updateSleepers(): void {
-  if (mode === 'viewer') return
-  const night = isNightTime(dayNightClock.timeOfDay)
-  // Each night species sleeps by the first prop on its SLEEP_PROPS list that is placed (a house
-  // before a can); with none, or no entry, it sleeps where it stands.
-  type Home = { x: number; z: number; radius: number; key: string }
-  const homesFor = (species: string): Home[] => {
-    for (const { prop, radius } of SLEEP_PROPS[species] ?? []) {
-      const spots = gardenProps?.placements(prop as PropId) ?? []
-      if (spots.length > 0) return spots.map((spot, index) => ({ ...spot, radius, key: `${prop}:${index}` }))
-    }
-    return []
-  }
-  const occupancy = new Map<string, number>()
-  const nearHome = (bed: Bed, home: Home): boolean => Math.hypot(bed.x - home.x, bed.z - home.z) < home.radius + 0.5
-  for (const animal of animals) {
-    const bed = sleepBeds.get(animal.instanceId)
-    if (!bed || !shouldSleep(animal.id, night)) continue
-    const home = homesFor(animal.id).find((candidate) => nearHome(bed, candidate))
-    if (home) occupancy.set(home.key, (occupancy.get(home.key) ?? 0) + 1)
-  }
-  for (const animal of animals) {
-    if (animal.isFlier) continue
-    if (animal.isSold) {
-      sleepBeds.delete(animal.instanceId)
-      continue
-    }
-    const record = progress.animal(animal.instanceId)
-    const wantsSleep = shouldSleep(animal.id, night) && animal.isAtFarm && !animal.isCapturing && !animal.isRomancing
-      && Boolean(record && record.stage >= 2 && !record.baby)
-    if (!wantsSleep) {
-      if (sleepBeds.delete(animal.instanceId)) animal.setSleepSpot(null)
-      continue
-    }
-    let bed = sleepBeds.get(animal.instanceId)
-    // A resident prefers a home; if one is placed after it lay down, it moves over.
-    const resident = (record?.stage ?? 0) >= 3
-    const homes = resident ? homesFor(animal.id) : []
-    if (!bed || (homes.length > 0 && !homes.some((home) => nearHome(bed!, home)))) {
-      const from = { x: animal.currentPosition.x, z: animal.currentPosition.z }
-      const index = pickAnchor(homes, homes.map((home) => occupancy.get(home.key) ?? 0), from)
-      if (index >= 0) {
-        const home = homes[index]
-        const slot = occupancy.get(home.key) ?? 0
-        occupancy.set(home.key, slot + 1)
-        bed = bedBeside(home, slot, home.radius)
-      } else {
-        bed = { x: from.x, z: from.z, heading: animal.currentHeading }
-      }
-      sleepBeds.set(animal.instanceId, bed)
-    }
-    animal.setSleepSpot(bed)
-  }
-}
 
 /**
  * Everything the animal sim reads from the scene, in one place. Every tick goes
  * through here: a tick that left out the houses would evict every resident.
  */
 function animalLifeSnapshot(): AnimalLifeSnapshot {
-  houseSpots = gardenProps?.houses() ?? []
+  setHouses(gardenProps?.houses() ?? [])
   return {
     farm: currentFarmSnapshot(),
     expansionLevel: fairground.farmExpansion?.state.level ?? 0,
     positions: Object.fromEntries(animals.map((animal) => [animal.instanceId, { x: animal.root.position.x, z: animal.root.position.z }])),
-    houses: houseSpots.map((house) => ({ id: house.id, prop: house.prop, x: house.x, z: house.z })),
+    houses: houses().map((house) => ({ id: house.id, prop: house.prop, x: house.x, z: house.z })),
   }
 }
 
@@ -790,16 +731,8 @@ function updateAnimalProgress(deltaSeconds: number): void {
 // disposed; one coming out is rebuilt at that house's door. That is what keeps
 // the drawn herd small however big it grows.
 
-/** Houses on the farm, refreshed every tick from the placed props. */
-let houseSpots: readonly HouseSpot[] = []
-/** Who the roster last put outside. */
-let outdoorRoster: ReadonlySet<string> = new Set()
-let lastRosterAt = -Infinity
-const ROSTER_REFRESH_SECONDS = 0.5
 /** Animals walking to a door to go in: which house, and when they set off. */
 const goingIn = new Map<string, { readonly houseId: string; readonly since: number }>()
-/** Give up on a walk in that never arrives (stuck on a prop) after this long. */
-const GOING_IN_TIMEOUT_SECONDS = 20
 /** A newborn stays in view this long after its birth, so the player sees it come out. */
 const newbornUntil = new Map<string, number>()
 const NEWBORN_SHOW_SECONDS = 25
@@ -808,246 +741,23 @@ const knownDoors = new Map<string, { readonly x: number; readonly z: number }>()
 /** The house each indoor animal went into. */
 const lastHouseOf = new Map<string, string>()
 
-function houseSpot(id: string | null | undefined): HouseSpot | undefined {
-  return id ? houseSpots.find((house) => house.id === id) : undefined
-}
 
-function hasHouseFor(species: string): boolean {
-  return houseSpots.some((house) => houseAccepts(house.prop, species))
-}
 
-/** Must stay in view: busy, selected, hunted, or not yet settled at the farm. */
-function pinnedOutside(id: string, nowSeconds: number): boolean {
-  if (id === focusedAnimalId || (newbornUntil.get(id) ?? 0) > nowSeconds) return true
-  const animal = animalById.get(id)
-  if (!animal) return false
-  return animal.isCapturing || animal.isResidencyPending || animal.isAlarmed || !animal.isAtFarm
-    || owlHunt.huntedIds().has(id) || snakeHunt.huntedIds().has(id)
-}
 
-/** Take an animal's model off the farm. The record stays in the sim. */
-function retireModel(animal: BalloonAnimal): void {
-  animal.setHomeTrip(null)
-  goingIn.delete(animal.instanceId)
-  bolting.delete(animal.instanceId)
-  animalById.delete(animal.instanceId)
-  const index = animals.indexOf(animal)
-  if (index >= 0) animals.splice(index, 1)
-  farmHomes.delete(animal.instanceId)
-  viewerStands.delete(animal.instanceId)
-  sleepBeds.delete(animal.instanceId)
-  animal.dispose()
-}
 
-/** Rebuild an animal's model at a door: it is stepping out onto the farm. */
-function stepOut(record: AnimalRecord, door: { readonly x: number; readonly z: number }): void {
-  if (animalById.has(record.id) || animalCreations.has(record.id)) return
-  void createAnimalInstance(record, door, true).then((created) => {
-    created.placeAt(door.x, door.z)
-    refreshAnimalVisibility(performance.now() / 1000, true)
-  })
-}
 
-function cancelTrip(id: string): void {
-  animalById.get(id)?.setHomeTrip(null)
-  goingIn.delete(id)
-  bolting.delete(id)
-}
 
-/** Give up waiting for a loaded farm's houses after this long and bring indoor animals out instead. */
-const SAVED_INDOORS_WAIT_SECONDS = 5
-let savedIndoorsSince: number | null = null
 
-/**
- * Put animals that were indoors in a save back into this session's houses:
- * the nearest house of their kind with room to the door they went in by. One
- * with nowhere to go steps out there instead.
- */
-function restoreSavedIndoors(nowSeconds: number): void {
-  if (savedIndoors.size === 0) return
-  savedIndoorsSince ??= nowSeconds
-  const waited = nowSeconds - savedIndoorsSince >= SAVED_INDOORS_WAIT_SECONDS
-  if (houseSpots.length === 0 && !waited) return
-  for (const [id, door] of savedIndoors) {
-    savedIndoors.delete(id)
-    const record = progress.animal(id)
-    if (!record) continue
-    const used = occupantsByHouse(progress.all())
-    const house = houseWithRoom(record.species, houseSpots, used, HOUSE_CAPACITY, door)
-    if (house && progress.enterHouse(id, house.id)) {
-      lastHouseOf.set(id, house.id)
-      continue
-    }
-    stepOut(record, door)
-  }
-}
 
-function updateHousing(nowSeconds: number): void {
-  if (mode !== 'farm') return
-  for (const house of houseSpots) knownDoors.set(house.id, { x: house.doorX, z: house.doorZ })
-  for (const [id, until] of newbornUntil) if (until <= nowSeconds || !progress.animal(id)) newbornUntil.delete(id)
-  restoreSavedIndoors(nowSeconds)
-  const records = progress.all().filter((record) => record.stage > 0)
-  if (nowSeconds - lastRosterAt >= ROSTER_REFRESH_SECONDS) {
-    lastRosterAt = nowSeconds
-    const roster: RosterAnimal[] = records.map((record) => ({
-      id: record.id,
-      species: record.species,
-      canGoIndoors: record.stage >= 3 && (record.insideId !== null || hasHouseFor(record.species)),
-      pinned: pinnedOutside(record.id, nowSeconds),
-    }))
-    outdoorRoster = chooseOutdoorRoster({ animals: roster, night: isNightTime(dayNightClock.timeOfDay), timeSeconds: nowSeconds })
-  }
-  // Space already promised to animals on their way in counts as taken.
-  const reserved = new Map<string, number>()
-  for (const trip of goingIn.values()) reserved.set(trip.houseId, (reserved.get(trip.houseId) ?? 0) + 1)
-  const used = new Map(occupantsByHouse(records, reserved))
-  for (const record of records) {
-    const animal = animalById.get(record.id)
-    if (record.insideId) {
-      lastHouseOf.set(record.id, record.insideId)
-      if (!outdoorRoster.has(record.id)) continue
-      // It just escaped a snake in here: it is not coming out yet.
-      if ((hidingUntil.get(record.id) ?? 0) > nowSeconds) continue
-      hidingUntil.delete(record.id)
-      const house = houseSpot(record.insideId)
-      progress.leaveHouse(record.id)
-      if (house) stepOut(record, { x: house.doorX, z: house.doorZ })
-      continue
-    }
-    if (!animal) {
-      // Out in the sim but with no model: its house was stored or sold from under it.
-      if (record.stage >= 3 && !savedIndoors.has(record.id)) stepOut(record, knownDoors.get(lastHouseOf.get(record.id) ?? '') ?? { x: 0, z: 0 })
-      continue
-    }
-    const trip = goingIn.get(record.id)
-    // Fleeing a snake beats the roster: it is running for the door, not strolling.
-    const fleeing = Boolean(trip) && bolting.has(record.id)
-    if (!fleeing && (outdoorRoster.has(record.id) || record.stage < 3)) {
-      if (trip) cancelTrip(record.id)
-      continue
-    }
-    if (!trip) {
-      const house = houseWithRoom(record.species, houseSpots, used, HOUSE_CAPACITY, { x: animal.currentPosition.x, z: animal.currentPosition.z })
-      // Every house of its kind is full: it stays out, over the outdoor limit.
-      if (!house) continue
-      used.set(house.id, (used.get(house.id) ?? 0) + 1)
-      if (animal.isFlier) {
-        if (progress.enterHouse(record.id, house.id)) retireModel(animal)
-        continue
-      }
-      animal.setHomeTrip({ x: house.doorX, z: house.doorZ })
-      goingIn.set(record.id, { houseId: house.id, since: nowSeconds })
-      continue
-    }
-    if (!houseSpot(trip.houseId)) {
-      cancelTrip(record.id)
-      continue
-    }
-    if (animal.isAtDoor || nowSeconds - trip.since > GOING_IN_TIMEOUT_SECONDS) {
-      // The house may have filled while it walked over; then it tries again next time.
-      if (progress.enterHouse(record.id, trip.houseId)) retireModel(animal)
-      else cancelTrip(record.id)
-    }
-  }
-  if (propCard.isOpen && selectedProp && isHouse(selectedProp.id)) propCard.setResidents(residentsOf(selectedProp))
-}
 
-/** Plural display name for a species row on a house card, e.g. "Geese". */
-function speciesPluralName(species: string): string {
-  const name = animalDisplayName(species)
-  if (species === 'sheep') return name
-  if (species === 'goose') return 'Geese'
-  if (species === 'mouse') return 'Mice'
-  return `${name}s`
-}
 
-/** The animals inside a house right now. Animals out on the farm belong to no house. */
-function animalsInside(siteId: string): AnimalRecord[] {
-  return progress.all().filter((record) => record.insideId === siteId)
-}
 
-/**
- * Selling a house sells the animals inside it, at their usual prices. They have
- * no model while indoors, so each is simply credited and forgotten; anyone out
- * on the farm is untouched.
- */
-function sellAnimalsInside(siteId: string): number {
-  let total = 0
-  for (const record of animalsInside(siteId)) {
-    const price = animalSaleValue(record.species as BalloonAnimalId, record.stage)
-    const model = animalById.get(record.id)
-    if (model) retireModel(model)
-    progress.remove(record.id)
-    newbornUntil.delete(record.id)
-    lastHouseOf.delete(record.id)
-    total += price
-  }
-  if (total > 0) salePanel.setWallet(wallet.credit(total))
-  return total
-}
 
-/** What a house's card shows: space in use and who is inside, by species. */
-function residentsOf(selection: { readonly id: PropId; readonly siteId: string }): PropResidents | null {
-  if (!isHouse(selection.id)) return null
-  const inside = animalsInside(selection.siteId)
-  const occupancy = houseOccupancy(selection.siteId, selection.id, progress.all(), HOUSE_CAPACITY)
-  return {
-    capacity: occupancy.capacity,
-    used: occupancy.used,
-    saleCount: inside.length,
-    saleValue: inside.reduce((sum, record) => sum + animalSaleValue(record.species as BalloonAnimalId, record.stage), 0),
-    rows: occupancy.species.map((row) => ({ name: speciesPluralName(row.species), inside: row.inside })),
-  }
-}
 
 // ---------------------------------------------------------------- collisions --
 
-/** Solid prop footprints, rebuilt a few times a second: props move rarely, animals every frame. */
-let collisionBoxes: readonly CollisionBox[] = []
-let collisionBoxesAt = -Infinity
-const COLLISION_BOX_REFRESH_SECONDS = 0.25
-/** An animal's footprint radius as a share of its catalog size (its longest side). */
-const BODY_RADIUS_SHARE = 0.24
 const bodySizeBySpecies = new Map(ANIMAL_CATALOG.map((entry) => [entry.id as string, entry.size]))
 
-/**
- * Keep walking animals out of houses and other solid props, and out of each
- * other. Only the animals out on the farm have models, so this never sees more
- * than the outdoor limit (plus perf-ramp fixtures).
- */
-function collideAnimals(nowSeconds: number): void {
-  if (mode !== 'farm') return
-  if (nowSeconds - collisionBoxesAt >= COLLISION_BOX_REFRESH_SECONDS) {
-    collisionBoxesAt = nowSeconds
-    collisionBoxes = (gardenProps?.occupancy.placed ?? [])
-      .filter((prop) => prop.id !== 'fence' && propDefinition(prop.id).blocking)
-      .map((prop) => footprintWorldRect(prop.id, prop.cell, prop.rotation))
-  }
-  const walkers: BalloonAnimal[] = []
-  const bodies: CollisionBody[] = []
-  for (const animal of [...animals, ...crowdFixtures]) {
-    if (animal.isFlier || animal.isSold) continue
-    const position = animal.currentPosition
-    walkers.push(animal)
-    bodies.push({
-      x: position.x,
-      z: position.z,
-      radius: (bodySizeBySpecies.get(animal.id) ?? 2) * BODY_RADIUS_SHARE * animal.currentScale,
-      fixed: animal.isSleeping || animal.isCapturing || animal.isRomancing,
-      // On its way in through a door, walking the gate route from the carnival, or
-      // asleep in a bed laid out beside a prop (moving it would wake it to walk back).
-      ghost: animal.isGoingHome || !animal.isAtFarm || animal.isSleeping,
-    })
-  }
-  resolveCollisions(bodies, collisionBoxes)
-  bodies.forEach((body, index) => {
-    const animal = walkers[index]
-    const dx = body.x - animal.currentPosition.x
-    const dz = body.z - animal.currentPosition.z
-    if (dx !== 0 || dz !== 0) animal.nudge(dx, dz)
-  })
-}
 
 // ---------------------------------------------------------------- game modes --
 // The farm and the animal viewer are the same scene with different staging, so
@@ -2055,7 +1765,7 @@ const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil,
   getFocusedAnimal: () => focusedAnimalId,
   setFocusedAnimal: (id) => { focusedAnimalId = id },
   mode: () => mode,
-  houses: () => houseSpots,
+  houses: () => houses(),
   gardenProps: () => gardenProps,
   animalCard,
   syncFarmChrome,
@@ -2065,7 +1775,7 @@ const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil,
   activeGardenBounds,
   residentCounts,
   bodySizeBySpecies,
-  speciesPluralName,
+  speciesPluralName: (species) => speciesPluralName(species),
   dayNightClock,
 })
 const { measureFarm, remeasureMeadow, maturePlantCounts } = createFarmMeasure({
@@ -2077,6 +1787,35 @@ const { measureFarm, remeasureMeadow, maturePlantCounts } = createFarmMeasure({
   gardenProps: () => gardenProps,
   residentCounts,
   preyEaten: () => predationLedger.totals,
+})
+const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimals, updateSleepers } = createHousing({
+  progress,
+  animals,
+  animalById,
+  farmHomes,
+  viewerStands,
+  goingIn,
+  newbornUntil,
+  knownDoors,
+  lastHouseOf,
+  savedIndoors,
+  sleepBeds,
+  bolting,
+  hidingUntil,
+  getFocusedAnimal: () => focusedAnimalId,
+  isHunted: (id) => owlHunt.huntedIds().has(id) || snakeHunt.huntedIds().has(id),
+  createAnimalInstance,
+  animalCreations,
+  refreshAnimalVisibility,
+  mode: () => mode,
+  dayNightClock,
+  getSelectedProp: () => selectedProp,
+  propCard,
+  creditCoins: (amount) => { salePanel.setWallet(wallet.credit(amount)) },
+  animalDisplayName,
+  bodySizeBySpecies,
+  crowdFixtures,
+  gardenProps: () => gardenProps,
 })
 const hoverGlow = createHoverGlow()
 scene.add(hoverGlow.root)
@@ -2168,14 +1907,13 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     gardenProps: () => gardenProps,
     mode: () => mode,
     shownAnimalCount: () => shownAnimalCount,
-    houseSpots: () => houseSpots,
+    houseSpots: () => houses(),
     gardenBounds: () => currentGardenBounds,
     setGardenBounds: (bounds) => { currentGardenBounds = bounds },
     setClockHeld: (held) => { clockHeld = held },
     setFocusedAnimal: (id) => { focusedAnimalId = id },
     resetRoster: () => {
-      outdoorRoster = new Set()
-      lastRosterAt = -Infinity
+      resetRoster()
     },
     resetVisibilityClock: () => { lastVisibilityRefreshAt = 0 },
     refreshAnimalVisibility,
