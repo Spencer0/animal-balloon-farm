@@ -16,9 +16,7 @@
    the game canvas. Oversized images break the agent thread.
    Don't run `npm run gate` locally: its stress scenarios bog down Spencer's
    PC. It runs on GitHub CI for every pull request (the Performance workflow,
-   `.github/workflows/performance.yml`). Run `npm run check` locally, then
-   read the PR's Performance check before merging. If it fails, fix the change
-   or measure and justify a new budget. Never loosen a check to get green.
+   `.github/workflows/performance.yml`). Run `npm run check` locally.
 4. **Open a live preview for Spencer.** When work is ready to look at, start
    the worktree's dev server (`PORT=<port> npm run dev`, with a port no other
    worktree uses) and open its URL in the in-app browser so Spencer can play
@@ -27,8 +25,7 @@
    task branch and resolve conflicts. Run `npm run check` and push only if it
    passes. Commit with a message that explains why the change was needed, push,
    and open or merge the PR with the `gh` CLI. A push to `main` deploys to
-   GitHub Pages, so a red build must never reach it. Stage only the paths you
-   changed, never `git add -A`.
+   GitHub Pages. Stage only the paths you changed, never `git add -A`.
 6. **No file deletion from the shell.** Never run `Remove-Item`, `rm`, `del`,
    `rmdir`, or any other recursive delete, on Windows or anywhere else. Git
    commands are fine for undoing and discarding changes, including `git reset`
