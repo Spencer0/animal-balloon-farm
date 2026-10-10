@@ -7,7 +7,7 @@ import { UI_THEME } from './ui-theme'
  * The centralized UI layer.
  *
  * One scene, one orthographic camera, one set of lights, one input router --
- * shared by the main menu, the journal, the tool HUD and the viewer. Before
+ * shared by the main menu, the journal and the tool HUD. Before
  * this existed each surface built its own overlay scene, its own camera and its
  * own scaling rule, which is why the journal looked one way locally and another
  * way on the deployed build.
@@ -161,7 +161,7 @@ export function routePointer(
   return false
 }
 
-/** A full-bleed tinted scrim, used behind the menu and the viewer. */
+/** A full-bleed tinted scrim, used behind the menu. */
 export function createScrim(opacity: number, color = '#12211f'): THREE.Mesh {
   const material = new THREE.MeshBasicMaterial({
     color: new THREE.Color(color),

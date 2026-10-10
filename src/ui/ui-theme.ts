@@ -2,7 +2,7 @@
  * The shared visual language for every screen in the game.
  *
  * Colours, type and the handful of canvas primitives live here so the journal,
- * the tool HUD, the menu and the viewer cannot drift apart again. Sizes are in
+ * the tool HUD and the menu cannot drift apart again. Sizes are in
  * design units (see `ui-viewport.ts`); canvases are drawn at `TEXTURE_SCALE`
  * and then mapped down, so type stays crisp on high-DPI displays.
  */

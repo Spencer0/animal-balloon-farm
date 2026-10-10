@@ -1,6 +1,6 @@
 /* Boot shell only.
  *
- * All game UI -- menu, journal, tool bar, viewer -- is Three.js geometry and
+ * All game UI -- menu, journal, tool bar -- is Three.js geometry and
  * canvas drawn through `src/ui/ui-layer.ts`, so this file no longer styles any
  * interface. The only job left here is making the canvas fill the window and
  * stop the browser from selecting or scrolling it.
