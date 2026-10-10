@@ -1,9 +1,9 @@
 import './style.css'
 import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from './animals/balloon-animal'
-import { getAnimalSceneOptions, ANIMAL_CATALOG, VIEWER_CAST, type BalloonAnimalId } from './animals/animal-catalog'
+import { getAnimalSceneOptions, ANIMAL_CATALOG, type BalloonAnimalId } from './animals/animal-catalog'
 import { chooseOutdoorRoster, HOUSE_CAPACITY, houseAccepts, houseOccupancy, houseWithRoom, isHouse, occupantsByHouse, OUTDOOR_LIMITS, type RosterAnimal } from './game/animal-housing'
-import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS } from './scene/fairground'
+import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from './scene/fairground'
 import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalRecord, type AnimalLifeEvent, type AnimalLifeSnapshot } from './game/animal-life'
 import { FARM_EXPANSION_CONFIG } from './game/farm-expansion'
 import { clearOfFarmBounds } from './game/animal-travel'
@@ -22,7 +22,6 @@ import {
 import { type FarmSnapshot } from './game/animal-progress'
 import { farmMetric, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from './game/farm-state'
 import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind, type AnimalStage } from './game/animal-conditions'
-import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
 import { createGardenTools, ICE_SNOW_THRESHOLD, type GardenTools } from './scene/garden-tools'
 import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField, WATER_MIN_RENDER_DEPTH } from './game/garden-water'
@@ -47,7 +46,7 @@ import { createClockCalendarHud } from './ui/clock-calendar-hud'
 import { createPlantCard } from './ui/plant-card'
 import { createJournalPanel, type JournalConditionSource } from './ui/journal-panel'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
-import { createMenuPanel, type MenuChoice } from './ui/menu-panel'
+import { createMenuDomPanel, type MenuChoice } from './ui/menu-dom'
 import { createOptionsDomPanel, type OptionsDomPanel } from './ui/options-dom'
 import { createFpsCounter } from './ui/fps-counter'
 import { createSettingsStore } from './game/settings'
@@ -70,7 +69,6 @@ import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
 import { setCursor } from './ui/ui-cursor'
 import { createHoverGlow, type HoverGlowTarget } from './scene/hover-glow'
 import type { DesignPoint } from './ui/ui-viewport'
-import { createViewerPanel } from './ui/viewer-panel'
 import { createFarmsPanel } from './ui/farms-panel'
 import {
   browserSaveStorage,
@@ -121,22 +119,6 @@ declare const __GARDEN_DEBUG__: boolean
 const pageParams = new URLSearchParams(window.location.search)
 const gardenDebugMode = __GARDEN_DEBUG__ && pageParams.has('gardenDebug')
 const normalViewHeight = 43
-/**
- * The viewer looks at a small stage, so it zooms right in. The farm keeps its
- * own wide framing because the whole fairground has to fit on screen.
- */
-const viewerViewHeight = 26
-/**
- * Close-up framing for the solo review booth (a single-species VIEWER_CAST):
- * the whole point is judging one model, so it fills the frame.
- */
-const singleModelViewHeight = 6.5
-/**
- * How far below the stage the viewer's look-at point sits, in world units.
- * Lowering it lifts the stage up the screen so the animal tray along the
- * bottom does not cover the animals' feet.
- */
-const viewerTargetY = -4.7
 
 const cameraTarget = new THREE.Vector3(0, 1.25, 0)
 const aspect = window.innerWidth / Math.max(1, window.innerHeight)
@@ -274,7 +256,6 @@ function refreshAnimalVisibility(nowSeconds: number, force = false): void {
   lastVisibilityRefreshAt = nowSeconds
   camera.updateMatrixWorld()
   const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
-  const activeInViewer = new Set(getViewerCastAnimals().map((animal) => animal.instanceId))
   let shown = 0
   for (const animal of animals) {
     const record = progress.animal(animal.instanceId)
@@ -285,12 +266,6 @@ function refreshAnimalVisibility(nowSeconds: number, force = false): void {
     // A flier is away by day.
     if (animal.isFlier && !animal.flightVisible) {
       animal.setDetailedVisible(false)
-      continue
-    }
-    if (mode === 'viewer') {
-      const cast = activeInViewer.has(animal.instanceId)
-      animal.setDetailedVisible(cast)
-      if (cast) shown += 1
       continue
     }
     const size = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)?.size ?? 2
@@ -409,7 +384,7 @@ let lastExpansionLevel = fairground.farmExpansion?.state.level ?? 0
 // The condition ladder is what now drives that transition. `progress` is the
 // pure state machine; this file is only responsible for reading the farm,
 // feeding it in, and acting on the events it returns.
-const speciesIds = getAnimalSceneOptions(false, gameCanvas, camera).map((options) => options.id)
+const speciesIds = getAnimalSceneOptions(gameCanvas, camera).map((options) => options.id)
 const progress = createAnimalLife(speciesIds)
 const progression = createProgressLedger()
 const accomplishments = createAccomplishmentTracker(buildAccomplishmentCatalog(
@@ -470,7 +445,7 @@ async function setCrowdFixtures(requestedCount: number): Promise<number> {
   const count = Math.max(0, Math.min(CROWD_FIXTURE_LIMIT, Math.floor(requestedCount)))
   if (crowdFixtures.length === count) return count
   clearCrowdFixtures()
-  const walkers = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
+  const walkers = getAnimalSceneOptions(gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
     .filter((entry) => !entry.flier)
   const created = await Promise.all(Array.from({ length: count }, (_, index) => {
     const options = walkers[index % walkers.length]
@@ -495,7 +470,6 @@ async function setCrowdFixtures(requestedCount: number): Promise<number> {
 }
 let lastVisibilityRefreshAt = 0
 const farmHomes = new Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>()
-const viewerStands = new Map<string, THREE.Vector3>()
 const animalCreations = new Map<string, Promise<BalloonAnimal>>()
 /**
  * Build the model for a tracked animal. `emerging` is for an animal stepping out
@@ -518,7 +492,7 @@ function createAnimalInstance(record: AnimalRecord, position?: { x: number; z: n
 
 async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }, emerging = false): Promise<BalloonAnimal> {
   if (animals.length + animalCreations.size >= animalPopulationLimit && !animalById.has(record.id)) return Promise.reject(new Error(`The farm is at its ${animalPopulationLimit}-animal limit`))
-  const options = getAnimalSceneOptions(false, gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
+  const options = getAnimalSceneOptions(gameCanvas, camera, gardenTerrain ? (x: number, z: number) => gardenTerrain.heightAt(x, z) : undefined)
     .find((entry) => entry.id === record.species)
   if (!options) throw new Error(`Missing scene options for animal ${record.species}`)
   const takenNames = new Set(animalNames.values())
@@ -543,10 +517,6 @@ async function loadAnimalInstance(record: AnimalRecord, position?: { x: number; 
   animalById.set(record.id, animal)
   animals.push(animal)
   farmHomes.set(record.id, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
-  if (VIEWER_CAST.includes(animal.id)) {
-    const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
-    viewerStands.set(record.id, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-  }
   const latest = progress.animal(record.id)
   if (!latest) {
     animal.dispose()
@@ -588,17 +558,7 @@ const upgrades = createUpgradeLedger()
 
 // Individual residents and visitors are spawned from the pure animal-life records below.
 
-// Farm homes and viewer plinths are assigned as each independently tracked animal is created.
-/**
- * The viewer is the review booth for new models: VIEWER_CAST decides which
- * species it stages, so a model being tuned stands there alone instead of
- * sharing the stage with the whole catalog. The rest of the farm carries on
- * without them and is untouched when the booth closes.
- */
-const getViewerCastAnimals = (): BalloonAnimal[] => animals.filter((animal) => VIEWER_CAST.includes(animal.id))
-const viewerFocusStand = VIEWER_CAST.length === 1
-  ? new THREE.Vector3(SHOWCASE_ANIMALS[VIEWER_CAST[0]].spawn[0], GARDEN_LAWN_Y + 0.1, SHOWCASE_ANIMALS[VIEWER_CAST[0]].spawn[1])
-  : null
+// Farm homes are assigned as each independently tracked animal is created.
 
 // ------------------------------------------------------- farm measurement --
 
@@ -812,10 +772,6 @@ function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
       const record = progress.animal(event.animalId)
       if (record) void createAnimalInstance(record).then((created) => {
         farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairground.root, position: created.root.position.clone() })
-        if (VIEWER_CAST.includes(created.id)) {
-          const [x, z] = SHOWCASE_ANIMALS[created.id].spawn
-          viewerStands.set(created.instanceId, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-        }
       })
     }
     if (event.kind === 'birth' && event.animalId) {
@@ -864,7 +820,6 @@ function popAnimal(prey: BalloonAnimal): void {
     syncFarmChrome()
   }
   farmHomes.delete(prey.instanceId)
-  viewerStands.delete(prey.instanceId)
   prey.setAlarmed(false)
   const burst = createPopBurst({
     position: new THREE.Vector3(at.x, at.y, at.z),
@@ -886,7 +841,6 @@ function updateOwlHunt(deltaSeconds: number): void {
     animal.dispose()
     popsInFlight.splice(index, 1)
   }
-  if (mode === 'viewer') return
   const owlAnimals = animals.filter((animal) => animal.isFlier && !animal.isSold)
   if (owlAnimals.length === 0) return
   const roosts = gardenProps?.roosts() ?? []
@@ -939,7 +893,6 @@ function updateOwlHunt(deltaSeconds: number): void {
 const SNAKE_MOUTH_SHARE = 0.42
 
 function updateSnakeHunt(deltaSeconds: number): void {
-  if (mode === 'viewer') return
   const prey = PREY_OF.snake ?? []
   const snakes = animals
     .filter((animal) => animal.id === 'snake' && !animal.isSold)
@@ -1019,7 +972,6 @@ const sleepBeds = new Map<string, Bed>()
  * animal is not shuffled about as other animals settle.
  */
 function updateSleepers(): void {
-  if (mode === 'viewer') return
   const night = isNightTime(dayNightClock.timeOfDay)
   // Each night species sleeps by the first prop on its SLEEP_PROPS list that is placed (a house
   // before a can); with none, or no entry, it sleeps where it stands.
@@ -1088,7 +1040,7 @@ function animalLifeSnapshot(): AnimalLifeSnapshot {
 }
 
 function updateAnimalProgress(deltaSeconds: number): void {
-  if (mode === 'viewer' || menu.isOpen || salePanel.isOpen) return
+  if (menu.isOpen || salePanel.isOpen) return
   const events = progress.tick(animalLifeSnapshot(), deltaSeconds)
   handleAnimalLifeEvents(events)
   noteJournalStages()
@@ -1158,7 +1110,6 @@ function retireModel(animal: BalloonAnimal): void {
   const index = animals.indexOf(animal)
   if (index >= 0) animals.splice(index, 1)
   farmHomes.delete(animal.instanceId)
-  viewerStands.delete(animal.instanceId)
   sleepBeds.delete(animal.instanceId)
   animal.dispose()
 }
@@ -1207,7 +1158,6 @@ function restoreSavedIndoors(nowSeconds: number): void {
 }
 
 function updateHousing(nowSeconds: number): void {
-  if (mode !== 'farm') return
   for (const house of houseSpots) knownDoors.set(house.id, { x: house.doorX, z: house.doorZ })
   for (const [id, until] of newbornUntil) if (until <= nowSeconds || !progress.animal(id)) newbornUntil.delete(id)
   restoreSavedIndoors(nowSeconds)
@@ -1341,7 +1291,6 @@ const bodySizeBySpecies = new Map(ANIMAL_CATALOG.map((entry) => [entry.id as str
  * than the outdoor limit (plus perf-ramp fixtures).
  */
 function collideAnimals(nowSeconds: number): void {
-  if (mode !== 'farm') return
   if (nowSeconds - collisionBoxesAt >= COLLISION_BOX_REFRESH_SECONDS) {
     collisionBoxesAt = nowSeconds
     collisionBoxes = (gardenProps?.occupancy.placed ?? [])
@@ -1372,15 +1321,6 @@ function collideAnimals(nowSeconds: number): void {
     if (dx !== 0 || dz !== 0) animal.nudge(dx, dz)
   })
 }
-
-// ---------------------------------------------------------------- game modes --
-// The farm and the animal viewer are the same scene with different staging, so
-// switching modes swaps the fairground rather than reloading the page. That is
-// what lets the main menu hand off to either one without a navigation.
-
-type GameMode = 'farm' | 'viewer'
-let mode: GameMode = 'farm'
-let viewerStage: ReturnType<typeof createCaptureShowcaseStage> | null = null
 
 const targetOffset = new THREE.Vector3()
 const viewDirection = new THREE.Vector3().subVectors(camera.position, cameraTarget).normalize()
@@ -1506,27 +1446,11 @@ gardenTools?.setTallGrassBlocker((x, z) => {
 
 syncGrassPack()
 
-const menu = createMenuPanel(handleMenuChoice, window.innerWidth, window.innerHeight, () => {
-  syncFarmChrome()
+const menu = createMenuDomPanel({
+  onChoose: handleMenuChoice,
+  keysEnabled: () => !optionsDom.isOpen && !farmsPanel.isOpen,
+  onToggle: () => syncFarmChrome(),
 })
-const viewer = createViewerPanel({
-  getAnimals: () => animals.filter((animal) => !animal.isSold && VIEWER_CAST.includes(animal.id)),
-  getAnimalName: (id) => animalNames.get(animals.find((animal) => animal.id === id)?.instanceId ?? id) ?? id,
-  playAll: () => {
-    for (const animal of getViewerCastAnimals()) {
-      if (animal.isCaptured) animal.setAppearance('wild')
-      animal.beginCapture()
-    }
-  },
-  resetAll: () => getViewerCastAnimals().forEach((animal) => animal.setAppearance('wild')),
-  exit: () => setMode('farm'),
-  replay: (id) => {
-    const animal = animals.find((entry) => entry.id === id)
-    if (!animal || animal.isSold) return
-    if (animal.isCaptured) animal.setAppearance('wild')
-    animal.beginCapture()
-  },
-}, window.innerWidth, window.innerHeight, VIEWER_CAST)
 
 /**
  * Opens the animal info card for a live animal. Shared by the farm click
@@ -1584,7 +1508,7 @@ const salePanel = createSalePanel((target) => {
     } else {
       gardenPlants?.clearSelection()
     }
-    toolsHud.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !isOpen)
+    toolsHud.setVisible(!menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !isOpen)
     refreshCursor()
   }
 })
@@ -1613,7 +1537,6 @@ function completeAnimalSale(instanceId: string): { balance: number; price: numbe
   animal.dispose()
   refreshAnimalVisibility(performance.now() / 1000, true)
   farmHomes.delete(animal.instanceId)
-  viewerStands.delete(animal.instanceId)
   const balance = wallet.credit(price)
   salePanel.setWallet(balance)
   saveSoon()
@@ -2075,7 +1998,7 @@ function saveSoon(): void {
 }
 
 function tickAutosave(deltaSeconds: number): void {
-  if (!hasEntered || menu.isOpen || mode !== 'farm') return
+  if (!hasEntered || menu.isOpen) return
   playSeconds += deltaSeconds
   secondsSinceSave += deltaSeconds
   saveSoonIn -= deltaSeconds
@@ -2190,7 +2113,7 @@ function applySavedWorld(data: SaveGameData): void {
     farmsPanel.open(`Part of this farm could not be restored (${problems.join(', ')}). The rest is back.`)
   }
 }
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, menu, viewer, journal, salePanel, animalCard, plantCard, propCard, clockCalendarHud]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, journal, salePanel, animalCard, plantCard, propCard, clockCalendarHud]
 
 /**
  * The furthest rung each species has reached this session. The journal is a
@@ -2308,83 +2231,14 @@ function handleMenuChoice(choice: MenuChoice): void {
     optionsDom.setOpen(true)
     return
   }
-  setMode(choice === 'viewer' ? 'viewer' : 'farm')
-}
-
-function setMode(next: GameMode): void {
-  // Neither destination wants a tour running: the viewer stages its own camera
-  // and the farm restores its opening framing below.
   endCameraTour(false)
-  if (next !== 'farm') {
-    salePanel.close()
-    animalCard.close()
-    propCard.close()
-    plantCard.close()
-    shed.close()
-    shed.setPlacementActive(false)
-    shop.setOpen(false)
-    gardenPlants?.cancelPlacement()
-    gardenProps?.cancelPlacement()
-    gardenTools?.setPlantingMode(false)
-  }
-  if (next === mode) {
-    menu.close()
-    return
-  }
-  mode = next
-  if (next === 'viewer') {
-    menu.close()
-    viewer.open()
-    journal.close()
-    // Swap in the showcase staging so the animals stand together on a stage.
-    if (!viewerStage) {
-      viewerStage = createCaptureShowcaseStage(VIEWER_CAST)
-      scene.add(viewerStage.root)
-    }
-    // Only the cast travels to the stage; the rest of the farm stays in the
-    // fairground, which is simply removed from the scene while the booth is up.
-    for (const animal of getViewerCastAnimals()) {
-      viewerStage.root.add(animal.root)
-      animal.root.position.copy(viewerStands.get(animal.instanceId)!)
-      animal.setDetailedVisible(animal.stage > 0)
-    }
-    refreshAnimalVisibility(performance.now() / 1000, true)
-    scene.remove(fairground.root)
-    focusCamera()
-  } else {
-    viewer.close()
-    scene.remove(viewerStage?.root ?? fairground.root)
-    // Return only the cast; everyone else never left the fairground and keeps
-    // whatever wander they were in the middle of.
-    for (const animal of getViewerCastAnimals()) {
-      const home = farmHomes.get(animal.instanceId)
-      if (!home) continue
-      home.parent.add(animal.root)
-      animal.root.position.copy(home.position)
-    }
-    scene.add(fairground.root)
-    refreshAnimalVisibility(performance.now() / 1000, true)
-    focusCamera()
-  }
-  syncFarmChrome()
-  updateCameraProjection()
+  menu.close()
 }
 
 function focusCamera(): void {
   targetOffset.set(0, 0, 0)
-  if (mode === 'viewer' && viewerFocusStand) {
-    // Solo review booth: frame just the staged plinth so the model under
-    // review fills the frame. The look-at point sits below the plinth for the
-    // same reason as the wide shot — the tray along the bottom must clear the
-    // model's feet.
-    cameraTarget.set(viewerFocusStand.x, viewerFocusStand.y - 0.8, viewerFocusStand.z)
-    viewHalfHeight = singleModelViewHeight / 2
-  } else {
-    // The viewer's UI is a tray along the bottom, so the stage is framed a little
-    // high: look at a point under it and the animals ride above the tray.
-    cameraTarget.set(0, mode === 'viewer' ? viewerTargetY : 1.25, 0)
-    viewHalfHeight = (mode === 'viewer' ? viewerViewHeight : normalViewHeight) / 2
-  }
+  cameraTarget.set(0, 1.25, 0)
+  viewHalfHeight = normalViewHeight / 2
   camera.position.copy(cameraTarget).add(initialOffset)
   viewDirection.copy(initialOffset).normalize()
   cameraDistance = initialOffset.length()
@@ -2400,7 +2254,7 @@ function focusCamera(): void {
  * drawn straight through the tool bar and both sets of lettering overlapped.
  */
 function syncFarmChrome(): void {
-  const farmOnly = mode === 'farm' && !menu.isOpen
+  const farmOnly = !menu.isOpen
   if (menu.isOpen && shop.isOpen) shop.setOpen(false)
   const shopOpen = shop.isOpen
   const shedOpen = shed.isOpen
@@ -2413,7 +2267,6 @@ function syncFarmChrome(): void {
   clockCalendarHud.setVisible(farmOnly)
   balloon.setInteractEnabled(true)
   if (!farmOnly && notificationDom.isOpen) notificationDom.setOpen(false)
-  if (gardenPlants) gardenPlants.root.visible = mode === 'farm'
   refreshCursor()
 }
 
@@ -2497,7 +2350,7 @@ function isWorldToolActive(): boolean {
 }
 
 function beginCameraTour(seed = Math.floor(Math.random() * 0xffffffff)): boolean {
-  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) return false
+  if (menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) return false
   savedCameraView = {
     target: cameraTarget.clone(),
     position: camera.position.clone(),
@@ -2557,7 +2410,7 @@ function tourSubjects(): CameraTourSubject[] {
 
 function updateCameraTour(deltaSeconds: number): void {
   if (!cameraTour) return
-  if (mode !== 'farm' || menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) {
+  if (menu.isOpen || journal.isOpen || salePanel.isOpen || shed.isOpen || shop.isOpen) {
     endCameraTour(true)
     return
   }
@@ -2609,7 +2462,7 @@ function updateCursor(point: DesignPoint | null): void {
     setCursor('idle', gameCanvas)
     return
   }
-  const farmOpen = mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen
+  const farmOpen = !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen
   const overFarm = farmOpen && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
   // Only pointer mode (Shift, or nothing armed) lets farm objects claim the pointer.
   const interactive = overFarm && pointerActive() && hoverInteractable(lastPointerClient.x, lastPointerClient.y)
@@ -2655,7 +2508,7 @@ function syncWorldTool(interactive: boolean): void {
 
 /** Whether a press here belongs to a farm object rather than to the armed tool or seed. */
 function hoverInteractable(clientX: number, clientY: number): boolean {
-  if (mode !== 'farm' || menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return false
+  if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return false
   if (gardenProps?.placingId) return false
   return Boolean(
     pickAnimal(clientX, clientY)
@@ -2693,8 +2546,8 @@ function hoverTargetAt(clientX: number, clientY: number): { glow: HoverGlowTarge
 
 /** The glow only shows over the farm, with nothing else on top and no press in progress. */
 function hoverAllowed(): boolean {
-  return mode === 'farm' && pointerWasSeen
-    && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !viewer.isOpen && !salePanel.isOpen
+  return pointerWasSeen
+    && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !salePanel.isOpen
     && !gardenProps?.placingId
     && dragPointer === null && toolPointer === null
     && !isOverGameHUD(lastPointerClient.x, lastPointerClient.y)
@@ -2754,12 +2607,12 @@ function refreshCursor(): void {
  *
  * Edge-panning and the garden brush both have to get out of the way here, or
  * dragging the camera fights the tool bar. Full-screen panels (the menu, the
- * journal, the viewer) always count as the interface; the tool bar asks its own
+ * journal) always count as the interface; the tool bar asks its own
  * slots, and the expansion card still lives in its own 1280x720 scene so its
  * rectangle is measured in device pixels.
  */
 function isOverGameHUD(clientX: number, clientY: number): boolean {
-  if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen || mode === 'viewer') return true
+  if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return true
   const point = ui.viewport.toDesign(clientX, clientY, gameCanvas.getBoundingClientRect())
   return Boolean(point && (
     (toolsHud.isVisible && toolsHud.hitTest?.(point))
@@ -2772,7 +2625,7 @@ function isOverGameHUD(clientX: number, clientY: number): boolean {
 }
 
 function updateCameraPan(deltaSeconds: number): void {
-  if (mode !== 'farm' || menu.isOpen || deltaSeconds <= 0) return
+  if (menu.isOpen || deltaSeconds <= 0) return
   let horizontal = Number(pressedKeys.has('d') || pressedKeys.has('arrowright'))
     - Number(pressedKeys.has('a') || pressedKeys.has('arrowleft'))
   let vertical = Number(pressedKeys.has('w') || pressedKeys.has('arrowup'))
@@ -2862,7 +2715,7 @@ function applyExpansionCameraShake(deltaSeconds: number, elapsedSeconds: number)
 
 function orbitPointerDown(event: PointerEvent): void {
   if (uiPointerDown(event)) return
-  if (menu.isOpen || mode === 'viewer') return
+  if (menu.isOpen) return
   // A press on a farm object goes to the object, whatever tool is armed.
   const onObject = !isOverGameHUD(event.clientX, event.clientY) && pointerActive() && hoverInteractable(event.clientX, event.clientY)
   if (event.button === 0 && (pointerActive() || onObject) && !isOverGameHUD(event.clientX, event.clientY)) {
@@ -2922,7 +2775,7 @@ function orbitPointerDown(event: PointerEvent): void {
     salePanel.close()
   }
   // Plant mode owns the lawn press, so an armed seed plants without Shift.
-  if (event.button === 0 && (pointerActive() || plantingArmed()) && !onObject && !journal.isOpen && !shed.isOpen && !shop.isOpen && mode === 'farm' && gardenPlants?.pointerDown(event)) {
+  if (event.button === 0 && (pointerActive() || plantingArmed()) && !onObject && !journal.isOpen && !shed.isOpen && !shop.isOpen && gardenPlants?.pointerDown(event)) {
     event.preventDefault()
     if (!gardenPlants.selectedSpecies) {
       shed.setPlacementActive(false)
@@ -2974,7 +2827,7 @@ function orbitPointerMove(event: PointerEvent): void {
   if (uiPointerMove(event)) return
   updateCursor(pointerDesign(event))
   if (gardenProps?.placingId) gardenProps.pointerMove(event)
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants?.pointerMove(event)
+  if (!menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants?.pointerMove(event)
   if (isWorldToolActive()) gardenTools?.pointerMove(event)
   if (toolPointer === event.pointerId || dragPointer !== event.pointerId) return
   const dx = event.clientX - previousPointer.x
@@ -3065,7 +2918,7 @@ const PAN_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arro
 
 function handleKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Shift') setShiftHeld(true)
-  if (gardenPlants?.selectedSpecies && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
+  if (gardenPlants?.selectedSpecies && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
     const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event) && toolIsOwned(entry.id))
     if (tool) {
       event.preventDefault()
@@ -3101,7 +2954,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     return
   }
   const key = event.key.toLowerCase()
-  if (key === 'e' && !event.repeat && mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && swapGrassPack()) {
+  if (key === 'e' && !event.repeat && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && swapGrassPack()) {
     event.preventDefault()
     return
   }
@@ -3125,7 +2978,7 @@ function handleKeyDown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  if (event.key === 'Escape' && !menu.isOpen && mode === 'farm' && !journal.isOpen) {
+  if (event.key === 'Escape' && !menu.isOpen && !journal.isOpen) {
     if (gardenPlants?.selectedSpecies) {
       gardenPlants.cancelPlacement()
       shed.setPlacementActive(false)
@@ -3325,7 +3178,6 @@ interface GardenDebugHarness {
   openMenu(): void
   openJournal(): void
   closeMenu(): void
-  openViewer(): void
   /**
    * Open the animal info card for an instance or species id. A preview
    * forces the rendered stage/sellable so states the live ladder cannot
@@ -3514,7 +3366,6 @@ interface GardenDebugHarness {
 
 /** Where the farm camera is pointing, and what the tour is doing with it. */
 interface CameraDebugReport {
-  readonly mode: GameMode
   readonly target: { readonly x: number; readonly y: number; readonly z: number }
   readonly position: { readonly x: number; readonly y: number; readonly z: number }
   readonly viewHeight: number
@@ -3751,7 +3602,6 @@ function summarizeFrameTimings(): GardenPerformanceSummary | null {
 
 if (__GARDEN_DEBUG__ && gardenDebugMode) {
   const cameraReport = (): CameraDebugReport => ({
-    mode,
     target: { x: +cameraTarget.x.toFixed(3), y: +cameraTarget.y.toFixed(3), z: +cameraTarget.z.toFixed(3) },
     position: { x: +camera.position.x.toFixed(3), y: +camera.position.y.toFixed(3), z: +camera.position.z.toFixed(3) },
     viewHeight: +(viewHalfHeight * 2).toFixed(3),
@@ -3767,10 +3617,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
   const debugHarness: GardenDebugHarness = {
     enabled: true,
     state: () => ({
-      mode,
       menuOpen: menu.isOpen,
       journalOpen: journal.isOpen,
-      viewerOpen: viewer.isOpen,
       shopOpen: shop.isOpen,
       shedOpen: shed.isOpen,
       placing: gardenProps?.placingId ?? null,
@@ -3795,7 +3643,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     openMenu: () => menu.open(),
     closeMenu: () => menu.close(),
     openJournal: () => journal.open(),
-    openViewer: () => setMode('viewer'),
     digAt: (x, z, radius, amount) => {
       if (!gardenTerrain || !gardenWater) return 0
       const changed = gardenTerrain.splat(x, z, radius, amount)
@@ -3941,14 +3788,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       lastVisibilityRefreshAt = 0
       animalNames.clear()
       farmHomes.clear()
-      viewerStands.clear()
       void Promise.all(progress.all().map((record) => createAnimalInstance(record))).then((created) => {
         for (const animal of created) {
           farmHomes.set(animal.instanceId, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
-          if (VIEWER_CAST.includes(animal.id)) {
-            const [x, z] = SHOWCASE_ANIMALS[animal.id].spawn
-            viewerStands.set(animal.instanceId, new THREE.Vector3(x, GARDEN_LAWN_Y + 0.1, z))
-          }
         }
       })
       measureFarm()
@@ -4013,7 +3855,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       return { ...house, residents: residentsOf({ id: house.prop, siteId: house.id }) }
     }),
     crowdStressTest: async (requestedCount = OUTDOOR_LIMITS.total) => {
-      if (mode !== 'farm') throw new Error('Crowd stress tests can run only while the farm scene is active')
       const count = await setCrowdFixtures(requestedCount)
       focusCamera()
       const previousAutoReset = renderer.info.autoReset
@@ -4028,7 +3869,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       }
     },
     setCrowd: async (requestedCount = OUTDOOR_LIMITS.total) => {
-      if (mode !== 'farm') throw new Error('Crowd fixtures can run only while the farm scene is active')
       const count = await setCrowdFixtures(requestedCount)
       focusCamera()
       return { count }
@@ -4045,7 +3885,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
       focusSpecies: 'focusSpecies(species, height?) — close-up for model review.',
       frameAngle: 'frameAngle(x, z, height, azimuthDeg, elevationDeg) — low side-on view; scripts/angle-sheet.mjs uses it.',
       resetCamera: 'Back to the opening shot.',
-      'openMenu / closeMenu / openJournal / openViewer': 'Drive the menu without clicks.',
+      'openMenu / closeMenu / openJournal': 'Drive the menu without clicks.',
       layout: 'Every UI panel rect — use instead of screenshots for layout checks.',
       camera: 'Camera pose + tour state. advanceTour(seconds) steps the cinematic.',
       'startTour / endTour': 'Deterministic tour on a fixed seed for review passes.',
@@ -4344,7 +4184,7 @@ const menuDriftOffset = new THREE.Vector3()
 const worldUp = new THREE.Vector3(0, 1, 0)
 
 function updateMenuDrift(delta: number, elapsed: number): void {
-  const target = menu.isOpen && mode === 'farm' ? 1 : 0
+  const target = menu.isOpen ? 1 : 0
   const previous = menuDrift
   menuDrift += (target - menuDrift) * (1 - Math.exp(-delta * 1.1))
   if (Math.abs(target - menuDrift) < 0.001) menuDrift = target
@@ -4407,7 +4247,6 @@ function frame(now: number): void {
   }
   const expansionBoundsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
-  viewerStage?.update(delta)
   updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
   animals.forEach((animal) => animal.update(delta))
@@ -4430,14 +4269,6 @@ function frame(now: number): void {
   // The condition ladder runs after the animals have moved, so a settle
   // triggered this frame is applied against the farm as it is right now.
   updateAnimalProgress(delta)
-  // The animals keep walking and following garden terrain on their own, so in
-  // the viewer we pin them back onto their plinths after the update.
-  if (mode === 'viewer') {
-    for (const animal of getViewerCastAnimals()) {
-      const stand = viewerStands.get(animal.instanceId)
-      if (stand) animal.root.position.copy(stand)
-    }
-  }
   refreshAnimalVisibility(now / 1000)
   refreshHover(now / 1000, delta)
   const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
@@ -4469,7 +4300,7 @@ function frame(now: number): void {
       expansionFeedbackStrength = 1
     }
   }
-  gardenPlants?.update(delta, mode === 'farm' && !menu.isOpen && !journal.isOpen && !viewer.isOpen && !salePanel.isOpen)
+  gardenPlants?.update(delta, !menu.isOpen && !journal.isOpen && !salePanel.isOpen)
   syncPlantCard(delta)
   gardenProps?.update(delta, progression.level)
   const matureIds = new Set<number>()
@@ -4490,16 +4321,16 @@ function frame(now: number): void {
     const unread = notificationPanel.getUnreadCount()
     balloon.setPostBadge(unread > 9 ? '9+' : unread > 0 ? String(unread) : '')
   }
-  notificationPanel.setVisible(mode === 'farm' && !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen)
+  notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen)
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
-  if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
+  if (!menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
   shedDom.refresh()
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   updateCameraPan(delta)
   applyExpansionCameraShake(delta, now / 1000)
   if (pointerWasSeen && !isOverGameHUD(pointerPosition.x, pointerPosition.y)) {
-    if (mode === 'farm' && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
+    if (!menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && plantingArmed()) gardenPlants?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y, button: 0 })
     gardenProps?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
     if (isWorldToolActive()) gardenTools?.pointerMove({ clientX: pointerPosition.x, clientY: pointerPosition.y })
   } else {

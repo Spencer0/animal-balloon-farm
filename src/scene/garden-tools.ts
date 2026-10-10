@@ -385,7 +385,7 @@ export function createGardenTools(
   onWaterChanged: () => void = () => {},
 ): GardenTools {
   // The pointer used to be hidden outright for the whole canvas, which left the
-  // menu, the journal and the viewer with no cursor at all, and was then
+  // menu and the journal with no cursor at all, and was then
   // restored to the system arrow outside the plot. Both were treating the
   // symptom from in here; the UI layer now owns the cursor end to end and asks
   // `cursorVisible` whether the in-world ring is on screen before hiding it.
@@ -1148,9 +1148,10 @@ export function createGardenTools(
           const distanceSquared = dx * dx + dz * dz
           if (distanceSquared > radiusSquared) continue
 
-          // Plateau of full green through most of the disc, easing out only at the
-          // rim so the painted lawn blends into the surrounding dirt smoothly.
-          const weight = 1 - THREE.MathUtils.smoothstep(Math.sqrt(distanceSquared) / radius, 0.6, 1)
+          // Plateau of full green through the middle of the disc, easing out over
+          // the outer two thirds so the lawn edge spans several vertices (the
+          // ground shader rounds it) and blends into the dirt smoothly.
+          const weight = 1 - THREE.MathUtils.smoothstep(Math.sqrt(distanceSquared) / radius, 0.35, 1)
           const before = groundCoverage[vertexIndex]
           const after = THREE.MathUtils.clamp(before + amount * weight, 0, 1)
           if (after === before) continue

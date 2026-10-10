@@ -46,7 +46,6 @@ export interface BalloonAnimalOptions {
   readonly camera: THREE.Camera
   readonly wandering?: boolean
   readonly captureOnClick?: boolean
-  readonly replayCaptureOnClick?: boolean
   /** Accent tint for this species' non-heart cosmetics; hearts are always pink. */
   readonly eyeColor?: string
   /** Starting rung on the condition ladder. */
@@ -847,7 +846,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const onPointerDown = (event: PointerEvent): void => {
     if (sold || options.captureOnClick === false || event.button !== 0 || event.detail >= 2
       || options.isPointerBlocked?.(event.clientX, event.clientY)
-      || (captured && !options.replayCaptureOnClick)) return
+      || captured) return
     const bounds = options.canvas.getBoundingClientRect()
     const pointer = new THREE.Vector2(
       ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
@@ -857,7 +856,6 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     raycaster.setFromCamera(pointer, options.camera)
     const hit = raycaster.intersectObjects([wrapper], true)[0]
     if (!hit) return
-    if (captured && options.replayCaptureOnClick) setAppearance('wild')
     if (!beginCapture()) return
     event.preventDefault()
   }
