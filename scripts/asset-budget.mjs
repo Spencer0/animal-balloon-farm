@@ -1,16 +1,17 @@
 // Asset budgets: fail `npm run check` when a model costs more than the frame
 // can afford. Parses .glb JSON chunks directly (no three.js needed).
 //
-// Budgets were set from measured values on main (Oct 2026) plus ~15% headroom:
-// animals then cost 52k-89k tris at 1.3-2.2MB. A new species that blows past
-// the animal cap is a modeling task (decimate, merge, drop hidden detail),
-// not a number to bump without a crowd-ramp run proving the frame survives.
+// Budgets were set from measured values plus headroom. Animals are capped at 25k
+// tris: a crowd of 50 at 50-90k each made the CI software-rendered crowd ramp miss
+// its frame budget, so the heavy species were decimated (art/blender/decimate_animals.py).
+// A new species that blows past the animal cap is a modeling task (decimate, merge,
+// drop hidden detail), not a number to bump without a crowd-ramp run proving the frame survives.
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 
 const BUDGETS = [
-  { dir: 'public/assets/animals', maxTris: 100_000, maxKb: 2500, label: 'animal' },
+  { dir: 'public/assets/animals', maxTris: 25_000, maxKb: 2500, label: 'animal' },
   { dir: 'public/assets/buildings', maxTris: 25_000, maxKb: 1100, label: 'building' },
   { dir: 'public/assets/cursors', maxTris: 25_000, maxKb: 700, label: 'cursor' },
   { dir: 'public/assets/props', maxTris: 8000, maxKb: 400, label: 'prop' },
