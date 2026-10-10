@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { objectBounds } from './merge-static-meshes'
 import { SHOP_BUILD_PARTS, SHOP_BUILD_SECONDS, shopBuildProgress, shopPartPose, shopUnlocked, type ShopBuildPart } from '../game/shop-construction'
 
 /**
@@ -31,6 +32,9 @@ interface BuildPiece {
   readonly spec: ShopBuildPart
 }
 
+/** GLTFLoader sanitizes node names, so "SHOP BUILD site" in Blender loads as "SHOP_BUILD_site". */
+export const SHOP_BUILD_NODE = 'SHOP_BUILD_'
+
 /** Pieces must start at the pivot origin, so a pose can be written as position = anchor * (1 - scale). */
 const MIN_SCALE = 0.001
 
@@ -38,13 +42,12 @@ export function createShopBuild(building: THREE.Object3D): ShopBuild {
   building.updateMatrixWorld(true)
   const pieces: BuildPiece[] = []
   for (const spec of SHOP_BUILD_PARTS) {
-    // GLTFLoader sanitizes node names, so "SHOP BUILD site" in Blender loads as "SHOP_BUILD_site".
-    const node = building.getObjectByName(`SHOP_BUILD_${spec.name}`)
+    const node = building.getObjectByName(`${SHOP_BUILD_NODE}${spec.name}`)
     if (!node?.parent) {
       console.warn(`[shop] the shop model has no "SHOP BUILD ${spec.name}" node; that piece will not build`)
       continue
     }
-    const box = new THREE.Box3().setFromObject(node)
+    const box = objectBounds(node)
     const bottom = new THREE.Vector3((box.min.x + box.max.x) / 2, box.min.y, (box.min.z + box.max.z) / 2)
     pieces.push({ node, anchor: node.parent.worldToLocal(bottom), spec })
   }

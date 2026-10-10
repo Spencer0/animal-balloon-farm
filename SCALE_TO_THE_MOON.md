@@ -7,11 +7,13 @@ hundreds of animals without dropping frames.
 Everything below is grounded in a measurement of the running game (commit
 `b166c7e`, three.js 0.186.1, 1280×720) plus the sources listed at the end.
 
-> **This document is findings and plan only. No code from this investigation is
-> merged.** The measurements in section 4 were taken with a stress harness that
-> lives on the `feature/scale-to-the-moon` branch, which is kept for
-> re-measurement and is not intended to ship. The fixes in section 3 are
-> proposals, not changes. `main` is unchanged by this document.
+> **Status (2026-10-10).** The draw-call half of the plan is implemented:
+> animals and static props are merged at load (3.2 in a different form than
+> first proposed, 3.3 as written). Section 9 has the before/after numbers and
+> what changed. Grass LOD (3.1), the overdraw pass (3.4) and the shadow policy
+> (3.5) are still proposals. The measurements in section 4 predate the merge
+> and were taken with a stress harness on the `feature/scale-to-the-moon`
+> branch, which is kept for re-measurement and is not intended to ship.
 
 ## 1. What actually limits us today
 
@@ -93,6 +95,10 @@ take it, which is the cheapest possible "more content".
 
 ### 3.2 Animals: one draw call per part, shared across every animal
 
+> **Done, differently (2026-10-10).** Each species is merged into one rigidly
+> skinned mesh per material instead of instanced per part. See section 9 for
+> why, and for what instancing would still add.
+
 **This is the highest-value change in the document.**
 
 Because the parts are plain meshes animated by node transforms, the transform
@@ -134,6 +140,9 @@ transform work onto the GPU too. It is a large change and is not needed for
 hundreds of animals, so it stays a later milestone.
 
 ### 3.3 Fairground: merge the static props
+
+> **Done (2026-10-10).** Carnival props, boundary stakes, garden props and the
+> farm shop are merged by material at load. See section 9.
 
 363 static meshes share about 40 materials. Merging by material with
 `BufferGeometryUtils.mergeGeometries` (after baking each mesh's transform into
@@ -268,10 +277,11 @@ hardware numbers, which the branch preview harness makes straightforward.
 
 ## 7. Suggested order of work
 
-1. **Instance the animal parts** (3.2). Biggest win, and the only change that
-   makes the draw-call count independent of animal count.
-2. **Merge the fairground by material** (3.3). Cheapest win, no visual change,
-   halves the static half of the shadow pass.
+1. ~~**Instance the animal parts** (3.2).~~ Done as rigid skinning: about 17
+   calls per animal instead of ~60. True instancing would still make the count
+   independent of animal count; see section 9.
+2. ~~**Merge the fairground by material** (3.3).~~ Done, along with garden props
+   and the farm shop.
 3. **Overdraw pass** (3.4), starting with items 2, 4 and 5 — skipping item 1
    unless something else motivates it.
 4. **Shadow policy** (3.5), once 1 and 2 have changed what is casting.
@@ -288,3 +298,100 @@ hardware numbers, which the branch preview harness makes straightforward.
 - Web Game Dev — Instanced Meshes, instanced skinning
 - NVIDIA *GPU Gems 3*, Chapter 2 — Animated Crowd Rendering
 - caniuse / GPUWeb — WebGPU support matrix
+
+## 9. Implemented: merged animals and props (2026-10-10)
+
+### What changed
+
+`src/scene/merge-static-meshes.ts` merges meshes that never move relative to
+each other into one mesh per material, at load, once per model. The hierarchy is
+split at *pivots*, nodes that move on their own, and nothing is merged across
+one.
+
+- **Animals** (`src/animals/animal-batching.ts`). Every node an animation clip
+  drives, and every `rig` node the capture flourish turns, is a pivot. All of a
+  species' parts become one `SkinnedMesh` per material, with each pivot as a
+  bone and every vertex weighted fully to its own pivot. That is exactly the
+  rigid motion the node hierarchy produced, so the `AnimationMixer` drives the
+  same nodes as before. Pupils and catchlights stay separate because heart eyes
+  find them by name. Each animal is cloned with `cloneMerged`, so all its meshes
+  share one skeleton and one bone-texture upload per frame.
+- **Props.** Garden props merge on load. The placement ghost keeps an unmerged
+  copy, because it is translucent and blends part over part in draw order. The
+  farm shop merges each `SHOP_BUILD_*` piece separately so the build animation
+  still works. Carnival props and boundary stakes merge by *look-alike*
+  material: the procedural builders create a fresh material per part, so
+  materials are compared by their settings. Ride rotors, Ferris cabins and
+  carousel mounts are pivots.
+- **Exact bounds.** A merged mesh's bounding box is coarser than its parts'
+  boxes, which on its own changed animal sizing by up to 1.3% and grounding by
+  about 1 cm. Each merged geometry remembers its parts' boxes, and
+  `objectBounds` measures those, following bones into their current pose. Model
+  sizing, grounding, the paint-reveal range, shop build anchors and carnival
+  placement radii read exactly the numbers they read before.
+- Transparent, multi-material, instanced, morphing and already-skinned meshes
+  are never merged.
+
+### Why skinning rather than instancing (3.2)
+
+Merging within each animated node, as first tried, cut animals only from
+50–84 meshes to 27–56. The snake, with 13 animated body segments of 3 materials
+each, could not go below 39. Rigid skinning collapses every pivot into one mesh
+per material, so the count is set by materials, not by how many parts move.
+
+Instancing per (species, part) would still be the next step for hundreds of
+animals, because skinning keeps the count proportional to the number of
+animals: about 17 calls each instead of about 60.
+
+### Meshes per model
+
+| Model | Before | After |
+| --- | --- | --- |
+| Animals | 50–84 (owl 84, cow and sheep 69) | 14–20 (snake and goose 14, owl 20) |
+| Coop | 124 | 15 |
+| Farm shop | 111 | 29 (pieces merged separately for the build) |
+| Hollow log | 60 | 14 |
+| Sty | 62 | 13 |
+| Dumpster | 56 | 15 |
+| Goose house | 56 | 13 |
+| Other props | 13–48 | 2–15 |
+
+### Frame numbers
+
+Measured on 2026-10-10 with headless Chrome on Spencer's PC (d3d11 GPU,
+1280×720), same harness and same scenarios on `328f730` (before) and this
+branch (after). Draw calls are exact; frame times are indicative.
+
+| Scene | Draw calls before | Draw calls after | Triangles |
+| --- | --- | --- | --- |
+| `crowdStressTest(0)` in meadow/tall-grass-garden | 992 | **316** | 576,621 both |
+| `crowdStressTest(10)` | 1,106 | **351** | 598,315 both |
+| `crowdStressTest(40)` | 1,514 | **463** | 664,923 both |
+| meadow/tall-grass-garden, settled | 907 | **284–315** | 520k–555k* |
+| sandbox/farmer-10, carnival set up, wide view | 1,334 | **920** | |
+| sandbox/farmer-10, six placed props, garden view | 1,124 | **492** | |
+
+The crowd rows are the cleanest comparison. The scene is identical, the
+triangle counts match to the triangle, and only the number of submissions
+changed: a 68–69% cut.
+
+\* In the settled meadow the snake hunt changes how many mice are on screen
+(8 drawn before, 5–7 after), so its triangle count varies run to run.
+`sceneRenderMs` p95 went from 17 ms to 8.6–10.3 ms in the same scene.
+
+### How it was checked
+
+- `tests/merge-meshes.test.mjs` poses every species in five clip frames. For
+  every material, it checks that the merged, skinned model puts the same number
+  of vertices, with the same centroid and extent, in the same place as the
+  original node hierarchy. It also checks that bounds match `Box3.setFromObject`
+  exactly. Deliberately breaking the skin weights fails 12 of its 14 cases.
+- Browser comparison against `328f730`, using the same scenarios and pixel
+  diffs:
+  - the carnival, placed props, the shop, wild-red and painted animals;
+  - the paint reveal mid-flourish;
+  - prop hover glow, prop card and selection highlight, and the placement ghost;
+  - animal picking.
+
+  Remaining pixel differences are only in things that move between runs (the
+  HUD wheel, the Ferris wheel, walking animals).

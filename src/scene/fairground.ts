@@ -4,6 +4,7 @@ import type { CarnivalKind } from '../game/carnival-migration'
 import { createCarnivalSchedule, placeOutsideFarm } from '../game/carnival-schedule'
 import { createCarnivalBackdrop } from './carnival-backdrop'
 import { createCarnivalDressing } from './carnival-dressing'
+import { mergeStaticMeshes, objectBounds } from './merge-static-meshes'
 import { createFarmExpansion, FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS, type FarmExpansion, type GardenBounds } from '../game/farm-expansion'
 
 export const GARDEN_BOUNDS: GardenBounds = FARM_EXPANSION_CONFIG.startBounds
@@ -464,6 +465,24 @@ function addFlowerPatches(parent: THREE.Group, random: () => number): void {
   parent.add(stems, centers)
 }
 
+/**
+ * Marks a node the frame loop moves, so merging never welds it to the parts
+ * around it. Ride rotors, Ferris cabins and carousel mounts are the only ones.
+ */
+function movesOnItsOwn<T extends THREE.Object3D>(node: T): T {
+  node.userData.movesOnItsOwn = true
+  return node
+}
+
+/**
+ * Collapse a static prop to one mesh per look-alike material. The procedural
+ * builders make a fresh material for every part, so materials are compared by
+ * their settings rather than by identity.
+ */
+function mergeProp(group: THREE.Object3D): void {
+  mergeStaticMeshes(group, { isPivot: (node) => node.userData.movesOnItsOwn === true, materialMatch: 'value' })
+}
+
 function addBeam(parent: THREE.Object3D, start: THREE.Vector3, end: THREE.Vector3, radius: number, mat: THREE.Material, radialSegments = 10): THREE.Mesh {
   const direction = new THREE.Vector3().subVectors(end, start)
   const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, direction.length(), radialSegments), mat)
@@ -645,7 +664,7 @@ function createCarousel(parent: THREE.Group): { group: THREE.Group; rotor: THREE
   deck.position.y = .18
   deck.castShadow = deck.receiveShadow = true
   group.add(deck)
-  const rotor = new THREE.Group()
+  const rotor = movesOnItsOwn(new THREE.Group())
   rotor.position.y = .36
   group.add(rotor)
   const sides = 24
@@ -705,7 +724,7 @@ function createCarousel(parent: THREE.Group): { group: THREE.Group; rotor: THREE
     pole.position.set(Math.cos(angle) * 2.45, 1.45, Math.sin(angle) * 2.45)
     pole.castShadow = true
     rotor.add(pole)
-    const mount = new THREE.Group()
+    const mount = movesOnItsOwn(new THREE.Group())
     mount.position.set(Math.cos(angle) * 2.45, 1.42, Math.sin(angle) * 2.45)
     mount.rotation.y = -(angle + Math.PI / 2)
     const coat = standard(horseColors[i % horseColors.length], .44)
@@ -740,7 +759,7 @@ function createFerrisWheel(parent: THREE.Group): { group: THREE.Group; rotor: TH
     addBeam(group,new THREE.Vector3(-1.3,.3,z),new THREE.Vector3(1.3,.3,z),.17,frame,10)
   }
   for (const x of [-1.65,1.65]) addBeam(group,new THREE.Vector3(x,.2,-.48),new THREE.Vector3(x,.2,.48),.20,gold,10)
-  const rotor = new THREE.Group()
+  const rotor = movesOnItsOwn(new THREE.Group())
   rotor.position.y = centerY
   group.add(rotor)
   rotor.add(new THREE.Mesh(new THREE.TorusGeometry(radius,.15,12,96),standard('#51aaa4',.38)))
@@ -757,7 +776,7 @@ function createFerrisWheel(parent: THREE.Group): { group: THREE.Group; rotor: TH
   const cabins: THREE.Group[] = []
   const cabinColors = ['#ed6970','#f2bf52','#4ca49d','#6f8fca','#de85b2','#fff0c9']
   for (let i = 0; i < 10; i += 1) {
-    const cabin = new THREE.Group()
+    const cabin = movesOnItsOwn(new THREE.Group())
     const basket = new THREE.Mesh(new THREE.BoxGeometry(.82,.66,.62),standard(cabinColors[i%6],.55))
     basket.position.y = -.35
     const rim = new THREE.Mesh(new THREE.BoxGeometry(.98,.11,.76),standard('#fff0c9',.52))
@@ -847,13 +866,14 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   const borderMaterial=new THREE.MeshStandardMaterial({color:'#fff5d5',roughness:.48,emissive:'#d7ca9a',emissiveIntensity:.14})
   const frontierGlow=new THREE.MeshStandardMaterial({color:'#dcb965',roughness:.42,metalness:.1,emissive:'#efc95d',emissiveIntensity:.13})
   const propRadius=(object:THREE.Object3D,fallback:number):number=>{
-    const bounds=new THREE.Box3().setFromObject(object)
+    const bounds=objectBounds(object)
     if(bounds.isEmpty())return fallback
     const size=bounds.getSize(new THREE.Vector3())
     return Math.max(fallback,Math.hypot(size.x,size.z)*.5)
   }
   function trackProp(group:THREE.Group,fallbackRadius:number,kind?:CarnivalKind):void{
     close.attach(group)
+    mergeProp(group)
     const category = kind ?? (group.name.includes('tent') ? 'tent' : group.name.includes('wheel') || group.name.includes('carousel') ? 'ride' : 'decoration')
     const id = `close-${carnivalProps.length}-${category}`
     group.userData.carnivalId = id
@@ -974,6 +994,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
     stake.add(pennant)
     boundaryStakes.add(stake)
   })
+  mergeProp(boundaryStakes)
 
   // The quieter hills live in the horizon layer; nothing blocks the midway.
   const tufts=new THREE.MeshStandardMaterial({color:'#a1c66b',roughness:.9,side:THREE.DoubleSide})

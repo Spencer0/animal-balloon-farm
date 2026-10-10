@@ -18,6 +18,11 @@ const PUPIL_MATCH = /pupil/i
 /** The catchlight sits on top of the pupil; it is kept, just nudged. */
 const CATCHLIGHT_MATCH = /catchlight|glint/i
 
+/** Eye parts this module finds by name and toggles, so they must stay separate meshes. */
+export function isHeartEyePart(name: string): boolean {
+  return PUPIL_MATCH.test(name) || CATCHLIGHT_MATCH.test(name)
+}
+
 /**
  * The one heart-eye tint. Breeding reads as a single shared signal, so every
  * species wears the same candy pink rather than its own body colour; a cow's
