@@ -1,8 +1,9 @@
 /**
- * The shared visual language for every screen in the game.
+ * LEGACY canvas toolkit: the proof-of-concept look (Georgia, gilt rims). New UI
+ * is DOM, styled like `journal-dom.css`; do not extend or copy this. It stays
+ * only for the canvas panels that have not been migrated yet.
  *
- * Colours, type and the handful of canvas primitives live here so the journal,
- * the tool HUD, the menu and the viewer cannot drift apart again. Sizes are in
+ * Colours, type and the handful of canvas primitives for those panels. Sizes are in
  * design units (see `ui-viewport.ts`); canvases are drawn at `TEXTURE_SCALE`
  * and then mapped down, so type stays crisp on high-DPI displays.
  */
