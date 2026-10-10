@@ -6,7 +6,8 @@ import type { GardenTerrain } from './garden-terrain'
 import type { GardenWaterField } from '../game/garden-water'
 import type { HoverGlowTarget } from './hover-glow'
 import { isHouse } from '../game/animal-housing'
-import { createShopBuild, type ShopBuild, type ShopBuildReport } from './shop-build'
+import { createShopBuild, SHOP_BUILD_NODE, type ShopBuild, type ShopBuildReport } from './shop-build'
+import { mergeStaticMeshes, objectBounds } from './merge-static-meshes'
 import {
   createPropInventory,
   createPropOccupancy,
@@ -234,6 +235,12 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   // ------------------------------------------------------------ model cache --
 
   const sources = new Map<PropId, THREE.Object3D | 'loading' | 'failed'>()
+  /**
+   * The unmerged models, for the placement ghost only. The ghost is translucent
+   * and blends part over part in draw order, so it keeps its original parts to
+   * look exactly as it did; placed props are opaque and draw merged.
+   */
+  const ghostSources = new Map<PropId, THREE.Object3D>()
 
   function loadProp(id: PropId): THREE.Object3D | null {
     const existing = sources.get(id)
@@ -242,7 +249,12 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     sources.set(id, 'loading')
     loader.load(
       PROP_CATALOG[id].modelUrl,
-      (gltf) => sources.set(id, gltf.scene),
+      (gltf) => {
+        ghostSources.set(id, gltf.scene.clone(true))
+        // Merged once here, so every placed clone shares a few meshes instead of dozens.
+        mergeStaticMeshes(gltf.scene)
+        sources.set(id, gltf.scene)
+      },
       undefined,
       () => {
         console.warn(`[props] could not load ${id} from ${PROP_CATALOG[id].modelUrl}`)
@@ -257,13 +269,13 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     const wrapper = new THREE.Group()
     const clone = source.clone(true)
     wrapper.add(clone)
-    const measured = new THREE.Box3().setFromObject(clone)
+    const measured = objectBounds(clone)
     const dims = measured.getSize(new THREE.Vector3())
     const longest = Math.max(dims.x, dims.y, dims.z)
     const scale = size / Math.max(0.0001, longest)
     clone.scale.setScalar(scale)
     clone.updateMatrixWorld(true)
-    const fitted = new THREE.Box3().setFromObject(clone)
+    const fitted = objectBounds(clone)
     const centre = fitted.getCenter(new THREE.Vector3())
     clone.position.set(-centre.x, -fitted.min.y, -centre.z)
     wrapper.rotation.y = rotationY
@@ -402,13 +414,15 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     options.shop.url,
     (gltf) => {
       const model = gltf.scene
-      const measured = new THREE.Box3().setFromObject(model)
+      // Each build piece animates on its own, so pieces are merged separately.
+      mergeStaticMeshes(model, { isPivot: (object) => object.name.startsWith(SHOP_BUILD_NODE) })
+      const measured = objectBounds(model)
       const dims = measured.getSize(new THREE.Vector3())
       const longest = Math.max(dims.x, dims.y, dims.z)
       const scale = options.shop.size / Math.max(0.0001, longest)
       model.scale.setScalar(scale)
       model.updateMatrixWorld(true)
-      const fitted = new THREE.Box3().setFromObject(model)
+      const fitted = objectBounds(model)
       const centre = fitted.getCenter(new THREE.Vector3())
       model.position.set(-centre.x, -fitted.min.y, -centre.z)
       const holder = new THREE.Group()
@@ -523,7 +537,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     clearGhostModel()
     const source = loadProp(id)
     if (!source) return
-    const fitted = fitModel(source, propDefinition(id).size, 0)
+    const fitted = fitModel(ghostSources.get(id) ?? source, propDefinition(id).size, 0)
     fitted.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
       object.castShadow = false
@@ -1057,7 +1071,7 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     const selection = inspectAt(clientX, clientY)
     const visual = selection ? visualByProp.get(selection.handle) : undefined
     if (!visual) return null
-    const box = new THREE.Box3().setFromObject(visual.object)
+    const box = objectBounds(visual.object)
     const center = box.getCenter(new THREE.Vector3())
     const size = box.getSize(new THREE.Vector3())
     return { x: center.x, y: box.min.y, z: center.z, radius: Math.max(size.x, size.z) / 2 }
@@ -1329,6 +1343,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
         disposeSource(object)
       }
       sources.clear()
+      for (const object of ghostSources.values()) disposeSource(object)
+      ghostSources.clear()
       disposeSource(shopBuilding ?? new THREE.Group())
     },
   }

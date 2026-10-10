@@ -6,6 +6,8 @@ import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
 import { lowestClipPoseY } from './animal-grounding'
+import { cloneMerged, objectBounds, skeletonsOf } from '../scene/merge-static-meshes'
+import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
 import { advanceAnimalTravel, canAnimalLeaveFarm, clearOfFarmBounds, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
@@ -361,26 +363,9 @@ function setAnimalAppearanceProgress(root: THREE.Object3D, progress: number, ran
   })
 }
 
+/** Bounds of `object` in `root`'s space, following merged parts into their current pose. */
 function getLocalBounds(root: THREE.Group, object: THREE.Object3D): THREE.Box3 {
-  root.updateWorldMatrix(true, true)
-  const inverseRoot = root.matrixWorld.clone().invert()
-  const bounds = new THREE.Box3().makeEmpty()
-  const localToRoot = new THREE.Matrix4()
-  const point = new THREE.Vector3()
-
-  object.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return
-    if (!child.geometry.boundingBox) child.geometry.computeBoundingBox()
-    const geometryBounds = child.geometry.boundingBox
-    if (!geometryBounds) return
-    localToRoot.multiplyMatrices(inverseRoot, child.matrixWorld)
-    for (let mask = 0; mask < 8; mask += 1) {
-      point.set(mask & 1 ? geometryBounds.max.x : geometryBounds.min.x, mask & 2 ? geometryBounds.max.y : geometryBounds.min.y, mask & 4 ? geometryBounds.max.z : geometryBounds.min.z)
-        .applyMatrix4(localToRoot)
-      bounds.expandByPoint(point)
-    }
-  })
-  return bounds
+  return objectBounds(object, root)
 }
 
 function seededRandom(seed: number): () => number {
@@ -400,7 +385,10 @@ function loadModel(url: string): Promise<AnimalGLTF> {
   const existing = animalAssetCache.get(url)
   if (existing) return existing
   const loading = new Promise<AnimalGLTF>((resolve, reject) => {
-    new GLTFLoader().load(url, (gltf) => resolve(gltf as AnimalGLTF), undefined, reject)
+    new GLTFLoader().load(url, (gltf) => {
+      mergeAnimalParts(gltf.scene, gltf.animations)
+      resolve(gltf as AnimalGLTF)
+    }, undefined, reject)
   })
   animalAssetCache.set(url, loading)
   void loading.catch(() => {
@@ -514,16 +502,17 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         gltf = asset
         // Parsed geometry/textures are shared per species; only the hierarchy
         // and mixer are cloned when this particular animal enters close LOD.
-        modelRoot = asset.scene.clone(true) as THREE.Group
+        // Skinned parts must be cloned with their skeleton rebound to the clone's nodes.
+        modelRoot = cloneMerged(asset.scene)
         modelRoot.name = `Original balloon ${options.name} · Blender GLB clone`
-        const dimensions = new THREE.Box3().setFromObject(modelRoot).getSize(new THREE.Vector3())
+        const dimensions = objectBounds(modelRoot).getSize(new THREE.Vector3())
         const longestSide = Math.max(dimensions.x, dimensions.y, dimensions.z)
         if (!Number.isFinite(longestSide) || longestSide < 0.1) throw new Error('GLB has no measurable geometry')
         modelRoot.scale.setScalar(options.size / longestSide)
         modelRoot.position.set(0, 0, 0)
         modelRoot.rotation.set(0, 0, 0)
         modelRoot.updateMatrixWorld(true)
-        const initialBounds = new THREE.Box3().setFromObject(modelRoot)
+        const initialBounds = objectBounds(modelRoot)
         const modelCenter = initialBounds.getCenter(new THREE.Vector3())
         modelRoot.position.set(-modelCenter.x, -initialBounds.min.y, -modelCenter.z)
         modelRoot.updateMatrixWorld(true)
@@ -741,7 +730,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     appearance = 'standard'
     lastCaptureProgress = 0
     const bounds = getLocalBounds(posePivot, modelRoot ?? posePivot)
-    const worldBounds = new THREE.Box3().setFromObject(modelRoot ?? posePivot)
+    const worldBounds = objectBounds(modelRoot ?? posePivot)
     captureVerticalRange = { bottom: worldBounds.min.y, top: worldBounds.max.y }
     // Initialize at progress zero so the animal stays glossy red until paint reaches it.
     setAnimalAppearanceProgress(modelRoot ?? posePivot, 0, captureVerticalRange)
@@ -1271,6 +1260,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         if (!(object instanceof THREE.Mesh)) return
         disposeTemporaryMaterials(object)
       })
+      // Each clone owns its skeleton's bone texture; the geometry is the species'.
+      if (loaded) skeletonsOf(loaded.root).forEach((skeleton) => skeleton.dispose())
       loaded?.mixer.stopAllAction()
     },
   }
