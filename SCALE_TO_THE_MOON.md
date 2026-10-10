@@ -370,6 +370,7 @@ branch (after). Draw calls are exact; frame times are indicative.
 | meadow/tall-grass-garden, settled | 907 | **284–315** | 520k–555k* |
 | sandbox/farmer-10, carnival set up, wide view | 1,334 | **920** | |
 | sandbox/farmer-10, six placed props, garden view | 1,124 | **492** | |
+| sleep/rats-and-raccoons at 13 s, 20–22 animals walking home (vs `d1043cd`) | 4,283 | **534** | |
 
 The crowd rows are the cleanest comparison. The scene is identical, the
 triangle counts match to the triangle, and only the number of submissions
