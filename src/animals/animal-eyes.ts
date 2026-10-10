@@ -157,9 +157,3 @@ export function clearHeartEyes(root: THREE.Object3D): void {
   existing.material.dispose()
   installed.delete(root)
 }
-
-function disposeHeartEyes(root: THREE.Object3D): void {
-  clearHeartEyes(root)
-}
-
-export { disposeHeartEyes }

@@ -5,6 +5,7 @@ import { createUIViewport, rectContains, type DesignPoint, type DesignRect } fro
 import type { UIPanel } from './ui-layer'
 import type { UiCursorKind } from './ui-cursor'
 import { createSurface, fillRoundRect, strokeRoundRect } from './ui-theme'
+import { createToolTooltipDom } from './tool-tooltip-dom'
 
 /**
  * The garden tool bar.
@@ -38,11 +39,15 @@ export interface ToolsHud extends UIPanel {
   readonly isVisible: boolean
   setVisible(visible: boolean): void
   selectTool(id: GardenToolId | null): void
-  /** Which tools the farmer owns. The rest leave the bar; the owned ones close ranks. */
-  setOwnedTools(ids: readonly GardenToolId[]): void
   setSelectedTool(id: GardenToolId | null): void
   /** Show the pack in the seeder's hand; `canSwap` reveals the E chip once the tall pack is owned. */
   setGrassPack(pack: GrassPack, canSwap: boolean): void
+  /**
+   * Which bought tools the farmer owns. The seed bag is always in the bar; the
+   * shovel, the bucket and the Snower take the next slot and number key once bought.
+   */
+  setOwnedTools(ids: readonly GardenToolId[]): void
+  isToolOwned(id: GardenToolId): boolean
 }
 
 function round(value: number): number {
@@ -83,7 +88,6 @@ interface ToolSlot {
   readonly icon: THREE.Group
   readonly badgeMaterial: THREE.MeshBasicMaterial
   readonly model: THREE.Group
-  owned: boolean
   rect: DesignRect
   centreX: number
   centreY: number
@@ -157,7 +161,6 @@ export function createToolsHud(
       icon,
       badgeMaterial,
       model,
-      owned: true,
       rect: { x: 0, y: 0, width: SLOT_WIDTH, height: SLOT_HEIGHT },
       centreX: 0,
       centreY: 0,
@@ -181,6 +184,36 @@ export function createToolsHud(
 
   let selected = initialTool
   let visible = true
+  // Bought tools stay out of the bar, and off the keyboard, until they are owned.
+  const BOUGHT_TOOLS: readonly GardenToolId[] = ['shovel', 'water', 'snower']
+  const owned = new Set<GardenToolId>(GARDEN_TOOLS.map((tool) => tool.id).filter((id) => !BOUGHT_TOOLS.includes(id)))
+  const shown = (): ToolSlot[] => slots.filter((slot) => owned.has(slot.id))
+
+  // The hover tooltip is a DOM card (see tool-tooltip-dom.ts); the bar only
+  // reports which tool is hovered and where it sits on screen.
+  const tooltip = createToolTooltipDom()
+  let cssSize = { width: cssWidth, height: cssHeight }
+  let hoveredId: GardenToolId | null = null
+  let grassPack: GrassPack = 'short'
+  let canSwapPack = false
+
+  function showTooltip(slot: ToolSlot): void {
+    const x = (slot.centreX + viewport.width / 2) / viewport.width
+    const top = (viewport.height / 2 - (slot.centreY + SLOT_HEIGHT / 2)) / viewport.height
+    tooltip.show(
+      slot.id,
+      { centreX: x * cssSize.width, top: top * cssSize.height },
+      { canSwapPack, pack: grassPack },
+    )
+  }
+
+  function hoverSlot(slot: ToolSlot | null): void {
+    const id = slot?.id ?? null
+    if (id === hoveredId) return
+    hoveredId = id
+    if (slot) showTooltip(slot)
+    else tooltip.hide()
+  }
 
   function select(id: GardenToolId | null): void {
     selected = id
@@ -188,18 +221,12 @@ export function createToolsHud(
   }
 
   function layout(): void {
-    const shown = slots.filter((slot) => slot.owned)
-    const totalWidth = shown.length * SLOT_WIDTH + Math.max(0, shown.length - 1) * SLOT_GAP
+    const row = shown()
+    for (const slot of slots) slot.holder.visible = owned.has(slot.id)
+    const totalWidth = row.length * SLOT_WIDTH + (row.length - 1) * SLOT_GAP
     const centreY = viewport.bottom + BOTTOM_MARGIN + SLOT_HEIGHT / 2
     const startX = -totalWidth / 2 + SLOT_WIDTH / 2
-    for (const slot of slots) {
-      slot.holder.visible = slot.owned
-      // An unowned slot takes no clicks: park its rect where nothing can hit it.
-      if (!slot.owned) {
-        slot.rect = { x: -1e6, y: -1e6, width: 0, height: 0 }
-        continue
-      }
-      const index = shown.indexOf(slot)
+    for (const [index, slot] of row.entries()) {
       slot.centreX = startX + index * (SLOT_WIDTH + SLOT_GAP)
       slot.centreY = centreY
       slot.holder.position.set(slot.centreX, slot.centreY, 0)
@@ -213,7 +240,7 @@ export function createToolsHud(
   }
 
   function slotAt(point: DesignPoint): ToolSlot | null {
-    for (const slot of slots) {
+    for (const slot of shown()) {
       if (rectContains(slot.rect, point)) return slot
     }
     return null
@@ -255,17 +282,16 @@ export function createToolsHud(
       return selected
     },
     get isVisible(): boolean { return visible },
-    setVisible(next): void { visible = next; object.visible = next },
+    setVisible(next): void {
+      visible = next
+      object.visible = next
+      if (!next) hoverSlot(null)
+    },
     selectTool(id: GardenToolId | null): void {
       select(id)
     },
     setSelectedTool(id: GardenToolId | null): void {
       if (id === null || GARDEN_TOOLS.some((tool) => tool.id === id)) selected = id
-    },
-    setOwnedTools(ids: readonly GardenToolId[]): void {
-      for (const slot of slots) slot.owned = ids.includes(slot.id)
-      if (selected !== null && !ids.includes(selected)) selected = null
-      layout()
     },
     pointerDown(point: DesignPoint, event: PointerEvent): boolean {
       if (!visible) return false
@@ -281,6 +307,7 @@ export function createToolsHud(
       if (!visible) return false
       const slot = slotAt(point)
       for (const candidate of slots) candidate.hover = candidate === slot ? 1 : 0
+      hoverSlot(slot)
       return slot !== null
     },
     cursor(point: DesignPoint): UiCursorKind | undefined {
@@ -300,24 +327,39 @@ export function createToolsHud(
     keyDown(event: KeyboardEvent): boolean {
       if (!visible || event.altKey || event.ctrlKey || event.metaKey || event.repeat) return false
       const key = event.code === 'Space' ? 'space' : event.key.toLowerCase()
-      const tool = GARDEN_TOOLS.find((item) => item.hotkey === key)
-      if (!tool || !slots.some((item) => item.id === tool.id && item.owned)) return false
+      const tool = GARDEN_TOOLS.find((item) => item.hotkey === key && owned.has(item.id))
+      if (!tool) return false
       event.preventDefault()
       const slot = slots.find((item) => item.id === tool.id)
       if (slot) slot.press = 1
       select(tool.id)
       return true
     },
+    setOwnedTools(ids: readonly GardenToolId[]): void {
+      owned.clear()
+      for (const tool of GARDEN_TOOLS) if (!BOUGHT_TOOLS.includes(tool.id)) owned.add(tool.id)
+      for (const id of ids) owned.add(id)
+      layout()
+    },
+    isToolOwned(id: GardenToolId): boolean {
+      return owned.has(id)
+    },
     setGrassPack(pack: GrassPack, canSwap: boolean): void {
       const grass = slots.find((slot) => slot.id === 'grass')
       if (grass) tintSeedPack(grass.model, pack)
       swapChip.visible = canSwap
+      grassPack = pack
+      canSwapPack = canSwap
+      // Keep an open tooltip honest when E swaps the pack under the pointer.
+      const hovered = slots.find((slot) => slot.id === hoveredId)
+      if (hovered) showTooltip(hovered)
     },
     update(delta: number): void {
       update(delta, performance.now() / 1000)
     },
     resize(width: number, height: number): void {
       viewport.resize(width, height)
+      cssSize = { width, height }
       layout()
     },
     describe() {
@@ -326,11 +368,12 @@ export function createToolsHud(
         // The bar is anchored to the bottom edge and sized in design units, so
         // its height as a fraction of the window must not drift with aspect.
         barHeightFraction: round(SLOT_HEIGHT / viewport.height),
-        firstButton: { ...(slots.find((slot) => slot.owned) ?? slots[0]).rect },
-        slots: slots.filter((slot) => slot.owned).map((slot) => ({ id: slot.id, hotkey: slot.hotkey, ...slot.rect })),
+        firstButton: { ...slots[0].rect },
+        slots: shown().map((slot) => ({ id: slot.id, hotkey: slot.hotkey, ...slot.rect })),
       }
     },
     dispose(): void {
+      tooltip.dispose()
       for (const slot of slots) {
         slot.holder.traverse((child) => {
           if (!(child instanceof THREE.Mesh)) return

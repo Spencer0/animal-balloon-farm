@@ -62,6 +62,18 @@ export interface SavedGrass {
   readonly paintKeys: string
   readonly paintCoverage: string
   readonly paintCount: number
+  /**
+   * Snow lying on the lawn, packed like the paint. Optional so a save written
+   * before the Snower reads back as a lawn with no snow.
+   */
+  readonly snowKeys?: string
+  readonly snowCoverage?: string
+  readonly snowCount?: number
+  /** Ice crystals (kind 0) and snowballs (kind 1) standing on the snow. */
+  readonly featureXs?: string
+  readonly featureZs?: string
+  readonly featureKinds?: string
+  readonly featureCount?: number
 }
 
 export interface SaveGameData {
@@ -230,6 +242,11 @@ export function parseEnvelope(text: string | null): ParseResult {
     && isRecord(data.grass) && typeof data.grass.xs === 'string' && typeof data.grass.zs === 'string'
     && typeof data.grass.heights === 'string' && isNumber(data.grass.count)
     && typeof data.grass.paintKeys === 'string' && typeof data.grass.paintCoverage === 'string' && isNumber(data.grass.paintCount)
+    && (data.grass.snowCount === undefined
+      || (isNumber(data.grass.snowCount) && typeof data.grass.snowKeys === 'string' && typeof data.grass.snowCoverage === 'string'))
+    && (data.grass.featureCount === undefined
+      || (isNumber(data.grass.featureCount) && typeof data.grass.featureXs === 'string'
+        && typeof data.grass.featureZs === 'string' && typeof data.grass.featureKinds === 'string'))
     && isRecord(data.tools) && isRecord(data.journalBestStage)
   if (!summaryOk || !dataOk) return { ok: false, failure: 'malformed' }
   return { ok: true, envelope: raw as unknown as SaveEnvelope }

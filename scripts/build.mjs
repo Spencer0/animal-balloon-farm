@@ -19,7 +19,9 @@ const gardenDebug = debugFlag === '0' ? 'false'
   : debugFlag === '1' || debugFlag === 'true' || Boolean(basePath) ? 'true'
     : 'false'
 const basePrefix = basePath ? `/${basePath}/` : './'
-await cp('public', outdir, { recursive: true, force: true }).catch((error) => {
+// Blender sources sit beside their exports in public/ but the game only loads
+// the .glb, so they stay out of the deploy (about 84 MB of it).
+await cp('public', outdir, { recursive: true, force: true, filter: (path) => !/\.blend\d?$/.test(path) }).catch((error) => {
   if (error.code !== 'ENOENT') throw error
 })
 

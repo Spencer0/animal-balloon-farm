@@ -38,6 +38,26 @@
 If unrelated changes appear in the working tree, leave them uncommitted and
 mention them in the summary.
 
+## Command allow list
+
+Spencer keeps Claude Code's allow list in the global settings file,
+`C:\Users\Spencer\.claude\settings.json`, so it applies to every project.
+You may add a command to its `allow` list when it has **zero ability to wipe
+the drive**. In practice that means all of these hold:
+
+- It can't delete, overwrite, or move files outside a git-restorable change.
+- It can't kill processes or change permissions (`taskkill`, `icacls`, `takeown`).
+- It isn't a shell wrapper that could hide a delete inside a string (`cmd`,
+  `powershell`, `bash -c`).
+- Its pattern is narrow. Use `git worktree add:*`, not `git:*`.
+
+Never add `rm`, `rmdir`, `rd`, `del`, `erase`, `Remove-Item`, `robocopy`,
+`taskkill`, `format`, or `diskpart`. Commands that push, merge to `main`,
+remove a worktree, or reset or clean the tree belong on `ask`, not `allow`.
+
+When you add an entry, name it in your final summary and say why it's safe.
+If you aren't sure a command meets this bar, don't add it. Ask Spencer.
+
 ## Adding an animal
 
 Read `ANIMAL_PIPELINE.md` first and use its checklist. It lists the
@@ -45,14 +65,22 @@ registration points that are not compiler-enforced and fail silently.
 
 ## Project rules
 
-- **Rendering:** Three.js for all game rendering, including menus, HUD,
-  journal, dialogs, and the animal viewer. Don't add Vite, and don't build
-  game UI from HTML/CSS/DOM overlays. `index.html` and `src/style.css` are the
-  boot shell only. All game UI goes through `src/ui/` (`ui-layer.ts`,
-  `ui-viewport.ts`, `ui-theme.ts`, `ui-button.ts`, `ui-props.ts`).
-- **Layout:** UI is authored at 1600x900 design units with one uniform scale.
-  Never scale x and y independently. Test with the `?gardenDebug=1` harness
-  (`window.__gardenDebug.layout()`) rather than eyeballing screenshots.
+- **Rendering:** Three.js renders the farm and the world-space bits of the HUD
+  (the tool bar, the balloon). Don't add Vite.
+- **UI toolkit:** Game panels are DOM overlays: one `src/ui/<name>-dom.ts`
+  with a sibling `<name>-dom.css`, in the Farm Journal look (cream paper
+  `#faf3e2`, `#6b4a33` borders, dashed `#b08c5e` dividers, Trebuchet MS,
+  terracotta `#c65a3a` accents). Copy `journal-dom.css` / `notification-dom.css`
+  for new UI, including hover tooltips (`tool-tooltip-dom.ts`).
+- **Legacy canvas toolkit:** `ui-theme.ts`, `ui-button.ts`, `ui-props.ts`,
+  `ui-layer.ts` and the canvas `*-panel.ts` files (Georgia type, gilt rims)
+  are the old proof of concept, being replaced by the DOM toolkit. Don't
+  extend them and don't copy their style. Only touch them to migrate or
+  retire a panel.
+- **Layout:** Three.js HUD elements are authored at 1600x900 design units with
+  one uniform scale. Never scale x and y independently. Test with the
+  `?gardenDebug=1` harness (`window.__gardenDebug.layout()`) rather than
+  eyeballing screenshots.
 - **Dev server:** Use the local esbuild server, never `file://`. `npm run dev`
   writes to `dist-<branch>` so worktrees never share an output directory.
 - **Pinned deps:** Pin Three.js and its addons and types together.

@@ -13,12 +13,13 @@ import { sleepingByDumpster } from './raccoon/sleeping-by-dumpster'
 import { aboutToGoFlat, goingFlat } from './mole/going-flat'
 import { readyToSettle as moleReadyToSettle } from './mole/ready-to-settle'
 import { emptyMeadow, snakeHunt, tallGrassGarden, tallGrassNight } from './meadow/tall-grass-garden'
+import { ratsAndRaccoons } from './sleep/rats-and-raccoons'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
   farmer10, firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium,
   raccoonFirstNight, sleepingByCan, sleepingByDumpster, raccoonBreedReady,
-  tallGrassGarden, tallGrassNight, emptyMeadow, snakeHunt,
+  tallGrassGarden, tallGrassNight, emptyMeadow, snakeHunt, ratsAndRaccoons,
   moleReadyToSettle, goingFlat, aboutToGoFlat,
 ]
 

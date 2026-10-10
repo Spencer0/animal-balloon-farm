@@ -92,19 +92,6 @@ export function rectContains(rect: DesignRect, point: DesignPoint): boolean {
     && point.y >= rect.y && point.y <= rect.y + rect.height
 }
 
-export function rectCenter(rect: DesignRect): DesignPoint {
-  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-}
-
-export function insetRect(rect: DesignRect, amount: number): DesignRect {
-  return {
-    x: rect.x + amount,
-    y: rect.y + amount,
-    width: Math.max(0, rect.width - amount * 2),
-    height: Math.max(0, rect.height - amount * 2),
-  }
-}
-
 /** The full design space, i.e. the rect a full-bleed backdrop should fill. */
 export function fullViewportRect(viewport: UIViewport): DesignRect {
   return { x: viewport.left, y: viewport.bottom, width: viewport.width, height: viewport.height }
@@ -134,9 +121,4 @@ export function fitAspectRect(
     width,
     height,
   }
-}
-
-/** A uniform scale factor that fits `content` inside `frame`, preserving aspect. */
-export function fitScale(contentWidth: number, contentHeight: number, frame: DesignRect): number {
-  return Math.min(frame.width / contentWidth, frame.height / contentHeight)
 }

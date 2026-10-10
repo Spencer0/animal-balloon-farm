@@ -255,7 +255,7 @@ function easeOutBack(time: number): number {
   return 1 + 2.2 * eased * eased * eased + 1.2 * eased * eased
 }
 
-/** The progression card this mailbox tucks underneath (see progression-hud). */
+/** The progression card this mailbox tucks underneath. */
 const PROGRESSION_CARD_HEIGHT = 124
 const PROGRESSION_TOP_MARGIN = 22
 

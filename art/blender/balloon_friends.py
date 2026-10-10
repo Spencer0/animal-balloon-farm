@@ -1070,7 +1070,7 @@ def animate_owl(body, neck, head, tufts, wings, tips, tail, eyes, bell, body_z):
     finish_action(perch, "IDLE", "owl")
 
 
-def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, lids, body_z=1.2):
+def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, lids, body_z=1.2, tail_pitch=-24):
     """A third clip, SLEEP: a curled-up ball, head tucked onto the flank, tail wrapped round, eyes shut.
 
     The runtime picks it up by name (any clip containing SLEEP) and only for a species that
@@ -1080,7 +1080,7 @@ def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_
     everything = [body, head, neck, *ears, tail, *legs, *hooves, bell, *lids]
     for obj in everything:
         begin_action(obj, f"BALLOON {animal.upper()} · SLEEP")
-    lying_z = .70  # belly (body-local -.68) rests on the lawn
+    lying_z = .81  # the hip balloons (body-local -.72, x1.1 puff) rest on the lawn
     for frame, phase in zip(FRAMES, PHASES):
         bpy.context.scene.frame_set(frame)
         breath = math.sin(phase)
@@ -1093,17 +1093,17 @@ def animate_sleep(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_
         # tucked round onto the near flank, and the tail wraps along that flank so its tip meets the
         # nose. The legs fold underneath and only the paws show. "Near" is the -Y side.
         key(body, frame, location=(0, 0, lying_z + .012 * breath), rotation=(0, 0, 0), scale=(.96 + .012 * breath, 1.08 + .02 * breath, 1.1 + .03 * breath))
-        key(head, frame, location=(.56, -.40 + wob, -.24), rotation=(0, math.radians(30) + tremor, math.radians(-64)))
+        key(head, frame, location=(.56, -.40 + wob, -.06), rotation=(0, math.radians(30) + tremor, math.radians(-64)))
         key(neck, frame, rotation=(0, math.radians(8) + tremor, math.radians(-20)))
         key(bell, frame, rotation=(0, math.radians(2) * breath, 0))
         for index, ear in enumerate(ears):
             side = -1 if index == 0 else 1
             key(ear, frame, rotation=(math.radians(side * 38) + tremor, math.radians(-6), math.radians(side * -16)))
-        key(tail, frame, location=(-.62, -.66 + wob, -.34), rotation=(0, math.radians(-24) + tremor, math.radians(168)))
+        key(tail, frame, location=(-.62, -.66 + wob, -.34), rotation=(0, math.radians(tail_pitch) + tremor, math.radians(168)))
         for index, (leg, hoof, (x, y, _)) in enumerate(zip(legs, hooves, leg_positions)):
             front = index < 2
             # Front paws tuck under the chin; hind legs fold forward under the belly.
-            key(leg, frame, location=(x - (.05 if front else -.18), y * .55, -.62 + wob), rotation=(0, math.radians(-58 if front else -62) + tremor, math.radians(0)))
+            key(leg, frame, location=(x - (.05 if front else -.18), y * .55, -.42 + wob), rotation=(0, math.radians(-84 if front else -86) + tremor, math.radians(0)))
             key(hoof, frame, rotation=(0, tremor, 0))
         for lid in lids:
             key(lid, frame, scale=(1 + .01 * breath, 1, 1 + .01 * breath))
@@ -1253,7 +1253,7 @@ def make_rat():
         sphere(f"RAT · {label} sleepy eyelid", (0, side * .02, 0), (.16, .10, .17), m["mask"], lid, 24, 16)
         curve(f"RAT · {label} closed-eye line", [(-.08, side * .10, .0), (.02, side * .105, -.045), (.13, side * .10, .0)], .012, m["white"], lid, 2)
     pinned = [(head, tuple(head.location)), (tail, tuple(tail.location))]
-    animate_sleep("rat", body, head, neck, ears, tail, legs, paws, bell, positions, lids)
+    animate_sleep("rat", body, head, neck, ears, tail, legs, paws, bell, positions, lids, tail_pitch=-12)
     animate("rat", body, head, neck, ears, tail, legs, paws, bell, positions, forward_gait=True, body_z=1.2, leg_anchor=-.45, held=lids, pinned=pinned)
     portrait("rat", m)
     export_asset(root, "rat", texcoords=False)
