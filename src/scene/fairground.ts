@@ -36,8 +36,11 @@ export interface Fairground {
   refreshLandReveal?(): void
   /** Legacy full replacement for consumers without a reusable surface template. */
   updateSurfaceGeometry?(geometry: THREE.BufferGeometry): void
-  /** `elapsedDays` drives the weekly carnival: it is set up on Sundays and packed away otherwise. Stages without a calendar omit it. */
-  update(deltaSeconds: number, elapsedDays?: number): void
+  /**
+   * `elapsedDays` drives the weekly carnival: it is set up on Sundays and packed away otherwise. Stages without a calendar omit it.
+   * Returns true when a shadow caster moved this frame (a prop folding, the town filling in), so the caller can redraw the sun's shadows.
+   */
+  update(deltaSeconds: number, elapsedDays?: number): boolean
 }
 
 export interface CarnivalReport {
@@ -691,7 +694,9 @@ function createCarousel(parent: THREE.Group): { group: THREE.Group; rotor: THREE
   consolidateMaterialGroups(canopy)
   const roof = new THREE.Mesh(canopy, stripeMaterials)
   roof.position.y = 2.62
-  roof.castShadow = true
+  // The rotor turns while the carousel runs, so its canopy, poles and horses do not
+  // cast: a turning shadow would need a redraw every frame. See shadow-refresh.ts.
+  roof.castShadow = false
   rotor.add(roof)
   const valance = new THREE.Mesh(new THREE.TorusGeometry(radius, .12, 8, 64), standard('#f2c75c', .42))
   valance.rotation.x = Math.PI / 2
@@ -723,7 +728,7 @@ function createCarousel(parent: THREE.Group): { group: THREE.Group; rotor: THREE
     const angle = i / 8 * Math.PI * 2
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, 2.5, 8), standard('#f2c75c', .35))
     pole.position.set(Math.cos(angle) * 2.45, 1.45, Math.sin(angle) * 2.45)
-    pole.castShadow = true
+    pole.castShadow = false
     rotor.add(pole)
     const mount = movesOnItsOwn(new THREE.Group())
     mount.position.set(Math.cos(angle) * 2.45, 1.42, Math.sin(angle) * 2.45)
@@ -737,7 +742,7 @@ function createCarousel(parent: THREE.Group): { group: THREE.Group; rotor: THREE
     const tail = new THREE.Mesh(new THREE.ConeGeometry(.14, .42, 8), coat)
     tail.rotation.z = Math.PI / 2.4
     tail.position.set(-.62, .16, 0)
-    body.castShadow = head.castShadow = tail.castShadow = true
+    body.castShadow = head.castShadow = tail.castShadow = false
     mount.add(body, head, tail)
     rotor.add(mount)
     horses.push(mount)
@@ -768,7 +773,8 @@ function createFerrisWheel(parent: THREE.Group): { group: THREE.Group; rotor: TH
   const spokes = [standard('#ed6970',.47),standard('#f5cd61',.42),standard('#fff0c9',.44)]
   for (let i = 0; i < 12; i += 1) {
     const angle = i / 12 * Math.PI * 2
-    addBeam(rotor,new THREE.Vector3(),new THREE.Vector3(Math.cos(angle)*(radius-.2),Math.sin(angle)*(radius-.2),0),.075,spokes[i%3],8)
+    // Spokes turn with the wheel, so they stay out of the shadow pass (see carousel above).
+    addBeam(rotor,new THREE.Vector3(),new THREE.Vector3(Math.cos(angle)*(radius-.2),Math.sin(angle)*(radius-.2),0),.075,spokes[i%3],8).castShadow = false
     const light = new THREE.Mesh(new THREE.SphereGeometry(.13,10,8),new THREE.MeshStandardMaterial({color:COLORS.tent[i%6],emissive:COLORS.tent[i%6],emissiveIntensity:.45,roughness:.35}))
     light.position.set(Math.cos(angle)*radius,Math.sin(angle)*radius,.02)
     rotor.add(light)
@@ -825,6 +831,9 @@ function addBalloonBunch(parent: THREE.Group,x:number,z:number,scale:number,seed
 }
 
 export function createFairground(initialElapsedDays = 0): Fairground {
+  /** Last frame's pack progress per carnival prop, to spot a prop that is folding. */
+  const lastPackProgress: number[] = []
+  let lastCarnivalAmount = -1
   const root=new THREE.Group()
   root.name='Animal Balloon Farm carnival grounds and expandable garden'
   const random=seededRandom(20260927)
@@ -1140,9 +1149,10 @@ export function createFairground(initialElapsedDays = 0): Fairground {
       updateLandRevealMask(soil.geometry, null, farmExpansion.state.bounds, true, LAND_REVEAL_FADE_START, LAND_REVEAL_FADE_END)
       lastRevealBounds = { ...farmExpansion.state.bounds }
     },
-    update(delta, elapsedDays):void{
+    update(delta, elapsedDays):boolean{
       if (elapsedDays !== undefined) schedule!.update(delta, elapsedDays)
       const progress = schedule!.packProgress()
+      let castersMoved = false
       // Rides turn only while they are fully set up; a folded ride stands still.
       const isSetUp = (group: THREE.Group): boolean => progress[carnivalProps.findIndex((prop) => prop.group === group)] === 0
       const wheelRunning = isSetUp(wheel.group)
@@ -1174,6 +1184,10 @@ export function createFairground(initialElapsedDays = 0): Fairground {
       for (let index = 0; index < carnivalProps.length; index += 1) {
         const prop = carnivalProps[index]
         const packed = progress[index]
+        if (lastPackProgress[index] !== packed) {
+          lastPackProgress[index] = packed
+          castersMoved = true
+        }
         // Packing away plays the set-up in reverse: the crate swells as the prop
         // folds, and unpacking shrinks it back out of sight as the prop rises.
         prop.group.visible = packed < 1
@@ -1186,6 +1200,10 @@ export function createFairground(initialElapsedDays = 0): Fairground {
       }
       // The whole carnival is in town while any of it is set up, and is gone on weekdays.
       const inTown = schedule!.amount > 0
+      if (schedule!.amount !== lastCarnivalAmount) {
+        lastCarnivalAmount = schedule!.amount
+        castersMoved = true
+      }
       backdrop.distantCarnival.visible = inTown
       dressing.midway.visible = inTown
       backdrop.update(delta, state.bounds)
@@ -1197,6 +1215,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
       updateLandReveal(state.bounds)
       borderMaterial.emissiveIntensity=.14+(state.isAnimating?Math.sin(state.progress*Math.PI)*.58:0)
       frontierGlow.emissiveIntensity=.13+(state.isAnimating?Math.sin(state.progress*Math.PI)*.78:0)
+      return castersMoved
     },
   }
 }
