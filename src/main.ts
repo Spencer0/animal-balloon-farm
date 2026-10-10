@@ -13,15 +13,14 @@ import { buildAccomplishmentCatalog, createAccomplishmentTracker } from './game/
 import {
   createUpgradeLedger,
   purchasePropAtLevel,
-  purchaseUpgrade,
   upgradeQuote,
-  UPGRADE_CATALOG,
   type UpgradeId,
 } from './game/tool-unlocks'
 import { farmMetric } from './game/farm-state'
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
+import { createFarmActions } from './ui/farm-actions'
 import { PROP_CATALOG, type PropId } from './game/farm-props'
 import { conditionMetricLabel, conditionMetricUnit, getSpeciesConditions, isCountKind } from './game/animal-conditions'
 import { createCaptureShowcaseStage, GARDEN_LAWN_Y, SHOWCASE_ANIMALS } from './scene/capture-showcase'
@@ -31,8 +30,8 @@ import { createGardenWaterField } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
-import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type GardenPlant, type PlantId, type PlantSubstrate } from './game/plants'
-import { STARTING_COINS, animalSaleValue, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
+import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
+import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import type { GardenToolId } from './scene/garden-tool-art'
 import type { CameraTourSubject } from './game/camera-tour'
 import { createFarmCamera } from './scene/farm-camera'
@@ -51,7 +50,7 @@ import { createFpsCounter } from './ui/fps-counter'
 import { createSettingsStore } from './game/settings'
 import { createToolsHud } from './ui/tools-hud'
 import { createBalloonPanel } from './ui/balloon-panel'
-import { createPlayerDomPanel, playerLevelCards } from './ui/player-dom'
+import { createPlayerDomPanel } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
 import { createPropCard } from './ui/prop-card'
@@ -759,41 +758,6 @@ const viewer = createViewerPanel({
   },
 }, window.innerWidth, window.innerHeight, VIEWER_CAST)
 
-/**
- * Opens the animal info card for a live animal. Shared by the farm click
- * and the garden-debug harness so the card stays verifiable headlessly.
- * The card pins to the right of the balloon (flipping left at the edge).
- */
-function openAnimalCardFor(animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }): void {
-  propCard.close()
-  focusedAnimalId = animal.instanceId
-  refreshAnimalVisibility(performance.now() / 1000, true)
-  plantCard.close()
-  gardenPlants?.clearSelection()
-  const species = ANIMAL_CATALOG.find((entry) => entry.id === animal.id)
-  // A preview renders states the live ladder cannot hold on demand (a
-  // resident with no meadow behind it). Selling still validates the live
-  // animal, so this never mints coins; it only draws.
-  const stage = preview?.stage ?? animal.stage
-  const sellable = preview?.sellable ?? animal.canSell
-  const anchorWorld = animal.root.getWorldPosition(new THREE.Vector3())
-  anchorWorld.y += 2.6
-  const anchorNdc = anchorWorld.project(camera)
-  const anchor = {
-    x: anchorNdc.x * ui.viewport.width / 2,
-    y: anchorNdc.y * ui.viewport.height / 2,
-  }
-  animalCard.open({
-    instanceId: animal.instanceId,
-    speciesId: animal.id,
-    name: animalNames.get(animal.instanceId) ?? species?.name ?? animal.id,
-    speciesLabel: `Balloon ${species?.name ?? animal.id}`,
-    stage,
-    price: animalSaleValue(animal.id, stage),
-    sellable,
-  }, anchor)
-  syncFarmChrome()
-}
 
 const salePanel = createSalePanel((target) => {
   if (target.kind === 'animal') {
@@ -824,35 +788,6 @@ salePanel.setWalletVisible(false)
 
 const sellBursts: SellBurst[] = []
 
-/**
- * The shared goodbye behind the sale card and the animal info card: the
- * animal leaves the world, the wallet grows, and a quick gold burst pops
- * where it stood. Sales never touch the accomplishment banner -- that is for
- * milestones, not routine farm business.
- */
-function completeAnimalSale(instanceId: string): { balance: number; price: number; name: string } | null {
-  const animal = animalById.get(instanceId)
-  if (!animal || !animal.canSell || !animal.sell()) return null
-  const name = animalNames.get(instanceId) ?? animal.id
-  const price = animalSaleValue(animal.id, animal.stage)
-  const farewellAt = animal.root.getWorldPosition(new THREE.Vector3())
-  progress.remove(animal.instanceId)
-  animalById.delete(animal.instanceId)
-  const animalIndex = animals.indexOf(animal)
-  if (animalIndex >= 0) animals.splice(animalIndex, 1)
-  if (focusedAnimalId === animal.instanceId) focusedAnimalId = null
-  animal.dispose()
-  refreshAnimalVisibility(performance.now() / 1000, true)
-  farmHomes.delete(animal.instanceId)
-  viewerStands.delete(animal.instanceId)
-  const balance = wallet.credit(price)
-  salePanel.setWallet(balance)
-  saveSoon()
-  const burst = createSellBurst(farewellAt, price)
-  scene.add(burst.root)
-  sellBursts.push(burst)
-  return { balance, price, name }
-}
 
 const animalCard = createAnimalCard({
   onSell: (target) => {
@@ -918,27 +853,6 @@ const propCard = createPropCard({
   },
 }, window.innerWidth, window.innerHeight)
 
-/** Pin the prop card beside a placed prop and highlight it on the lawn. */
-function openPropCardFor(selection: PropSelection): void {
-  animalCard.close()
-  plantCard.close()
-  salePanel.close()
-  gardenPlants?.clearSelection()
-  selectedProp = selection
-  gardenProps?.select(selection)
-  const ndc = new THREE.Vector3(selection.anchor.x, selection.anchor.y, selection.anchor.z).project(camera)
-  propCard.open({
-    id: selection.id,
-    name: selection.name,
-    blurb: selection.blurb,
-    sections: selection.sections,
-    salePrice: selection.salePrice,
-    movable: selection.movable,
-    rotatable: selection.rotatable,
-    residents: residentsOf(selection),
-  }, { x: ndc.x * ui.viewport.width / 2, y: ndc.y * ui.viewport.height / 2 })
-  syncFarmChrome()
-}
 
 const shed = createShedPanel(window.innerWidth, window.innerHeight, (isShedOpen) => {
   shedDom.setOpen(isShedOpen)
@@ -977,35 +891,7 @@ const shedDom: ShedDomPanel = createShedDomPanel({
 })
 
 /* Keep the shed and the shop showing the same counts the world does. */
-function refreshShopUi(): void {
-  shedDom.refresh()
-  shop.refresh()
-}
 
-function buyUpgrade(id: UpgradeId): { ok: boolean; text: string } {
-  const definition = UPGRADE_CATALOG[id]
-  const expansion = fairground.farmExpansion
-  if (id === 'land-deed' && (!expansion || expansion.state.isAnimating)) {
-    return { ok: false, text: 'The surveyors are still marking out the last parcel. Give them a moment.' }
-  }
-  const quote = upgradeQuote(id, upgrades, progression.level)
-  const result = purchaseUpgrade(wallet, upgrades, id, progression.level)
-  if (!result.ok) {
-    if (result.failure === 'maxed') return { ok: false, text: `You already own every ${definition.name}.` }
-    if (result.failure === 'locked') return { ok: false, text: `Pip will sell you this at farmer level ${quote.requiredLevel + 1}.` }
-    return { ok: false, text: `Not enough coins for the ${definition.name} -- it costs ${quote.price}.` }
-  }
-  salePanel.setWallet(wallet.balance)
-  saveSoon()
-  if (id === 'land-deed') {
-    expansion?.expand()
-    refreshShopUi()
-    return { ok: true, text: 'Deed signed -- a new strip of land opens up.' }
-  }
-  syncGrassPack()
-  refreshShopUi()
-  return { ok: true, text: 'The green pack is yours. Press E with the seed bag out to swap packs.' }
-}
 
 const shop: ShopDomPanel = createShopDomPanel({
   onClose: () => {
@@ -1052,23 +938,6 @@ const shop: ShopDomPanel = createShopDomPanel({
   balance: () => wallet.balance,
 })
 
-function playerDomStats() {
-  const base = progressionHudState()
-  const parcel = (fairground.farmExpansion?.state.level ?? 0) + 1
-  return {
-    points: base.points,
-    level: base.level,
-    pointsToNext: base.pointsToNextLevel,
-    parcel,
-    population: base.population,
-    outside: base.outside,
-    houseRoom: base.houseRoom,
-    houseUsed: base.houseUsed,
-    accomplishments: accomplishments.list(ownedSeedSpecies()),
-    recentAccomplishments: accomplishments.recent(),
-    levels: playerLevelCards(base.points, base.level),
-  }
-}
 
 const playerDom = createPlayerDomPanel({
   onClose: () => {
@@ -1113,18 +982,6 @@ const balloon = createBalloonPanel(window.innerWidth, window.innerHeight, (quadr
   refreshCursor()
 })
 
-function balloonInboxAnchor(): { x: number; y: number } {
-  const vw = ui.viewport.width
-  const vh = ui.viewport.height
-  const described = balloon.describe?.() as { center?: { x: number; y: number }; radius?: number } | undefined
-  const cx = described?.center?.x ?? vw / 2 - 150
-  const cy = described?.center?.y ?? 195 - vh / 2
-  const top = cy + (described?.radius ?? 108) + 10
-  return {
-    x: ((cx + vw / 2) / vw) * window.innerWidth,
-    y: ((vh / 2 - top) / vh) * window.innerHeight,
-  }
-}
 
 /**
  * The plant info card: the animal card's twin. Clicking a plant pins it beside
@@ -1158,39 +1015,7 @@ const plantCard = createPlantCard({
   },
 }, window.innerWidth, window.innerHeight)
 
-function openPlantCardFor(plant: GardenPlant): void {
-  propCard.close()
-  const species = PLANT_CATALOG.find((entry) => entry.id === plant.species)
-  const anchorWorld = new THREE.Vector3(plant.x, GARDEN_LAWN_Y + 1.4, plant.z)
-  const anchorNdc = anchorWorld.project(camera)
-  gardenPlants?.cancelPlacement()
-  gardenTools?.setPlantingMode(false)
-  shed.setPlacementActive(false)
-  plantCard.open({
-    instanceId: plant.instanceId,
-    speciesId: plant.species,
-    name: `${species?.name ?? 'Plant'} ${gardenPlants?.selectedPlantNumber ?? 1}`,
-    speciesLabel: species?.subtitle ?? 'Plant',
-    growth: plant.growth,
-    care: plant.careNeeded,
-    price: plantSaleValue(plant.species, plant.growth),
-  }, { x: anchorNdc.x * ui.viewport.width / 2, y: anchorNdc.y * ui.viewport.height / 2 })
-  syncFarmChrome()
-}
 
-let plantCardSyncTimer = 0
-function syncPlantCard(deltaSeconds: number): void {
-  if (!plantCard.isOpen) return
-  plantCardSyncTimer += deltaSeconds
-  if (plantCardSyncTimer < 0.25) return
-  plantCardSyncTimer = 0
-  const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantCard.instanceId)
-  if (!plant) {
-    plantCard.close()
-    return
-  }
-  plantCard.sync({ growth: plant.growth, care: plant.careNeeded, price: plantSaleValue(plant.species, plant.growth) })
-}
 
 // ------------------------------------------------------------ save and load --
 // Everything a farm is, as plain data, and the way back from it. Loading and
@@ -1513,7 +1338,7 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
   setLastExpansionLevel: (level) => { lastExpansionLevel = level },
   remeasureMeadow,
   syncGrassPack,
-  refreshShopUi,
+  refreshShopUi: () => refreshShopUi(),
   noteJournalStages,
   salePanel,
   notificationPanel,
@@ -1552,6 +1377,44 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   carnivalSpawnFor,
   animalDisplayName,
   noteJournalStages,
+})
+const { openAnimalCardFor, completeAnimalSale, openPropCardFor, refreshShopUi, buyUpgrade, playerDomStats, balloonInboxAnchor, openPlantCardFor, syncPlantCard } = createFarmActions({
+  camera,
+  ui,
+  scene,
+  animalCard,
+  propCard,
+  plantCard,
+  salePanel,
+  shed,
+  shedDom,
+  shop,
+  balloon,
+  wallet,
+  upgrades,
+  progression,
+  progress,
+  accomplishments,
+  fairground,
+  gardenPlants: () => gardenPlants,
+  gardenProps: () => gardenProps,
+  gardenTools,
+  animals,
+  animalById,
+  animalNames,
+  farmHomes,
+  viewerStands,
+  sellBursts,
+  getFocusedAnimal: () => focusedAnimalId,
+  setFocusedAnimal: (id) => { focusedAnimalId = id },
+  setSelectedProp: (selection) => { selectedProp = selection },
+  refreshAnimalVisibility,
+  residentsOf,
+  saveSoon,
+  syncGrassPack,
+  syncFarmChrome: () => syncFarmChrome(),
+  progressionHudState,
+  ownedSeedSpecies,
 })
 const hoverGlow = createHoverGlow()
 scene.add(hoverGlow.root)
