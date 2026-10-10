@@ -27,6 +27,11 @@ body {
   touch-action: none;
 }
 
+/* A cutscene owns the whole screen: every DOM panel steps aside, open or not. */
+body.film-playing > :not(#game) {
+  visibility: hidden !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
