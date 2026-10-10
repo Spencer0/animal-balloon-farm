@@ -30,7 +30,7 @@ export interface FarmLifecycleDeps {
   readonly houses: () => readonly HouseSpot[]
   readonly setHouses: (spots: readonly HouseSpot[]) => void
   readonly updateHousing: (nowSeconds: number) => void
-  readonly measureFarm: () => FarmState
+  readonly measureFarmForSim: () => FarmState
   readonly dayNightClock: { readonly timeOfDay: number }
   readonly createAnimalInstance: (record: AnimalRecord, position?: { x: number; z: number }, emerging?: boolean) => Promise<BalloonAnimal>
   readonly carnivalSpawnFor: (species: string) => readonly [number, number]
@@ -44,7 +44,7 @@ export interface FarmLifecycleDeps {
 }
 
 export function createFarmLifecycle(deps: FarmLifecycleDeps) {
-  const { progress, progression, accomplishments, notificationPanel, animals, animalById, animalNames, popAnimal, animalCard, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarm, dayNightClock, createAnimalInstance, carnivalSpawnFor, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
+  const { progress, progression, accomplishments, notificationPanel, animals, animalById, animalNames, popAnimal, animalCard, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarmForSim, dayNightClock, createAnimalInstance, carnivalSpawnFor, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
   /**
    * Advance every animal one step and play whatever transition it earned.
    *
@@ -69,7 +69,7 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
     const residentSpecies = new Set(progress.all()
       .filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold)
       .map((entry) => entry.species))
-    return { state: measureFarm(), residentSpecies, night: isNightTime(dayNightClock.timeOfDay) }
+    return { state: measureFarmForSim(), residentSpecies, night: isNightTime(dayNightClock.timeOfDay) }
   }
 
   function accomplishmentStageForKind(kind: AnimalLifeEvent['kind']): AccomplishmentStage | null {
