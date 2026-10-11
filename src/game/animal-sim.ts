@@ -23,6 +23,16 @@ export interface AnimalHomeTrip {
 }
 
 /**
+ * Steer toward a point at `speedScale` times the walking speed, as a hunting
+ * snake does or a visitor walking in across the meadow. Zero holds it still.
+ */
+export interface AnimalPursuit {
+  readonly x: number
+  readonly z: number
+  readonly speedScale: number
+}
+
+/**
  * Where an animal is in its comings and goings through the farm gate. A visitor
  * walks `route` between the carnival and the plot, and rests `cooldown` seconds
  * on each side before the next trip.
@@ -60,6 +70,10 @@ export interface AnimalSimRecord {
   /** True once it has reached the door it was sent to; cleared by the next trip. */
   atDoor: boolean
   visit: AnimalVisit
+  /** A point to steer to; it beats wandering and the gate route, and a home trip beats it. */
+  pursuit: AnimalPursuit | null
+  /** Prey in a panic: runs 2.2 times faster in short dashes. */
+  alarmed: boolean
 }
 
 export function createAnimalSimRecord(init: {
@@ -85,6 +99,8 @@ export function createAnimalSimRecord(init: {
     home: null,
     atDoor: false,
     visit: { route: null, direction: null, side: init.side ?? 'carnival', cooldown: 0 },
+    pursuit: null,
+    alarmed: false,
   }
 }
 
@@ -134,4 +150,26 @@ export function interpolateAnimalSim(record: AnimalSimRecord, alpha: number, out
 /** Yaw about +Y that turns a +X-forward model to face the ground direction (dx, dz). */
 export function headingOf(dx: number, dz: number): number {
   return Math.atan2(-dz, dx)
+}
+
+/**
+ * Start, change or end a pursuit. Ending one sends the animal back to wandering
+ * with a fresh spot to pick, rather than the one from before the chase.
+ */
+export function setSimPursuit(record: AnimalSimRecord, next: AnimalPursuit | null): void {
+  if (record.pursuit && !next) {
+    record.paused = 0
+    record.nextDecision = 0
+  }
+  record.pursuit = next
+}
+
+/** Panic or calm an animal. A panic cuts short whatever it was standing about doing. */
+export function setSimAlarmed(record: AnimalSimRecord, alarmed: boolean): void {
+  if (record.alarmed === alarmed) return
+  record.alarmed = alarmed
+  if (alarmed) {
+    record.paused = 0
+    record.nextDecision = 0
+  }
 }

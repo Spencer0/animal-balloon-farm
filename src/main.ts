@@ -934,7 +934,7 @@ for (const panel of panels) ui.add(panel)
 
 
 
-const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, updateOwlHunt, updateSnakeHunt, popAnimal } = createPredation({
+const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, tickHunts, presentHunts, popAnimal } = createPredation({
   fairgroundRoot: fairground.root,
   lawnY: GARDEN_LAWN_Y,
   scene,
@@ -1254,8 +1254,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     remeasureMeadow,
     measureFarm,
     handleAnimalLifeEvents,
-    updateOwlHunt,
-    updateSnakeHunt,
+    stepAnimalWorld,
+    presentHunts,
     bolting,
     hidingUntil,
     panicking,
@@ -1463,16 +1463,26 @@ function plantShadowKey(): number {
  * Logic that does not need per-frame smoothness runs on a fixed simulation clock
  * (see game/sim-clock.ts). Animal wander and walk movement is simulated on it too
  * (game/animal-sim.ts) and drawn blended by simClock.alpha, and so are the
- * walk home, the gate trips and the collision push-out for those animals. Animation, camera and
- * water stay per frame, and so do the hunts: they steer the owls and snakes as well as deciding catches.
+ * walk home, the gate trips, the collision push-out and the owl and snake hunts
+ * (game/animal-hunt.ts). Animation, camera and water stay per frame.
  */
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
 
-function runSimTick(stepSeconds: number, nowSeconds: number): void {
-  // Wandering and walking are simulated here; the frame only blends the last two ticks.
+/**
+ * One sim tick of the animals: they walk, collision pushes them out of houses and
+ * each other, then the hunts decide against where they ended up. The harness steps
+ * this directly; the frame loop runs it from `runSimTick`.
+ */
+function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {
+  // Wandering, walking and the hunters' steering are simulated here; the frame only blends the last two ticks.
   for (const animal of animals) animal.tickSim(stepSeconds)
   // Push the walkers out of houses and each other once they have moved; the view blends the result.
   collideAnimalsTick(nowSeconds)
+  if (huntsActive) tickHunts(stepSeconds)
+}
+
+function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {
+  stepAnimalWorld(stepSeconds, nowSeconds, huntsActive)
   updateSleepers()
   // The condition ladder runs after the animals have moved, so a settle
   // triggered this tick is applied against the farm as measured, which the
@@ -1550,15 +1560,14 @@ function frame(now: number): void {
   farmCamera.updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
   const simSteps = simClock.advance(delta)
-  for (let step = 0; step < simSteps; step += 1) runSimTick(simClock.stepSeconds, now / 1000)
+  // Hunts hold still while a full-screen panel is open, as they always have.
+  const huntsActive = !menu.isOpen && !salePanel.isOpen
+  for (let step = 0; step < simSteps; step += 1) runSimTick(simClock.stepSeconds, now / 1000, huntsActive)
   const simAlpha = simClock.alpha
   animals.forEach((animal) => animal.update(delta, simAlpha))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
   collideAnimalsFrame(now / 1000)
-  if (!menu.isOpen && !salePanel.isOpen) {
-    updateOwlHunt(delta)
-    updateSnakeHunt(delta)
-  }
+  if (huntsActive) presentHunts(delta, simAlpha)
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
   for (let burstIndex = sellBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {

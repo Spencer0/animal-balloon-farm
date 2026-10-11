@@ -1,6 +1,6 @@
 # Animal sim / view split
 
-Status: slices 1 (wander and walk) and 2 (collision and home trip) are implemented; slices 3 to 5 are planned below.
+Status: slices 1 (wander and walk), 2 (collision and home trip) and 3 (owl and snake hunts) are implemented; slices 4 and 5 are planned below.
 
 ## Why
 
@@ -66,8 +66,8 @@ Planned additions, one per slice, always plain data:
 // slice 2
 radius: number
 home: { x; z } | null; homeSpeedScale: number; atDoor: boolean
-// slice 3
-hunt: { role: 'prey' | 'hunter'; targetId: string | null; ... }
+// slice 3 (as built: pursuit and alarm on the record, hunter state in the hunt sims)
+pursuit: { x; z; speedScale } | null; alarmed: boolean
 // slice 4
 stage: AnimalStage; conditions: ...; asleep: boolean; sleepSpot: {...} | null
 captured: boolean; sold: boolean
@@ -111,7 +111,7 @@ slice 5 deletes the adapter.
 ## Events
 
 Emitted by the sim, consumed by the view, audio, journal and notifications.
-Slice 1 emits none; the list is the target.
+Slice 3 emits `caught`, `escaped` and `popped` (a flat `HuntEvent` list, `src/game/animal-hunt.ts`); the rest is the target.
 
 | Event | Emitted when | Consumers |
 | --- | --- | --- |
@@ -181,7 +181,41 @@ care: push-out must not jitter or tunnel at 15 Hz, and `housing.ts` mixes
 collision with house occupancy. Give the collision half to the stronger model,
 the lifts to a cheaper one.
 
-### Slice 3: owl and snake hunts
+### Slice 3 (done): owl and snake hunts
+
+Landed as `src/game/animal-hunt.ts` (`createSnakeSim`, `createOwlSim`), the
+`pursuit` and `alarmed` fields on `AnimalSimRecord`, `stepPursuit` in
+`animal-routes.ts`, and `src/scene/owl-hunt.ts` shrunk to a presenter. What
+differs from the plan below:
+
+- Hunter state is the existing pure state machines (`OwlFlight`,
+  `GroundHunter`), held in the hunt sims keyed by animal id, not fields on the
+  record. They are stepped on the tick against the records' positions, after
+  walking and collision (`stepAnimalWorld` in `main.ts`), and they write the
+  steering **into the records**: a snake's `pursuit`, a frozen mouse's
+  `pursuit` with scale 0, a stalked chicken's `alarmed`.
+- Pursuit and alarm are sim state: `viewDrivesPosition()` lost its `pursuit`
+  clause, `setPursuit` / `setAlarmed` on the view are commands that write the
+  record (visitors walking across the meadow still use them), and the view reads
+  `record.pursuit` / `record.alarmed` to pick the turn rate, clip fade and mixer
+  speed.
+- The strike die is seeded per snake (`seed ^ hash(instanceId)`), so a hunt
+  replays. It used to be `Math.random`.
+- Events: `caught` (+ `popped`, cause `caught`) when an owl's dive or a snake's
+  winning lunge lands, `escaped` when the die lets the prey off, `popped` (cause
+  `deflated`) when an owl runs out of helium. `playHuntEvents` in
+  `scene/predation.ts` turns them into the ledger, the notice, the pop effect and
+  the mouse's sprint home. The sim does not call an effect.
+- Owls still reach the view through `FlightPose` / `setFlightPose`. The
+  presenter blends the last two ticks of the flight by the clock's alpha (never
+  from "away" into view), eases the facing and draws the shadow, per frame.
+- Hunts pause while the menu or the sale panel is open, as before: the sim tick
+  skips `tickHunts` then.
+- The harness hunt stepper (`stepHunt`) ticks `stepAnimalWorld` at the sim rate;
+  its `secondsPerStep` argument no longer applies.
+- `scene/snake-hunt.ts` is gone; its logic is `createSnakeSim`.
+
+Original plan:
 
 - `owl-hunt.ts` and `snake-hunt.ts` (`src/scene/`) read and write records through
   `src/game/predator.ts`; strikes and catches become `caught` / `popped` events.
@@ -225,6 +259,9 @@ compiler and the tests; a cheaper model can do it.
   wander, checks the leash and fence, the alarm speed, the infinite-pause hold,
   and the interpolation maths, including a 60 Hz display over a 15 Hz walk.
 - Each later slice adds a replay test: seed, N ticks, assert the event list and
-  final positions.
+  final positions. `tests/animal-hunt.test.mjs` does it for the snake (seeded die,
+  caught / escaped / popped, frozen prey, speed bounds) and the owl (dive and
+  catch, panicked prey, helium pop, blend continuity), plus 15 Hz against 60 Hz
+  parity checks on the first catch and the lunge time.
 - In the game: `?gardenDebug=1&scenario=...` and `scripts/screenshot.mjs`; the
   Performance workflow runs on every PR.

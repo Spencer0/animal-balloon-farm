@@ -11,8 +11,8 @@ import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
 import { carnivalRing } from '../game/animal-travel'
-import { beginSimStep, createAnimalSimRecord, interpolateAnimalSim, pushAnimalSim, shiftAnimalSim, snapAnimalSim, type AnimalSimRecord } from '../game/animal-sim'
-import { beginGateTravel, stepGateTravel, stepHomeTrip, tickVisitCooldown } from '../game/animal-routes'
+import { beginSimStep, createAnimalSimRecord, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, shiftAnimalSim, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord } from '../game/animal-sim'
+import { beginGateTravel, stepGateTravel, stepHomeTrip, stepPursuit, tickVisitCooldown } from '../game/animal-routes'
 import { ALARM_SPEED_SCALE, chooseWanderTarget, stepWander, type WanderContext } from '../game/animal-wander'
 import { seededRandom } from '../game/seeded-random'
 
@@ -153,11 +153,12 @@ export interface BalloonAnimal {
   /** True while it walks to a house door. */
   readonly isGoingHome: boolean
   /**
-   * Steer toward a point at `speedScale` times its walking speed, as a hunting
-   * snake does; 0 holds it still. Null hands it back to its own wandering.
-   * A house trip takes priority. A flier ignores it.
+   * Steer toward a point at `speedScale` times its walking speed, as a visitor
+   * crossing the meadow does; 0 holds it still. Null hands it back to its own
+   * wandering. A house trip takes priority. A flier ignores it. Hunts steer the
+   * sim record directly (game/animal-hunt.ts); this is the command for the rest.
    */
-  setPursuit(pursuit: { readonly x: number; readonly z: number; readonly speedScale: number } | null): void
+  setPursuit(pursuit: AnimalPursuit | null): void
   /** Shift it sideways on the ground, e.g. out of a house wall or a neighbour. Walking carries on. */
   nudge(dx: number, dz: number): void
   /** Stand at a point, e.g. a house door it has just stepped out of, and wander from there. */
@@ -473,10 +474,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let sold = false
   let romancing = false
   let focused = false
-  let alarmed = false
+  /** The alarm the mixer rate last followed, so a hunt panicking the sim record reaches the clips. */
+  let shownAlarmed = false
+  let wasPursuing = false
   let flightRate = 1
   let sleepSpot: SleepSpot | null = null
-  let pursuit: { readonly x: number; readonly z: number; readonly speedScale: number } | null = null
   let sleepBlend = 0
   let asleep = false
   const sleepFacing = new THREE.Quaternion()
@@ -485,7 +487,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   const facingScratch = new THREE.Quaternion()
   const sleepYaw = new THREE.Vector3(0, 1, 0)
   let flightVisible = !options.flier
-  const alarmScale = (): number => (alarmed ? ALARM_SPEED_SCALE : 1)
+  const alarmScale = (): number => (sim.alarmed ? ALARM_SPEED_SCALE : 1)
   const hasSleepClip = (): boolean => Boolean(loaded?.actions.has('SLEEP'))
   /** Ease the crouch in or out and breathe; only the pivot is touched, never the wrapper. */
   const applySleepPose = (delta: number): void => {
@@ -698,8 +700,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     wanderContext.limitX = limits.x
     wanderContext.limitZ = limits.z
     wanderContext.carnival = carnival
-    wanderContext.alarmed = alarmed
-    wanderContext.anchor = carnival && !alarmed ? options.getPackAnchor?.() ?? null : null
+    wanderContext.alarmed = sim.alarmed
+    wanderContext.anchor = carnival && !sim.alarmed ? options.getPackAnchor?.() ?? null : null
     wanderContext.gardenBounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
     return wanderContext
   }
@@ -863,8 +865,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   function viewDrivesPosition(): boolean {
     if (capture || options.flier || romancing) return true
     // A walk to a door beats pursuit, sleep and standing still; the sim runs it.
-    if (sim.home) return false
-    return Boolean(pursuit || sleepSpot || options.wandering === false)
+    if (sim.home || sim.pursuit) return false
+    return Boolean(sleepSpot || options.wandering === false)
   }
 
   /** Take the position, and the facing, the view-driven behaviours left behind. */
@@ -888,6 +890,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     tickVisitCooldown(sim, stepSeconds, bounds, Boolean(options.flier), stage, random)
     beginSimStep(sim)
     if (sim.home) stepHomeTrip(sim, options.speed, stepSeconds)
+    else if (sim.pursuit) stepPursuit(sim, options.speed, stepSeconds)
     else if (sim.visit.route) stepGateTravel(sim, options.speed * alarmScale(), stepSeconds, stage, random)
     else stepWander(sim, readWanderContext(), stepSeconds, random)
   }
@@ -909,7 +912,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     sim,
     tickSim,
     get flightVisible(): boolean { return flightVisible },
-    get isAlarmed(): boolean { return alarmed },
+    get isAlarmed(): boolean { return sim.alarmed },
     get isSleeping(): boolean { return asleep },
     get isAtDoor(): boolean { return sim.atDoor },
     get isGoingHome(): boolean { return sim.home !== null },
@@ -936,13 +939,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     },
     setPursuit(next): void {
       if (options.flier) return
-      if (pursuit && !next) {
-        // Back to wandering: pick a fresh spot rather than the one from before the chase.
-        sim.paused = 0
-        sim.nextDecision = 0
-        if (loaded) loaded.mixer.timeScale = alarmScale()
-      }
-      pursuit = next
+      setSimPursuit(sim, next)
     },
     placeAt(x: number, z: number): void {
       if (options.flier) return
@@ -966,12 +963,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       if (!spot) asleep = false
     },
     setAlarmed(next: boolean): void {
-      if (options.flier || alarmed === next) return
-      alarmed = next
-      if (next) {
-        sim.paused = 0
-        sim.nextDecision = 0
-      }
+      if (options.flier || sim.alarmed === next) return
+      setSimAlarmed(sim, next)
+      shownAlarmed = next
       if (loaded) loaded.mixer.timeScale = next ? 2.2 : 1
     },
     setFlightPose(pose: FlightPose): void {
@@ -1060,6 +1054,16 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       if (sold) return
       const delta = Math.min(deltaSeconds, 0.05)
       elapsed += delta
+      // A hunt can panic or calm the sim record, or end a pursuit, between frames: let the clips follow.
+      if (sim.alarmed !== shownAlarmed) {
+        shownAlarmed = sim.alarmed
+        if (loaded) loaded.mixer.timeScale = shownAlarmed ? 2.2 : 1
+      }
+      if (sim.pursuit) wasPursuing = true
+      else if (wasPursuing) {
+        wasPursuing = false
+        if (loaded) loaded.mixer.timeScale = alarmScale()
+      }
       // Nothing is ticking this animal's sim (a debug stepper, a test): step it here, once.
       if (simAlpha === undefined) tickSim(delta)
       if (viewDrivesPosition()) positionOwnedByView = true
@@ -1131,33 +1135,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         if (detailActive) loaded?.mixer.update(delta)
         return
       }
-      if (pursuit && !sim.home) {
-        direction.set(pursuit.x - wrapper.position.x, 0, pursuit.z - wrapper.position.z)
-        const distance = direction.length()
-        const speed = options.speed * pursuit.speedScale
-        if (speed > 0 && distance > 0.05) {
-          direction.normalize()
-          const facing = facingScratch.setFromUnitVectors(modelForward, direction)
-          // A lunge snaps round to face the prey; a stalk turns smoothly.
-          wrapper.quaternion.slerp(facing, 1 - Math.exp(-(pursuit.speedScale > 3 ? 14 : 5) * delta))
-          wrapper.position.addScaledVector(direction, Math.min(speed * delta, distance))
-          setAnimation('WALK', 0.18)
-          // Creeping is a slow ripple; a lunge whips the body through it.
-          if (loaded) loaded.mixer.timeScale = Math.max(0.6, pursuit.speedScale * 0.55)
-        } else {
-          setAnimation('IDLE', 0.3)
-          if (loaded) loaded.mixer.timeScale = 0.6
-        }
-        if (detailActive) loaded?.mixer.update(delta)
-        if (options.groundSampler) {
-          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
-          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
-          wrapper.position.y = groundYCurrent
-        }
-        wrapper.updateMatrixWorld(true)
-        return
-      }
-      if (sleepSpot && !sim.home) {
+      if (sleepSpot && !sim.home && !sim.pursuit) {
         direction.set(sleepSpot.x - wrapper.position.x, 0, sleepSpot.z - wrapper.position.z)
         const distance = direction.length()
         if (distance > 0.12) {
@@ -1185,13 +1163,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         wrapper.updateMatrixWorld(true)
         return
       }
-      if (sleepBlend > 0 && !sim.home) {
+      if (sleepBlend > 0 && !sim.home && !sim.pursuit) {
         // Waking: stand back up before wandering off.
-        if (loaded) loaded.mixer.timeScale = alarmed ? 2.2 : 1
+        if (loaded) loaded.mixer.timeScale = sim.alarmed ? 2.2 : 1
         applySleepPose(delta)
       }
 
-      if (options.wandering === false && !sim.home) {
+      if (options.wandering === false && !sim.home && !sim.pursuit) {
         if (detailActive) loaded?.mixer.update(delta)
         return
       }
@@ -1204,12 +1182,18 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       wrapper.position.z = blended.z
       shown.x = blended.x
       shown.z = blended.z
+      // A hunt or a visitor's walk steers by pursuit: a lunge snaps round to face
+      // the prey, a stalk turns smoothly, and creeping is a slow ripple of the body.
+      const pursuit = sim.home ? null : sim.pursuit
       if (sim.motion === 'walk') {
         facingScratch.setFromAxisAngle(upAxis, sim.heading)
-        wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-4.5 * delta))
-        setAnimation('WALK', 0.24)
+        const turnRate = pursuit ? (pursuit.speedScale > 3 ? 14 : 5) : 4.5
+        wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-turnRate * delta))
+        setAnimation('WALK', pursuit ? 0.18 : 0.24)
+        if (pursuit && loaded) loaded.mixer.timeScale = Math.max(0.6, pursuit.speedScale * 0.55)
       } else if (sim.motion === 'idle') {
-        setAnimation('IDLE', 0.28)
+        setAnimation('IDLE', pursuit ? 0.3 : 0.28)
+        if (pursuit && loaded) loaded.mixer.timeScale = 0.6
       }
 
       if (detailActive) loaded?.mixer.update(delta)

@@ -1,7 +1,8 @@
 /**
  * Walks that are not wandering, as simulation systems: the trip to a house door
- * (a stroll, or a sprint when something is chasing it) and the visitor's route
- * through the farm gate. Both steer an `AnimalSimRecord` on the fixed tick; the
+ * (a stroll, or a sprint when something is chasing it), steering toward a point
+ * (a hunting snake, a visitor crossing the meadow) and the visitor's route
+ * through the farm gate. All of them steer an `AnimalSimRecord` on the fixed tick; the
  * view only shows the result.
  *
  * Speeds, thresholds and random draws match what the per-frame animal did
@@ -14,6 +15,8 @@ import { headingOf, type AnimalSimRecord, type AnimalVisit } from './animal-sim'
 
 /** Closer than this to the door counts as arrived. */
 export const HOME_ARRIVE_DISTANCE = 0.25
+/** Closer than this to its pursuit point it stops. */
+export const PURSUIT_ARRIVE_DISTANCE = 0.05
 
 /**
  * One tick of the walk to a house door. The caller has opened the step with
@@ -33,6 +36,29 @@ export function stepHomeTrip(record: AnimalSimRecord, walkSpeed: number, dt: num
     record.motion = 'walk'
   } else {
     record.atDoor = true
+    record.motion = 'idle'
+  }
+}
+
+/**
+ * One tick of steering toward the pursuit point at `walkSpeed` times its scale.
+ * The caller has opened the step with `beginSimStep`. A zero scale, or being
+ * on the spot, stands still.
+ */
+export function stepPursuit(record: AnimalSimRecord, walkSpeed: number, dt: number): void {
+  const pursuit = record.pursuit
+  if (!pursuit) return
+  const dx = pursuit.x - record.x
+  const dz = pursuit.z - record.z
+  const distance = Math.hypot(dx, dz)
+  const speed = walkSpeed * pursuit.speedScale
+  if (speed > 0 && distance > PURSUIT_ARRIVE_DISTANCE) {
+    record.heading = headingOf(dx, dz)
+    const travel = Math.min(speed * dt, distance)
+    record.x += (dx / distance) * travel
+    record.z += (dz / distance) * travel
+    record.motion = 'walk'
+  } else {
     record.motion = 'idle'
   }
 }

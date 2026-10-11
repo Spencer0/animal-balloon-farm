@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
 import { ANIMAL_CATALOG } from '../animals/animal-catalog'
-import { createOwlHunt, type HuntOwl } from './owl-hunt'
-import { createSnakeHunt } from './snake-hunt'
+import { createOwlPresenter } from './owl-hunt'
+import { createOwlSim, createSnakeSim, type HuntEvent, type OwlInput, type PreyInput } from '../game/animal-hunt'
 import { createPopBurst, type PopBurst } from './pop-burst'
 import { createDeflateEffect } from './deflate-effect'
 import { createPredationLedger, isNightTime, PREY_OF } from '../game/predator'
@@ -47,9 +47,25 @@ export function createPredation(deps: PredationDeps) {
    * effect holds the animal until the clean-up has finished.
    */
   const predationLedger = createPredationLedger()
-  const owlHunt = createOwlHunt(fairgroundRoot, lawnY)
+  const owlSim = createOwlSim()
+  const owlPresenter = createOwlPresenter(fairgroundRoot, lawnY, owlSim)
+  /** The owl's sim, with the farm reset also clearing what the presenter remembers. */
+  const owlHunt = {
+    huntedIds: owlSim.huntedIds,
+    hurry: owlSim.hurry,
+    setHelium: owlSim.setHelium,
+    report: owlSim.report,
+    reset(): void {
+      owlSim.reset()
+      owlPresenter.reset()
+    },
+    dispose(): void { owlPresenter.dispose() },
+  }
   /** Snakes hunt mice and rats on the ground (pure sim in game/ground-hunt.ts); catches go in the same ledger. */
-  const snakeHunt = createSnakeHunt()
+  const snakeHunt = createSnakeSim(0x5a4e)
+  /** Which owls the farm gave a perch to this tick, so the presenter can turn them to face the camera. */
+  const roostedOwls = new Set<string>()
+  const huntEvents: HuntEvent[] = []
   interface PopInFlight { readonly burst: PopBurst; readonly animal: BalloonAnimal }
   const popsInFlight: PopInFlight[] = []
 
@@ -59,14 +75,12 @@ export function createPredation(deps: PredationDeps) {
   }
 
   /**
-   * An owl has caught a chicken: it leaves the farm the way a sale does (the
-   * sim forgets it at once), but instead of a coin burst it swells, pops, and the
-   * effect holds the model until the clean-up is done.
+   * A hunter has caught a chicken, mouse or rat: tally it and tell the player.
+   * The prey leaves the farm on the `popped` event that follows.
    */
   function handlePredatorCatch(hunter: string, prey: BalloonAnimal, roll?: number): void {
     const total = predationLedger.record(prey.id)
     const name = animalNames.get(prey.instanceId) ?? preyLabel(prey.id)
-    popAnimal(prey)
     const eaten = total === 1 ? preyLabel(prey.id) : speciesPluralName(prey.id).toLowerCase()
     const rolled = roll ? ` (rolled ${roll})` : ''
     notificationPanel.notifyAccomplishment(`The ${preyLabel(hunter)} caught ${name}${rolled}`, `${total} ${eaten} eaten on your farm`)
@@ -109,7 +123,11 @@ export function createPredation(deps: PredationDeps) {
     refreshAnimalVisibility(performance.now() / 1000, true)
   }
 
-  function updateOwlHunt(deltaSeconds: number): void {
+  /**
+   * Per frame: finish the pop effects, and show every owl where the last two sim
+   * ticks put it (`simAlpha` of the way between them).
+   */
+  function presentHunts(deltaSeconds: number, simAlpha: number): void {
     for (let index = popsInFlight.length - 1; index >= 0; index -= 1) {
       const { burst, animal } = popsInFlight[index]
       if (burst.update(deltaSeconds)) continue
@@ -117,26 +135,37 @@ export function createPredation(deps: PredationDeps) {
       animal.dispose()
       popsInFlight.splice(index, 1)
     }
+    const owls = animals
+      .filter((animal) => animal.isFlier && !animal.isSold)
+      .map((animal) => ({ animal, hasRoost: roostedOwls.has(animal.instanceId) }))
+    if (owls.length > 0) owlPresenter.present(simAlpha, deltaSeconds, owls)
+  }
+
+  const preyInput = (animal: BalloonAnimal, targetable: boolean): PreyInput => ({ id: animal.instanceId, species: animal.id, record: animal.sim, targetable })
+
+  function stepOwlHunt(stepSeconds: number): void {
     const owlAnimals = animals.filter((animal) => animal.isFlier && !animal.isSold)
     if (owlAnimals.length === 0) return
     const roosts = gardenProps()?.roosts() ?? []
     // Stranded means no oak on the farm at all; an oak whose model is still loading is not a loss.
     const oakCount = gardenProps()?.propCounts().oak ?? 0
     let nextRoost = 0
-    const owls: HuntOwl[] = owlAnimals.map((animal) => {
+    roostedOwls.clear()
+    const owls: OwlInput[] = owlAnimals.map((animal) => {
       const record = progress.animal(animal.instanceId)
       const stage = record?.stage ?? 0
       const carnival = carnivalSpawnFor(animal.id)
       // A resident takes the next oak; owls beyond the oak count share one, a step apart.
       // A visitor has no perch and leaves at dawn. A resident with no oak at all is stranded.
-      let roost: HuntOwl['roost'] = null
+      let roost: OwlInput['roost'] = null
       if (stage >= 3 && roosts.length > 0) {
         const base = roosts[nextRoost % roosts.length]
         const sharers = Math.floor(nextRoost / roosts.length)
-        roost = { ...base, x: base.x + sharers * 0.9 }
+        roost = { x: base.x + sharers * 0.9, y: base.y, z: base.z }
+        roostedOwls.add(animal.instanceId)
         nextRoost += 1
       }
-      return { animal, carnivalSpawn: carnival, stage, roost, stranded: stage >= 3 && oakCount === 0 }
+      return { id: animal.instanceId, carnivalSpawn: carnival, stage, roost, stranded: stage >= 3 && oakCount === 0, sold: animal.isSold }
     })
     const flock = animals
       .filter((animal) => animal.id === 'chicken' && !animal.isSold && animal.isAtFarm)
@@ -144,21 +173,14 @@ export function createPredation(deps: PredationDeps) {
         const record = progress.animal(animal.instanceId)
         return Boolean(record && record.stage >= 3 && !record.baby)
       })
-      .map((animal) => ({ animal, targetable: !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending }))
+      .map((animal) => preyInput(animal, !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending))
     const bounds = activeGardenBounds()
-    const result = owlHunt.update(deltaSeconds, {
+    owlSim.step(stepSeconds, {
       night: isNightTime(dayNightClock.timeOfDay),
       owls,
       prey: flock,
       farm: { halfWidth: bounds.halfWidth, halfDepth: bounds.halfDepth },
-    })
-    for (const caught of result.catches) handlePredatorCatch('owl', caught.prey)
-    for (const owl of result.deflated) {
-      const name = animalNames.get(owl.instanceId) ?? preyLabel(owl.id)
-      popAnimal(owl, 'deflate')
-      notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'Without an oak to roost on, an owl slowly deflates.')
-      console.info(`[Animal Balloon Farm] ${owl.id} popped: out of helium`)
-    }
+    }, huntEvents)
   }
 
   /**
@@ -168,7 +190,7 @@ export function createPredation(deps: PredationDeps) {
    */
   const SNAKE_MOUTH_SHARE = 0.42
 
-  function updateSnakeHunt(deltaSeconds: number): void {
+  function stepSnakeHunt(stepSeconds: number): void {
     const prey = PREY_OF.snake ?? []
     const snakes = animals
       .filter((animal) => animal.id === 'snake' && !animal.isSold)
@@ -177,7 +199,7 @@ export function createPredation(deps: PredationDeps) {
         const busy = animal.isCapturing || animal.isRomancing || animal.isResidencyPending || animal.isGoingHome
         // `size` is the model's length, so the mouth sits a little under half of it ahead of the centre.
         const reach = (bodySizeBySpecies.get('snake') ?? 2.8) * SNAKE_MOUTH_SHARE * animal.currentScale
-        return { animal, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy), reach }
+        return { id: animal.instanceId, record: animal.sim, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy), reach }
       })
     if (snakes.length === 0) return
     const quarry = animals
@@ -186,17 +208,50 @@ export function createPredation(deps: PredationDeps) {
         const record = progress.animal(animal.instanceId)
         return Boolean(record && record.stage >= 3 && !record.baby)
       })
-      .map((animal) => ({ animal, targetable: !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending && !animal.isGoingHome }))
-    const counts = residentCounts()
-    const result = snakeHunt.update(deltaSeconds, { snakes, prey: quarry, preyCounts: counts })
-    for (const caught of result.catches) handlePredatorCatch('snake', caught.prey, caught.roll)
-    for (const escaped of result.escapes) boltHome(escaped.prey, escaped.roll)
+      .map((animal) => preyInput(animal, !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending && !animal.isGoingHome))
+    snakeHunt.step(stepSeconds, { snakes, prey: quarry, preyCounts: residentCounts() }, huntEvents)
+    // Mice scattering with no house to hide in calm down after a few seconds. Only checked
+    // while a snake is about, as it always was.
     const now = performance.now() / 1000
     for (const [id, until] of panicking) {
       if (until > now) continue
       animalById.get(id)?.setAlarmed(false)
       panicking.delete(id)
     }
+  }
+
+  /** Play what the hunts decided this tick: tallies, notices, pops and the mouse that got away. */
+  function playHuntEvents(): void {
+    for (const event of huntEvents) {
+      if (event.type === 'caught') {
+        const prey = animalById.get(event.preyId)
+        if (prey) handlePredatorCatch(event.hunter, prey, event.roll)
+      } else if (event.type === 'escaped') {
+        const prey = animalById.get(event.preyId)
+        if (prey) boltHome(prey, event.roll)
+      } else if (event.cause === 'caught') {
+        const prey = animalById.get(event.animalId)
+        if (prey) popAnimal(prey)
+      } else {
+        const owl = animalById.get(event.animalId)
+        if (!owl) continue
+        const name = animalNames.get(owl.instanceId) ?? preyLabel(owl.id)
+        popAnimal(owl, 'deflate')
+        notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'Without an oak to roost on, an owl slowly deflates.')
+        console.info(`[Animal Balloon Farm] ${owl.id} popped: out of helium`)
+      }
+    }
+    huntEvents.length = 0
+  }
+
+  /**
+   * One sim tick of both hunts, after the animals have walked: decide, steer the
+   * hunters and prey through their records, and play whatever happened.
+   */
+  function tickHunts(stepSeconds: number): void {
+    stepOwlHunt(stepSeconds)
+    stepSnakeHunt(stepSeconds)
+    playHuntEvents()
   }
 
   /** How much faster than its walk a mouse runs for home when the strike die lets it off. */
@@ -248,7 +303,7 @@ export function createPredation(deps: PredationDeps) {
     bolting,
     hidingUntil,
     panicking,
-    updateOwlHunt,
-    updateSnakeHunt,
+    tickHunts,
+    presentHunts,
   }
 }
