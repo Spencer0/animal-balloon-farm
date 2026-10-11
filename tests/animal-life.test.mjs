@@ -14,6 +14,7 @@ const snapshot = (farm = emptyFarm, houses = [], expansionLevel = 0) => ({ farm,
 const quickConfig = {
   visitDelaySeconds: 0, enterFarmSeconds: 0, arrivalIntervalSeconds: 0,
   breedIntervalSeconds: 3, babyDurationSeconds: 10,
+  packSizes: {}, replacementCooldownSeconds: 0, groundsVisitorsBase: 50,
 }
 const runFor = (life, world, seconds, events = []) => {
   for (let i = 0; i < seconds * 4; i += 1) events.push(...life.tick(world, 0.25))
@@ -139,4 +140,105 @@ test('selling the only cow queues a new cow instead of ending its visits', () =>
   assert.equal(life.all().filter((animal) => animal.species === 'cow' && animal.stage > 0).length, 0)
   runFor(life, snapshot(lushFarm), 6)
   assert.ok(life.all().some((animal) => animal.species === 'cow' && animal.stage > 0 && !sold.some((old) => old.id === animal.id)))
+})
+
+const lcg = (seed) => () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296 }
+const clover = { state: { tallGrassArea: 20, waterArea: 0, flatGrassArea: 0, plantCounts: { clover: 2 } }, residentSpecies: new Set() }
+const cloverReady = { state: { ...clover.state, plantCounts: { clover: 3 } }, residentSpecies: new Set() }
+
+test('selling a cow does not summon a replacement straight away', () => {
+  const life = createAnimalLife(['cow'], {
+    config: { ...quickConfig, arrivalIntervalSeconds: 1, breedIntervalSeconds: 10_000, replacementCooldownSeconds: 60 },
+    random: lcg(7),
+  })
+  runFor(life, snapshot(lushFarm), 10)
+  const cows = life.all().filter((animal) => animal.stage > 0)
+  assert.ok(cows.length > 0)
+  for (const cow of cows) life.remove(cow.id)
+  runFor(life, snapshot(lushFarm), 40)
+  assert.equal(life.all().filter((animal) => animal.stage > 0).length, 0, 'the cooldown holds the next cow back')
+  runFor(life, snapshot(lushFarm), 120)
+  assert.ok(life.all().some((animal) => animal.stage > 0), 'and then a cow does turn up')
+})
+
+test('arrivals are not on a timer: the gaps between them differ', () => {
+  const life = createAnimalLife(['cow', 'duck', 'sheep', 'pig'], {
+    config: { ...quickConfig, arrivalIntervalSeconds: 20, visitDelaySeconds: 0, groundsVisitorsBase: 50 },
+    random: lcg(11),
+  })
+  const times = []
+  for (let i = 0; i < 4 * 600; i += 1) {
+    for (const event of life.tick(snapshot(lushFarm), 0.25)) if (event.kind === 'arriveCarnival') times.push(i * 0.25)
+  }
+  const gaps = times.slice(1).map((time, index) => time - times[index]).filter((gap) => gap > 0)
+  assert.ok(gaps.length >= 3, `saw ${gaps.length} gaps`)
+  assert.ok(new Set(gaps.map((gap) => Math.round(gap))).size > 2, `gaps were ${gaps}`)
+})
+
+test('herd species arrive as a pack: followers name their leader and share a pack id', () => {
+  const life = createAnimalLife(['sheep'], {
+    config: { ...quickConfig, packSizes: { sheep: { min: 3, max: 3 } }, groundsVisitorsBase: 10 },
+    random: lcg(3),
+  })
+  life.discover('sheep')
+  const events = runFor(life, snapshot(clover), 1).filter((event) => event.kind === 'arriveCarnival')
+  assert.equal(events.length, 3)
+  assert.equal(events[0].leaderId, undefined)
+  assert.equal(events[1].leaderId, events[0].animalId)
+  assert.equal(events[2].leaderId, events[0].animalId)
+  const packs = new Set(life.all().filter((animal) => animal.stage > 0).map((animal) => animal.packId))
+  assert.equal(packs.size, 1)
+  assert.ok(!packs.has(null))
+})
+
+test('the grounds hold only so many visitors, and a pack is trimmed to fit', () => {
+  const life = createAnimalLife(['sheep', 'duck'], {
+    config: { ...quickConfig, packSizes: { sheep: { min: 4, max: 4 }, duck: { min: 4, max: 4 } }, groundsVisitorsBase: 5, visitStaySeconds: 10_000 },
+    random: lcg(5),
+  })
+  life.discover('sheep')
+  life.discover('duck')
+  let peak = 0
+  for (let i = 0; i < 4 * 30; i += 1) {
+    life.tick({ ...snapshot(clover), farm: { ...clover, night: false } }, 0.25)
+    peak = Math.max(peak, life.all().filter((animal) => animal.stage === 1).length)
+  }
+  assert.ok(peak <= 5, `peak ${peak}`)
+  assert.ok(peak >= 4, 'but the grounds do fill up')
+  const more = createAnimalLife(['sheep'], { config: { ...quickConfig, packSizes: { sheep: { min: 4, max: 4 } }, groundsVisitorsBase: 4, groundsVisitorsPerLevel: 3, unhousedPerSpecies: 20 }, random: lcg(5) })
+  more.discover('sheep')
+  runFor(more, snapshot(clover, [], 1), 1)
+  assert.equal(more.all().filter((animal) => animal.stage === 1).length, 4)
+})
+
+test('a visitor the farm does not suit wanders off after a while, and may come back', () => {
+  const life = createAnimalLife(['sheep'], {
+    config: { ...quickConfig, packSizes: {}, visitStaySeconds: 20, departSeconds: 4, replacementCooldownSeconds: 10 },
+    random: lcg(9),
+  })
+  life.discover('sheep')
+  runFor(life, snapshot(clover), 2)
+  const sheep = life.all().find((animal) => animal.stage === 1)
+  assert.ok(sheep, 'the sheep turned up')
+  const events = runFor(life, snapshot(clover), 40)
+  assert.ok(events.some((event) => event.kind === 'departCarnival' && event.animalId === sheep.id), 'it left')
+  assert.equal(life.animal(sheep.id).stage, 0)
+  assert.equal(life.animal(sheep.id).departing, false)
+  runFor(life, snapshot(clover), 30)
+  assert.ok(life.all().some((animal) => animal.species === 'sheep' && animal.stage === 1), 'and it came back')
+})
+
+test('a leaving visitor is marked departing, and a suited one never leaves', () => {
+  const life = createAnimalLife(['sheep'], {
+    config: { ...quickConfig, visitStaySeconds: 5, departSeconds: 100, visitDelaySeconds: 0 },
+    random: lcg(2),
+  })
+  life.discover('sheep')
+  runFor(life, snapshot(clover), 30)
+  assert.equal(life.all().find((animal) => animal.stage === 1)?.departing, true)
+  const content = createAnimalLife(['sheep'], { config: { ...quickConfig, visitStaySeconds: 5, visitDelaySeconds: 3, departSeconds: 2 }, random: lcg(2) })
+  content.discover('sheep')
+  const events = runFor(content, snapshot(cloverReady), 60)
+  assert.equal(events.some((event) => event.kind === 'departCarnival'), false)
+  assert.ok(content.all().some((animal) => animal.stage >= 2))
 })
