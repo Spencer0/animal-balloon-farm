@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { hasCustomShading } from './matte-material'
 
 /**
  * Collapse meshes that never move relative to each other into one mesh per
@@ -391,7 +392,7 @@ function materialSignature(material: THREE.Material): string {
   const record = material as unknown as Record<string, unknown>
   // A shader hook (ground variation, the paint reveal) can make two otherwise
   // identical materials draw differently, so such a material matches only itself.
-  if (Object.hasOwn(material, 'onBeforeCompile') || Object.hasOwn(material, 'customProgramCacheKey')) return material.uuid
+  if (hasCustomShading(material)) return material.uuid
   const parts = [material.type]
   for (const key of Object.keys(record).sort()) {
     if (IGNORED_MATERIAL_KEYS.has(key)) continue

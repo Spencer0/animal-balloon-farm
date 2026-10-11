@@ -72,6 +72,11 @@ entry in `TOOL_UNLOCK_FILMS`, with no Blender work.
 
 - **Rendering:** Three.js renders the farm and the world-space bits of the HUD
   (the tool bar, the balloon). Don't add Vite.
+- **WebGPU:** `?renderer=webgpu` swaps in `WebGPURenderer`; WebGL stays the
+  default. A shader that has GLSL for WebGL needs a TSL twin in
+  `src/render/webgpu/kit.ts` (the GLSL source stays the reference). Read
+  `docs/WEBGPU.md` before touching either renderer path, and never statically import
+  `three/webgpu` or `three/tsl` outside `src/render/webgpu/` (it is a lazy chunk).
 - **UI toolkit:** Game panels are DOM overlays: one `src/ui/<name>-dom.ts`
   with a sibling `<name>-dom.css`, in the Farm Journal look (cream paper
   `#faf3e2`, `#6b4a33` borders, dashed `#b08c5e` dividers, Trebuchet MS,

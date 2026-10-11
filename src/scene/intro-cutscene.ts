@@ -1,12 +1,5 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
-import { BokehPass } from 'three/addons/postprocessing/BokehPass.js'
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import {
   BROADCAST_BANNER,
   INTRO_DURATION,
@@ -18,7 +11,9 @@ import {
 import { createUILayer, type UILayer } from '../ui/ui-layer'
 import { createIntroCaptions, type IntroCaptions } from '../ui/intro-captions'
 import { createIntroAudio } from './intro-audio'
-import { createGradeShader, disposeTree, makeActor, poseActor, prepareShadows, type Actor, type CutscenePlayer } from './cutscene-kit'
+import { disposeTree, makeActor, poseActor, prepareShadows, type Actor, type CutscenePlayer } from './cutscene-kit'
+import { createFilmEnvironment, createFilmPost } from './film-post'
+import { precompile, webgpuKit, type FarmRenderer, type FilmPost } from '../render/backend'
 
 /**
  * The new-farm intro cutscene: a perspective, post-processed little film
@@ -136,6 +131,30 @@ const SKY_FRAGMENT = /* glsl */ `
   }
 `
 
+/** The television's picture: the studio render target through a CRT shader. */
+function createCrtScreen(picture: THREE.Texture): { material: THREE.Material; setFrame(time: number, staticAmount: number): void } {
+  const nodeKit = webgpuKit()
+  if (nodeKit) return nodeKit.createCrtMaterial(picture)
+  const material = new THREE.ShaderMaterial({
+    name: 'Intro CRT screen',
+    uniforms: {
+      map: { value: picture },
+      time: { value: 0 },
+      staticAmount: { value: 1 },
+      brightness: { value: 1.0 },
+    },
+    vertexShader: CRT_VERTEX,
+    fragmentShader: CRT_FRAGMENT,
+  })
+  return {
+    material,
+    setFrame(time, staticAmount): void {
+      material.uniforms['time'].value = time
+      material.uniforms['staticAmount'].value = staticAmount
+    },
+  }
+}
+
 // -------------------------------------------------------------- broadcast --
 
 function drawBanner(): THREE.CanvasTexture {
@@ -185,7 +204,7 @@ function drawTicker(): THREE.CanvasTexture {
 
 // ------------------------------------------------------------------- create --
 
-export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: number, cssHeight: number): IntroCutscene {
+export function createIntroCutscene(renderer: FarmRenderer, cssWidth: number, cssHeight: number): IntroCutscene {
   let time = 0
   let paused = false
   let loaded = false
@@ -197,10 +216,8 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
   const camera = new THREE.PerspectiveCamera(40, cssWidth / Math.max(1, cssHeight), 0.05, 220)
   camera.name = 'Intro cinematic camera'
 
-  const pmrem = new THREE.PMREMGenerator(renderer)
-  const roomEnvironment = new RoomEnvironment()
-  const environment = pmrem.fromScene(roomEnvironment, 0.04).texture
-  roomEnvironment.dispose()
+  const filmEnvironment = createFilmEnvironment(renderer)
+  const environment = filmEnvironment.texture
   scene.environment = environment
 
   // ----- the living room, at night.
@@ -239,7 +256,7 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
   sun.shadow.normalBias = 0.02
   sun.shadow.radius = 3
   const skyFill = new THREE.HemisphereLight('#d7ebff', '#6e9a4c', 0.55)
-  const skyMaterial = new THREE.ShaderMaterial({
+  const skyMaterial = webgpuKit()?.createIntroSkyMaterial(sunDirection) ?? new THREE.ShaderMaterial({
     name: 'Intro morning sky',
     side: THREE.BackSide,
     depthWrite: false,
@@ -295,34 +312,23 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
   broadcastCamera.add(banner, ticker)
   const studioTarget = new THREE.WebGLRenderTarget(960, 720, { samples: 4, type: THREE.HalfFloatType })
   studioTarget.texture.name = 'Intro broadcast picture'
-  const crtMaterial = new THREE.ShaderMaterial({
-    name: 'Intro CRT screen',
-    uniforms: {
-      map: { value: studioTarget.texture },
-      time: { value: 0 },
-      staticAmount: { value: 1 },
-      brightness: { value: 1.0 },
-    },
-    vertexShader: CRT_VERTEX,
-    fragmentShader: CRT_FRAGMENT,
-  })
+  const crt = createCrtScreen(studioTarget.texture)
 
   // ----- post: depth of field, bloom, tone map, then the film grade.
-  const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { samples: 4, type: THREE.HalfFloatType }))
-  composer.setPixelRatio(renderer.getPixelRatio())
-  composer.addPass(new RenderPass(scene, camera))
-  const bokeh = new BokehPass(scene, camera, { focus: 2, aperture: 0.0016, maxblur: 0.007 })
-  composer.addPass(bokeh)
-  const bokehUniforms = bokeh.uniforms as Record<'focus' | 'aperture' | 'maxblur', THREE.IUniform<number>>
-  const bloom = new UnrealBloomPass(new THREE.Vector2(cssWidth, cssHeight), 0.26, 0.5, 0.95)
-  composer.addPass(bloom)
-  composer.addPass(new OutputPass())
-  const grade = new ShaderPass(createGradeShader('IntroGradeShader'))
-  composer.addPass(grade)
 
   const ui: UILayer = createUILayer()
   const captions: IntroCaptions = createIntroCaptions(ui.viewport)
   ui.add(captions)
+
+  const post: FilmPost = createFilmPost(renderer, scene, camera, {
+    width: cssWidth,
+    height: cssHeight,
+    bloomStrength: 0.26,
+    bloomRadius: 0.5,
+    bloomThreshold: 0.95,
+    overlay: ui,
+    name: 'IntroGradeShader',
+  })
 
   const audio = createIntroAudio()
   let boy: Actor | null = null
@@ -334,9 +340,7 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
   function resize(width: number, height: number): void {
     camera.aspect = width / Math.max(1, height)
     camera.updateProjectionMatrix()
-    composer.setPixelRatio(renderer.getPixelRatio())
-    composer.setSize(width, height)
-    grade.uniforms['aspect'].value = camera.aspect
+    post.setSize(width, height)
     ui.resize(width, height)
   }
   resize(cssWidth, cssHeight)
@@ -350,7 +354,7 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
     scene.fog = set === 'room' ? null : morningFog
     scene.environmentIntensity = set === 'room' ? 0.32 : 0.42
     // Only the lamp and the TV should glow at night; by day only true highlights.
-    bloom.threshold = set === 'room' ? 0.9 : 1.5
+    post.setBloomThreshold(set === 'room' ? 0.9 : 1.5)
   }
 
   const focusPoint = new THREE.Vector3()
@@ -364,20 +368,15 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
       camera.updateProjectionMatrix()
     }
     const focus = camera.position.distanceTo(focusPoint.set(...frame.camera.target))
-    bokehUniforms.focus.value = focus
     // Close-ups get a shallower depth of field than the wide shots.
-    bokehUniforms.aperture.value = THREE.MathUtils.clamp(0.0035 / Math.max(0.4, focus), 0.0004, 0.004)
+    post.setFocus(focus, THREE.MathUtils.clamp(0.0035 / Math.max(0.4, focus), 0.0004, 0.004))
     broadcastCamera.position.set(...frame.broadcast.position)
     broadcastCamera.lookAt(...frame.broadcast.target)
     tickerTexture.offset.x = frame.t * 0.045
-    crtMaterial.uniforms['time'].value = frame.t
-    crtMaterial.uniforms['staticAmount'].value = frame.broadcastStatic
+    crt.setFrame(frame.t, frame.broadcastStatic)
     // The set flickers on the boy and the walls as the picture changes.
     tvLight.intensity = 2.6 + 0.5 * Math.sin(frame.t * 13.1) + 0.35 * Math.sin(frame.t * 31.7) + 1.4 * frame.broadcastStatic
-    grade.uniforms['time'].value = frame.t
-    grade.uniforms['letterbox'].value = frame.letterbox
-    grade.uniforms['fadeBlack'].value = frame.fadeBlack
-    grade.uniforms['fadeWhite'].value = frame.fadeWhite
+    post.setGrade({ time: frame.t, letterbox: frame.letterbox, fadeBlack: frame.fadeBlack, fadeWhite: frame.fadeWhite })
     if (president) poseActor(president, frame.president)
     if (boy) {
       boy.root.visible = frame.boyVisible
@@ -413,7 +412,7 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
     const screen = roomGltf.scene.getObjectByName('TV_SCREEN')
     if (screen instanceof THREE.Mesh) {
       ;(screen.material as THREE.Material).dispose()
-      screen.material = crtMaterial
+      screen.material = crt.material
       screen.castShadow = false
     }
     prepareShadows(exteriorGltf.scene)
@@ -445,9 +444,10 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
     // Compile every set up front so the first cut never hitches on a shader.
     for (const set of ['room', 'exterior'] as const) {
       showSet(set)
-      renderer.compile(scene, camera)
+      await precompile(renderer, scene, camera)
     }
-    renderer.compile(studioScene, broadcastCamera)
+    await precompile(renderer, studioScene, broadcastCamera)
+    if (disposed) return
     loaded = true
     apply(introFrameAt(time))
   }
@@ -482,8 +482,8 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
         renderer.render(studioScene, broadcastCamera)
         renderer.setRenderTarget(null)
       }
-      composer.render()
-      ui.render(renderer)
+      post.render()
+      if (!post.includesOverlay) ui.render(renderer)
     },
     seek(seconds: number): void {
       time = THREE.MathUtils.clamp(seconds, 0, INTRO_DURATION)
@@ -520,12 +520,8 @@ export function createIntroCutscene(renderer: THREE.WebGLRenderer, cssWidth: num
       bannerTexture.dispose()
       tickerTexture.dispose()
       studioTarget.dispose()
-      environment.dispose()
-      pmrem.dispose()
-      bokeh.dispose()
-      bloom.dispose()
-      grade.dispose()
-      composer.dispose()
+      filmEnvironment.dispose()
+      post.dispose()
       ui.dispose()
       scene.clear()
       studioScene.clear()

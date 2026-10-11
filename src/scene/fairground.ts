@@ -6,6 +6,7 @@ import { createCarnivalBackdrop } from './carnival-backdrop'
 import { createCarnivalDressing } from './carnival-dressing'
 import { mergeStaticMeshes, objectBounds } from './merge-static-meshes'
 import { freezeTransform } from './matte-material'
+import { webgpuKit, type SkyColors } from '../render/backend'
 import { applyGroundVariation, createGroundVariationBounds } from './ground-variation'
 import { createFarmExpansion, FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS, type FarmExpansion, type GardenBounds } from '../game/farm-expansion'
 
@@ -1228,8 +1229,12 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   }
 }
 
-export function createSkyDome():THREE.Mesh {
-  const mat=new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:{horizonColor:{value:new THREE.Color('#f6c98c')},middleColor:{value:new THREE.Color('#92cfce')},zenithColor:{value:new THREE.Color('#63a8c5')}},vertexShader:`varying vec3 vWorldPosition; void main(){vec4 p=modelMatrix*vec4(position,1.0);vWorldPosition=p.xyz;gl_Position=projectionMatrix*viewMatrix*p;}`,fragmentShader:`uniform vec3 horizonColor;uniform vec3 middleColor;uniform vec3 zenithColor;varying vec3 vWorldPosition;void main(){vec3 d=normalize(vWorldPosition-cameraPosition);float h=clamp(d.y,-.12,1.);float a=smoothstep(-.12,.18,h);float b=smoothstep(.12,.92,h);vec3 c=mix(horizonColor,middleColor,a);c=mix(c,zenithColor,b);gl_FragColor=vec4(c,1.);
+export function createSkyDome():{mesh:THREE.Mesh;colors:SkyColors} {
+  // The day-night rig mutates these colours in place; both the GLSL material and
+  // its node twin read the same three objects.
+  const colors:SkyColors={horizon:new THREE.Color('#f6c98c'),middle:new THREE.Color('#92cfce'),zenith:new THREE.Color('#63a8c5')}
+  const nodeKit=webgpuKit()
+  const mat=nodeKit?nodeKit.createSkyMaterial(colors):new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:{horizonColor:{value:colors.horizon},middleColor:{value:colors.middle},zenithColor:{value:colors.zenith}},vertexShader:`varying vec3 vWorldPosition; void main(){vec4 p=modelMatrix*vec4(position,1.0);vWorldPosition=p.xyz;gl_Position=projectionMatrix*viewMatrix*p;}`,fragmentShader:`uniform vec3 horizonColor;uniform vec3 middleColor;uniform vec3 zenithColor;varying vec3 vWorldPosition;void main(){vec3 d=normalize(vWorldPosition-cameraPosition);float h=clamp(d.y,-.12,1.);float a=smoothstep(-.12,.18,h);float b=smoothstep(.12,.92,h);vec3 c=mix(horizonColor,middleColor,a);c=mix(c,zenithColor,b);gl_FragColor=vec4(c,1.);
 #include <tonemapping_fragment>
 #include <colorspace_fragment>
 }`})
@@ -1237,5 +1242,5 @@ export function createSkyDome():THREE.Mesh {
   sky.name='Carnival fairground pastel sky'
   sky.frustumCulled=false
   sky.renderOrder=-1000
-  return sky
+  return {mesh:sky,colors}
 }

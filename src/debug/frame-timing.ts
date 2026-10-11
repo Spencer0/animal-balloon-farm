@@ -1,3 +1,4 @@
+import { backendInUse, frameRenderStats, type FarmRenderer, type RenderBackend } from '../render/backend'
 import * as THREE from 'three'
 
 // Debug-only frame timing and the on-screen performance HUD. Nothing here runs
@@ -20,6 +21,8 @@ export interface GardenFrameTiming {
 export interface GardenPerformanceSummary {
   readonly samples: number
   readonly fps: number
+  /** Which renderer produced these numbers. */
+  readonly renderer: RenderBackend
   readonly cadenceMs: number
   readonly droppedFrames: number
   readonly zoom: number
@@ -153,7 +156,7 @@ export function createPerformanceOverlay(): PerformanceOverlay {
  * Frame samples for scripted stress tests. `zoom` reads the farm camera's
  * current zoom, which every summary reports beside the timings.
  */
-export function createFrameTimer(renderer: THREE.WebGLRenderer, zoom: () => number): FrameTimer {
+export function createFrameTimer(renderer: FarmRenderer, zoom: () => number): FrameTimer {
   const samples: GardenFrameTiming[] = []
   let frameNumber = 0
   let lastLogAt = performance.now()
@@ -184,8 +187,8 @@ export function createFrameTimer(renderer: THREE.WebGLRenderer, zoom: () => numb
       zoom: +zoom().toFixed(2),
       bufferWidth: drawingBuffer.x,
       bufferHeight: drawingBuffer.y,
-      renderCalls: renderer.info.render.calls,
-      triangles: renderer.info.render.triangles,
+      ...frameRenderStats(renderer),
+      renderer: backendInUse(),
       intervalMs: summarizeAll(intervals),
       workMs: summarizeAll(get('workMs')),
       updateMs: summarizeAll(update),
