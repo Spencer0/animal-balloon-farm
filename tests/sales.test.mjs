@@ -67,3 +67,13 @@ test('sale prices are fixed by plant and animal species', () => {
     mole: 18,
   })
 })
+
+test('an animal built standard (a resident leaving a house) starts captured and is sellable', () => {
+  assert.equal(sales.startsCaptured('standard'), true)
+  assert.equal(sales.startsCaptured('wild'), false)
+  // Regression: captured used to start false whatever the look, leaving a
+  // stage 4 standard resident stuck on 'Becomes sellable as a resident'.
+  const emerged = { sold: false, captured: sales.startsCaptured('standard'), capturing: false, stage: 4, appearance: 'standard' }
+  assert.equal(sales.canSellAnimal(emerged), true)
+  assert.equal(sales.canSellAnimal({ ...emerged, captured: false }), false)
+})

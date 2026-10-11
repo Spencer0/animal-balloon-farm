@@ -184,6 +184,12 @@ interface GardenDebugHarness {
   stepHunt(seconds: number, secondsPerStep?: number): ReturnType<OwlSim['report']>['owls']
   /** Add a tracked animal at a rung of the ladder, standing at its farm spawn; returns its id. */
   addAnimal(species: string, stage?: number): string | null
+  /**
+   * Retire an animal's model and rebuild it the way a house door does
+   * (`emerging`), so a settled resident that arrives with no flourish to play
+   * can be checked for the Sell button. Resolves to its card state.
+   */
+  emergeAnimal(id: string): Promise<{ readonly stage: number; readonly canSell: boolean; readonly isCaptured: boolean } | null>
   /** Credit chickens as already eaten, to reach the stay condition without a long night. */
   feedOwl(count: number): Readonly<Record<string, number>>
   /** Credit mice as already eaten by snakes, to reach the snake's stay condition without a long hunt. */
@@ -894,6 +900,20 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       const slot = harnessSpawnCount++ % 8
       void createAnimalInstance(record, { x: -3.5 + (slot % 4) * 1.6, z: 2.6 + Math.floor(slot / 4) * 1.5 })
       return record.id
+    },
+    emergeAnimal: async (id) => {
+      const old = animalById.get(id)
+      const record = progress.animal(id)
+      if (!old || !record) return null
+      const at = { x: old.currentPosition.x, z: old.currentPosition.z }
+      animalById.delete(id)
+      const index = animals.indexOf(old)
+      if (index >= 0) animals.splice(index, 1)
+      farmHomes.delete(id)
+      old.dispose()
+      const created = await createAnimalInstance(record, at, true)
+      created.placeAt(at.x, at.z)
+      return { stage: created.stage, canSell: created.canSell, isCaptured: created.isCaptured }
     },
     feedOwl: (count) => {
       for (let index = 0; index < Math.max(0, Math.floor(count)); index += 1) predationLedger.record('chicken')

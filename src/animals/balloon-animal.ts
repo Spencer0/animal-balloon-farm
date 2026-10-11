@@ -10,7 +10,7 @@ import { nearestRayHit } from '../scene/skinned-pick'
 import { cloneMerged, objectBounds, skeletonsOf } from '../scene/merge-static-meshes'
 import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
-import { canSellAnimal } from '../game/sales'
+import { canSellAnimal, startsCaptured } from '../game/sales'
 import { carnivalRing } from '../game/animal-travel'
 import { requestStage, tickResidency } from '../game/animal-residency'
 import { beginSimStep, createAnimalSimRecord, drainSimEvents, holdAnimalSim, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord, type AnimalSleepSpot } from '../game/animal-sim'
@@ -465,7 +465,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let appearance = options.appearance ?? 'wild'
   let active: AnimalClip = 'WALK'
   let elapsed = 0
-  let captured = false
+  let captured = startsCaptured(appearance)
   let sold = false
   let focused = false
   /** The alarm the mixer rate last followed, so a hunt panicking the sim record reaches the clips. */

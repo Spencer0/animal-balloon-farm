@@ -32,6 +32,15 @@ export interface AnimalSaleStatus {
   readonly appearance: 'wild' | 'standard'
 }
 
+/**
+ * Whether an animal built with this look has already been captured. A resident
+ * stepping out of a house is created `standard` with no flourish to play, so
+ * nothing would ever set `captured` for it; the look is the record of it.
+ */
+export function startsCaptured(appearance: AnimalSaleStatus['appearance']): boolean {
+  return appearance === 'standard'
+}
+
 /** Only settled, captured farm residents can be sold. */
 export function canSellAnimal(status: AnimalSaleStatus): boolean {
   return !status.sold && status.captured && !status.capturing && status.stage >= 3 && status.appearance === 'standard'
