@@ -81,10 +81,13 @@ import type { CutscenePlayer } from './scene/cutscene-kit'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
 import { createFarmRenderer, precompile } from './render/backend'
+import { createLoadingScreen } from './ui/loading-dom'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
 const gameCanvas = canvas
+const loading = createLoadingScreen()
+await loading.setStage('renderer')
 
 // `?renderer=webgpu` selects WebGPURenderer (async init); WebGL is the default.
 // Top-level await is fine here: nothing below can run without a renderer.
@@ -102,6 +105,7 @@ renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.info.autoReset = false // reset manually each frame so stats survive the HUD pass
 document.documentElement.dataset.renderer = renderBackend
 
+await loading.setStage('models')
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#c2d8cf')
 scene.fog = new THREE.Fog('#c2d8cf', 185, 345)
@@ -1666,5 +1670,10 @@ function frame(now: number): void {
 }
 // WebGPU builds pipelines lazily, and the first draw of each stalls the frame.
 // Build the farm's up front so the menu opens smoothly.
-if (renderBackend === 'webgpu') await precompile(renderer, scene, camera)
-requestAnimationFrame(frame)
+await loading.setStage('shaders')
+await precompile(renderer, scene, camera)
+requestAnimationFrame((now) => {
+  frame(now)
+  // The first frame has been submitted; the next paint shows the farm.
+  requestAnimationFrame(() => loading.done())
+})
