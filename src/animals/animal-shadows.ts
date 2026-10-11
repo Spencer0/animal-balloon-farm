@@ -36,8 +36,8 @@ export function shadowSizeFactor(height: number): number {
 
 export interface AnimalShadows {
   readonly mesh: THREE.InstancedMesh
-  /** Place a decal under each shown animal. `daylight` is 0 (night) to 1 (day). */
-  update(animals: readonly BalloonAnimal[], daylight: number): void
+  /** Place a decal under each shown animal in every group (the herd, harness crowd fixtures). `daylight` is 0 (night) to 1 (day). */
+  update(groups: readonly (readonly BalloonAnimal[])[], daylight: number): void
   dispose(): void
 }
 
@@ -98,10 +98,10 @@ export function createAnimalShadows(parent: THREE.Object3D, capacity: number): A
 
   return {
     mesh,
-    update(animals, daylight): void {
+    update(groups, daylight): void {
       material.opacity = NIGHT_OPACITY + (DAY_OPACITY - NIGHT_OPACITY) * THREE.MathUtils.clamp(daylight, 0, 1)
       let count = 0
-      for (const animal of animals) {
+      for (const animals of groups) for (const animal of animals) {
         if (count >= capacity) break
         const root = animal.root
         if (!root.visible || animal.isSold) continue
