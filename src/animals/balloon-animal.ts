@@ -209,7 +209,8 @@ const WILD_BALLOON_MATERIAL = new THREE.MeshPhysicalMaterial({
   clearcoatRoughness: 0.17,
 })
 // The wild mask draws the merged eye mesh too: its hearts stay collapsed, so the mask shows pupils only.
-installHeartEyeShader(WILD_BALLOON_MATERIAL, false)
+// Installed on first use, not at module load: the module-load call stalled the farm's start-up.
+let wildHeartHookInstalled = false
 
 const STANDARD_MATERIALS = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>()
 const WILD_MATERIALS = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>()
@@ -242,6 +243,10 @@ function disposeTemporaryMaterials(mesh: THREE.Mesh): void {
 }
 
 function setAnimalAppearance(root: THREE.Object3D, appearance: AnimalAppearance): void {
+  if (appearance === 'wild' && !wildHeartHookInstalled) {
+    wildHeartHookInstalled = true
+    installHeartEyeShader(WILD_BALLOON_MATERIAL, false)
+  }
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return
     if (appearance === 'wild') {
@@ -256,7 +261,8 @@ function setAnimalAppearance(root: THREE.Object3D, appearance: AnimalAppearance)
     } else {
       const originals = STANDARD_MATERIALS.get(object)
       if (originals) object.material = originals
-      applyHeartEyeMaterial(object)
+      // Only a mesh that wears hearts needs its material put back; the rest keep their originals.
+      if (object.userData.heartEyes) applyHeartEyeMaterial(object)
       disposeTemporaryMaterials(object)
     }
   })
