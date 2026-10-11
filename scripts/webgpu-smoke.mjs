@@ -3,7 +3,7 @@
 //   node scripts/webgpu-smoke.mjs            build a debug bundle, then run
 //   node scripts/webgpu-smoke.mjs --no-build reuse .gate/debug
 //
-// The WebGPU path is opt-in (WebGL stays the default), so the stress gate does
+// The stress gate pins `?renderer=webgl` (its budgets are WebGL numbers), so it does
 // not cover it. This launches Chrome with software WebGPU (SwiftShader Vulkan),
 // loads the farm with `?renderer=webgpu`, and checks that it really got a
 // WebGPU renderer, drew frames and the film post chain, and logged no errors.

@@ -5,8 +5,11 @@ import type { GroundVariationBounds, GroundVariationKindSpec } from '../scene/gr
 /**
  * Which renderer draws the farm, and the seam between the two.
  *
- * WebGL stays the default. `?renderer=webgpu` swaps in three's WebGPURenderer
- * (async init, node materials). Everything that draws through the renderer
+ * WebGPU is the default (three's WebGPURenderer: async init, node materials)
+ * and the page falls back to WebGL by itself when the browser has no WebGPU or
+ * the adapter/device fails to start. `?renderer=webgl` forces WebGL and
+ * `?renderer=webgpu` asks for WebGPU explicitly (it still falls back, loudly,
+ * rather than leave a black page). Everything that draws through the renderer
  * accepts a {@link FarmRenderer}; the few places whose shaders differ per
  * backend ask for {@link webgpuKit} and get `null` under WebGL.
  *
@@ -96,8 +99,9 @@ export function isWebGPURenderer(renderer: FarmRenderer): renderer is WebGPURend
   return (renderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true
 }
 
+/** What the page asks for: WebGPU unless `?renderer=webgl`. */
 export function requestedBackend(search: string = window.location.search): RenderBackend {
-  return new URLSearchParams(search).get('renderer') === 'webgpu' ? 'webgpu' : 'webgl'
+  return new URLSearchParams(search).get('renderer') === 'webgl' ? 'webgl' : 'webgpu'
 }
 
 export interface CreatedRenderer {
@@ -123,6 +127,7 @@ async function webgpuAdapterAvailable(): Promise<string | null> {
  */
 export async function createFarmRenderer(canvas: HTMLCanvasElement): Promise<CreatedRenderer> {
   let fallbackReason: string | null = null
+  let drawingCanvas = canvas
   if (requestedBackend() === 'webgpu') {
     fallbackReason = await webgpuAdapterAvailable()
     if (!fallbackReason) {
@@ -135,11 +140,16 @@ export async function createFarmRenderer(canvas: HTMLCanvasElement): Promise<Cre
         return { renderer, backend: 'webgpu', fallbackReason: null }
       } catch (error) {
         fallbackReason = `WebGPU init failed: ${error instanceof Error ? error.message : String(error)}`
+        // A canvas that already handed out a WebGPU context cannot give out a WebGL one.
+        const fresh = canvas.cloneNode(false) as HTMLCanvasElement
+        canvas.replaceWith(fresh)
+        drawingCanvas = fresh
       }
     }
-    console.warn(`[renderer] ${fallbackReason}; using WebGL`)
+    const asked = new URLSearchParams(window.location.search).has('renderer')
+    ;(asked ? console.warn : console.info)(`[renderer] ${fallbackReason}; using WebGL`)
   }
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
+  const renderer = new THREE.WebGLRenderer({ canvas: drawingCanvas, antialias: true, powerPreference: 'high-performance' })
   return { renderer, backend: 'webgl', fallbackReason }
 }
 
