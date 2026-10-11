@@ -4,7 +4,7 @@ import { FARM_EXPANSION_CONFIG, type GardenBounds } from '../game/farm-expansion
 import { containsFarmPoint } from '../game/farm-footprint'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
-import { clearHeartEyes, heartEyeCount as countHeartEyes, setHeartEyes } from './animal-eyes'
+import { applyHeartEyeMaterial, clearHeartEyes, heartEyeCount as countHeartEyes, installHeartEyeShader, setHeartEyes } from './animal-eyes'
 import { lowestClipPoseY } from './animal-grounding'
 import { cloneMerged, objectBounds, skeletonsOf } from '../scene/merge-static-meshes'
 import { mergeAnimalParts } from './animal-batching'
@@ -226,6 +226,9 @@ const WILD_BALLOON_MATERIAL = new THREE.MeshPhysicalMaterial({
   clearcoat: 0.48,
   clearcoatRoughness: 0.17,
 })
+// The wild mask draws the merged eye mesh too: its hearts stay collapsed, so the mask shows pupils only.
+// Installed on first use, not at module load: the module-load call stalled the farm's start-up.
+let wildHeartHookInstalled = false
 
 const STANDARD_MATERIALS = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>()
 const WILD_MATERIALS = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>()
@@ -258,6 +261,10 @@ function disposeTemporaryMaterials(mesh: THREE.Mesh): void {
 }
 
 function setAnimalAppearance(root: THREE.Object3D, appearance: AnimalAppearance): void {
+  if (appearance === 'wild' && !wildHeartHookInstalled) {
+    wildHeartHookInstalled = true
+    installHeartEyeShader(WILD_BALLOON_MATERIAL, false)
+  }
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return
     if (appearance === 'wild') {
@@ -272,6 +279,8 @@ function setAnimalAppearance(root: THREE.Object3D, appearance: AnimalAppearance)
     } else {
       const originals = STANDARD_MATERIALS.get(object)
       if (originals) object.material = originals
+      // Only a mesh that wears hearts needs its material put back; the rest keep their originals.
+      if (object.userData.heartEyes) applyHeartEyeMaterial(object)
       disposeTemporaryMaterials(object)
     }
   })
@@ -288,6 +297,8 @@ function createCaptureMaterial(source: THREE.Material, range: CaptureVerticalRan
   material.clearcoat = WILD_BALLOON_MATERIAL.clearcoat
   material.clearcoatRoughness = WILD_BALLOON_MATERIAL.clearcoatRoughness
   material.color.copy(standard.color ?? new THREE.Color('#ffffff'))
+  // Painted parts keep their colour in vertex colours, which the reveal must still multiply in.
+  material.vertexColors = source.vertexColors
   const textured = source as THREE.MeshStandardMaterial
   material.map = textured.map ?? null
   material.alphaMap = textured.alphaMap ?? null
@@ -320,7 +331,7 @@ uniform float uCaptureTop;
 uniform vec3 uCaptureWildColor;
 varying float vCaptureWorldY;
 varying vec3 vCaptureWorldPosition;`)
-      .replace('#include <map_fragment>', `#include <map_fragment>
+      .replace('#include <color_fragment>', `#include <color_fragment>
 float captureHeight = clamp((vCaptureWorldY - uCaptureBottom) / max(uCaptureTop - uCaptureBottom, 0.001), 0.0, 1.0);
 float captureEdge = 1.03 - uCaptureProgress * 1.06;
 float captureNoise = (sin(vCaptureWorldPosition.x * 9.0 + vCaptureWorldPosition.z * 6.0) + sin(vCaptureWorldPosition.z * 13.0 - vCaptureWorldPosition.y * 5.0)) * 0.012;

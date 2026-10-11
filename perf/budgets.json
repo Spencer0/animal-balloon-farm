@@ -40,15 +40,15 @@
       "runs": 3,
       "steps": {
         "10": {
-          "maxRenderCalls": 122,
+          "maxRenderCalls": 89,
           "maxTriangles": 529000
         },
         "30": {
-          "maxRenderCalls": 643,
+          "maxRenderCalls": 179,
           "maxTriangles": 1053000
         },
         "50": {
-          "maxRenderCalls": 1102,
+          "maxRenderCalls": 262,
           "maxTriangles": 1469000
         }
       }

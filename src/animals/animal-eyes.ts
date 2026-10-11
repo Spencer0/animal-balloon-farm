@@ -1,16 +1,18 @@
 import * as THREE from 'three'
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 
 /**
  * Heart eyes: the one cosmetic that marks a breedable animal.
  *
  * The GLBs already name their face parts precisely (`COW · near dark pupil`,
- * `COW · near starry catchlight`), so the conversion is a runtime mesh swap
- * keyed on those names rather than a Blender re-export. That matters: the
- * standard -> hearts transition is something the player triggers and undoes
- * during play, and a baked asset would make it a reload.
+ * `COW · near starry catchlight`). At load, `mergeAnimalParts` folds every
+ * pupil and catchlight into one shared eye mesh, and gives each pupil a heart
+ * sibling in the same merged mesh. Heart mode is then a material swap between
+ * two shared eye materials. A vertex attribute decides which geometry
+ * collapses, so the swap costs no extra draw calls and needs no rebuild.
  *
- * The pupil is hidden and a heart is drawn in its place at the same transform,
- * so the eyes do not slide when they change.
+ * The heart sits where the pupil was, at the same transform, so the eyes do
+ * not slide when they change.
  */
 
 /** Node-name substrings for the black dot we replace. */
@@ -18,9 +20,13 @@ const PUPIL_MATCH = /pupil/i
 /** The catchlight sits on top of the pupil; it is kept, just nudged. */
 const CATCHLIGHT_MATCH = /catchlight|glint/i
 
-/** Eye parts this module finds by name and toggles, so they must stay separate meshes. */
+/** Eye parts this module finds by name when merging, so they never fold into the body. */
 export function isHeartEyePart(name: string): boolean {
   return PUPIL_MATCH.test(name) || CATCHLIGHT_MATCH.test(name)
+}
+
+export function isPupilPart(name: string): boolean {
+  return PUPIL_MATCH.test(name)
 }
 
 /**
@@ -30,19 +36,42 @@ export function isHeartEyePart(name: string): boolean {
  */
 export const HEART_EYE_COLOR = '#ff5d7a'
 
-export interface HeartEyeOptions {
-  /** Heart tint; defaults to the shared breeding pink. */
-  readonly color?: string
-  /** Uniform scale relative to the pupil it replaces. */
-  readonly scale?: number
+/** Hearts are about a centimetre across, a touch bigger than the pupil they replace. */
+const HEART_SCALE = 1.1
+
+/**
+ * Vertex attribute on every eye-merge geometry: 1 on a heart, 0 on a pupil or
+ * catchlight. The shader collapses the vertices of whichever kind is hidden.
+ */
+export const HEART_PART_ATTRIBUTE = 'eyePart'
+
+/**
+ * The eye materials of one species. `plain` shows the pupils and catchlights,
+ * `hearts` shows the hearts. Both are shared by every clone of the species, and
+ * `eyes` counts the eyes the species has (2 for every species today).
+ */
+export interface HeartEyeSet {
+  readonly id: string
+  readonly plain: THREE.Material
+  readonly hearts: THREE.Material
+  eyes: number
 }
 
-interface HeartEyes {
-  readonly hearts: readonly THREE.Mesh[]
-  readonly material: THREE.Material
-}
+/**
+ * Every species' eye set, by id. A merged eye mesh carries its id in `userData`,
+ * which clones copy. The material is not a reliable key: the paint-reveal
+ * flourish swaps it out, and a heart stage can arrive during that flourish.
+ */
+const EYE_SETS = new Map<string, HeartEyeSet>()
+const EYE_SET_KEY = 'heartEyeSet'
+let nextEyeSetId = 0
 
-const installed = new WeakMap<THREE.Object3D, HeartEyes>()
+/** Tag the merged eye meshes of `set`, so `setHeartEyes` can find them in any clone. */
+export function tagHeartEyeMeshes(root: THREE.Object3D, set: HeartEyeSet): void {
+  root.traverse((object) => {
+    if (object instanceof THREE.Mesh && object.material === set.plain) object.userData[EYE_SET_KEY] = set.id
+  })
+}
 
 /**
  * A heart, extruded very slightly and built from two lobes and a point.
@@ -66,7 +95,8 @@ function createHeartGeometry(): THREE.BufferGeometry {
     curveSegments: 10,
   })
   geometry.center()
-  return geometry
+  // Indexed, like the GLB pupils, so the merge treats both as one layout.
+  return mergeVertices(geometry)
 }
 
 let sharedHeartGeometry: THREE.BufferGeometry | null = null
@@ -76,89 +106,138 @@ function heartGeometry(): THREE.BufferGeometry {
   return sharedHeartGeometry
 }
 
-function isMesh(object: THREE.Object3D): object is THREE.Mesh {
-  return object instanceof THREE.Mesh
+/**
+ * Make the two eye materials for a species. The vertex colours carry the
+ * pupil, catchlight and heart colours, so both materials are plain white.
+ * Each gets its own `uEyeHearts` uniform through `installHeartEyeShader`.
+ */
+export function createHeartEyeMaterials(): HeartEyeSet {
+  const plain = new THREE.MeshPhysicalMaterial({
+    name: 'Animal eyes',
+    vertexColors: true,
+    roughness: 0.2,
+    metalness: 0.01,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.2,
+  })
+  const hearts = new THREE.MeshPhysicalMaterial({
+    name: 'Animal heart eyes',
+    vertexColors: true,
+    roughness: 0.24,
+    metalness: 0.02,
+    emissive: new THREE.Color(HEART_EYE_COLOR).multiplyScalar(0.18),
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.2,
+  })
+  installHeartEyeShader(plain, false)
+  installHeartEyeShader(hearts, true)
+  const set: HeartEyeSet = { id: `eyes-${nextEyeSetId}`, plain, hearts, eyes: 0 }
+  nextEyeSetId += 1
+  EYE_SETS.set(set.id, set)
+  return set
+}
+
+/**
+ * Collapse the eye vertices that the current mode hides. A collapsed vertex
+ * scales to the origin, so its triangles have no area and draw nothing.
+ * Pupils and catchlights collapse when `uEyeHearts` is 1, and hearts when it is 0.
+ *
+ * The shader hook is per material, so the wild mask installs it too: a wild
+ * animal's eye mesh then shows its pupils and never its hearts.
+ */
+export function installHeartEyeShader(material: THREE.Material, hearts: boolean): void {
+  const uniform = { value: hearts ? 1 : 0 }
+  const previousCompile = material.onBeforeCompile
+  material.onBeforeCompile = (shader, renderer) => {
+    previousCompile(shader, renderer)
+    shader.uniforms.uEyeHearts = uniform
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+attribute float ${HEART_PART_ATTRIBUTE};
+uniform float uEyeHearts;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+transformed *= ${HEART_PART_ATTRIBUTE} > 0.5 ? uEyeHearts : 1.0 - uEyeHearts;`)
+  }
+  material.customProgramCacheKey = () => 'balloon-heart-eyes-v1'
+}
+
+/**
+ * Add a heart sibling to a pupil (same parent, same transform), so it rides
+ * the head pivot like the pupil does. Returns the heart, or null when the pupil
+ * has no parent. The heart is a new mesh with the pink colour and the heart flag.
+ */
+export function addHeartEyePart(pupil: THREE.Mesh, set: HeartEyeSet): THREE.Mesh | null {
+  if (!pupil.parent) return null
+  const geometry = heartGeometry().clone()
+  const heart = new THREE.Mesh(geometry, set.plain)
+  heart.name = `heart for ${pupil.name}`
+  pupil.parent.add(heart)
+  heart.position.copy(pupil.position)
+  heart.quaternion.copy(pupil.quaternion)
+  // The heart geometry is unit-sized, so matching the pupil's own scale is
+  // what keeps it the same size on the face whatever the model's scale is.
+  heart.scale.copy(pupil.scale).multiplyScalar(HEART_SCALE)
+  // Sit slightly proud of the face so it never z-fights with the eye.
+  heart.position.y += HEART_SCALE * 0.06
+  return heart
+}
+
+/** The eye set of a tagged eye mesh, or undefined for any other mesh. */
+function eyeSetOf(object: THREE.Object3D): HeartEyeSet | undefined {
+  if (!(object instanceof THREE.Mesh)) return undefined
+  const id = object.userData[EYE_SET_KEY]
+  return typeof id === 'string' ? EYE_SETS.get(id) : undefined
+}
+
+function eyeMeshes(root: THREE.Object3D): THREE.Mesh[] {
+  const found: THREE.Mesh[] = []
+  root.traverse((object) => {
+    if (eyeSetOf(object)) found.push(object as THREE.Mesh)
+  })
+  return found
 }
 
 /**
  * Swap the black pupils for hearts. Returns the number of eyes converted so
  * the caller can warn about a species whose naming ever drifts.
  */
-export function setHeartEyes(root: THREE.Object3D, options: HeartEyeOptions = {}): number {
-  const color = options.color ?? HEART_EYE_COLOR
-  const existing = installed.get(root)
-  if (existing) {
-    (existing.material as THREE.MeshStandardMaterial).color.set(color)
-    return existing.hearts.length
+export function setHeartEyes(root: THREE.Object3D): number {
+  let eyes = 0
+  for (const mesh of eyeMeshes(root)) {
+    const set = eyeSetOf(mesh)
+    if (!set) continue
+    mesh.userData.heartEyes = true
+    // A mesh mid-flourish or on the wild mask keeps its material. The flag is
+    // kept, so `applyHeartEyeMaterial` shows the hearts when it next goes standard.
+    if (mesh.material === set.plain) mesh.material = set.hearts
+    eyes = set.eyes
   }
+  return eyes
+}
 
-  const material = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.24,
-    metalness: 0.02,
-    emissive: new THREE.Color(color).multiplyScalar(0.18),
-  })
-  const hearts: THREE.Mesh[] = []
-  let converted = 0
-
-  root.traverse((object) => {
-    if (!isMesh(object) || !PUPIL_MATCH.test(object.name)) return
-    const heart = new THREE.Mesh(heartGeometry(), material)
-    heart.name = `heart for ${object.name}`
-    // The heart is added as a *sibling* of the pupil, copying its local
-    // transform. Pupils are children of a head rig pivot, so parenting to the
-    // pivot is what makes the heart follow the head's idle and walk motion
-    // automatically -- and it avoids any world-matrix math, which is how the
-    // first attempt ended up hanging off in root space.
-    if (!object.parent) return
-    object.parent.add(heart)
-    heart.position.copy(object.position)
-    heart.quaternion.copy(object.quaternion)
-    // The heart geometry is unit-sized, so matching the pupil's own scale is
-    // what keeps it the same size on the face whatever the model's scale is.
-    heart.scale.copy(object.scale).multiplyScalar(options.scale ?? 1.1)
-    // Sit slightly proud of the face so it never z-fights with the eye.
-    heart.position.y += (options.scale ?? 1.1) * 0.06
-    object.visible = false
-    hearts.push(heart)
-    converted += 1
-  })
-
-  if (converted === 0) {
-    material.dispose()
-    return 0
-  }
-
-  // The catchlight rides on the pupil; hide it while the hearts are in, or it
-  // floats over a shape that is no longer there.
-  root.traverse((object) => {
-    if (isMesh(object) && CATCHLIGHT_MATCH.test(object.name)) object.visible = false
-  })
-
-  installed.set(root, { hearts, material })
-  return converted
+/**
+ * Restore an eye mesh's material after a palette change: hearts when the mesh
+ * is wearing them, plain otherwise. Does nothing for a mesh that is not an eye mesh.
+ */
+export function applyHeartEyeMaterial(mesh: THREE.Mesh): void {
+  const set = eyeSetOf(mesh)
+  if (!set) return
+  mesh.material = mesh.userData.heartEyes ? set.hearts : set.plain
 }
 
 /** How many heart eyes a species is currently wearing, for the debug report. */
 export function heartEyeCount(root: THREE.Object3D): number {
-  return installed.get(root)?.hearts.length ?? 0
+  for (const mesh of eyeMeshes(root)) {
+    const set = eyeSetOf(mesh)
+    if (set && mesh.userData.heartEyes) return set.eyes
+  }
+  return 0
 }
 
 export function clearHeartEyes(root: THREE.Object3D): void {
-  const existing = installed.get(root)
-  if (!existing) return
-  for (const heart of existing.hearts) {
-    // Detach rather than just hide: the heart is a sibling of the pupil under
-    // the head pivot, so removing it is what actually takes it off the face.
-    heart.parent?.remove(heart)
+  for (const mesh of eyeMeshes(root)) {
+    mesh.userData.heartEyes = false
+    const set = eyeSetOf(mesh)
+    if (set && mesh.material === set.hearts) mesh.material = set.plain
   }
-  root.traverse((object) => {
-    if (!isMesh(object)) return
-    if (PUPIL_MATCH.test(object.name) || CATCHLIGHT_MATCH.test(object.name)) object.visible = true
-  })
-  // Fully undo, including the bookkeeping. Leaving the entry behind kept the
-  // hearts off the face but still reported them, which made the debug report
-  // claim a species was breeding when it was not.
-  existing.material.dispose()
-  installed.delete(root)
 }

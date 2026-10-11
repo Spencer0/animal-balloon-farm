@@ -11,6 +11,7 @@ const { outputFiles } = await build({
       export { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
       export { cloneMerged, mergeStaticMeshes, objectBounds, skeletonsOf } from './src/scene/merge-static-meshes.ts'
       export { mergeAnimalParts } from './src/animals/animal-batching.ts'
+      export { clearHeartEyes, heartEyeCount, setHeartEyes } from './src/animals/animal-eyes.ts'
     `,
     resolveDir: '.',
     loader: 'ts',
@@ -20,7 +21,7 @@ const { outputFiles } = await build({
   platform: 'node',
   write: false,
 })
-const { THREE, GLTFLoader, cloneMerged, mergeStaticMeshes, objectBounds, skeletonsOf, mergeAnimalParts } = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
+const { THREE, GLTFLoader, cloneMerged, mergeStaticMeshes, objectBounds, skeletonsOf, mergeAnimalParts, clearHeartEyes, heartEyeCount, setHeartEyes } = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 
 const ANIMAL_DIR = 'public/assets/animals'
 const models = fs.readdirSync(ANIMAL_DIR).filter((name) => /^balloon-.*\.glb$/.test(name))
@@ -38,26 +39,35 @@ function drawnMeshes(root) {
 }
 
 /**
- * World-space vertex statistics per material: count, centroid and extent. Two
- * renderings that agree on these for every material, in several poses, put the
- * same surfaces in the same places.
+ * World-space vertex statistics per colour: count, centroid and extent. Parts
+ * are merged into vertex colours, so the key is each vertex's colour, which is
+ * the material colour an unmerged part drew with. Two renderings that agree on
+ * these for every colour, in several poses, put the same surfaces in the same places.
  */
 function surfaceStats(root) {
   root.updateMatrixWorld(true)
   const stats = new Map()
   const vertex = new THREE.Vector3()
+  const linear = new THREE.Color()
   for (const mesh of drawnMeshes(root)) {
-    const key = mesh.material.name
-    const entry = stats.get(key) ?? { count: 0, sum: new THREE.Vector3(), box: new THREE.Box3() }
     const position = mesh.geometry.getAttribute('position')
+    const colors = mesh.geometry.getAttribute('color')
+    const eyeParts = mesh.geometry.getAttribute('eyePart')
     for (let index = 0; index < position.count; index += 1) {
+      // Hearts are kept beside their pupils, and the shader collapses whichever
+      // is hidden, so the plain pose's CPU data holds hearts the screen never shows.
+      if (eyeParts && eyeParts.getX(index) > 0.5) continue
+      const key = colors
+        ? linear.setRGB(colors.getX(index), colors.getY(index), colors.getZ(index), THREE.LinearSRGBColorSpace).getHexString()
+        : mesh.material.color.getHexString()
+      const entry = stats.get(key) ?? { count: 0, sum: new THREE.Vector3(), box: new THREE.Box3() }
       mesh.getVertexPosition(index, vertex)
       vertex.applyMatrix4(mesh.matrixWorld)
       entry.sum.add(vertex)
       entry.box.expandByPoint(vertex)
       entry.count += 1
+      stats.set(key, entry)
     }
-    stats.set(key, entry)
   }
   return stats
 }
@@ -89,13 +99,18 @@ for (const model of models) {
     const original = await loadGlb(`${ANIMAL_DIR}/${model}`)
     const merged = await loadGlb(`${ANIMAL_DIR}/${model}`)
     const report = mergeAnimalParts(merged.scene, merged.animations)
-    assert.equal(report.before, drawnMeshes(original.scene).length)
+    // Heart siblings join the merge: one per pupil, added before it runs.
+    const pupils = drawnMeshes(original.scene).filter((mesh) => /pupil/i.test(mesh.name)).length
+    assert.equal(report.before, drawnMeshes(original.scene).length + pupils)
     assert.ok(report.after <= 20, `${model} still draws ${report.after} meshes`)
     assert.ok(report.after * 2.5 < report.before, `${model}: ${report.before} -> ${report.after} is not a real cut`)
 
-    // Heart eyes find these by name; they must survive as their own meshes.
-    const eyeParts = (root) => drawnMeshes(root).filter((mesh) => /pupil|catchlight|glint/i.test(mesh.name)).map((mesh) => mesh.name).sort()
-    assert.deepEqual(eyeParts(merged.scene), eyeParts(original.scene))
+    // Heart eyes are one material swap on the merged eye mesh, and clear back to plain.
+    const heartCopy = cloneMerged(merged.scene)
+    assert.equal(setHeartEyes(heartCopy), pupils)
+    assert.equal(heartEyeCount(heartCopy), pupils)
+    clearHeartEyes(heartCopy)
+    assert.equal(heartEyeCount(heartCopy), 0)
 
     for (const [clipIndex, fraction] of [[-1, 0], [0, 0.13], [0, 0.61], [1, 0.37], [1, 0.88]]) {
       // Each animal is a skeleton-aware clone of the cached species scene, as in the game.
