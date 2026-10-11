@@ -18,6 +18,11 @@ export interface SimClock {
   readonly stepSeconds: number
   /** Add one frame's time and return how many steps to run this frame (0 to maxStepsPerFrame). */
   advance(frameSeconds: number): number
+  /**
+   * How far the display is between the last step and the next, 0..1. A view
+   * blends from the previous snapshot to the current one by this much.
+   */
+  readonly alpha: number
   /** Forget any leftover time, e.g. when the simulation was paused. */
   reset(): void
 }
@@ -30,6 +35,9 @@ export function createSimClock(options: { hz?: number; maxStepsPerFrame?: number
   let accumulator = 0
   return {
     stepSeconds,
+    get alpha(): number {
+      return Math.min(1, accumulator / stepSeconds)
+    },
     advance(frameSeconds: number): number {
       accumulator += Math.max(0, frameSeconds)
       let steps = 0
