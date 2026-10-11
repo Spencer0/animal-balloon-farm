@@ -357,7 +357,6 @@ export interface GardenHarnessDeps {
   readonly lastHouseOf: Map<string, string>
   readonly updateHousing: (nowSeconds: number) => void
   readonly residentsOf: (selection: { readonly id: PropId; readonly siteId: string }) => import('../ui/prop-card').PropResidents | null
-  readonly collideAnimals: (nowSeconds: number) => void
   readonly ui: UILayer
   readonly frameTimer: FrameTimer | null
   readonly journal: ReturnType<typeof createJournalPanel>
@@ -455,7 +454,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     lastHouseOf,
     updateHousing,
     residentsOf,
-    collideAnimals,
     ui,
     frameTimer,
     journal,
@@ -868,7 +866,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
         simulatedSeconds += stepSeconds
         stepAnimalWorld(stepSeconds, simulatedSeconds, true)
         animals.forEach((animal) => animal.update(stepSeconds, 1))
-        collideAnimals(simulatedSeconds)
         presentHunts(stepSeconds, 1)
       }
       return owlHunt.report().owls

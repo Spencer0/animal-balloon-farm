@@ -178,7 +178,7 @@ function runSleep(ticks, speed = 0.9, start = [-3, 3], disturb = null) {
   r.sleepSpot = bed
   const path = []
   for (let tick = 0; tick < ticks; tick += 1) {
-    if (disturb && tick === disturb.at) sim.shiftAnimalSim(r, disturb.dx, disturb.dz)
+    if (disturb && tick === disturb.at) sim.pushAnimalSim(r, disturb.dx, disturb.dz)
     sim.beginSimStep(r)
     routes.stepSleep(r, speed, STEP)
     path.push([r.x, r.z, r.motion, r.asleep, r.heading])

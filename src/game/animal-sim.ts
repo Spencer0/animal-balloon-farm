@@ -103,6 +103,12 @@ export interface AnimalSimRecord {
   dwell: number
   /** Decisions for the view to play, oldest first. Drain with `drainSimEvents`. */
   events: AnimalSimEvent[]
+  /**
+   * Something other than the sim places the animal: a flier's flight, or the paint
+   * reveal, which holds it still. The sim leaves its position alone, though collision
+   * may still push it.
+   */
+  held: boolean
 }
 
 export function createAnimalSimRecord(init: {
@@ -112,6 +118,7 @@ export function createAnimalSimRecord(init: {
   radius?: number
   side?: 'carnival' | 'farm'
   stage?: AnimalStage
+  held?: boolean
 }): AnimalSimRecord {
   return {
     x: init.x,
@@ -137,6 +144,7 @@ export function createAnimalSimRecord(init: {
     pendingStage: null,
     dwell: 0,
     events: [],
+    held: init.held ?? false,
   }
 }
 
@@ -152,12 +160,17 @@ export function snapAnimalSim(record: AnimalSimRecord, x: number, z: number): vo
   record.z = record.prevZ = z
 }
 
-/** Shift the record sideways, previous and current together, so the blend stays continuous. */
-export function shiftAnimalSim(record: AnimalSimRecord, dx: number, dz: number): void {
-  record.x += dx
-  record.z += dz
-  record.prevX += dx
-  record.prevZ += dz
+/**
+ * Hold the animal where it stands, at `x, z` (the point it is drawn at): it stops, and
+ * the sim leaves it alone until it is released. A fresh wander target is picked
+ * afterwards, as it is for any animal whose standing about was cut short.
+ */
+export function holdAnimalSim(record: AnimalSimRecord, x: number, z: number): void {
+  snapAnimalSim(record, x, z)
+  record.held = true
+  record.motion = 'idle'
+  record.paused = 0
+  record.nextDecision = 0
 }
 
 /**

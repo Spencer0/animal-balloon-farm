@@ -972,7 +972,7 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = c
   activeGardenBounds,
   upgrades,
 })
-const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimals, collideAnimalsTick, collideAnimalsFrame, updateSleepers } = createHousing({
+const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimalsTick, updateSleepers } = createHousing({
   progress,
   animals,
   animalById,
@@ -1266,7 +1266,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     lastHouseOf,
     updateHousing,
     residentsOf,
-    collideAnimals,
     ui,
     frameTimer,
     journal,
@@ -1476,6 +1475,7 @@ const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PE
 function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {
   // Wandering, walking and the hunters' steering are simulated here; the frame only blends the last two ticks.
   for (const animal of animals) animal.tickSim(stepSeconds)
+  for (const fixture of crowdFixtures) fixture.tickSim(stepSeconds)
   // Push the walkers out of houses and each other once they have moved; the view blends the result.
   collideAnimalsTick(nowSeconds)
   if (huntsActive) tickHunts(stepSeconds)
@@ -1565,8 +1565,7 @@ function frame(now: number): void {
   for (let step = 0; step < simSteps; step += 1) runSimTick(simClock.stepSeconds, now / 1000, huntsActive)
   const simAlpha = simClock.alpha
   animals.forEach((animal) => animal.update(delta, simAlpha))
-  crowdFixtures.forEach((fixture) => fixture.update(delta))
-  collideAnimalsFrame(now / 1000)
+  crowdFixtures.forEach((fixture) => fixture.update(delta, simAlpha))
   if (huntsActive) presentHunts(delta, simAlpha)
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.

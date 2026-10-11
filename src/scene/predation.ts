@@ -173,7 +173,7 @@ export function createPredation(deps: PredationDeps) {
         const record = progress.animal(animal.instanceId)
         return Boolean(record && record.stage >= 3 && !record.baby)
       })
-      .map((animal) => preyInput(animal, !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending))
+      .map((animal) => preyInput(animal, !animal.isCapturing && !animal.isResidencyPending))
     const bounds = activeGardenBounds()
     owlSim.step(stepSeconds, {
       night: isNightTime(dayNightClock.timeOfDay),
@@ -196,7 +196,7 @@ export function createPredation(deps: PredationDeps) {
       .filter((animal) => animal.id === 'snake' && !animal.isSold)
       .map((animal) => {
         const record = progress.animal(animal.instanceId)
-        const busy = animal.isCapturing || animal.isRomancing || animal.isResidencyPending || animal.isGoingHome
+        const busy = animal.isCapturing || animal.isResidencyPending || animal.isGoingHome
         // `size` is the model's length, so the mouth sits a little under half of it ahead of the centre.
         const reach = (bodySizeBySpecies.get('snake') ?? 2.8) * SNAKE_MOUTH_SHARE * animal.currentScale
         return { id: animal.instanceId, record: animal.sim, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy), reach }
@@ -208,7 +208,7 @@ export function createPredation(deps: PredationDeps) {
         const record = progress.animal(animal.instanceId)
         return Boolean(record && record.stage >= 3 && !record.baby)
       })
-      .map((animal) => preyInput(animal, !animal.isCapturing && !animal.isRomancing && !animal.isResidencyPending && !animal.isGoingHome))
+      .map((animal) => preyInput(animal, !animal.isCapturing && !animal.isResidencyPending && !animal.isGoingHome))
     snakeHunt.step(stepSeconds, { snakes, prey: quarry, preyCounts: residentCounts() }, huntEvents)
     // Mice scattering with no house to hide in calm down after a few seconds. Only checked
     // while a snake is about, as it always was.

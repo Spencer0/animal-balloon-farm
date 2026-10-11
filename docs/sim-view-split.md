@@ -1,6 +1,6 @@
 # Animal sim / view split
 
-Status: slices 1 (wander and walk), 2 (collision and home trip), 3 (owl and snake hunts) and 4 (sleep, stage and residency; the capture reveal guard stays in the view, see below) are implemented; slice 5 is planned below.
+Status: all five slices are implemented. The sim owns position, steering, collision, hunts, sleep, stage and residency; `balloon-animal.ts` blends the sim's last two ticks, maps motion to clips, and plays events and effects. Two decisions deliberately stayed on the view side; see slice 4 below.
 
 ## Why
 
@@ -29,8 +29,10 @@ Rules:
 - `src/game/*` imports no Three.js and no DOM. A sim file must run in node under
   `tests/*.test.mjs`.
 - The view is **read-only toward the sim**. Intent flows in as commands
-  (`setHomeTrip`, `setPursuit`, `setSleepSpot`, `nudge`, `placeAt`, ...) that the
-  sim applies on its next tick; state flows out as snapshots.
+  (`setHomeTrip`, `setPursuit`, `setSleepSpot`, `setAlarmed`, `placeAt`,
+  `stage = ...`) that write the record, which the sim acts on at its next tick;
+  state flows out as snapshots. The collision pass is the one other writer
+  (`pushSim`, current tick only).
 - The sim never calls an effect. It emits an event; the view (or a presenter
   subscribed to the event list) plays it.
 - No `Math.random` in the sim. Every animal owns a seeded stream
@@ -38,12 +40,14 @@ Rules:
 
 ## Data shapes
 
-Implemented in slice 1 (`src/game/animal-sim.ts`):
+`src/game/animal-sim.ts`. The record is plain data; the groups below are what
+each slice added.
 
 ```ts
 type AnimalMotion = 'walk' | 'idle' | 'sleep'
 
 interface AnimalSimRecord {
+  // slice 1: wander and walk
   x: number; z: number          // current tick
   prevX: number; prevZ: number  // previous tick, for the view to blend from
   heading: number               // yaw about +Y, +X-forward model
@@ -52,26 +56,24 @@ interface AnimalSimRecord {
   paused: number                // standing-about time left (Infinity = held)
   nextDecision: number
   longWalk: boolean
+  // slice 2: collision, home trip, gate route
+  radius: number
+  home: { x; z; speedScale } | null; atDoor: boolean
+  visit: { route; direction; side; cooldown }
+  // slice 3: hunts (hunter state lives in the hunt sims, see animal-hunt.ts)
+  pursuit: { x; z; speedScale } | null; alarmed: boolean
+  // slice 4: sleep, stage, residency
+  sleepSpot: { x; z; heading } | null; asleep: boolean
+  stage: AnimalStage; pendingStage: AnimalStage | null; dwell: number
+  events: AnimalSimEvent[]      // 'stage-up' | 'stage-down', drained by the view
+  // slice 5
+  held: boolean                 // a flier, or mid paint-reveal: the sim leaves it be
 }
 ```
 
 `WanderContext` (`src/game/animal-wander.ts`) is the world as the system needs
 it this tick: leash half-extents, carnival side, alarmed, speed, pack anchor,
-garden bounds. The adapter in the view builds it from its options; slice 2 moves
-the building into the sim world.
-
-Planned additions, one per slice, always plain data:
-
-```ts
-// slice 2
-radius: number
-home: { x; z } | null; homeSpeedScale: number; atDoor: boolean
-// slice 3 (as built: pursuit and alarm on the record, hunter state in the hunt sims)
-pursuit: { x; z; speedScale } | null; alarmed: boolean
-// slice 4
-stage: AnimalStage; conditions: ...; asleep: boolean; sleepSpot: {...} | null
-captured: boolean; sold: boolean
-```
+garden bounds. The adapter in the view builds it from its options.
 
 Terrain height is a view concern for now (it eases toward `groundSampler(x, z)`).
 When something in the sim needs it (a snake in grass, an owl perch), it reads the
@@ -82,36 +84,37 @@ heightmap array the way `src/scene/terrain-pick.ts` does: a pure function of
 
 - `SimClock.advance(frameSeconds)` returns 0 to 4 whole 15 Hz steps and keeps the
   remainder. `SimClock.alpha` is `remainder / stepSeconds`, 0..1.
-- Per frame in `main.ts`: `runSimTick` once per step (it calls
-  `animal.tickSim(stepSeconds)` first), then `animal.update(delta, simClock.alpha)`.
+- Per frame in `main.ts`: `runSimTick` once per step, which runs `stepAnimalWorld`
+  (every animal's `tickSim`, the crowd fixtures' too, then collision, then the
+  hunts), then `animal.update(delta, simClock.alpha)`. The debug hunt stepper
+  calls `stepAnimalWorld` directly. The view never steps the sim.
 - A system calls `beginSimStep(record)` first (previous := current), then writes
   the new current. The view draws `prev + (cur - prev) * alpha`, so it renders
   one tick behind the sim and never extrapolates.
-- Anything outside a tick that moves a record (`nudge`, `placeAt`) shifts or
-  snaps **previous and current together**, so a push-out at 60 Hz never fights
-  the blend.
-- `update(delta)` without an alpha (the debug hunt stepper, tests) steps the sim
-  once itself with `delta`, so a caller that does not own a clock still works.
+- Collision runs after the walk of the same tick and pushes only the **current**
+  position (`pushAnimalSim`), so the view blends from where the animal walked to
+  where it ended up. `placeAt` and the start of a hold **snap** previous and
+  current together, so a teleport is never blended across.
 - Cosmetic motion stays per frame and is never read back by the sim: facing slerp
   toward `record.heading`, sleep squash and breath, the placeholder bob, the
   flier perch offset, ground-height easing, capture flourish.
 
-### Adapter used while behaviours migrate
+### Held animals
 
-A behaviour that has not moved yet still drives the wrapper per frame
-(`viewDrivesPosition()` in `balloon-animal.ts`: capture, flier, romance, home
-trip, pursuit, sleep walk, gate travel, `wandering: false`). While any of those
-is active `tickSim` does nothing. When the last one ends, the next tick or frame
-**adopts** the wrapper's position and facing into the record
-(`adoptViewPosition`), then the sim carries on from there. The clip the legacy
-code last chose is mirrored into `record.motion` by `setAnimation`, so wander
-resumes from the right state. Each slice deletes one clause of that predicate;
-slice 5 deletes the adapter.
+Two things still place the animal from outside the walking systems, and the sim
+leaves them alone while `record.held` is true (it still opens each tick with
+`beginSimStep`, so a collision push on a held animal blends over one tick):
+
+- **Fliers** (owls) are placed per frame by the owl presenter from the hunt
+  sim's flight (`setFlightPose`); `held` is true from creation.
+- **The paint reveal.** `beginCapture` calls `holdAnimalSim` at the point the
+  animal is drawn: it stops there (and picks a fresh wander target when
+  released) while the flourish plays; the end of the flourish releases it.
 
 ## Events
 
 Emitted by the sim, consumed by the view, audio, journal and notifications.
-Slice 3 emits `caught`, `escaped` and `popped` (a flat `HuntEvent` list, `src/game/animal-hunt.ts`); the rest is the target.
+Built: `caught`, `escaped` and `popped` (a flat `HuntEvent` list from the hunt sims, `src/game/animal-hunt.ts`) and `stage-up` / `stage-down` (the per-record `events` queue, `AnimalSimEvent`). The rest of the table is the target; `arrived-home`, `woke` / `fell-asleep` and `alarmed` / `calmed` stay polled flags (`atDoor`, `asleep`, `alarmed`) because their consumers already poll them.
 
 | Event | Emitted when | Consumers |
 | --- | --- | --- |
@@ -121,7 +124,7 @@ Slice 3 emits `caught`, `escaped` and `popped` (a flat `HuntEvent` list, `src/ga
 | `caught` | owl dive or snake strike lands | pop effect, journal |
 | `popped` | prey removed from the farm | effects, progress |
 | `escaped` | prey reaches a hide | view |
-| `captured` | capture flourish should start | view, progress |
+| `captured` | capture flourish should start | not emitted: the `stage-up` to a resident rung is the trigger (see slice 4) |
 | `stage-up` / `stage-down` | ladder moves | view (appearance, heart eyes), journal |
 | `sold` | sale confirmed | effects, economy |
 
@@ -132,6 +135,10 @@ list that the frame drains once.
 
 Each slice is shippable on its own and changes no gameplay. Order matters: a
 slice may rely on the previous one, never on a later one.
+
+The notes under slices 2 to 4 say how each slice landed. They mention pieces of
+the interim adapter (`viewDrivesPosition`, the per-frame collision pass,
+`nudge`); slice 5 removed all of them.
 
 ### Slice 1 (done): wander and walk
 
@@ -256,16 +263,23 @@ Mechanical: **partly**. Sleep and progress are lifts. The capture flow crosses
 the async model load (`pendingCapture`) and is the easiest place to break the
 first-capture experience; keep it with the stronger model.
 
-### Slice 5: delete the old paths
+### Slice 5 (done): delete the old paths
 
-- Remove `viewDrivesPosition`, `adoptViewPosition`, the `update(delta)` fallback
-  tick, `setAnimation` mirroring and any setter that became a command.
-- `balloon-animal.ts` is the view only: interpolate, map motion to clips, play
-  events, cosmetic motion.
-- Replace per-animal `tickSim` calls with one sim world tick.
-
-Mechanical: **yes**, once slices 2 to 4 are merged. It is deletion guided by the
-compiler and the tests; a cheaper model can do it.
+- Gone from `balloon-animal.ts`: `viewDrivesPosition`, `adoptViewPosition`,
+  `positionOwnedByView`, the `update(delta)` fallback tick (`update` takes the
+  alpha), the `setAnimation` mirroring into `record.motion`, `nudge` and
+  `simDriven`, the per-frame collision pass (`collideAnimalsFrame`, the harness's
+  `collideAnimals`), `scene/snake-hunt.ts` (slice 3) and the dead `wandering`
+  option and romance hooks (`setRomancing`, `isRomancing`: nothing had called
+  them since breeding moved indoors).
+- The crowd fixtures now tick in the sim world like every other animal, so
+  collision needs one pass, on the tick.
+- `shiftAnimalSim` (previous and current together) went with `nudge`; the sim
+  API is `pushAnimalSim`, `snapAnimalSim` and `holdAnimalSim`.
+- What the view still does per frame: blend position, turn toward `record.heading`
+  (the turn rate follows pursuit and sleep), choose the clip and mixer speed from
+  `record.motion` / `pursuit` / `alarmed` / `asleep`, ease ground height, breathe
+  and squash a sleeper, run the capture flourish, play `stage-up` / `stage-down`.
 
 ## Testing
 
@@ -277,5 +291,12 @@ compiler and the tests; a cheaper model can do it.
   caught / escaped / popped, frozen prey, speed bounds) and the owl (dive and
   catch, panicked prey, helium pop, blend continuity), plus 15 Hz against 60 Hz
   parity checks on the first catch and the lunge time.
+- `tests/animal-routes.test.mjs` covers the home trip, the sprint, the gate route,
+  the visit cooldown and the walk to bed (seeded replay, speed bounds, a nudged
+  sleeper getting up); `tests/animal-residency.test.mjs` the settle, the dwell
+  and its reset, the margin, demotions and a seeded climb from the tents;
+  `tests/animal-collision.test.mjs` adds no-tunnelling and no-jitter checks for
+  collision on the 15 Hz tick (a dash through a thin wall, walking into a wall
+  every tick, two animals meeting, a seeded wanderer among houses).
 - In the game: `?gardenDebug=1&scenario=...` and `scripts/screenshot.mjs`; the
   Performance workflow runs on every PR.

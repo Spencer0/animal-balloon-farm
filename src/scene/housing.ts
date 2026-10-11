@@ -72,7 +72,7 @@ export function createHousing(deps: HousingDeps) {
         continue
       }
       const record = progress.animal(animal.instanceId)
-      const wantsSleep = shouldSleep(animal.id, night) && animal.isAtFarm && !animal.isCapturing && !animal.isRomancing
+      const wantsSleep = shouldSleep(animal.id, night) && animal.isAtFarm && !animal.isCapturing
         && Boolean(record && record.stage >= 2 && !record.baby)
       if (!wantsSleep) {
         if (sleepBeds.delete(animal.instanceId)) animal.setSleepSpot(null)
@@ -312,18 +312,6 @@ export function createHousing(deps: HousingDeps) {
 
   const COLLISION_BOX_REFRESH_SECONDS = 0.25
 
-  /**
-   * Which animals a collision pass reads and moves.
-   *
-   * - `sim`: on the fixed tick (runSimTick). Animals whose walk is simulated are
-   *   read from, and pushed in, their sim record; the view blends the result.
-   * - `view`: every frame. Animals the view still moves (sleeping, capture, romance,
-   *   pursuit) and the crowd fixtures keep the per-frame pass they always had.
-   * - `all`: everything from the drawn position, pushed with `nudge`. For callers that
-   *   step animals by hand (the debug harness).
-   */
-  type CollisionPass = 'sim' | 'view' | 'all'
-
   function refreshCollisionBoxes(nowSeconds: number): void {
     if (nowSeconds - collisionBoxesAt < COLLISION_BOX_REFRESH_SECONDS) return
     collisionBoxesAt = nowSeconds
@@ -334,59 +322,43 @@ export function createHousing(deps: HousingDeps) {
 
   /**
    * Keep walking animals out of houses and other solid props, and out of each
-   * other. Only the animals out on the farm have models, so this never sees more
-   * than the outdoor limit (plus perf-ramp fixtures).
+   * other, on the sim tick after they have walked. Bodies are the animals' sim
+   * records; the push goes back into the record's current position only, so the
+   * view blends from where the animal walked to where it ended up. Only the
+   * animals out on the farm have models, so this never sees more than the
+   * outdoor limit (plus perf-ramp fixtures).
    */
-  function collide(pass: CollisionPass, nowSeconds: number): void {
+  function collideAnimalsTick(nowSeconds: number): void {
     refreshCollisionBoxes(nowSeconds)
-    const fixtures = new Set<BalloonAnimal>(crowdFixtures)
     const walkers: BalloonAnimal[] = []
     const bodies: CollisionBody[] = []
-    let applicable = 0
-    for (const animal of [...animals, ...crowdFixtures]) {
-      if (animal.isFlier || animal.isSold) continue
-      const simDriven = animal.simDriven && !fixtures.has(animal)
-      // Fixtures tick themselves every frame, so they belong to the per-frame pass.
-      const fromRecord = pass === 'sim' && simDriven
+    const collect = (animal: BalloonAnimal): void => {
+      if (animal.isFlier || animal.isSold) return
       const sim = animal.sim
-      const position = animal.currentPosition
       walkers.push(animal)
-      if (pass === 'sim' ? simDriven : pass === 'view' ? !simDriven : true) applicable += 1
       bodies.push({
-        x: fromRecord ? sim.x : position.x,
-        z: fromRecord ? sim.z : position.z,
-        ...(fromRecord ? { prevX: sim.prevX, prevZ: sim.prevZ } : {}),
+        x: sim.x,
+        z: sim.z,
+        prevX: sim.prevX,
+        prevZ: sim.prevZ,
         radius: sim.radius,
-        fixed: animal.isSleeping || animal.isCapturing || animal.isRomancing,
+        fixed: animal.isSleeping || animal.isCapturing,
         // On its way in through a door, walking the gate route from the carnival, or
         // asleep in a bed laid out beside a prop (moving it would wake it to walk back).
         ghost: animal.isGoingHome || !animal.isAtFarm || animal.isSleeping,
       })
     }
-    if (applicable === 0) return
+    animals.forEach(collect)
+    crowdFixtures.forEach(collect)
+    if (bodies.length === 0) return
     resolveCollisions(bodies, collisionBoxes)
     bodies.forEach((body, index) => {
       const animal = walkers[index]
-      const simDriven = animal.simDriven && !fixtures.has(animal)
-      if (pass === 'sim') {
-        if (!simDriven) return
-        const dx = body.x - animal.sim.x
-        const dz = body.z - animal.sim.z
-        if (dx !== 0 || dz !== 0) animal.pushSim(dx, dz)
-        return
-      }
-      if (pass === 'view' && simDriven) return
-      const dx = body.x - animal.currentPosition.x
-      const dz = body.z - animal.currentPosition.z
-      if (dx !== 0 || dz !== 0) animal.nudge(dx, dz)
+      const dx = body.x - animal.sim.x
+      const dz = body.z - animal.sim.z
+      if (dx !== 0 || dz !== 0) animal.pushSim(dx, dz)
     })
   }
-  /** One pass on the sim tick, after the animals have walked. */
-  function collideAnimalsTick(nowSeconds: number): void { collide('sim', nowSeconds) }
-  /** The per-frame pass for animals the view still moves. */
-  function collideAnimalsFrame(nowSeconds: number): void { collide('view', nowSeconds) }
-  /** Everything at once from the drawn positions, for callers that step animals by hand. */
-  function collideAnimals(nowSeconds: number): void { collide('all', nowSeconds) }
   function houses(): readonly HouseSpot[] { return houseSpots }
   function setHouses(spots: readonly HouseSpot[]): void { houseSpots = spots }
   function resetRoster(): void {
@@ -402,9 +374,7 @@ export function createHousing(deps: HousingDeps) {
     speciesPluralName,
     sellAnimalsInside,
     residentsOf,
-    collideAnimals,
     collideAnimalsTick,
-    collideAnimalsFrame,
     updateSleepers,
   }
 }
