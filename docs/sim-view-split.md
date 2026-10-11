@@ -1,6 +1,6 @@
 # Animal sim / view split
 
-Status: slice 1 (wander and walk) is implemented; slices 2 to 5 are planned below.
+Status: slices 1 (wander and walk) and 2 (collision and home trip) are implemented; slices 3 to 5 are planned below.
 
 ## Why
 
@@ -139,7 +139,33 @@ slice may rely on the previous one, never on a later one.
 alpha blend and the adapter in `balloon-animal.ts`; `SimClock.alpha`.
 Everything else keeps its per-frame path.
 
-### Slice 2: collision and home trip
+### Slice 2 (done): collision and home trip
+
+Landed as `src/game/animal-routes.ts` (`stepHomeTrip`, the gate route
+`beginGateTravel` / `stepGateTravel` / `tickVisitCooldown`), `AnimalSimRecord`
+fields `radius`, `home`, `atDoor` and `visit`, and a tick-rate collision pass.
+What differs from the plan below:
+
+- The home trip and the gate route now run in `tickSim`. `viewDrivesPosition()`
+  lost its `homeTrip` and `travelRoute` clauses; a home trip beats pursuit,
+  sleep and `wandering: false`, as it always did.
+- Collision runs once per sim tick (`collideAnimalsTick` in `housing.ts`, called
+  from `runSimTick`) over the animals the sim moves, reading and pushing their
+  records with `pushAnimalSim`: only the **current** position is pushed, so the
+  view blends from the walked position to the pushed one and the correction is
+  spread over the tick. A body that travels more than half its radius in a tick
+  sweeps against boxes (`prevX/prevZ` on `CollisionBody`), so a fast mover cannot
+  skip a thin wall.
+- Animals the view still moves (sleep walk, capture, romance, pursuit) and the
+  crowd fixtures keep a per-frame pass (`collideAnimalsFrame`). It reads every
+  animal at its drawn position and moves only those. Slice 4 retires it.
+- `collideAnimals(now)` stays for the harness's hand-stepped hunts: everything
+  from the drawn position, pushed with `nudge`.
+- No events yet. `arrived-home` stays a polled flag (`isAtDoor`, `record.atDoor`)
+  because housing already polls it; the event queue arrives with slice 3, whose
+  catches need it.
+
+Original plan:
 
 - Move the home trip (`setHomeTrip`, `speedScale` sprint) into a sim system.
 - Move `collideAnimals` (`src/scene/housing.ts`) and `animal-collision.ts` usage

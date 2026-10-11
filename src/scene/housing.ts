@@ -34,13 +34,12 @@ export interface HousingDeps {
   readonly propCard: { readonly isOpen: boolean; setResidents(residents: PropResidents | null): void }
   readonly creditCoins: (amount: number) => void
   readonly animalDisplayName: (species: string) => string
-  readonly bodySizeBySpecies: Map<string, number>
   readonly crowdFixtures: BalloonAnimal[]
   readonly gardenProps: () => GardenProps | null
 }
 
 export function createHousing(deps: HousingDeps) {
-  const { progress, animalCreations, animals, animalById, farmHomes, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, dayNightClock, getSelectedProp, propCard, creditCoins, animalDisplayName, bodySizeBySpecies, crowdFixtures, gardenProps } = deps
+  const { progress, animalCreations, animals, animalById, farmHomes, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, dayNightClock, getSelectedProp, propCard, creditCoins, animalDisplayName, crowdFixtures, gardenProps } = deps
   /**
    * Night animals sleep by day: a resident curls up beside a garbage can, anything else
    * where it stands. Everyone wakes at dusk. Beds are chosen once per sleep so the
@@ -313,45 +312,81 @@ export function createHousing(deps: HousingDeps) {
 
   const COLLISION_BOX_REFRESH_SECONDS = 0.25
 
-  /** An animal's footprint radius as a share of its catalog size (its longest side). */
-  const BODY_RADIUS_SHARE = 0.24
+  /**
+   * Which animals a collision pass reads and moves.
+   *
+   * - `sim`: on the fixed tick (runSimTick). Animals whose walk is simulated are
+   *   read from, and pushed in, their sim record; the view blends the result.
+   * - `view`: every frame. Animals the view still moves (sleeping, capture, romance,
+   *   pursuit) and the crowd fixtures keep the per-frame pass they always had.
+   * - `all`: everything from the drawn position, pushed with `nudge`. For callers that
+   *   step animals by hand (the debug harness).
+   */
+  type CollisionPass = 'sim' | 'view' | 'all'
+
+  function refreshCollisionBoxes(nowSeconds: number): void {
+    if (nowSeconds - collisionBoxesAt < COLLISION_BOX_REFRESH_SECONDS) return
+    collisionBoxesAt = nowSeconds
+    collisionBoxes = (gardenProps()?.occupancy.placed ?? [])
+      .filter((prop) => prop.id !== 'fence' && propDefinition(prop.id).blocking)
+      .map((prop) => footprintWorldRect(prop.id, prop.cell, prop.rotation))
+  }
 
   /**
    * Keep walking animals out of houses and other solid props, and out of each
    * other. Only the animals out on the farm have models, so this never sees more
    * than the outdoor limit (plus perf-ramp fixtures).
    */
-  function collideAnimals(nowSeconds: number): void {
-    if (nowSeconds - collisionBoxesAt >= COLLISION_BOX_REFRESH_SECONDS) {
-      collisionBoxesAt = nowSeconds
-      collisionBoxes = (gardenProps()?.occupancy.placed ?? [])
-        .filter((prop) => prop.id !== 'fence' && propDefinition(prop.id).blocking)
-        .map((prop) => footprintWorldRect(prop.id, prop.cell, prop.rotation))
-    }
+  function collide(pass: CollisionPass, nowSeconds: number): void {
+    refreshCollisionBoxes(nowSeconds)
+    const fixtures = new Set<BalloonAnimal>(crowdFixtures)
     const walkers: BalloonAnimal[] = []
     const bodies: CollisionBody[] = []
+    let applicable = 0
     for (const animal of [...animals, ...crowdFixtures]) {
       if (animal.isFlier || animal.isSold) continue
+      const simDriven = animal.simDriven && !fixtures.has(animal)
+      // Fixtures tick themselves every frame, so they belong to the per-frame pass.
+      const fromRecord = pass === 'sim' && simDriven
+      const sim = animal.sim
       const position = animal.currentPosition
       walkers.push(animal)
+      if (pass === 'sim' ? simDriven : pass === 'view' ? !simDriven : true) applicable += 1
       bodies.push({
-        x: position.x,
-        z: position.z,
-        radius: (bodySizeBySpecies.get(animal.id) ?? 2) * BODY_RADIUS_SHARE * animal.currentScale,
+        x: fromRecord ? sim.x : position.x,
+        z: fromRecord ? sim.z : position.z,
+        ...(fromRecord ? { prevX: sim.prevX, prevZ: sim.prevZ } : {}),
+        radius: sim.radius,
         fixed: animal.isSleeping || animal.isCapturing || animal.isRomancing,
         // On its way in through a door, walking the gate route from the carnival, or
         // asleep in a bed laid out beside a prop (moving it would wake it to walk back).
         ghost: animal.isGoingHome || !animal.isAtFarm || animal.isSleeping,
       })
     }
+    if (applicable === 0) return
     resolveCollisions(bodies, collisionBoxes)
     bodies.forEach((body, index) => {
       const animal = walkers[index]
+      const simDriven = animal.simDriven && !fixtures.has(animal)
+      if (pass === 'sim') {
+        if (!simDriven) return
+        const dx = body.x - animal.sim.x
+        const dz = body.z - animal.sim.z
+        if (dx !== 0 || dz !== 0) animal.pushSim(dx, dz)
+        return
+      }
+      if (pass === 'view' && simDriven) return
       const dx = body.x - animal.currentPosition.x
       const dz = body.z - animal.currentPosition.z
       if (dx !== 0 || dz !== 0) animal.nudge(dx, dz)
     })
   }
+  /** One pass on the sim tick, after the animals have walked. */
+  function collideAnimalsTick(nowSeconds: number): void { collide('sim', nowSeconds) }
+  /** The per-frame pass for animals the view still moves. */
+  function collideAnimalsFrame(nowSeconds: number): void { collide('view', nowSeconds) }
+  /** Everything at once from the drawn positions, for callers that step animals by hand. */
+  function collideAnimals(nowSeconds: number): void { collide('all', nowSeconds) }
   function houses(): readonly HouseSpot[] { return houseSpots }
   function setHouses(spots: readonly HouseSpot[]): void { houseSpots = spots }
   function resetRoster(): void {
@@ -368,6 +403,8 @@ export function createHousing(deps: HousingDeps) {
     sellAnimalsInside,
     residentsOf,
     collideAnimals,
+    collideAnimalsTick,
+    collideAnimalsFrame,
     updateSleepers,
   }
 }

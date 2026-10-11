@@ -972,7 +972,7 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = c
   activeGardenBounds,
   upgrades,
 })
-const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimals, updateSleepers } = createHousing({
+const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimals, collideAnimalsTick, collideAnimalsFrame, updateSleepers } = createHousing({
   progress,
   animals,
   animalById,
@@ -995,7 +995,6 @@ const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAn
   propCard,
   creditCoins: (amount) => { salePanel.setWallet(wallet.credit(amount)) },
   animalDisplayName,
-  bodySizeBySpecies,
   crowdFixtures,
   gardenProps: () => gardenProps,
 })
@@ -1463,7 +1462,8 @@ function plantShadowKey(): number {
 /**
  * Logic that does not need per-frame smoothness runs on a fixed simulation clock
  * (see game/sim-clock.ts). Animal wander and walk movement is simulated on it too
- * (game/animal-sim.ts) and drawn blended by simClock.alpha. Animation, camera and
+ * (game/animal-sim.ts) and drawn blended by simClock.alpha, and so are the
+ * walk home, the gate trips and the collision push-out for those animals. Animation, camera and
  * water stay per frame, and so do the hunts: they steer the owls and snakes as well as deciding catches.
  */
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
@@ -1471,6 +1471,8 @@ const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PE
 function runSimTick(stepSeconds: number, nowSeconds: number): void {
   // Wandering and walking are simulated here; the frame only blends the last two ticks.
   for (const animal of animals) animal.tickSim(stepSeconds)
+  // Push the walkers out of houses and each other once they have moved; the view blends the result.
+  collideAnimalsTick(nowSeconds)
   updateSleepers()
   // The condition ladder runs after the animals have moved, so a settle
   // triggered this tick is applied against the farm as measured, which the
@@ -1552,7 +1554,7 @@ function frame(now: number): void {
   const simAlpha = simClock.alpha
   animals.forEach((animal) => animal.update(delta, simAlpha))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
-  collideAnimals(now / 1000)
+  collideAnimalsFrame(now / 1000)
   if (!menu.isOpen && !salePanel.isOpen) {
     updateOwlHunt(delta)
     updateSnakeHunt(delta)

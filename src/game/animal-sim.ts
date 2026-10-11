@@ -13,6 +13,27 @@
 /** What the animal is doing with its legs. The view maps it to a clip. */
 export type AnimalMotion = 'walk' | 'idle' | 'sleep'
 
+import type { AnimalTravelRoute } from './animal-travel'
+
+/** A walk to a house door, and how hard to run: above 1 is a sprint, e.g. a mouse fleeing a snake. */
+export interface AnimalHomeTrip {
+  readonly x: number
+  readonly z: number
+  readonly speedScale: number
+}
+
+/**
+ * Where an animal is in its comings and goings through the farm gate. A visitor
+ * walks `route` between the carnival and the plot, and rests `cooldown` seconds
+ * on each side before the next trip.
+ */
+export interface AnimalVisit {
+  route: AnimalTravelRoute | null
+  direction: 'enter' | 'leave' | null
+  side: 'carnival' | 'farm'
+  cooldown: number
+}
+
 export interface AnimalSimRecord {
   /** Position on the ground plane at the current tick. */
   x: number
@@ -32,9 +53,22 @@ export interface AnimalSimRecord {
   nextDecision: number
   /** True while on a long trek, so it does not change its mind half way. */
   longWalk: boolean
+  /** Footprint radius for collision, in ground units: catalog size times the growth scale. */
+  radius: number
+  /** The house door it is walking to, or null. Takes priority over wandering and gate travel. */
+  home: AnimalHomeTrip | null
+  /** True once it has reached the door it was sent to; cleared by the next trip. */
+  atDoor: boolean
+  visit: AnimalVisit
 }
 
-export function createAnimalSimRecord(init: { x: number; z: number; motion: AnimalMotion }): AnimalSimRecord {
+export function createAnimalSimRecord(init: {
+  x: number
+  z: number
+  motion: AnimalMotion
+  radius?: number
+  side?: 'carnival' | 'farm'
+}): AnimalSimRecord {
   return {
     x: init.x,
     z: init.z,
@@ -47,6 +81,10 @@ export function createAnimalSimRecord(init: { x: number; z: number; motion: Anim
     paused: 0,
     nextDecision: 0,
     longWalk: false,
+    radius: init.radius ?? 0.5,
+    home: null,
+    atDoor: false,
+    visit: { route: null, direction: null, side: init.side ?? 'carnival', cooldown: 0 },
   }
 }
 
@@ -68,6 +106,16 @@ export function shiftAnimalSim(record: AnimalSimRecord, dx: number, dz: number):
   record.z += dz
   record.prevX += dx
   record.prevZ += dz
+}
+
+/**
+ * Push the record sideways on the current tick only. Collision runs after the
+ * walk of the same tick, so the view blends from where the animal was to where
+ * it ended up after being pushed, and the correction is spread across the tick.
+ */
+export function pushAnimalSim(record: AnimalSimRecord, dx: number, dz: number): void {
+  record.x += dx
+  record.z += dz
 }
 
 export interface PlanarPoint {
