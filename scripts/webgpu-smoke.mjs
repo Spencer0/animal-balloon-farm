@@ -20,6 +20,7 @@ const WEBGPU_FLAGS = [
   '--enable-unsafe-webgpu',
   '--enable-features=Vulkan,WebGPUService',
   '--use-webgpu-adapter=swiftshader',
+  '--use-vulkan=swiftshader',
   '--use-angle=swiftshader',
   '--ignore-gpu-blocklist',
 ];
@@ -67,13 +68,30 @@ async function main() {
     await openDebugPage(cdp, 120_000, true);
     const state = await cdp.evaluate(`(async () => {
       const d = window.__gardenDebug;
+      // Software WebGPU is slow and compiles new pipelines when the menu closes, so
+      // wait for real frames (with a ceiling) instead of a fixed pause.
+      while (document.documentElement.dataset.ready !== 'true' && performance.now() < 90000) await new Promise((r) => setTimeout(r, 250));
       d.closeMenu(); d.focusGarden();
-      await new Promise((r) => setTimeout(r, 3000));
+      const waitStart = performance.now();
+      while (d.performanceSamples().filter((s) => s.intervalMs > 0).length < 30 && performance.now() - waitStart < 60000) await new Promise((r) => setTimeout(r, 250));
       const samples = d.performanceSamples().filter((s) => s.intervalMs > 0);
       const snapshot = d.renderSnapshot();
       return { renderer: document.documentElement.dataset.renderer, frames: samples.length, snapshot };
     })()`);
     console.log(`farm: ${JSON.stringify(state)}`);
+    // A new animal builds the node versions of the capture paint reveal and the
+    // heart eyes (the WebGL hooks are ignored by WebGPURenderer). A bad node graph
+    // surfaces as a page error or a missing heart-eye conversion.
+    const animal = await cdp.evaluate(`(async () => {
+      const d = window.__gardenDebug;
+      const id = d.addAnimal('pig', 4);
+      const before = d.performanceSamples().at(-1)?.frameNumber ?? 0;
+      const start = performance.now();
+      while (((d.performanceSamples().at(-1)?.frameNumber ?? 0) - before) < 20 && performance.now() - start < 90000) await new Promise((r) => setTimeout(r, 250));
+      const report = d.animalReport().find((a) => a.id === id);
+      return { id, frames: (d.performanceSamples().at(-1)?.frameNumber ?? 0) - before, stage: report?.stage, appearance: report?.appearance, heartCount: report?.heartCount };
+    })()`);
+    console.log(`animal: ${JSON.stringify(animal)}`);
     const film = await cdp.evaluate(`(async () => {
       const d = window.__gardenDebug;
       d.intro(2);
@@ -88,6 +106,8 @@ async function main() {
     if (state.renderer !== 'webgpu') failures.push(`renderer was "${state.renderer}", not webgpu (it fell back)`);
     if (state.frames < 3) failures.push(`only ${state.frames} frames were drawn`);
     if (!(state.snapshot?.renderCalls > 0)) failures.push('a forced render reported no draw calls');
+    if (!animal?.id || animal.frames < 5) failures.push(`the capture reveal scene drew only ${animal?.frames ?? 0} frames`);
+    if (!(animal?.heartCount > 0)) failures.push('a stage 4 animal has no heart eyes');
     if (!film?.loaded) failures.push('the intro film did not load');
     const real = errors.filter((line) => !IGNORED.some((pattern) => pattern.test(line)));
     if (real.length) failures.push(`${real.length} page error(s): ${real.slice(0, 5).join(' | ')}`);
@@ -95,7 +115,7 @@ async function main() {
       console.error(`FAIL webgpu-smoke:\n  ${failures.join('\n  ')}`);
       return 1;
     }
-    console.log('PASS webgpu-smoke: WebGPU renderer drew the farm and the intro film.');
+    console.log('PASS webgpu-smoke: WebGPU renderer drew the farm, a heart-eyed animal and the intro film.');
     return 0;
   } finally {
     chrome.kill();

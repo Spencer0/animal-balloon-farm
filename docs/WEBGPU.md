@@ -95,3 +95,9 @@ own pipeline, so the first reveal of a capture can compile once.
 * CI: the performance gate pins `?renderer=webgl` (`scripts/cdp-lib.mjs`);
   `scripts/webgpu-smoke.mjs` covers WebGPU on SwiftShader and skips when the
   runner has no adapter.
+* Headless software WebGPU needs `--use-vulkan=swiftshader` as well as
+  `--use-webgpu-adapter=swiftshader`. Without it Chrome cannot create the canvas
+  swap-chain shared image ("Could not find SharedImageBackingFactory ... WebgpuSwapChainTexture"),
+  the GPU channel is lost, and the page then fails with `Instance dropped in
+  popErrorScope` and `createBuffer ... too large for the implementation`. That is
+  a runner problem, not a game bug.
