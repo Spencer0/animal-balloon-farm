@@ -29,8 +29,10 @@ export interface ShadowRefresh {
  */
 const SUN_STEP_RADIANS = THREE.MathUtils.degToRad(1)
 
-export function createShadowRefresh(renderer: THREE.WebGLRenderer): ShadowRefresh {
-  renderer.shadowMap.autoUpdate = false
+export function createShadowRefresh(sun: THREE.DirectionalLight): ShadowRefresh {
+  // Per light, not per renderer: WebGLRenderer and WebGPURenderer both honour
+  // `shadow.autoUpdate` / `shadow.needsUpdate` (only WebGL has a global flag).
+  sun.shadow.autoUpdate = false
   const refreshedSun = new THREE.Vector3()
   let dirty = true
   return {
@@ -41,10 +43,10 @@ export function createShadowRefresh(renderer: THREE.WebGLRenderer): ShadowRefres
       if (!dirty && sunPosition.angleTo(refreshedSun) < SUN_STEP_RADIANS) return
       dirty = false
       refreshedSun.copy(sunPosition)
-      renderer.shadowMap.needsUpdate = true
+      sun.shadow.needsUpdate = true
     },
     forceNext(): void {
-      renderer.shadowMap.needsUpdate = true
+      sun.shadow.needsUpdate = true
     },
   }
 }

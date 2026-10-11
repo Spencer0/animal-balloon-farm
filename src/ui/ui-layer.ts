@@ -1,3 +1,4 @@
+import type { FarmRenderer } from '../render/backend'
 import * as THREE from 'three'
 import type { UiCursorKind } from './ui-cursor'
 import { createUIViewport, type DesignPoint, type UIViewport } from './ui-viewport'
@@ -63,7 +64,7 @@ export interface UILayer {
   resize(cssWidth: number, cssHeight: number): void
   update(delta: number): void
   /** Renders the UI over the game. The caller owns the renderer and depth clear. */
-  render(renderer: THREE.WebGLRenderer): void
+  render(renderer: FarmRenderer): void
   dispose(): void
 }
 
@@ -123,7 +124,7 @@ export function createUILayer(): UILayer {
     update(delta: number): void {
       for (const panel of ordered()) panel.update(delta)
     },
-    render(renderer: THREE.WebGLRenderer): void {
+    render(renderer: FarmRenderer): void {
       renderer.autoClear = false
       renderer.clearDepth()
       renderer.render(scene, camera)

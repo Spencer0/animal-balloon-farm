@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { daylightAmount, phaseOf, sunElevation, type DayPhase } from '../game/day-night'
+import type { FarmRenderer, SkyColors } from '../render/backend'
 
 /**
  * Drives the farm lights, sky and fog from the day/night clock.
@@ -94,12 +95,10 @@ export interface DayNightRig {
 
 export function createDayNightRig(
   scene: THREE.Scene,
-  renderer: THREE.WebGLRenderer,
+  renderer: FarmRenderer,
   lights: DayNightRigLights,
-  skyDome: THREE.Mesh,
+  skyColors: SkyColors,
 ): DayNightRig {
-  const material = skyDome.material as THREE.ShaderMaterial
-  const uniforms = material.uniforms as Record<string, { value: THREE.Color }>
   const background = scene.background as THREE.Color | null
   const fog = scene.fog as THREE.Fog | null
   const baseSunPosition = new THREE.Vector3(-22, 42, 17)
@@ -113,9 +112,9 @@ export function createDayNightRig(
       const lower = frames.lower
       const upper = frames.upper
       const amount = frames.amount
-      if (uniforms.horizonColor) lerpColor(uniforms.horizonColor.value, lower.horizon, upper.horizon, amount)
-      if (uniforms.middleColor) lerpColor(uniforms.middleColor.value, lower.middle, upper.middle, amount)
-      if (uniforms.zenithColor) lerpColor(uniforms.zenithColor.value, lower.zenith, upper.zenith, amount)
+      lerpColor(skyColors.horizon, lower.horizon, upper.horizon, amount)
+      lerpColor(skyColors.middle, lower.middle, upper.middle, amount)
+      lerpColor(skyColors.zenith, lower.zenith, upper.zenith, amount)
       if (background) lerpColor(background, lower.fog, upper.fog, amount)
       if (fog) lerpColor(fog.color, lower.fog, upper.fog, amount)
       lerpColor(lights.sun.color, lower.sun, upper.sun, amount)

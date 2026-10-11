@@ -1,3 +1,4 @@
+import type { FarmRenderer } from '../render/backend'
 import * as THREE from 'three'
 import { createCameraTour, type CameraTour, type CameraTourSubject } from '../game/camera-tour'
 import { cameraPanStep } from '../game/camera-rig'
@@ -12,7 +13,7 @@ const CAMERA_SHAKE_DURATION = 0.82
 const CAMERA_SHAKE_AMPLITUDE = 0.38
 
 export interface FarmCameraContext {
-  readonly renderer: THREE.WebGLRenderer
+  readonly renderer: FarmRenderer
   /** The main menu is over the farm, so the camera drifts. */
   readonly menuDrifting: () => boolean
   /** Something is on screen that a cinematic tour must not run under. */

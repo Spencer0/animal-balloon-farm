@@ -1,3 +1,4 @@
+import { frameRenderStats, type FarmRenderer } from '../render/backend'
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
 import type { FarmCamera } from '../scene/farm-camera'
@@ -291,7 +292,9 @@ interface AnimalConditionReport {
 export interface GardenHarnessDeps {
   readonly canvas: HTMLCanvasElement
   readonly pageParams: URLSearchParams
-  readonly renderer: THREE.WebGLRenderer
+  readonly renderer: FarmRenderer
+  /** Arms the sun's shadow pass for the next render. */
+  readonly forceShadowRedraw: () => void
   readonly scene: THREE.Scene
   readonly camera: THREE.OrthographicCamera
   readonly cameraTarget: THREE.Vector3
@@ -386,6 +389,16 @@ export interface GardenHarnessDeps {
   readonly syncFarmChrome: () => void
   readonly intro: (seconds?: number) => unknown
 }
+
+declare const __GARDEN_DEBUG__: boolean
+
+/**
+ * The literal `__GARDEN_DEBUG__` test sits right at the import so esbuild drops
+ * the dynamic import (and with code splitting, the whole scenarios chunk) from
+ * a production build instead of emitting it as an unreachable chunk.
+ */
+const loadScenarios = (): Promise<typeof import('../../dev/scenarios/index')> =>
+  __GARDEN_DEBUG__ ? import('../../dev/scenarios/index') : Promise.reject(new Error('Scenarios are not part of production builds.'))
 
 export function installGardenHarness(deps: GardenHarnessDeps): void {
   const {
@@ -519,16 +532,16 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     try {
       renderer.info.autoReset = true
       renderer.info.reset()
-      renderer.shadowMap.needsUpdate = true
+      deps.forceShadowRedraw()
       renderer.render(scene, camera)
-      return { renderCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles }
+      return frameRenderStats(renderer)
     } finally {
       renderer.info.autoReset = previousAutoReset
       renderer.info.reset()
     }
   }
   let scenarioList: Record<string, string> = {}
-  void import('../../dev/scenarios/index').then((module) => { scenarioList = module.listScenarios() })
+  void loadScenarios().then((module) => { scenarioList = module.listScenarios() })
   const debugHarness: GardenDebugHarness = {
     enabled: true,
     intro: (seconds) => deps.intro(seconds),
@@ -844,7 +857,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     setOwlHelium: (level) => owlHunt.setHelium(level),
     holdTime: (hold) => { deps.setClockHeld(hold) },
     scenarios: () => scenarioList,
-    runScenario: async (name) => (await import('../../dev/scenarios/index')).runScenario(name, debugHarness),
+    runScenario: async (name) => (await loadScenarios()).runScenario(name, debugHarness),
     stepHunt: (seconds, secondsPerStep = 1 / 30) => {
       const steps = Math.max(0, Math.round(seconds / secondsPerStep))
       // Mirror the frame loop, collisions included: a hunt that only works

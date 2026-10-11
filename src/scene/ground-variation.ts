@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { GardenBounds } from '../game/farm-expansion'
+import { webgpuKit } from '../render/backend'
 
 /**
  * Ground variation: broad tonal patches, dry and lush areas, and a soft
@@ -144,11 +145,25 @@ export function getGroundVariationField(): THREE.DataTexture {
 
 // ----------------------------------------------------------------- shader --
 
-/** Per-kind tuning and which effects compile in. */
-const KINDS: Record<GroundVariationKind, {
-  tone: number; patches: number; dust: number
-  field: boolean; distance: boolean; pebbles: boolean; feather: boolean; paint: boolean
-}> = {
+/** Per-kind tuning and which effects compile in. Shared by the GLSL hook and its TSL twin. */
+export interface GroundVariationKindSpec {
+  readonly kind: GroundVariationKind
+  readonly tone: number
+  readonly patches: number
+  readonly dust: number
+  readonly field: boolean
+  readonly distance: boolean
+  readonly pebbles: boolean
+  readonly feather: boolean
+  readonly paint: boolean
+}
+
+/** Colour multipliers and dust tint, in one place for both shader languages. */
+export const GROUND_DRY: readonly [number, number, number] = [1.14, 1.03, 0.7]
+export const GROUND_LUSH: readonly [number, number, number] = [0.88, 1.08, 0.88]
+export const GROUND_DUST = '#cdb883'
+
+const KINDS: Record<GroundVariationKind, Omit<GroundVariationKindSpec, 'kind'>> = {
   meadow: { tone: 0.34, patches: 1.0, dust: 0.62, field: true, distance: true, pebbles: false, feather: false, paint: false },
   lawn: { tone: 0.14, patches: 0.6, dust: 0, field: true, distance: false, pebbles: false, feather: false, paint: true },
   soil: { tone: 0.2, patches: 0, dust: 0, field: true, distance: false, pebbles: false, feather: false, paint: false },
@@ -259,6 +274,14 @@ const GLSL_BODY = /* glsl */ `
  */
 export function applyGroundVariation(material: THREE.MeshStandardMaterial | THREE.MeshLambertMaterial, options: GroundVariationOptions): void {
   const kind = KINDS[options.kind]
+  const nodeKit = webgpuKit()
+  if (nodeKit) {
+    // WebGPU has no onBeforeCompile; the node version is a colourNode on the
+    // material. Mark it as custom-shaded so merging never folds it into another.
+    nodeKit.applyGroundVariation(material, { kind: options.kind, ...kind }, { bounds: options.bounds, localSpace: options.localSpace === true })
+    material.userData.customShading = 'ground-variation'
+    return
+  }
   const defines = [
     kind.field ? '#define GV_FIELD' : '',
     kind.distance ? '#define GV_DISTANCE' : '',
@@ -275,9 +298,9 @@ export function applyGroundVariation(material: THREE.MeshStandardMaterial | THRE
     shader.uniforms.uGvOrganic = options.bounds.organic
     shader.uniforms.uGvLocalSpace = { value: options.localSpace ? 1 : 0 }
     shader.uniforms.uGvParams = { value: new THREE.Vector4(kind.tone, kind.patches, kind.dust, 0) }
-    shader.uniforms.uGvDry = { value: new THREE.Vector3(1.14, 1.03, 0.7) }
-    shader.uniforms.uGvLush = { value: new THREE.Vector3(0.88, 1.08, 0.88) }
-    shader.uniforms.uGvDust = { value: new THREE.Color('#cdb883') }
+    shader.uniforms.uGvDry = { value: new THREE.Vector3(...GROUND_DRY) }
+    shader.uniforms.uGvLush = { value: new THREE.Vector3(...GROUND_LUSH) }
+    shader.uniforms.uGvDust = { value: new THREE.Color(GROUND_DUST) }
 
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vGvWorld;\nvarying vec3 vGvLocal;')
@@ -290,5 +313,6 @@ export function applyGroundVariation(material: THREE.MeshStandardMaterial | THRE
       .replace('#include <color_fragment>', `#include <color_fragment>\n${GLSL_BODY}`)
   }
   material.customProgramCacheKey = () => `ground-variation-${options.kind}-${options.localSpace ? 'local' : 'world'}`
+  material.userData.customShading = 'ground-variation'
   material.needsUpdate = true
 }
