@@ -38,7 +38,8 @@ import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } fro
 import type { GardenToolId } from './scene/garden-tool-art'
 import { createFarmCamera } from './scene/farm-camera'
 import { createUILayer, type UIPanel } from './ui/ui-layer'
-import { advanceClock, calendarOf, createDayNightClock, phaseOf } from './game/day-night'
+import { advanceClock, calendarOf, createDayNightClock, daylightAmount, phaseOf } from './game/day-night'
+import { createAnimalShadows } from './animals/animal-shadows'
 import { createDayNightRig } from './scene/day-night-rig'
 import { createShadowRefresh } from './scene/shadow-refresh'
 import { weekdayName } from './game/carnival-schedule'
@@ -81,14 +82,19 @@ import type { CutscenePlayer } from './scene/cutscene-kit'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
 import { createFarmRenderer, precompile } from './render/backend'
+import { createLoadingScreen } from './ui/loading-dom'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
-const gameCanvas = canvas
+const loading = createLoadingScreen()
+await loading.setStage('renderer')
 
-// `?renderer=webgpu` selects WebGPURenderer (async init); WebGL is the default.
+// WebGPU by default, with an automatic WebGL fallback; `?renderer=webgl` forces WebGL.
 // Top-level await is fine here: nothing below can run without a renderer.
-const { renderer, backend: renderBackend } = await createFarmRenderer(gameCanvas)
+const { renderer, backend: renderBackend } = await createFarmRenderer(canvas)
+// A failed WebGPU start can leave the original canvas unusable, in which case the
+// renderer brought its own; everything below uses the one actually drawn on.
+const gameCanvas = renderer.domElement
 // Cap the drawing buffer below the display pixel ratio: at devicePixelRatio the
 // canvas raster gets enormous (and so do any screenshots of it). 1.25 keeps
 // edges acceptably smooth while keeping captures far under attachment limits.
@@ -102,6 +108,7 @@ renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.info.autoReset = false // reset manually each frame so stats survive the HUD pass
 document.documentElement.dataset.renderer = renderBackend
 
+await loading.setStage('models')
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#c2d8cf')
 scene.fog = new THREE.Fog('#c2d8cf', 185, 345)
@@ -184,6 +191,10 @@ if (loadedSave) {
 /** Debug only: a held clock stays put, so a scenario's night does not slip into morning. */
 let clockHeld = false
 const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, sky.colors)
+// One instanced draw call of soft ground decals under every animal (animals stay out of the sun's shadow map).
+const animalShadows = createAnimalShadows(scene, ANIMAL_LIFE_CONFIG.maximumPopulation + 16)
+/** Herd plus harness crowd fixtures, so the perf gate counts the shadow draw as players get it. */
+const refreshAnimalShadows = (): void => animalShadows.update([animals, crowdFixtures], daylightAmount(dayNightClock.timeOfDay))
 const clockCalendarHud = createClockCalendarHud(window.innerWidth, window.innerHeight)
 
 const fairground = createFairground(dayNightClock.elapsedDays)
@@ -934,7 +945,7 @@ for (const panel of panels) ui.add(panel)
 
 
 
-const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, updateOwlHunt, updateSnakeHunt, popAnimal } = createPredation({
+const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, tickHunts, presentHunts, popAnimal } = createPredation({
   fairgroundRoot: fairground.root,
   lawnY: GARDEN_LAWN_Y,
   scene,
@@ -972,7 +983,7 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = c
   activeGardenBounds,
   upgrades,
 })
-const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimals, updateSleepers } = createHousing({
+const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimalsTick, updateSleepers } = createHousing({
   progress,
   animals,
   animalById,
@@ -995,7 +1006,6 @@ const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAn
   propCard,
   creditCoins: (amount) => { salePanel.setWallet(wallet.credit(amount)) },
   animalDisplayName,
-  bodySizeBySpecies,
   crowdFixtures,
   gardenProps: () => gardenProps,
 })
@@ -1204,6 +1214,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     pageParams,
     renderer,
     forceShadowRedraw: shadowRefresh.forceNext,
+    refreshAnimalShadows,
     scene,
     camera,
     cameraTarget,
@@ -1255,8 +1266,8 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     remeasureMeadow,
     measureFarm,
     handleAnimalLifeEvents,
-    updateOwlHunt,
-    updateSnakeHunt,
+    stepAnimalWorld,
+    presentHunts,
     bolting,
     hidingUntil,
     panicking,
@@ -1267,7 +1278,6 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     lastHouseOf,
     updateHousing,
     residentsOf,
-    collideAnimals,
     ui,
     frameTimer,
     journal,
@@ -1463,14 +1473,28 @@ function plantShadowKey(): number {
 /**
  * Logic that does not need per-frame smoothness runs on a fixed simulation clock
  * (see game/sim-clock.ts). Animal wander and walk movement is simulated on it too
- * (game/animal-sim.ts) and drawn blended by simClock.alpha. Animation, camera and
- * water stay per frame, and so do the hunts: they steer the owls and snakes as well as deciding catches.
+ * (game/animal-sim.ts) and drawn blended by simClock.alpha, and so are the
+ * walk home, the gate trips, the collision push-out and the owl and snake hunts
+ * (game/animal-hunt.ts). Animation, camera and water stay per frame.
  */
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
 
-function runSimTick(stepSeconds: number, nowSeconds: number): void {
-  // Wandering and walking are simulated here; the frame only blends the last two ticks.
+/**
+ * One sim tick of the animals: they walk, collision pushes them out of houses and
+ * each other, then the hunts decide against where they ended up. The harness steps
+ * this directly; the frame loop runs it from `runSimTick`.
+ */
+function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {
+  // Wandering, walking and the hunters' steering are simulated here; the frame only blends the last two ticks.
   for (const animal of animals) animal.tickSim(stepSeconds)
+  for (const fixture of crowdFixtures) fixture.tickSim(stepSeconds)
+  // Push the walkers out of houses and each other once they have moved; the view blends the result.
+  collideAnimalsTick(nowSeconds)
+  if (huntsActive) tickHunts(stepSeconds)
+}
+
+function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {
+  stepAnimalWorld(stepSeconds, nowSeconds, huntsActive)
   updateSleepers()
   // The condition ladder runs after the animals have moved, so a settle
   // triggered this tick is applied against the farm as measured, which the
@@ -1548,15 +1572,14 @@ function frame(now: number): void {
   farmCamera.updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
   const simSteps = simClock.advance(delta)
-  for (let step = 0; step < simSteps; step += 1) runSimTick(simClock.stepSeconds, now / 1000)
+  // Hunts hold still while a full-screen panel is open, as they always have.
+  const huntsActive = !menu.isOpen && !salePanel.isOpen
+  for (let step = 0; step < simSteps; step += 1) runSimTick(simClock.stepSeconds, now / 1000, huntsActive)
   const simAlpha = simClock.alpha
   animals.forEach((animal) => animal.update(delta, simAlpha))
-  crowdFixtures.forEach((fixture) => fixture.update(delta))
-  collideAnimals(now / 1000)
-  if (!menu.isOpen && !salePanel.isOpen) {
-    updateOwlHunt(delta)
-    updateSnakeHunt(delta)
-  }
+  crowdFixtures.forEach((fixture) => fixture.update(delta, simAlpha))
+  refreshAnimalShadows()
+  if (huntsActive) presentHunts(delta, simAlpha)
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
   for (let burstIndex = sellBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {
@@ -1668,9 +1691,26 @@ function frame(now: number): void {
 // Build the farm's up front so the menu opens smoothly. The sale farewell's
 // ring, tag and sparks ride along (on both backends), so the first sale is not
 // the first time their programs exist.
-await warmSellBursts(scene, async () => {
-  await precompile(renderer, scene, camera)
-  // WebGL finishes linking on the first draw, so draw once (WebGPU's pipelines are built above).
-  if (renderBackend === 'webgl') renderer.render(scene, camera)
+await loading.setStage('shaders')
+try {
+  await warmSellBursts(scene, async () => {
+    await precompile(renderer, scene, camera)
+    // WebGL finishes linking on the first draw, so draw once (WebGPU's pipelines are built above).
+    if (renderBackend === 'webgl') renderer.render(scene, camera)
+  })
+} catch (error) {
+  // A WebGPU device that starts but cannot build the farm's pipelines (a driver
+  // or browser mismatch) would leave a dead canvas; restart the page on WebGL.
+  if (renderBackend === 'webgpu') {
+    console.warn('[renderer] WebGPU could not compile the farm; reloading on WebGL', error)
+    const url = new URL(window.location.href)
+    url.searchParams.set('renderer', 'webgl')
+    window.location.replace(url.href)
+  }
+  throw error
+}
+requestAnimationFrame((now) => {
+  frame(now)
+  // The first frame has been submitted; the next paint shows the farm.
+  requestAnimationFrame(() => loading.done())
 })
-requestAnimationFrame(frame)

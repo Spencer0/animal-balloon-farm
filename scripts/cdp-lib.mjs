@@ -27,6 +27,10 @@ export async function connectCDP(options = {}) {
   const cdpUrl = options.cdpUrl ?? process.env.GARDEN_CDP_URL ?? 'http://127.0.0.1:9222';
   const targetUrl = new URL(baseUrl);
   targetUrl.searchParams.set('gardenDebug', '1');
+  // WebGPU is the game's default; the budgets in perf/budgets.json are WebGL
+  // numbers (and CI's software GPU has no usable WebGPU), so scripted runs pin
+  // WebGL unless the caller asks for a renderer.
+  if (!targetUrl.searchParams.has('renderer')) targetUrl.searchParams.set('renderer', 'webgl');
 
   const response = await fetch(`${cdpUrl}/json/list`);
   if (!response.ok) throw new Error(`Chrome DevTools returned HTTP ${response.status}`);

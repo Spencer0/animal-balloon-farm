@@ -29,8 +29,8 @@ import type { GardenToolId } from '../scene/garden-tool-art'
 import type { ShopBuildReport } from '../scene/shop-build'
 import type { createWallet } from '../game/sales'
 import type { createPredationLedger } from '../game/predator'
-import type { createOwlHunt } from '../scene/owl-hunt'
-import type { createSnakeHunt } from '../scene/snake-hunt'
+import type { OwlSim, SnakeSim } from '../game/animal-hunt'
+import { SIM_HZ } from '../game/sim-clock'
 import type { createGardenWaterField } from '../game/garden-water'
 import type { createGardenWaterMesh } from '../scene/garden-water-mesh'
 import type { createJournalPanel } from '../ui/journal-panel'
@@ -163,7 +163,7 @@ interface GardenDebugHarness {
   /** The arcade store's build: null before the model loads, else started/finished. */
   shopBuild(): ShopBuildReport | null
   /** Predator and prey: what the owls are doing, and how many chickens have been eaten. */
-  predation(): { readonly eaten: Readonly<Record<string, number>>; readonly owls: ReturnType<ReturnType<typeof createOwlHunt>['report']>['owls']; readonly snakes: ReturnType<ReturnType<typeof createSnakeHunt>['report']>['snakes']; readonly oaks: number; readonly flock: number }
+  predation(): { readonly eaten: Readonly<Record<string, number>>; readonly owls: ReturnType<OwlSim['report']>['owls']; readonly snakes: ReturnType<SnakeSim['report']>['snakes']; readonly oaks: number; readonly flock: number }
   /** Freeze or release the day clock. */
   holdTime(hold: boolean): void
   /** The test scenarios you can jump into, by id. Nothing here ships. */
@@ -181,7 +181,7 @@ interface GardenDebugHarness {
   /** Make the owls and snakes hunt as soon as they can, instead of waiting out the cooldown. */
   hurryHunt(): void
   /** Step the owl and snake hunts and any pops forward without waiting on rendered frames. */
-  stepHunt(seconds: number, secondsPerStep?: number): ReturnType<ReturnType<typeof createOwlHunt>['report']>['owls']
+  stepHunt(seconds: number, secondsPerStep?: number): ReturnType<OwlSim['report']>['owls']
   /** Add a tracked animal at a rung of the ladder, standing at its farm spawn; returns its id. */
   addAnimal(species: string, stage?: number): string | null
   /** Credit chickens as already eaten, to reach the stay condition without a long night. */
@@ -297,6 +297,8 @@ export interface GardenHarnessDeps {
   readonly renderer: FarmRenderer
   /** Arms the sun's shadow pass for the next render. */
   readonly forceShadowRedraw: () => void
+  /** Re-place the animal contact decals, so a snapshot taken before any frame still counts them. */
+  readonly refreshAnimalShadows: () => void
   readonly scene: THREE.Scene
   readonly camera: THREE.OrthographicCamera
   readonly cameraTarget: THREE.Vector3
@@ -335,8 +337,8 @@ export interface GardenHarnessDeps {
   readonly animalById: Map<string, BalloonAnimal>
   readonly animals: BalloonAnimal[]
   readonly predationLedger: ReturnType<typeof createPredationLedger>
-  readonly owlHunt: ReturnType<typeof createOwlHunt>
-  readonly snakeHunt: ReturnType<typeof createSnakeHunt>
+  readonly owlHunt: Pick<OwlSim, 'huntedIds' | 'hurry' | 'setHelium' | 'reset' | 'report'>
+  readonly snakeHunt: SnakeSim
   readonly popsInFlight: { readonly burst: PopBurst; readonly animal: BalloonAnimal }[]
   readonly crowdFixtures: BalloonAnimal[]
   readonly clearCrowdFixtures: () => void
@@ -347,8 +349,8 @@ export interface GardenHarnessDeps {
   readonly remeasureMeadow: () => void
   readonly measureFarm: () => import('../game/farm-state').FarmState
   readonly handleAnimalLifeEvents: (events: readonly import('../game/animal-life').AnimalLifeEvent[]) => void
-  readonly updateOwlHunt: (deltaSeconds: number) => void
-  readonly updateSnakeHunt: (deltaSeconds: number) => void
+  readonly stepAnimalWorld: (stepSeconds: number, nowSeconds: number, huntsActive: boolean) => void
+  readonly presentHunts: (deltaSeconds: number, simAlpha: number) => void
   readonly bolting: Set<string>
   readonly hidingUntil: Map<string, number>
   readonly panicking: Map<string, number>
@@ -359,7 +361,6 @@ export interface GardenHarnessDeps {
   readonly lastHouseOf: Map<string, string>
   readonly updateHousing: (nowSeconds: number) => void
   readonly residentsOf: (selection: { readonly id: PropId; readonly siteId: string }) => import('../ui/prop-card').PropResidents | null
-  readonly collideAnimals: (nowSeconds: number) => void
   readonly ui: UILayer
   readonly frameTimer: FrameTimer | null
   readonly journal: ReturnType<typeof createJournalPanel>
@@ -445,8 +446,8 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     remeasureMeadow,
     measureFarm,
     handleAnimalLifeEvents,
-    updateOwlHunt,
-    updateSnakeHunt,
+    stepAnimalWorld,
+    presentHunts,
     bolting,
     hidingUntil,
     panicking,
@@ -457,7 +458,6 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     lastHouseOf,
     updateHousing,
     residentsOf,
-    collideAnimals,
     ui,
     frameTimer,
     journal,
@@ -535,6 +535,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       renderer.info.autoReset = true
       renderer.info.reset()
       deps.forceShadowRedraw()
+      deps.refreshAnimalShadows()
       renderer.render(scene, camera)
       return frameRenderStats(renderer)
     } finally {
@@ -677,9 +678,17 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       }
       return reportConditions()
     },
-    fastForwardAnimals: (seconds, secondsPerStep = 0.05) => {
-      const steps = Math.max(0, Math.ceil(seconds / secondsPerStep))
-      for (let step = 0; step < steps; step += 1) animals.forEach((animal) => animal.update(secondsPerStep))
+    fastForwardAnimals: (seconds) => {
+      // The sim owns movement now, so tick it at its own rate (like stepHunt) and let the
+      // views catch up on each tick; `secondsPerStep` no longer applies.
+      const stepSeconds = 1 / SIM_HZ
+      const steps = Math.max(0, Math.ceil(seconds / stepSeconds))
+      let simulatedSeconds = performance.now() / 1000
+      for (let step = 0; step < steps; step += 1) {
+        simulatedSeconds += stepSeconds
+        stepAnimalWorld(stepSeconds, simulatedSeconds, false)
+        animals.forEach((animal) => animal.update(stepSeconds, 1))
+      }
     },
     resetConditions: () => {
       gardenTools?.clearGrass()
@@ -864,17 +873,17 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     holdTime: (hold) => { deps.setClockHeld(hold) },
     scenarios: () => scenarioList,
     runScenario: async (name) => (await loadScenarios()).runScenario(name, debugHarness),
-    stepHunt: (seconds, secondsPerStep = 1 / 30) => {
-      const steps = Math.max(0, Math.round(seconds / secondsPerStep))
-      // Mirror the frame loop, collisions included: a hunt that only works
-      // without them (animals passing through each other) is not a hunt.
+    stepHunt: (seconds) => {
+      // Tick the sim directly, the way the frame loop does: animals walk, collide, then the
+      // hunts decide. `secondsPerStep` no longer applies; the sim only runs at its own rate.
+      const stepSeconds = 1 / SIM_HZ
+      const steps = Math.max(0, Math.round(seconds / stepSeconds))
       let simulatedSeconds = performance.now() / 1000
       for (let step = 0; step < steps; step += 1) {
-        simulatedSeconds += secondsPerStep
-        animals.forEach((animal) => animal.update(secondsPerStep))
-        collideAnimals(simulatedSeconds)
-        updateOwlHunt(secondsPerStep)
-        updateSnakeHunt(secondsPerStep)
+        simulatedSeconds += stepSeconds
+        stepAnimalWorld(stepSeconds, simulatedSeconds, true)
+        animals.forEach((animal) => animal.update(stepSeconds, 1))
+        presentHunts(stepSeconds, 1)
       }
       return owlHunt.report().owls
     },

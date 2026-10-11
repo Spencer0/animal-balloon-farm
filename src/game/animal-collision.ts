@@ -20,6 +20,13 @@ export interface CollisionBody {
   readonly fixed?: boolean
   /** Ignores boxes, e.g. on its way in through a house door, or asleep in its bed by one. */
   readonly ghost?: boolean
+  /**
+   * Where the body stood one sim tick ago. When it is given and the body has
+   * travelled far in one tick, the push-out against boxes sweeps along the way
+   * instead of only checking the end point, so a fast mover cannot skip a thin wall.
+   */
+  readonly prevX?: number
+  readonly prevZ?: number
 }
 
 export interface CollisionBox {
@@ -79,10 +86,33 @@ export function resolveCollisions(bodies: readonly CollisionBody[], boxes: reado
   pushOutOfBoxes(bodies, boxes)
 }
 
+/** A sweep step is at most this share of the radius, so a step can never jump over a box wider than the body. */
+const SWEEP_STEP_SHARE = 0.5
+
 function pushOutOfBoxes(bodies: readonly CollisionBody[], boxes: readonly CollisionBox[]): void {
   for (const body of bodies) {
     if (body.ghost) continue
-    for (const box of boxes) pushOutOfBox(body, box)
+    if (boxes.length === 0) continue
+    const fromX = body.prevX
+    const fromZ = body.prevZ
+    const maxStep = body.radius * SWEEP_STEP_SHARE
+    const travelled = fromX === undefined || fromZ === undefined ? 0 : Math.hypot(body.x - fromX, body.z - fromZ)
+    if (fromX === undefined || fromZ === undefined || !(travelled > maxStep)) {
+      for (const box of boxes) pushOutOfBox(body, box)
+      continue
+    }
+    // Walk from the old spot to the new one in small steps, pushing out of every
+    // box at each, so the body slides along a wall rather than through it.
+    const endX = body.x
+    const endZ = body.z
+    const steps = Math.ceil(travelled / maxStep)
+    body.x = fromX
+    body.z = fromZ
+    for (let step = 1; step <= steps; step += 1) {
+      body.x += (endX - fromX) / steps
+      body.z += (endZ - fromZ) / steps
+      for (const box of boxes) pushOutOfBox(body, box)
+    }
   }
 }
 

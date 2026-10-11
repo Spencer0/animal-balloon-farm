@@ -34,13 +34,12 @@ export interface HousingDeps {
   readonly propCard: { readonly isOpen: boolean; setResidents(residents: PropResidents | null): void }
   readonly creditCoins: (amount: number) => void
   readonly animalDisplayName: (species: string) => string
-  readonly bodySizeBySpecies: Map<string, number>
   readonly crowdFixtures: BalloonAnimal[]
   readonly gardenProps: () => GardenProps | null
 }
 
 export function createHousing(deps: HousingDeps) {
-  const { progress, animalCreations, animals, animalById, farmHomes, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, dayNightClock, getSelectedProp, propCard, creditCoins, animalDisplayName, bodySizeBySpecies, crowdFixtures, gardenProps } = deps
+  const { progress, animalCreations, animals, animalById, farmHomes, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, dayNightClock, getSelectedProp, propCard, creditCoins, animalDisplayName, crowdFixtures, gardenProps } = deps
   /**
    * Night animals sleep by day: a resident curls up beside a garbage can, anything else
    * where it stands. Everyone wakes at dusk. Beds are chosen once per sleep so the
@@ -73,7 +72,7 @@ export function createHousing(deps: HousingDeps) {
         continue
       }
       const record = progress.animal(animal.instanceId)
-      const wantsSleep = shouldSleep(animal.id, night) && animal.isAtFarm && !animal.isCapturing && !animal.isRomancing
+      const wantsSleep = shouldSleep(animal.id, night) && animal.isAtFarm && !animal.isCapturing
         && Boolean(record && record.stage >= 2 && !record.baby)
       if (!wantsSleep) {
         if (sleepBeds.delete(animal.instanceId)) animal.setSleepSpot(null)
@@ -313,43 +312,51 @@ export function createHousing(deps: HousingDeps) {
 
   const COLLISION_BOX_REFRESH_SECONDS = 0.25
 
-  /** An animal's footprint radius as a share of its catalog size (its longest side). */
-  const BODY_RADIUS_SHARE = 0.24
+  function refreshCollisionBoxes(nowSeconds: number): void {
+    if (nowSeconds - collisionBoxesAt < COLLISION_BOX_REFRESH_SECONDS) return
+    collisionBoxesAt = nowSeconds
+    collisionBoxes = (gardenProps()?.occupancy.placed ?? [])
+      .filter((prop) => prop.id !== 'fence' && propDefinition(prop.id).blocking)
+      .map((prop) => footprintWorldRect(prop.id, prop.cell, prop.rotation))
+  }
 
   /**
    * Keep walking animals out of houses and other solid props, and out of each
-   * other. Only the animals out on the farm have models, so this never sees more
-   * than the outdoor limit (plus perf-ramp fixtures).
+   * other, on the sim tick after they have walked. Bodies are the animals' sim
+   * records; the push goes back into the record's current position only, so the
+   * view blends from where the animal walked to where it ended up. Only the
+   * animals out on the farm have models, so this never sees more than the
+   * outdoor limit (plus perf-ramp fixtures).
    */
-  function collideAnimals(nowSeconds: number): void {
-    if (nowSeconds - collisionBoxesAt >= COLLISION_BOX_REFRESH_SECONDS) {
-      collisionBoxesAt = nowSeconds
-      collisionBoxes = (gardenProps()?.occupancy.placed ?? [])
-        .filter((prop) => prop.id !== 'fence' && propDefinition(prop.id).blocking)
-        .map((prop) => footprintWorldRect(prop.id, prop.cell, prop.rotation))
-    }
+  function collideAnimalsTick(nowSeconds: number): void {
+    refreshCollisionBoxes(nowSeconds)
     const walkers: BalloonAnimal[] = []
     const bodies: CollisionBody[] = []
-    for (const animal of [...animals, ...crowdFixtures]) {
-      if (animal.isFlier || animal.isSold) continue
-      const position = animal.currentPosition
+    const collect = (animal: BalloonAnimal): void => {
+      if (animal.isFlier || animal.isSold) return
+      const sim = animal.sim
       walkers.push(animal)
       bodies.push({
-        x: position.x,
-        z: position.z,
-        radius: (bodySizeBySpecies.get(animal.id) ?? 2) * BODY_RADIUS_SHARE * animal.currentScale,
-        fixed: animal.isSleeping || animal.isCapturing || animal.isRomancing,
+        x: sim.x,
+        z: sim.z,
+        prevX: sim.prevX,
+        prevZ: sim.prevZ,
+        radius: sim.radius,
+        fixed: animal.isSleeping || animal.isCapturing,
         // On its way in through a door, walking the gate route from the carnival, or
         // asleep in a bed laid out beside a prop (moving it would wake it to walk back).
         ghost: animal.isGoingHome || !animal.isAtFarm || animal.isSleeping,
       })
     }
+    animals.forEach(collect)
+    crowdFixtures.forEach(collect)
+    if (bodies.length === 0) return
     resolveCollisions(bodies, collisionBoxes)
     bodies.forEach((body, index) => {
       const animal = walkers[index]
-      const dx = body.x - animal.currentPosition.x
-      const dz = body.z - animal.currentPosition.z
-      if (dx !== 0 || dz !== 0) animal.nudge(dx, dz)
+      const dx = body.x - animal.sim.x
+      const dz = body.z - animal.sim.z
+      if (dx !== 0 || dz !== 0) animal.pushSim(dx, dz)
     })
   }
   function houses(): readonly HouseSpot[] { return houseSpots }
@@ -367,7 +374,7 @@ export function createHousing(deps: HousingDeps) {
     speciesPluralName,
     sellAnimalsInside,
     residentsOf,
-    collideAnimals,
+    collideAnimalsTick,
     updateSleepers,
   }
 }

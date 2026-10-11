@@ -13,6 +13,51 @@
 /** What the animal is doing with its legs. The view maps it to a clip. */
 export type AnimalMotion = 'walk' | 'idle' | 'sleep'
 
+import type { AnimalStage } from './animal-conditions'
+import type { AnimalTravelRoute } from './animal-travel'
+
+/** A walk to a house door, and how hard to run: above 1 is a sprint, e.g. a mouse fleeing a snake. */
+export interface AnimalHomeTrip {
+  readonly x: number
+  readonly z: number
+  readonly speedScale: number
+}
+
+/**
+ * Steer toward a point at `speedScale` times the walking speed, as a hunting
+ * snake does or a visitor walking in across the meadow. Zero holds it still.
+ */
+export interface AnimalPursuit {
+  readonly x: number
+  readonly z: number
+  readonly speedScale: number
+}
+
+/** Something the sim decided that the view plays: a picture, a sound, a notice. */
+export type AnimalSimEvent =
+  /** The rung it shows moved up (`from` to `to`); a settle is a rise to 3 or more from below. */
+  | { readonly type: 'stage-up'; readonly from: AnimalStage; readonly to: AnimalStage }
+  | { readonly type: 'stage-down'; readonly from: AnimalStage; readonly to: AnimalStage }
+
+/** Where a night animal curls up for the day, and which way it faces (yaw about +Y, +X-forward model). */
+export interface AnimalSleepSpot {
+  readonly x: number
+  readonly z: number
+  readonly heading: number
+}
+
+/**
+ * Where an animal is in its comings and goings through the farm gate. A visitor
+ * walks `route` between the carnival and the plot, and rests `cooldown` seconds
+ * on each side before the next trip.
+ */
+export interface AnimalVisit {
+  route: AnimalTravelRoute | null
+  direction: 'enter' | 'leave' | null
+  side: 'carnival' | 'farm'
+  cooldown: number
+}
+
 export interface AnimalSimRecord {
   /** Position on the ground plane at the current tick. */
   x: number
@@ -32,9 +77,49 @@ export interface AnimalSimRecord {
   nextDecision: number
   /** True while on a long trek, so it does not change its mind half way. */
   longWalk: boolean
+  /** Footprint radius for collision, in ground units: catalog size times the growth scale. */
+  radius: number
+  /** The house door it is walking to, or null. Takes priority over wandering and gate travel. */
+  home: AnimalHomeTrip | null
+  /** True once it has reached the door it was sent to; cleared by the next trip. */
+  atDoor: boolean
+  visit: AnimalVisit
+  /** A point to steer to; it beats wandering and the gate route, and a home trip beats it. */
+  pursuit: AnimalPursuit | null
+  /** Prey in a panic: runs 2.2 times faster in short dashes. */
+  alarmed: boolean
+  /** The bed it was sent to. A home trip and a pursuit beat it; it beats the gate route and wandering. */
+  sleepSpot: AnimalSleepSpot | null
+  /** True once it has reached its bed and is curled up (not merely on its way there). */
+  asleep: boolean
+  /**
+   * The rung on the condition ladder it shows. The ladder's verdict (animal-life)
+   * can run ahead of it: a settle that arrives out at the tents waits in `pendingStage`.
+   */
+  stage: AnimalStage
+  /** A settle waiting for the walk in; the rung stays put until it has browsed the plot a while. */
+  pendingStage: AnimalStage | null
+  /** Seconds spent inside the plot while a settle is pending. */
+  dwell: number
+  /** Decisions for the view to play, oldest first. Drain with `drainSimEvents`. */
+  events: AnimalSimEvent[]
+  /**
+   * Something other than the sim places the animal: a flier's flight, or the paint
+   * reveal, which holds it still. The sim leaves its position alone, though collision
+   * may still push it.
+   */
+  held: boolean
 }
 
-export function createAnimalSimRecord(init: { x: number; z: number; motion: AnimalMotion }): AnimalSimRecord {
+export function createAnimalSimRecord(init: {
+  x: number
+  z: number
+  motion: AnimalMotion
+  radius?: number
+  side?: 'carnival' | 'farm'
+  stage?: AnimalStage
+  held?: boolean
+}): AnimalSimRecord {
   return {
     x: init.x,
     z: init.z,
@@ -47,6 +132,19 @@ export function createAnimalSimRecord(init: { x: number; z: number; motion: Anim
     paused: 0,
     nextDecision: 0,
     longWalk: false,
+    radius: init.radius ?? 0.5,
+    home: null,
+    atDoor: false,
+    visit: { route: null, direction: null, side: init.side ?? 'carnival', cooldown: 0 },
+    pursuit: null,
+    alarmed: false,
+    sleepSpot: null,
+    asleep: false,
+    stage: init.stage ?? 1,
+    pendingStage: null,
+    dwell: 0,
+    events: [],
+    held: init.held ?? false,
   }
 }
 
@@ -62,12 +160,27 @@ export function snapAnimalSim(record: AnimalSimRecord, x: number, z: number): vo
   record.z = record.prevZ = z
 }
 
-/** Shift the record sideways, previous and current together, so the blend stays continuous. */
-export function shiftAnimalSim(record: AnimalSimRecord, dx: number, dz: number): void {
+/**
+ * Hold the animal where it stands, at `x, z` (the point it is drawn at): it stops, and
+ * the sim leaves it alone until it is released. A fresh wander target is picked
+ * afterwards, as it is for any animal whose standing about was cut short.
+ */
+export function holdAnimalSim(record: AnimalSimRecord, x: number, z: number): void {
+  snapAnimalSim(record, x, z)
+  record.held = true
+  record.motion = 'idle'
+  record.paused = 0
+  record.nextDecision = 0
+}
+
+/**
+ * Push the record sideways on the current tick only. Collision runs after the
+ * walk of the same tick, so the view blends from where the animal was to where
+ * it ended up after being pushed, and the correction is spread across the tick.
+ */
+export function pushAnimalSim(record: AnimalSimRecord, dx: number, dz: number): void {
   record.x += dx
   record.z += dz
-  record.prevX += dx
-  record.prevZ += dz
 }
 
 export interface PlanarPoint {
@@ -86,4 +199,31 @@ export function interpolateAnimalSim(record: AnimalSimRecord, alpha: number, out
 /** Yaw about +Y that turns a +X-forward model to face the ground direction (dx, dz). */
 export function headingOf(dx: number, dz: number): number {
   return Math.atan2(-dz, dx)
+}
+
+/**
+ * Start, change or end a pursuit. Ending one sends the animal back to wandering
+ * with a fresh spot to pick, rather than the one from before the chase.
+ */
+export function setSimPursuit(record: AnimalSimRecord, next: AnimalPursuit | null): void {
+  if (record.pursuit && !next) {
+    record.paused = 0
+    record.nextDecision = 0
+  }
+  record.pursuit = next
+}
+
+/** Panic or calm an animal. A panic cuts short whatever it was standing about doing. */
+export function setSimAlarmed(record: AnimalSimRecord, alarmed: boolean): void {
+  if (record.alarmed === alarmed) return
+  record.alarmed = alarmed
+  if (alarmed) {
+    record.paused = 0
+    record.nextDecision = 0
+  }
+}
+
+/** Hand every queued event to `handle`, oldest first, and empty the queue. */
+export function drainSimEvents(record: AnimalSimRecord, handle: (event: AnimalSimEvent) => void): void {
+  while (record.events.length > 0) handle(record.events.shift() as AnimalSimEvent)
 }
