@@ -235,7 +235,7 @@ function workP95Of(result) {
  * Draw calls and triangles are the noise-free half of the gate: they come from
  * renderer.info on a forced render, so the same code gives the same numbers on
  * any runner. A budget missing from budgets.json is not checked.
- * @param {{ renderCalls?: number, triangles?: number }} measured
+ * @param {{ renderCalls: number, triangles: number }} measured
  * @param {{ maxRenderCalls?: number, maxTriangles?: number }} budget
  * @param {string} label
  */
@@ -290,7 +290,7 @@ function summaryMarkdown(rows) {
   ];
   for (const row of rows) {
     const status = row.failures.length ? `FAIL: ${row.failures.join('; ')}` : 'PASS';
-    const runs = row.runs?.length ? row.runs.map((value) => (value === null ? '-' : value.toFixed(1))).join(', ') : '-';
+    const runs = row.runs?.length ? row.runs.map((/** @type {number | null} */ value) => (value === null ? '-' : value.toFixed(1))).join(', ') : '-';
     const budget = row.budget === undefined ? 'none' : `${row.budget}`;
     lines.push(`| ${row.name} | ${runs} | ${budget} | ${row.calls ?? '-'} | ${row.tris ?? '-'} | ${status} |`);
   }
@@ -358,8 +358,8 @@ async function main() {
       fps: timing?.sustainedFps ?? null,
       samples: timing?.sampleCount ?? 0,
       runs: result.scenario === 'crowd-ramp' ? result.steps?.[0]?.runs : result.runs,
-      calls: steps ? steps.map((step) => `${step.count}:${step.renderCalls}`).join(' ') : result.render?.renderCalls,
-      tris: steps ? steps.map((step) => `${step.count}:${step.triangles}`).join(' ') : result.render?.triangles,
+      calls: steps ? steps.map((/** @type {any} */ step) => `${step.count}:${step.renderCalls}`).join(' ') : result.render?.renderCalls,
+      tris: steps ? steps.map((/** @type {any} */ step) => `${step.count}:${step.triangles}`).join(' ') : result.render?.triangles,
       failures,
     };
   });

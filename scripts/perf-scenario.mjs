@@ -278,6 +278,7 @@ export function explainShortSamples(timing, minSamples) {
  * @returns {T}
  */
 export function medianRun(runs, p95Of) {
+  /** @param {T} run */
   const key = (run) => p95Of(run) ?? Number.POSITIVE_INFINITY;
   const ranked = [...runs].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   return ranked[Math.floor(ranked.length / 2)];
@@ -303,12 +304,13 @@ function gateSingle(summary, { minFps, minSamples }) {
 /**
  * @param {import('./cdp-lib.mjs').CDPClient} cdp
  * @param {string} name
- * @param {{ minFps: number }} options
+ * @param {{ minFps: number, runs: number }} options
  */
 async function runSingle(cdp, name, options) {
   const scenario = /** @type {Record<string, { description: string, minSamples: number, expression: string, check: (result: any) => string | null }>} */ (SCENARIOS)[name];
   if (!scenario) throw new Error(`Unknown scenario: ${name}. Try --list.`);
   const viewport = await assertViewport(cdp);
+  /** @type {Array<{ raw: any, render: { renderCalls: number, triangles: number }, timing: any, problem: string | null }>} */
   const runs = [];
   for (let run = 0; run < options.runs; run += 1) {
     const raw = await cdp.evaluate(scenario.expression);
@@ -384,6 +386,7 @@ async function runCrowdRamp(cdp, options) {
     await cdp.evaluate(`window.__gardenDebug.setCrowd(${count})`);
     await new Promise((resolve) => setTimeout(resolve, options.settleMs));
     // The floor is the step the gate judges, so it is sampled `runs` times and the median window counts.
+    /** @type {Array<{ timing: any }>} */
     const windows = [];
     const sampleWindows = count === options.ramp[0] ? options.runs : 1;
     for (let window = 0; window < sampleWindows; window += 1) {
