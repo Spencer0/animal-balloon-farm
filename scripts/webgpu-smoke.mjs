@@ -46,6 +46,12 @@ async function main() {
       }
     });
     await cdp.send('Runtime.enable');
+    // Probe from the served origin: the tab starts on about:blank, which is not a
+    // secure context, so navigator.gpu is undefined there even when WebGPU works.
+    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/robots.txt` });
+    for (let i = 0; i < 50 && (await cdp.evaluate('location.origin').catch(() => '')) !== `http://127.0.0.1:${port}`; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     const adapter = await cdp.evaluate(`(async () => {
       const gpu = navigator.gpu;
       if (!gpu) return { ok: false, reason: 'navigator.gpu is undefined' };
