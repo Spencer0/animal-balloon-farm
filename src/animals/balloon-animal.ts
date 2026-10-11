@@ -2,7 +2,6 @@ import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
 import { webgpuKit } from '../render/backend'
 import { FARM_EXPANSION_CONFIG, type GardenBounds } from '../game/farm-expansion'
-import { containsFarmPoint } from '../game/farm-footprint'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { applyHeartEyeMaterial, clearHeartEyes, heartEyeCount as countHeartEyes, installHeartEyeShader, setHeartEyes } from './animal-eyes'
@@ -11,8 +10,10 @@ import { cloneMerged, objectBounds, skeletonsOf } from '../scene/merge-static-me
 import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
-import { advanceAnimalTravel, canAnimalLeaveFarm, carnivalRing, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
-import { beginSimStep, createAnimalSimRecord, interpolateAnimalSim, shiftAnimalSim, snapAnimalSim, type AnimalSimRecord } from '../game/animal-sim'
+import { carnivalRing } from '../game/animal-travel'
+import { requestStage, tickResidency } from '../game/animal-residency'
+import { beginSimStep, createAnimalSimRecord, drainSimEvents, holdAnimalSim, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord, type AnimalSleepSpot } from '../game/animal-sim'
+import { stepGateTravel, stepHomeTrip, stepPursuit, stepSleep, tickVisitCooldown } from '../game/animal-routes'
 import { ALARM_SPEED_SCALE, chooseWanderTarget, stepWander, type WanderContext } from '../game/animal-wander'
 import { seededRandom } from '../game/seeded-random'
 
@@ -43,7 +44,6 @@ export interface BalloonAnimalOptions {
   readonly isPointerBlocked?: (clientX: number, clientY: number) => boolean
   readonly canvas: HTMLCanvasElement
   readonly camera: THREE.Camera
-  readonly wandering?: boolean
   readonly captureOnClick?: boolean
   /** Accent tint for this species' non-heart cosmetics; hearts are always pink. */
   readonly eyeColor?: string
@@ -91,11 +91,7 @@ export interface FlightPose {
 }
 
 /** Where a night animal curls up for the day, and which way it faces (yaw about +Y, +X-forward model). */
-export interface SleepSpot {
-  readonly x: number
-  readonly z: number
-  readonly heading: number
-}
+export type SleepSpot = AnimalSleepSpot
 
 export interface BalloonAnimal {
   readonly id: BalloonAnimalId
@@ -111,19 +107,20 @@ export interface BalloonAnimal {
   /** Half the animal's longest side in world units, growth included: how wide its contact shadow reads. */
   readonly footprintRadius: number
   readonly renderPriority: number
-  readonly isRomancing: boolean
   /** True for a species that is positioned by the predator sim instead of wandering. */
   readonly isFlier: boolean
   /**
    * The simulation record behind this animal. The view reads it; only
-   * `tickSim` and the behaviour setters below change it.
+   * `tickSim`, collision (`pushSim`) and the command setters below change it.
    */
   readonly sim: Readonly<AnimalSimRecord>
   /**
-   * Advance the simulation by one fixed step (see game/sim-clock.ts). Wandering
-   * and walking run here; everything else still runs in `update`.
+   * Advance the simulation by one fixed step (see game/sim-clock.ts): wandering, the
+   * walks, the bed, hunts' steering and the stage. One call per step, from the sim world tick.
    */
   tickSim(stepSeconds: number): void
+  /** Push the sim record sideways on this tick only (collision); the view blends the change in. */
+  pushSim(dx: number, dz: number): void
   /** Whether the flier is currently in the world at all (it is away by day). */
   readonly flightVisible: boolean
   /** Place a flier for this frame. No-op for ground animals. */
@@ -150,13 +147,12 @@ export interface BalloonAnimal {
   /** True while it walks to a house door. */
   readonly isGoingHome: boolean
   /**
-   * Steer toward a point at `speedScale` times its walking speed, as a hunting
-   * snake does; 0 holds it still. Null hands it back to its own wandering.
-   * A house trip takes priority. A flier ignores it.
+   * Steer toward a point at `speedScale` times its walking speed, as a visitor
+   * crossing the meadow does; 0 holds it still. Null hands it back to its own
+   * wandering. A house trip takes priority. A flier ignores it. Hunts steer the
+   * sim record directly (game/animal-hunt.ts); this is the command for the rest.
    */
-  setPursuit(pursuit: { readonly x: number; readonly z: number; readonly speedScale: number } | null): void
-  /** Shift it sideways on the ground, e.g. out of a house wall or a neighbour. Walking carries on. */
-  nudge(dx: number, dz: number): void
+  setPursuit(pursuit: AnimalPursuit | null): void
   /** Stand at a point, e.g. a house door it has just stepped out of, and wander from there. */
   placeAt(x: number, z: number): void
   readonly isLoose: boolean
@@ -188,13 +184,11 @@ export interface BalloonAnimal {
   /** How many heart eyes are currently worn, for the debug report. */
   readonly heartEyeCount: number
   setGrowth(scale: number): void
-  setRomancing(active: boolean, partnerPosition?: THREE.Vector3): void
   /**
    * Draw a frame. `simAlpha` is how far the display is between the last sim
-   * tick and the next; the position is blended by it. Leave it out when nothing
-   * ticks the sim for this animal: `update` then steps the sim itself, once.
+   * tick and the next; the position is blended by it. The view never steps the sim.
    */
-  update(deltaSeconds: number, simAlpha?: number): void
+  update(deltaSeconds: number, simAlpha: number): void
   dispose(): void
 }
 
@@ -221,6 +215,8 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   snake: new THREE.MeshStandardMaterial({ color: '#3f9e6e', roughness: 0.26, metalness: 0.01 }),
   mole: new THREE.MeshStandardMaterial({ color: '#5b5663', roughness: 0.3, metalness: 0.01 }),
 }
+/** An animal's collision footprint radius as a share of its catalog size (its longest side). */
+const BODY_RADIUS_SHARE = 0.24
 const HOOF_MATERIAL = new THREE.MeshStandardMaterial({ color: '#76505d', roughness: 0.31 })
 const WILD_BALLOON_COLOR = new THREE.Color('#e53649')
 const WILD_BALLOON_MATERIAL = new THREE.MeshPhysicalMaterial({
@@ -466,33 +462,25 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let modelLoading: Promise<void> | null = null
   let placeholderLoaded = false
   let appearance = options.appearance ?? 'wild'
-  let active: AnimalClip = options.wandering === false ? 'IDLE' : 'WALK'
-  let romanceSeconds = 0
+  let active: AnimalClip = 'WALK'
   let elapsed = 0
   let captured = false
   let sold = false
-  let romancing = false
   let focused = false
-  let alarmed = false
+  /** The alarm the mixer rate last followed, so a hunt panicking the sim record reaches the clips. */
+  let shownAlarmed = false
+  let wasPursuing = false
   let flightRate = 1
-  let sleepSpot: SleepSpot | null = null
-  let homeTrip: { readonly x: number; readonly z: number } | null = null
-  let homeTripSpeed = 1
-  let pursuit: { readonly x: number; readonly z: number; readonly speedScale: number } | null = null
-  let atDoor = false
   let sleepBlend = 0
-  let asleep = false
-  const sleepFacing = new THREE.Quaternion()
   // Shared by every walk, chase and wander branch; each one uses it at once, so
   // one scratch quaternion per animal replaces a fresh allocation per frame.
   const facingScratch = new THREE.Quaternion()
-  const sleepYaw = new THREE.Vector3(0, 1, 0)
   let flightVisible = !options.flier
-  const alarmScale = (): number => (alarmed ? ALARM_SPEED_SCALE : 1)
+  const alarmScale = (): number => (sim.alarmed ? ALARM_SPEED_SCALE : 1)
   const hasSleepClip = (): boolean => Boolean(loaded?.actions.has('SLEEP'))
   /** Ease the crouch in or out and breathe; only the pivot is touched, never the wrapper. */
   const applySleepPose = (delta: number): void => {
-    sleepBlend = THREE.MathUtils.clamp(sleepBlend + (asleep ? delta : -delta * 1.5) / 1.4, 0, 1)
+    sleepBlend = THREE.MathUtils.clamp(sleepBlend + (sim.asleep ? delta : -delta * 1.5) / 1.4, 0, 1)
     const eased = sleepBlend * sleepBlend * (3 - 2 * sleepBlend)
     // A species with a SLEEP clip lies down by itself; only the others are crouched in code.
     if (hasSleepClip()) return
@@ -510,25 +498,21 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let lastCaptureProgress = 0
   const pivotBasePosition = new THREE.Vector3()
   const pivotBaseRotation = new THREE.Euler()
-  const direction = new THREE.Vector3()
-  const romanceTarget = new THREE.Vector3()
-  const romanceDirection = new THREE.Vector3()
-  const modelForward = new THREE.Vector3(1, 0, 0)
   const random = seededRandom(options.seed)
   // The simulation half of this animal. Wander and walk movement lives in it;
   // the wrapper below only shows it (see docs/sim-view-split.md).
   const sim = createAnimalSimRecord({
     x: options.spawn[0],
     z: options.spawn[1],
-    motion: options.wandering === false ? 'idle' : 'walk',
+    motion: 'walk',
+    held: Boolean(options.flier),
+    radius: options.size * BODY_RADIUS_SHARE * (options.growthScale ?? 1),
+    side: (options.stage ?? 1) >= 2 ? 'farm' : 'carnival',
+    stage: options.stage ?? 1,
   })
-  /** The position the view last wrote, and a scratch point for the blend. */
-  const shown = { x: sim.x, z: sim.z }
+  /** A scratch point for the blend. */
   const blended = { x: sim.x, z: sim.z }
-  /** Set while another behaviour owns the position, so the sim re-reads it afterwards. */
-  let positionOwnedByView = false
   const upAxis = new THREE.Vector3(0, 1, 0)
-  let stage: AnimalStage = options.stage ?? 1
   wrapper.userData.animalInstanceId = instanceId
 
   const ensureDetailedModel = (): Promise<void> => {
@@ -594,8 +578,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           }
         })
         if (appearance === 'wild') setAnimalAppearance(modelRoot, 'wild')
-        if (stage >= 4) setHeartEyes(modelRoot)
-        if (active !== 'IDLE' || options.wandering === false) {
+        if (sim.stage >= 4) setHeartEyes(modelRoot)
+        if (active !== 'IDLE') {
           const action = actions.get(active)
           if (action) action.play()
         }
@@ -618,7 +602,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         placeholderLoaded = true
         setAnimalAppearance(posePivot, appearance)
       }
-      if (detailActive) wrapper.visible = stage > 0 && !sold
+      if (detailActive) wrapper.visible = sim.stage > 0 && !sold
       options.onDetailedModelReady?.()
       if (pendingCapture) {
         pendingCapture = false
@@ -628,69 +612,14 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     })().finally(() => { modelLoading = null })
     return modelLoading
   }
-  let travelRoute: AnimalTravelRoute | null = null
-  let travelDirection: 'enter' | 'leave' | null = null
-  let travelCooldown = 0
-  let travelSide: 'carnival' | 'farm' = stage >= 2 ? 'farm' : 'carnival'
-  /**
-   * A settle that arrives while the visitor is still out at the tents is a
-   * promise, not yet a fact. The rung stays at 2 -- so the animal keeps its
-   * visitor leash and walks in -- and the promotion is applied once it has
-   * actually been browsing the plot for a while.
-   */
-  const RESIDENT_DWELL_SECONDS = 4
-  const RESIDENT_INSIDE_MARGIN = 0.6
-  let pendingResidentStage: AnimalStage | null = null
-  let farmDwellSeconds = 0
+  /** The ground point the animal stands on: its sim record, or the wrapper for a flier the predator sim places. */
+  const standingPoint = (): { readonly x: number; readonly z: number } => (options.flier ? wrapper.position : sim)
 
-  /** Inside the plot proper: not mid-route, and comfortably past the boundary. */
-  function insideFarmPlot(): boolean {
-    if (travelRoute !== null) return false
-    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-    return containsFarmPoint(wrapper.position.x, wrapper.position.z, bounds, RESIDENT_INSIDE_MARGIN)
-  }
-
-  /**
-   * How long a visitor stays on a side of the gate. A visitor pokes its head
-   * into the plot and ambles back out, so its time inside is short; the time
-   * out at the tents is longer so visits read as comings and goings.
-   */
-  function visitCooldown(side: 'carnival' | 'farm'): number {
-    if (stage >= 3) return 28 + random() * 18
-    // Long enough to look like browsing, and different every time.
-    return side === 'farm' ? 16 + random() * 34 : 14 + random() * 36
-  }
-
-  function beginTravel(direction: 'enter' | 'leave'): void {
-    // Fliers cross the fence by air; there is no gate route for them.
-    if (options.flier) {
-      travelSide = direction === 'enter' ? 'farm' : 'carnival'
-      return
-    }
-    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-    if (direction === 'enter' && containsFarmPoint(wrapper.position.x, wrapper.position.z, bounds)) {
-      // A carnival wanderer may already have crossed the open ground before
-      // its timed visit arrives; never send it back out just to re-enter.
-      travelSide = 'farm'
-      travelDirection = null
-      travelRoute = null
-      travelCooldown = visitCooldown('farm')
-      return
-    }
-    if (direction === 'enter') travelSide = 'carnival'
-    travelDirection = direction
-    travelRoute = createAnimalTravelRoute(direction, bounds, { x: wrapper.position.x, z: wrapper.position.z })
-    const first = travelRoute.waypoints[travelRoute.nextWaypoint]
-    sim.targetX = first.x
-    sim.targetZ = first.z
-    sim.nextDecision = 0
-    sim.paused = 0
-    setAnimation('WALK', 0.22)
-  }
+  const gardenBoundsNow = (): GardenBounds => options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
 
   /** True while this animal lives out at the tents instead of inside the fence. */
   const isCarnivalSide = (): boolean => Boolean(options.isLoose?.())
-    || travelSide === 'carnival' || travelDirection !== null
+    || sim.visit.side === 'carnival' || sim.visit.direction !== null
 
   /**
    * Where this animal is allowed to be right now.
@@ -733,16 +662,14 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     wanderContext.limitX = limits.x
     wanderContext.limitZ = limits.z
     wanderContext.carnival = carnival
-    wanderContext.alarmed = alarmed
-    wanderContext.anchor = carnival && !alarmed ? options.getPackAnchor?.() ?? null : null
+    wanderContext.alarmed = sim.alarmed
+    wanderContext.anchor = carnival && !sim.alarmed ? options.getPackAnchor?.() ?? null : null
     wanderContext.gardenBounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
     return wanderContext
   }
   const chooseTarget = (): void => chooseWanderTarget(sim, readWanderContext(), random)
 
   const setAnimation = (name: AnimalClip, fadeSeconds = 0.22): void => {
-    // The sim's wander reads this, so a clip chosen by another behaviour is what it resumes from.
-    sim.motion = name === 'WALK' ? 'walk' : name === 'SLEEP' ? 'sleep' : 'idle'
     if (active === name && (!loaded || loaded.activeAnimation === name)) return
     active = name
     if (!loaded || !detailActive) return
@@ -775,10 +702,14 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     capture = createCapturePresentation(posePivot, wrapper, modelRoot, options.id, bounds, options.seed)
     focused = true
     setAnimation('IDLE', 0.22)
-    sim.paused = 0
-    sim.nextDecision = 0
+    // The reveal holds it still where it is drawn; the sim leaves it alone until the flourish ends.
+    holdAnimalSim(sim, wrapper.position.x, wrapper.position.z)
     console.info(`[Animal Balloon Farm] ${options.name} capture flourish started`)
     return true
+  }
+  /** The flourish is over (or was cancelled): the sim has the animal again. A flier stays the predator sim's. */
+  const releaseHold = (): void => {
+    if (!options.flier) sim.held = false
   }
   const setAppearance = (nextAppearance: AnimalAppearance): void => {
     if (pendingCapture && nextAppearance === 'standard') return
@@ -789,6 +720,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       capture.dispose()
       capture = null
       captureVerticalRange = null
+      releaseHold()
       posePivot.position.copy(pivotBasePosition)
       posePivot.rotation.copy(pivotBaseRotation)
     }
@@ -819,7 +751,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   }
 
   /**
-   * Move an animal to a rung of the condition ladder.
+   * Play what the sim decided about the animal's rung (game/animal-residency.ts):
+   * when to settle, and whether the settle waits for the walk in, are the sim's. The
+   * look of it is here.
    *
    * The wild -> standard change reuses the existing 6.8s paint-reveal flourish
    * as its transition animation, because that flourish was already exactly
@@ -828,47 +762,34 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    * for hearts, which is the only visual change in the game that is not a
    * material mask.
    */
-  const setStage = (next: AnimalStage): void => {
-    // A demotion cancels residency that was still waiting for the walk inside.
-    if (next < 3) {
-      pendingResidentStage = null
-      farmDwellSeconds = 0
-    }
-    if (next === stage) return
-    const previous = stage
-    const becomingResident = next >= 3 && stage < 3
-    const becomingWild = next <= 2 && stage >= 3
-    if (previous < 2 && next === 2) beginTravel('enter')
-    if (previous < 3 && next >= 3 && travelSide === 'carnival' && travelDirection !== 'enter') {
-      beginTravel('enter')
-    }
-    if (previous >= 3 && next < 2) {
-      travelRoute = null
-      travelDirection = null
-      travelSide = 'farm'
-    }
-    if (next >= 3 && stage < 3 && !insideFarmPlot()) {
-      // The condition ladder has decided; only the arrival waits. Leaving the
-      // rung at 2 is what keeps the animal walking in as a visitor instead of
-      // donning residence while it is still out on the meadow.
-      if (pendingResidentStage === null) farmDwellSeconds = 0
-      pendingResidentStage = next
-      return
-    }
+  const playStageChange = (from: AnimalStage, next: AnimalStage): void => {
+    const becomingResident = next >= 3 && from < 3
+    const becomingWild = next <= 2 && from >= 3
     if (becomingResident) {
       // Play the reveal. beginCapture refuses while another is running, which
       // is what we want: a second settle arriving mid-flourish should queue on
       // the next stage change rather than snap.
       if (beginCapture()) {
-        stage = next
         applyHeartEyes(stageHasHeartEyes(next))
         return
       }
     }
     if (becomingWild) setAppearance('wild')
     else if (next >= 3) setAppearance('standard')
-    stage = next
     applyHeartEyes(stageHasHeartEyes(next))
+  }
+
+  const playSimEvents = (): void => {
+    if (sim.events.length === 0) return
+    drainSimEvents(sim, (event) => {
+      if (event.type === 'stage-up' || event.type === 'stage-down') playStageChange(event.from, event.to)
+    })
+  }
+
+  /** Command: move to a rung of the condition ladder. The sim decides when it takes effect. */
+  const setStage = (next: AnimalStage): void => {
+    requestStage(sim, next, standingPoint(), gardenBoundsNow(), Boolean(options.flier), random)
+    playSimEvents()
   }
 
   const onPointerDown = (event: PointerEvent): void => {
@@ -890,46 +811,29 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
 
   options.canvas.addEventListener('pointerdown', onPointerDown)
 
-  /**
-   * True while a behaviour that has not moved into the sim yet drives the
-   * position frame by frame (see docs/sim-view-split.md, slices 2 to 4). The sim
-   * leaves the animal alone then, and picks it up from the view afterwards.
-   */
-  const viewDrivesPosition = (): boolean => Boolean(
-    capture || options.flier || romancing || homeTrip || pursuit || sleepSpot || travelRoute || options.wandering === false,
-  )
-
-  /** Take the position, and the facing, the view-driven behaviours left behind. */
-  const adoptViewPosition = (): void => {
-    snapAnimalSim(sim, wrapper.position.x, wrapper.position.z)
-    const q = wrapper.quaternion
-    sim.heading = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z))
-    shown.x = wrapper.position.x
-    shown.z = wrapper.position.z
-    positionOwnedByView = false
-  }
-
   function tickSim(stepSeconds: number): void {
     if (sold) return
-    if (viewDrivesPosition()) {
-      positionOwnedByView = true
-      return
+    // A settle waiting for the walk in counts its time inside the plot, whatever else the animal is doing.
+    if (sim.pendingStage !== null) {
+      tickResidency(sim, stepSeconds, standingPoint(), gardenBoundsNow(), Boolean(options.flier), random)
+      playSimEvents()
     }
-    if (positionOwnedByView) adoptViewPosition()
-    // Only stage-two visitors browse both sides of the gate. Settled
-    // residents stay inside; the visitor's bounds change only after a
-    // route has carried it through the entrance.
-    if (canAnimalLeaveFarm(stage) && travelCooldown > 0) {
-      travelCooldown = Math.max(0, travelCooldown - stepSeconds)
-      if (travelCooldown === 0) beginTravel(travelSide === 'farm' ? 'leave' : 'enter')
-    }
-    if (travelRoute) {
-      // The gate walk is still driven by the view; it takes the position from here.
-      positionOwnedByView = true
-      return
-    }
+    // Open the step even when held, so a push on a held animal blends in over one tick only.
     beginSimStep(sim)
-    stepWander(sim, readWanderContext(), stepSeconds, random)
+    if (sim.held) return
+    if (sim.home) {
+      stepHomeTrip(sim, options.speed, stepSeconds)
+    } else if (sim.pursuit) {
+      stepPursuit(sim, options.speed, stepSeconds)
+    } else if (sim.sleepSpot) {
+      stepSleep(sim, options.speed, stepSeconds)
+    } else {
+      // Only stage-two visitors browse both sides of the gate: their rest counts down
+      // while they are free, and ends in a walk through the gate.
+      tickVisitCooldown(sim, stepSeconds, gardenBoundsNow(), Boolean(options.flier), sim.stage, random)
+      if (sim.visit.route) stepGateTravel(sim, options.speed * alarmScale(), stepSeconds, sim.stage, random)
+      else stepWander(sim, readWanderContext(), stepSeconds, random)
+    }
   }
 
   return {
@@ -944,51 +848,37 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get groundHeight(): number { return groundYCurrent },
     get footprintRadius(): number { return options.size * 0.5 * wrapper.scale.x },
     get renderPriority(): number {
-      return (focused ? 100 : 0) + (capture ? 90 : 0) + (romancing ? 80 : 0) + (stage >= 3 ? 10 : 0)
+      return (focused ? 100 : 0) + (capture ? 90 : 0) + (sim.stage >= 3 ? 10 : 0)
     },
-    get isRomancing(): boolean { return romancing },
     get isFlier(): boolean { return Boolean(options.flier) },
     sim,
     tickSim,
     get flightVisible(): boolean { return flightVisible },
-    get isAlarmed(): boolean { return alarmed },
-    get isSleeping(): boolean { return asleep },
-    get isAtDoor(): boolean { return atDoor },
-    get isGoingHome(): boolean { return homeTrip !== null },
-    nudge(dx: number, dz: number): void {
+    get isAlarmed(): boolean { return sim.alarmed },
+    get isSleeping(): boolean { return sim.asleep },
+    get isAtDoor(): boolean { return sim.atDoor },
+    get isGoingHome(): boolean { return sim.home !== null },
+    pushSim(dx: number, dz: number): void {
       if (options.flier || sold) return
-      wrapper.position.x += dx
-      wrapper.position.z += dz
-      // Previous and current shift together so the blend stays continuous.
-      shiftAnimalSim(sim, dx, dz)
-      shown.x = wrapper.position.x
-      shown.z = wrapper.position.z
+      pushAnimalSim(sim, dx, dz)
     },
     setHomeTrip(door, speedScale = 1): void {
       if (options.flier) return
-      homeTrip = door
-      homeTripSpeed = door && Number.isFinite(speedScale) && speedScale > 0 ? speedScale : 1
-      atDoor = false
-      if (loaded) loaded.mixer.timeScale = homeTripSpeed > 1 ? Math.min(3, homeTripSpeed) : alarmScale()
+      const scale = door && Number.isFinite(speedScale) && speedScale > 0 ? speedScale : 1
+      sim.home = door ? { x: door.x, z: door.z, speedScale: scale } : null
+      sim.atDoor = false
+      if (loaded) loaded.mixer.timeScale = scale > 1 ? Math.min(3, scale) : alarmScale()
     },
     setPursuit(next): void {
       if (options.flier) return
-      if (pursuit && !next) {
-        // Back to wandering: pick a fresh spot rather than the one from before the chase.
-        sim.paused = 0
-        sim.nextDecision = 0
-        if (loaded) loaded.mixer.timeScale = alarmScale()
-      }
-      pursuit = next
+      setSimPursuit(sim, next)
     },
     placeAt(x: number, z: number): void {
       if (options.flier) return
-      travelRoute = null
+      sim.visit.route = null
       wrapper.position.x = x
       wrapper.position.z = z
       snapAnimalSim(sim, x, z)
-      shown.x = x
-      shown.z = z
       if (options.groundSampler) {
         groundYCurrent = options.groundY + options.groundSampler(x, z)
         wrapper.position.y = groundYCurrent
@@ -999,16 +889,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     },
     setSleepSpot(spot: SleepSpot | null): void {
       if (options.flier) return
-      sleepSpot = spot
-      if (!spot) asleep = false
+      sim.sleepSpot = spot
+      if (!spot) sim.asleep = false
     },
     setAlarmed(next: boolean): void {
-      if (options.flier || alarmed === next) return
-      alarmed = next
-      if (next) {
-        sim.paused = 0
-        sim.nextDecision = 0
-      }
+      if (options.flier || sim.alarmed === next) return
+      setSimAlarmed(sim, next)
+      shownAlarmed = next
       if (loaded) loaded.mixer.timeScale = next ? 2.2 : 1
     },
     setFlightPose(pose: FlightPose): void {
@@ -1025,7 +912,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isLoose(): boolean { return Boolean(options.isLoose?.()) },
     get animationPhase(): number { return stableAnimationPhase },
     setDetailedVisible(visible: boolean): void {
-      detailActive = visible && !sold && stage > 0
+      detailActive = visible && !sold && sim.stage > 0
       if (detailActive) {
         if (loaded && modelRoot && modelRoot.parent !== posePivot) posePivot.add(modelRoot)
         void ensureDetailedModel()
@@ -1043,10 +930,10 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       wrapper.visible = detailActive && Boolean(loaded || placeholderLoaded)
     },
     get canSell(): boolean {
-      return canSellAnimal({ sold, captured, capturing: capture !== null || pendingCapture, stage, appearance })
+      return canSellAnimal({ sold, captured, capturing: capture !== null || pendingCapture, stage: sim.stage, appearance })
     },
     sell(): boolean {
-      if (!canSellAnimal({ sold, captured, capturing: capture !== null, stage, appearance })) return false
+      if (!canSellAnimal({ sold, captured, capturing: capture !== null, stage: sim.stage, appearance })) return false
       sold = true
       focused = false
       wrapper.visible = false
@@ -1055,29 +942,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get gltf(): AnimalGLTF | null { return gltf },
     eyeColor: options.eyeColor ?? BODY_MATERIALS[options.id].color.getHexString(),
     get heartEyeCount(): number { return countHeartEyes(modelRoot ?? posePivot) },
-    setGrowth(scale: number): void { wrapper.scale.setScalar(Math.max(0.1, Math.min(1, scale))) },
-    setRomancing(active: boolean, partnerPosition?: THREE.Vector3): void {
-      if (active) {
-        if (partnerPosition) romanceTarget.copy(partnerPosition)
-        if (romancing) return
-        romancing = true
-        focused = true
-        romanceSeconds = 0
-        setAnimation('IDLE', 0.16)
-        sim.paused = Number.POSITIVE_INFINITY
-        sim.nextDecision = Number.POSITIVE_INFINITY
-        return
-      }
-      if (!romancing) return
-      romancing = false
-      focused = capture !== null
-      sim.paused = 0
-      posePivot.position.copy(pivotBasePosition)
-      posePivot.rotation.copy(pivotBaseRotation)
-      sim.nextDecision = 0
-      // The romance walk moved the wrapper; pick the next spot from where it stands.
-      adoptViewPosition()
-      chooseTarget()
+    setGrowth(scale: number): void {
+      wrapper.scale.setScalar(Math.max(0.1, Math.min(1, scale)))
+      sim.radius = options.size * BODY_RADIUS_SHARE * wrapper.scale.x
     },
     setAnimation,
     setAppearance,
@@ -1086,31 +953,30 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isCapturing(): boolean { return pendingCapture || Boolean(capture && !capture.finished) },
     get captureProgress(): number { return lastCaptureProgress },
     get appearance(): AnimalAppearance { return appearance },
-    get isAtFarm(): boolean { return travelSide === 'farm' && travelRoute === null },
-    get isResidencyPending(): boolean { return pendingResidentStage !== null },
-    get stage(): AnimalStage { return stage },
+    get isAtFarm(): boolean { return sim.visit.side === 'farm' && sim.visit.route === null },
+    get isResidencyPending(): boolean { return sim.pendingStage !== null },
+    get stage(): AnimalStage { return sim.stage },
     set stage(next: AnimalStage) { setStage(next) },
     update(deltaSeconds, simAlpha): void {
       if (sold) return
       const delta = Math.min(deltaSeconds, 0.05)
       elapsed += delta
-      // Nothing is ticking this animal's sim (a debug stepper, a test): step it here, once.
-      if (simAlpha === undefined) tickSim(delta)
-      if (viewDrivesPosition()) positionOwnedByView = true
-      if (pendingResidentStage !== null) {
-        if (insideFarmPlot()) {
-          farmDwellSeconds += delta
-          if (farmDwellSeconds >= RESIDENT_DWELL_SECONDS) {
-            const next = pendingResidentStage
-            pendingResidentStage = null
-            farmDwellSeconds = 0
-            setStage(next)
-          }
-        } else {
-          // Still out on the meadow: the clock restarts, so the animal has to
-          // spend the dwell time actually inside before residence sticks.
-          farmDwellSeconds = 0
-        }
+      // A hunt can panic or calm the sim record, or end a pursuit, between frames: let the clips follow.
+      if (sim.alarmed !== shownAlarmed) {
+        shownAlarmed = sim.alarmed
+        if (loaded) loaded.mixer.timeScale = shownAlarmed ? 2.2 : 1
+      }
+      if (sim.pursuit) wasPursuing = true
+      else if (wasPursuing) {
+        wasPursuing = false
+        if (loaded) loaded.mixer.timeScale = alarmScale()
+      }
+      // Show the sim's position, blended between the last two ticks. A flier's is placed by
+      // its pose, and a held animal (the reveal) has a record that stands still.
+      if (!options.flier) {
+        interpolateAnimalSim(sim, simAlpha, blended)
+        wrapper.position.x = blended.x
+        wrapper.position.z = blended.z
       }
       if (capture) {
         if (!loaded && !placeholderLoaded && !modelLoading) void ensureDetailedModel()
@@ -1129,7 +995,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           capture = null
           captureVerticalRange = null
           lastCaptureProgress = 1
-          focused = romancing
+          focused = false
+          releaseHold()
           posePivot.position.copy(pivotBasePosition)
           posePivot.rotation.copy(pivotBaseRotation)
         }
@@ -1143,157 +1010,38 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         return
       }
 
-      if (romancing) {
-        romanceSeconds += delta
-        romanceDirection.set(romanceTarget.x - wrapper.position.x, 0, romanceTarget.z - wrapper.position.z)
-        const distance = romanceDirection.length()
-        if (distance > 1.35) {
-          romanceDirection.normalize()
-          wrapper.position.addScaledVector(romanceDirection, Math.min(options.speed * 0.45 * delta, distance - 1.35))
-        }
-        if (romanceDirection.lengthSq() > 1e-8) {
-          const facing = facingScratch.setFromUnitVectors(modelForward, romanceDirection.normalize())
-          wrapper.quaternion.slerp(facing, 1 - Math.exp(-4 * delta))
-        }
-        if (options.groundSampler) {
-          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
-          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
-          wrapper.position.y = groundYCurrent
-        }
-        posePivot.rotation.y = pivotBaseRotation.y + Math.sin(romanceSeconds * 7.5) * 0.3
-        posePivot.position.y = pivotBasePosition.y + Math.sin(romanceSeconds * 15) * 0.11
-        if (detailActive) loaded?.mixer.update(delta)
-        return
-      }
-      if (homeTrip) {
-        direction.set(homeTrip.x - wrapper.position.x, 0, homeTrip.z - wrapper.position.z)
-        const distance = direction.length()
-        if (distance > 0.25) {
-          direction.normalize()
-          const facing = facingScratch.setFromUnitVectors(modelForward, direction)
-          wrapper.quaternion.slerp(facing, 1 - Math.exp(-4.5 * delta))
-          wrapper.position.addScaledVector(direction, Math.min(options.speed * homeTripSpeed * delta, distance))
-          setAnimation('WALK', 0.24)
-        } else {
-          atDoor = true
-          setAnimation('IDLE', 0.3)
-        }
-        if (detailActive) loaded?.mixer.update(delta)
-        if (options.groundSampler) {
-          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
-          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
-          wrapper.position.y = groundYCurrent
-        }
-        wrapper.updateMatrixWorld(true)
-        return
-      }
-      if (pursuit) {
-        direction.set(pursuit.x - wrapper.position.x, 0, pursuit.z - wrapper.position.z)
-        const distance = direction.length()
-        const speed = options.speed * pursuit.speedScale
-        if (speed > 0 && distance > 0.05) {
-          direction.normalize()
-          const facing = facingScratch.setFromUnitVectors(modelForward, direction)
-          // A lunge snaps round to face the prey; a stalk turns smoothly.
-          wrapper.quaternion.slerp(facing, 1 - Math.exp(-(pursuit.speedScale > 3 ? 14 : 5) * delta))
-          wrapper.position.addScaledVector(direction, Math.min(speed * delta, distance))
-          setAnimation('WALK', 0.18)
-          // Creeping is a slow ripple; a lunge whips the body through it.
-          if (loaded) loaded.mixer.timeScale = Math.max(0.6, pursuit.speedScale * 0.55)
-        } else {
-          setAnimation('IDLE', 0.3)
-          if (loaded) loaded.mixer.timeScale = 0.6
-        }
-        if (detailActive) loaded?.mixer.update(delta)
-        if (options.groundSampler) {
-          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
-          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
-          wrapper.position.y = groundYCurrent
-        }
-        wrapper.updateMatrixWorld(true)
-        return
-      }
-      if (sleepSpot) {
-        direction.set(sleepSpot.x - wrapper.position.x, 0, sleepSpot.z - wrapper.position.z)
-        const distance = direction.length()
-        if (distance > 0.12) {
-          // Walk to the bed. A sleeper that was nudged away gets up and goes back.
-          asleep = false
-          direction.normalize()
-          sleepFacing.setFromUnitVectors(modelForward, direction)
-          wrapper.quaternion.slerp(sleepFacing, 1 - Math.exp(-4.5 * delta))
-          wrapper.position.addScaledVector(direction, Math.min(options.speed * 0.8 * delta, distance))
-          setAnimation('WALK', 0.24)
-        } else {
-          asleep = true
-          sleepFacing.setFromAxisAngle(sleepYaw, sleepSpot.heading)
-          wrapper.quaternion.slerp(sleepFacing, 1 - Math.exp(-3 * delta))
-          setAnimation(hasSleepClip() ? 'SLEEP' : 'IDLE', 0.6)
-        }
-        if (loaded) loaded.mixer.timeScale = asleep ? (hasSleepClip() ? 0.5 : 0.3) : 1
-        applySleepPose(delta)
-        if (detailActive) loaded?.mixer.update(delta)
-        if (options.groundSampler) {
-          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
-          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
-          wrapper.position.y = groundYCurrent
-        }
-        wrapper.updateMatrixWorld(true)
-        return
-      }
-      if (sleepBlend > 0) {
+      // A bed beats a gate walk and wandering, but a walk to a door or a pursuit beats the bed.
+      const sleeping = Boolean(sim.sleepSpot) && !sim.home && !sim.pursuit
+      if (sleepBlend > 0 && !sleeping && !sim.home && !sim.pursuit) {
         // Waking: stand back up before wandering off.
-        if (loaded) loaded.mixer.timeScale = alarmed ? 2.2 : 1
+        if (loaded) loaded.mixer.timeScale = sim.alarmed ? 2.2 : 1
         applySleepPose(delta)
       }
 
-      if (options.wandering === false) {
-        if (detailActive) loaded?.mixer.update(delta)
-        return
+      // Wandering, the walks, the bed and the hunts are the sim's (tickSim); the view has
+      // blended the last two ticks above, and now turns to face the way it is going and picks the clip.
+      // A hunt or a visitor's walk steers by pursuit: a lunge snaps round to face
+      // the prey, a stalk turns smoothly, and creeping is a slow ripple of the body.
+      const pursuit = sim.home ? null : sim.pursuit
+      if (sim.motion === 'walk') {
+        facingScratch.setFromAxisAngle(upAxis, sim.heading)
+        const turnRate = pursuit ? (pursuit.speedScale > 3 ? 14 : 5) : 4.5
+        wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-turnRate * delta))
+        setAnimation('WALK', pursuit ? 0.18 : 0.24)
+        if (pursuit && loaded) loaded.mixer.timeScale = Math.max(0.6, pursuit.speedScale * 0.55)
+      } else if (sim.motion === 'sleep') {
+        // Lying in bed: turn to the bed's heading, slowly. There is no sleep clip for most
+        // species: the model keeps its IDLE pose, slowed, and the pivot is squashed into a crouch.
+        facingScratch.setFromAxisAngle(upAxis, sim.heading)
+        wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-3 * delta))
+        setAnimation(hasSleepClip() ? 'SLEEP' : 'IDLE', 0.6)
+      } else if (sim.motion === 'idle') {
+        setAnimation('IDLE', pursuit ? 0.3 : 0.28)
+        if (pursuit && loaded) loaded.mixer.timeScale = 0.6
       }
-
-      if (travelRoute) {
-        positionOwnedByView = true
-        const previousPosition = wrapper.position.clone()
-        const step = advanceAnimalTravel(
-          { x: wrapper.position.x, z: wrapper.position.z },
-          travelRoute,
-          options.speed * alarmScale() * delta,
-        )
-        wrapper.position.set(step.position.x, wrapper.position.y, step.position.z)
-        direction.set(step.position.x - previousPosition.x, 0, step.position.z - previousPosition.z)
-        if (direction.lengthSq() > 1e-8) {
-          direction.normalize()
-          const targetFacing = facingScratch.setFromUnitVectors(modelForward, direction)
-          wrapper.quaternion.slerp(targetFacing, 1 - Math.exp(-4.5 * delta))
-          setAnimation('WALK', 0.24)
-        }
-        travelRoute = step.route
-        if (step.completed) {
-          const completedDirection = travelDirection
-          travelSide = completedDirection === 'leave' ? 'carnival' : 'farm'
-          travelDirection = null
-          travelCooldown = canAnimalLeaveFarm(stage) ? visitCooldown(travelSide) : 0
-          sim.targetX = wrapper.position.x
-          sim.targetZ = wrapper.position.z
-          setAnimation('IDLE', 0.22)
-        }
-      } else {
-        // Wandering and walking are the sim's (tickSim); the view blends the
-        // last two ticks, turns to face the way it is going and picks the clip.
-        if (positionOwnedByView) adoptViewPosition()
-        interpolateAnimalSim(sim, simAlpha ?? 1, blended)
-        wrapper.position.x = blended.x
-        wrapper.position.z = blended.z
-        shown.x = blended.x
-        shown.z = blended.z
-        if (sim.motion === 'walk') {
-          facingScratch.setFromAxisAngle(upAxis, sim.heading)
-          wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-4.5 * delta))
-          setAnimation('WALK', 0.24)
-        } else if (sim.motion === 'idle') {
-          setAnimation('IDLE', 0.28)
-        }
+      if (sleeping) {
+        if (loaded) loaded.mixer.timeScale = sim.asleep ? (hasSleepClip() ? 0.5 : 0.3) : 1
+        applySleepPose(delta)
       }
 
       if (detailActive) loaded?.mixer.update(delta)

@@ -133,7 +133,7 @@ test('interpolation blends previous to current and clamps alpha', () => {
   assert.deepEqual(out, { x: 0, z: 0 })
 })
 
-test('beginSimStep, shift and snap keep the blend continuous', () => {
+test('beginSimStep, push and snap keep the blend continuous', () => {
   const record = sim.createAnimalSimRecord({ x: 0, z: 0, motion: 'walk' })
   record.x = 1
   sim.beginSimStep(record)
@@ -141,10 +141,32 @@ test('beginSimStep, shift and snap keep the blend continuous', () => {
   record.x = 2
   const out = { x: 0, z: 0 }
   const before = sim.interpolateAnimalSim(record, 0.5, out).x
-  sim.shiftAnimalSim(record, 0.3, 0)
-  assert.ok(Math.abs(sim.interpolateAnimalSim(record, 0.5, out).x - (before + 0.3)) < 1e-12)
+  // A collision push moves only the current tick, so the correction is blended in over the tick.
+  sim.pushAnimalSim(record, 0.3, 0)
+  assert.equal(record.prevX, 1)
+  assert.ok(Math.abs(sim.interpolateAnimalSim(record, 0.5, out).x - (before + 0.15)) < 1e-12)
+  assert.ok(Math.abs(sim.interpolateAnimalSim(record, 1, out).x - 2.3) < 1e-12)
+  // The next tick opens from where the push left it: no jump.
+  sim.beginSimStep(record)
+  assert.ok(Math.abs(sim.interpolateAnimalSim(record, 0, out).x - 2.3) < 1e-12)
   sim.snapAnimalSim(record, 9, 9)
   assert.equal(sim.interpolateAnimalSim(record, 0.5, out).x, 9)
+})
+
+test('holding an animal stops it where it is drawn and the sim leaves it alone until released', () => {
+  const record = sim.createAnimalSimRecord({ x: 0, z: 0, motion: 'walk' })
+  record.x = 1
+  record.paused = 3
+  record.nextDecision = 2
+  const out = { x: 0, z: 0 }
+  sim.holdAnimalSim(record, 0.4, 0.1)
+  assert.equal(record.held, true)
+  assert.equal(record.motion, 'idle')
+  assert.equal(record.paused, 0)
+  assert.equal(record.nextDecision, 0)
+  for (const alpha of [0, 0.5, 1]) assert.deepEqual(sim.interpolateAnimalSim(record, alpha, out), { x: 0.4, z: 0.1 }, 'no drift across the blend')
+  assert.equal(sim.createAnimalSimRecord({ x: 0, z: 0, motion: 'walk', held: true }).held, true)
+  assert.equal(sim.createAnimalSimRecord({ x: 0, z: 0, motion: 'walk' }).held, false)
 })
 
 test('a 60 Hz display shows a 15 Hz walk with no jumps bigger than a frame of travel', () => {

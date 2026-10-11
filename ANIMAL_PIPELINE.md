@@ -499,9 +499,11 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 | `flier: true` on the catalog entry | `animal-catalog.ts` (passed through `getAnimalSceneOptions`) |
 | Who eats whom, the prey floor, the eaten tally | `PREY_OF`, `PREY_FLOOR`, `createPredationLedger` in `src/game/predator.ts` |
 | The owl's flight and hunt state machine | `stepOwl` in `predator.ts` (pure, tested in `tests/predator.test.mjs`) |
-| Applying flight, panicking prey | `src/scene/owl-hunt.ts` |
+| Stepping the owls on the sim tick, panicking prey, `caught` / `popped` events | `createOwlSim` in `src/game/animal-hunt.ts` (pure, tested in `tests/animal-hunt.test.mjs`) |
+| Showing flight: blending the last two ticks, the perch facing, the shadow | `src/scene/owl-hunt.ts`, via `BalloonAnimal.setFlightPose` |
 | A ground hunter's stalk-and-lunge state machine | `stepGroundHunter` in `src/game/ground-hunt.ts` (pure, tested in `tests/tall-grass-animals.test.mjs`) |
-| Steering a ground hunter, panicking prey on the lunge | `src/scene/snake-hunt.ts`, via `BalloonAnimal.setPursuit` |
+| Stepping the snakes on the sim tick, steering them and freezing prey on the lunge, the strike die | `createSnakeSim` in `src/game/animal-hunt.ts`, writing `AnimalSimRecord.pursuit` (the view just draws it) |
+| Playing a catch, an escape, an owl's deflation | `playHuntEvents` in `src/scene/predation.ts` |
 | The pop and its clean-up | `src/game/pop-animation.ts` (timeline), `src/scene/pop-burst.ts` (meshes) |
 | The roost | the `OAK roost` node of `public/assets/props/oak.glb`, read by `GardenProps.roosts()` |
 
