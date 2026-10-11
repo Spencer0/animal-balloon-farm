@@ -1,10 +1,52 @@
 {
-  "calibratedOn": "Windows 10, Chrome headless with SwiftShader, 2026-10-08. Local p95 work: shovel 14-24ms, dig 15-26ms, plant 10-16ms, expand 13-72ms, crowd 13-14ms. CI (ubuntu, SwiftShader) p95 work: shovel 16ms, dig 17ms, plant 19ms, expand 11ms, crowd 11ms, at ~0.6-0.7 FPS, so a 60s sampling cap yields ~40 frames.",
+  "calibratedOn": "Windows 10, Chrome headless with SwiftShader, 2026-10-08. Local p95 work: shovel 14-24ms, dig 15-26ms, plant 10-16ms, expand 13-72ms, crowd 13-14ms. CI (ubuntu, SwiftShader) p95 work: shovel 16ms, dig 17ms, plant 19ms, expand 11ms, crowd 11ms, at ~0.6-0.7 FPS, so a 60s sampling cap yields ~40 frames. Draw-call and triangle budgets: measured in CI run 38099574363 (renderSnapshot, shadows forced) plus 15%, rounded up. Timing budgets are unchanged; plant and the crowd floor are judged on the median of 3 runs.",
   "scenarios": {
-    "shovel": { "minSamples": 30, "maxP95WorkMs": 40 },
-    "dig": { "minSamples": 30, "maxP95WorkMs": 40 },
-    "plant": { "minSamples": 30, "maxP95WorkMs": 30 },
-    "expand": { "minSamples": 30, "maxP95WorkMs": 60 },
-    "crowd-ramp": { "minSamples": 30, "maxP95WorkMs": 30 }
+    "shovel": {
+      "minSamples": 30,
+      "maxP95WorkMs": 40,
+      "runs": 1,
+      "maxRenderCalls": 103,
+      "maxTriangles": 478000
+    },
+    "dig": {
+      "minSamples": 30,
+      "maxP95WorkMs": 40,
+      "runs": 1,
+      "maxRenderCalls": 103,
+      "maxTriangles": 494000
+    },
+    "plant": {
+      "minSamples": 30,
+      "maxP95WorkMs": 30,
+      "runs": 3,
+      "maxRenderCalls": 122,
+      "maxTriangles": 521000
+    },
+    "expand": {
+      "minSamples": 30,
+      "maxP95WorkMs": 60,
+      "runs": 1,
+      "maxRenderCalls": 122,
+      "maxTriangles": 529000
+    },
+    "crowd-ramp": {
+      "minSamples": 30,
+      "maxP95WorkMs": 30,
+      "runs": 3,
+      "steps": {
+        "10": {
+          "maxRenderCalls": 122,
+          "maxTriangles": 529000
+        },
+        "30": {
+          "maxRenderCalls": 643,
+          "maxTriangles": 1053000
+        },
+        "50": {
+          "maxRenderCalls": 1102,
+          "maxTriangles": 1469000
+        }
+      }
+    }
   }
 }

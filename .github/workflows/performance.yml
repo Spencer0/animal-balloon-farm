@@ -3,9 +3,13 @@ name: Performance gate
 # One command, same as on a laptop: `npm run gate` runs the unit tests, the
 # production no-test-code check, and the browser stress budgets. Keep this
 # file thin so local and CI results cannot drift apart.
+# Runs once per pull request (pull_request) and once per merge to main (push to
+# main, which deploys to Pages). Plain branch pushes do not run it: a PR already
+# runs on every push to its branch, so running on both doubled every check.
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +20,9 @@ jobs:
     # Pinned so the Ubuntu 26 migration (announced for October 19, 2026)
     # cannot change Chrome or system libraries under this gate unannounced.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # The gate repeats the slow scenarios (median of 3) and a slow runner can
+    # stretch each run, so 25 minutes was too tight.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
         with:
@@ -34,7 +40,10 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: stable
+          # Pinned, not "stable": a Chrome release changes the renderer and
+          # the frame timings under this gate with no code change. Bump it on
+          # purpose, and recalibrate perf/budgets.json when you do.
+          chrome-version: 155.0.8059.39
           install-dependencies: true
 
       - name: Run the gate
