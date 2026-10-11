@@ -59,6 +59,7 @@ import { createPlayerDomPanel } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
 import { createPropCard } from './ui/prop-card'
+import { warmAnimalLooks } from './animals/animal-warmup'
 import { createSellBurst, warmSellBursts, type SellBurst } from './ui/sell-burst'
 import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
@@ -1693,11 +1694,22 @@ function frame(now: number): void {
 // the first time their programs exist.
 await loading.setStage('shaders')
 try {
-  await warmSellBursts(scene, async () => {
+  const drawWarmScene = async (): Promise<void> => {
+    // The sun's shadow map only redraws on request; ask, so the casters' depth programs are built too.
+    shadowRefresh.forceNext()
     await precompile(renderer, scene, camera)
     // WebGL finishes linking on the first draw, so draw once (WebGPU's pipelines are built above).
     if (renderBackend === 'webgl') renderer.render(scene, camera)
+  }
+  const cowOptions = getAnimalSceneOptions(gameCanvas, camera).find((entry) => entry.id === 'cow')
+  const warmupRoot = new THREE.Group()
+  warmupRoot.name = 'Animal look warm-up (parked, hidden)'
+  scene.add(warmupRoot)
+  await warmSellBursts(scene, async () => {
+    if (!cowOptions) return drawWarmScene()
+    await warmAnimalLooks(warmupRoot, cowOptions, drawWarmScene)
   })
+  warmupRoot.visible = false
 } catch (error) {
   // A WebGPU device that starts but cannot build the farm's pipelines (a driver
   // or browser mismatch) would leave a dead canvas; restart the page on WebGL.
