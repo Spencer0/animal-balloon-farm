@@ -439,7 +439,7 @@ const { pickAnimal, refreshAnimalVisibility, carnivalSpawnFor, clearCrowdFixture
 })
 await Promise.all(progress.all()
   .filter((record) => !savedIndoors.has(record.id))
-  .map((record) => createAnimalInstance(record, savedPlaces.get(record.id))))
+  .map((record) => createAnimalInstance(record, savedPlaces.get(record.id), true)))
   const wallet = createWallet(STARTING_COINS)
 /** Tools and land the shop has sold. Farmer level decides what it will sell next. */
 const upgrades = createUpgradeLedger()

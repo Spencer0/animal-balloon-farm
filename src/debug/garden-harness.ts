@@ -729,7 +729,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       deps.resetVisibilityClock()
       animalNames.clear()
       farmHomes.clear()
-      void Promise.all(progress.all().map((record) => createAnimalInstance(record))).then((created) => {
+      void Promise.all(progress.all().map((record) => createAnimalInstance(record, undefined, true))).then((created) => {
         for (const animal of created) {
           farmHomes.set(animal.instanceId, { parent: animal.root.parent ?? fairground.root, position: animal.root.position.clone() })
         }

@@ -182,7 +182,8 @@ export function createHerd(deps: HerdDeps) {
   /**
    * Build the model for a tracked animal. `emerging` is for an animal stepping out
    * of its house: it is already a resident, so it appears in its own colours at
-   * the door instead of replaying the capture reveal.
+   * the door instead of replaying the capture reveal. A farm restored from a save
+   * does the same for every resident, so loading never replays the flourish.
    */
   function createAnimalInstance(record: AnimalRecord, position?: { x: number; z: number }, emerging = false): Promise<BalloonAnimal> {
     const existing = animalById.get(record.id)

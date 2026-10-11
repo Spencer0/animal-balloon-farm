@@ -67,3 +67,10 @@ test('sale prices are fixed by plant and animal species', () => {
     mole: 18,
   })
 })
+
+test('a restored resident (built captured, standard, stage 3+) is sellable with no reveal pending', () => {
+  const restored = { sold: false, captured: true, capturing: false, stage: 3, appearance: 'standard' }
+  assert.equal(sales.canSellAnimal(restored), true)
+  // The old restore path built a wild stage-0 animal, then promoted it, which started a reveal.
+  assert.equal(sales.canSellAnimal({ ...restored, captured: false, appearance: 'wild' }), false)
+})
