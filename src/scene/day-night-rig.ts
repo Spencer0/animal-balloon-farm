@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { daylightAmount, phaseOf, sunElevation, type DayPhase } from '../game/day-night'
+import { skyBlendOf, sunElevation } from '../game/day-night'
 import type { FarmRenderer, SkyColors } from '../render/backend'
 
 /**
@@ -71,6 +71,7 @@ const NIGHT: SkyKeyframe = {
 
 const scratchA = new THREE.Color()
 const scratchB = new THREE.Color()
+const scratchC = new THREE.Color()
 
 function lerpColor(target: THREE.Color, from: string, to: string, amount: number): void {
   scratchA.set(from)
@@ -78,15 +79,19 @@ function lerpColor(target: THREE.Color, from: string, to: string, amount: number
   target.copy(scratchA).lerp(scratchB, amount)
 }
 
-function blendKeyframes(daylight: number, phase: DayPhase): { lower: SkyKeyframe; upper: SkyKeyframe; amount: number } {
-  if (phase === 'night') return { lower: NIGHT, upper: NIGHT, amount: 0 }
-  if (phase === 'dawn' || phase === 'dusk') return { lower: GOLDEN, upper: DAY, amount: THREE.MathUtils.clamp(daylight * 1.4, 0, 1) }
-  if (daylight < 0.35) return { lower: GOLDEN, upper: DAY, amount: daylight / 0.35 }
-  return { lower: DAY, upper: DAY, amount: 0 }
-}
-
 function lerpField(lower: number, upper: number, amount: number): number {
   return lower + (upper - lower) * amount
+}
+
+/** golden -> day by `day`, then toward night by `night`. */
+function blendColor(target: THREE.Color, key: (frame: SkyKeyframe) => string, day: number, night: number): void {
+  lerpColor(target, key(GOLDEN), key(DAY), day)
+  scratchC.set(key(NIGHT))
+  target.lerp(scratchC, night)
+}
+
+function blendField(key: (frame: SkyKeyframe) => number, day: number, night: number): number {
+  return lerpField(lerpField(key(GOLDEN), key(DAY), day), key(NIGHT), night)
 }
 
 export interface DayNightRig {
@@ -106,28 +111,24 @@ export function createDayNightRig(
 
   return {
     update(timeOfDay: number): void {
-      const daylight = daylightAmount(timeOfDay)
-      const phase = phaseOf(timeOfDay)
-      const frames = blendKeyframes(daylight, phase)
-      const lower = frames.lower
-      const upper = frames.upper
-      const amount = frames.amount
-      lerpColor(skyColors.horizon, lower.horizon, upper.horizon, amount)
-      lerpColor(skyColors.middle, lower.middle, upper.middle, amount)
-      lerpColor(skyColors.zenith, lower.zenith, upper.zenith, amount)
-      if (background) lerpColor(background, lower.fog, upper.fog, amount)
-      if (fog) lerpColor(fog.color, lower.fog, upper.fog, amount)
-      lerpColor(lights.sun.color, lower.sun, upper.sun, amount)
-      lights.sun.intensity = lerpField(lower.sunIntensity, upper.sunIntensity, amount)
-      lights.ambient.intensity = lerpField(lower.ambientIntensity, upper.ambientIntensity, amount)
-      lights.fill.intensity = lerpField(lower.fillIntensity, upper.fillIntensity, amount)
-      lights.rim.intensity = lerpField(lower.rimIntensity, upper.rimIntensity, amount)
-      renderer.toneMappingExposure = lerpField(lower.exposure, upper.exposure, amount)
+      const { day, night } = skyBlendOf(timeOfDay)
+      blendColor(skyColors.horizon, (f) => f.horizon, day, night)
+      blendColor(skyColors.middle, (f) => f.middle, day, night)
+      blendColor(skyColors.zenith, (f) => f.zenith, day, night)
+      if (background) blendColor(background, (f) => f.fog, day, night)
+      if (fog) blendColor(fog.color, (f) => f.fog, day, night)
+      blendColor(lights.sun.color, (f) => f.sun, day, night)
+      lights.sun.intensity = blendField((f) => f.sunIntensity, day, night)
+      lights.ambient.intensity = blendField((f) => f.ambientIntensity, day, night)
+      lights.fill.intensity = blendField((f) => f.fillIntensity, day, night)
+      lights.rim.intensity = blendField((f) => f.rimIntensity, day, night)
+      renderer.toneMappingExposure = blendField((f) => f.exposure, day, night)
       const elevation = sunElevation(timeOfDay)
       const angle = (timeOfDay - 0.25) * Math.PI * 2
       const radius = baseSunPosition.length()
       sunDirection.set(Math.cos(angle) * radius, Math.max(elevation, -0.35) * radius, baseSunPosition.z)
-      if (sunDirection.y < 4 && phase === 'night') sunDirection.y = 18
+      // Ease the sun down into the fixed moon height instead of snapping at night.
+      sunDirection.y = lerpField(sunDirection.y, 18, night)
       lights.sun.position.copy(sunDirection)
     },
   }
