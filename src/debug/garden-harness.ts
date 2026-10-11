@@ -122,6 +122,8 @@ interface GardenDebugHarness {
   growPlants(steps?: number, secondsPerStep?: number): PlantHarnessResult
   /** Run the progression tick `steps` times, optionally with a time jump. */
   advance(steps?: number, secondsPerStep?: number): AnimalConditionReport
+  /** Tick every animal model without drawing, so a capture flourish finishes in a slow headless browser. */
+  fastForwardAnimals(seconds: number, secondsPerStep?: number): void
   /** Forget everything: no grass, no pond, every animal back to the carnival. */
   resetConditions(): void
   /** Where each animal is, and what it looks like right now. */
@@ -674,6 +676,10 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
         handleAnimalLifeEvents(events)
       }
       return reportConditions()
+    },
+    fastForwardAnimals: (seconds, secondsPerStep = 0.05) => {
+      const steps = Math.max(0, Math.ceil(seconds / secondsPerStep))
+      for (let step = 0; step < steps; step += 1) animals.forEach((animal) => animal.update(secondsPerStep))
     },
     resetConditions: () => {
       gardenTools?.clearGrass()

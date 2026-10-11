@@ -58,7 +58,7 @@ import { createPlayerDomPanel } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card'
 import { createPropCard } from './ui/prop-card'
-import { createSellBurst, type SellBurst } from './ui/sell-burst'
+import { createSellBurst, warmSellBursts, type SellBurst } from './ui/sell-burst'
 import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
@@ -1665,6 +1665,12 @@ function frame(now: number): void {
   requestAnimationFrame(frame)
 }
 // WebGPU builds pipelines lazily, and the first draw of each stalls the frame.
-// Build the farm's up front so the menu opens smoothly.
-if (renderBackend === 'webgpu') await precompile(renderer, scene, camera)
+// Build the farm's up front so the menu opens smoothly. The sale farewell's
+// ring, tag and sparks ride along (on both backends), so the first sale is not
+// the first time their programs exist.
+await warmSellBursts(scene, async () => {
+  await precompile(renderer, scene, camera)
+  // WebGL finishes linking on the first draw, so draw once (WebGPU's pipelines are built above).
+  if (renderBackend === 'webgl') renderer.render(scene, camera)
+})
 requestAnimationFrame(frame)
