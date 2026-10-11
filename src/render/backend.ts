@@ -67,6 +67,14 @@ export interface WebGPUKit {
     kind: GroundVariationKindSpec,
     options: { bounds: GroundVariationBounds; localSpace: boolean },
   ): void
+  /** Node version of the heart-eye collapse in animals/animal-eyes.ts (`partAttribute` flags heart vertices). */
+  applyHeartEyes(material: THREE.Material, hearts: boolean, partAttribute: string): void
+  /** Node version of the capture paint reveal in animals/balloon-animal.ts. */
+  applyPaintReveal(
+    material: THREE.MeshStandardMaterial,
+    state: { progress: { value: number }; bottom: { value: number }; top: { value: number } },
+    wildColor: THREE.Color,
+  ): void
   createFilmPost(renderer: FarmRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, options: FilmPostOptions): FilmPost
   /** A prefiltered room environment for PBR materials. */
   createRoomEnvironment(renderer: FarmRenderer): { texture: THREE.Texture; dispose(): void }

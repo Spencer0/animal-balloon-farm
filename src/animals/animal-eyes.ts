@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { webgpuKit } from '../render/backend'
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 
 /**
@@ -146,6 +147,12 @@ export function createHeartEyeMaterials(): HeartEyeSet {
  * animal's eye mesh then shows its pupils and never its hearts.
  */
 export function installHeartEyeShader(material: THREE.Material, hearts: boolean): void {
+  material.customProgramCacheKey = () => 'balloon-heart-eyes-v1'
+  const nodeKit = webgpuKit()
+  if (nodeKit) {
+    nodeKit.applyHeartEyes(material, hearts, HEART_PART_ATTRIBUTE)
+    return
+  }
   const uniform = { value: hearts ? 1 : 0 }
   const previousCompile = material.onBeforeCompile
   material.onBeforeCompile = (shader, renderer) => {
@@ -158,7 +165,6 @@ uniform float uEyeHearts;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 transformed *= ${HEART_PART_ATTRIBUTE} > 0.5 ? uEyeHearts : 1.0 - uEyeHearts;`)
   }
-  material.customProgramCacheKey = () => 'balloon-heart-eyes-v1'
 }
 
 /**
