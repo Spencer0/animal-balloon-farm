@@ -1457,12 +1457,15 @@ function plantShadowKey(): number {
 
 /**
  * Logic that does not need per-frame smoothness runs on a fixed simulation clock
- * (see game/sim-clock.ts). Motion, animation, camera and water stay per frame, and
- * so do the hunts: they steer the owls and snakes as well as deciding catches.
+ * (see game/sim-clock.ts). Animal wander and walk movement is simulated on it too
+ * (game/animal-sim.ts) and drawn blended by simClock.alpha. Animation, camera and
+ * water stay per frame, and so do the hunts: they steer the owls and snakes as well as deciding catches.
  */
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
 
 function runSimTick(stepSeconds: number, nowSeconds: number): void {
+  // Wandering and walking are simulated here; the frame only blends the last two ticks.
+  for (const animal of animals) animal.tickSim(stepSeconds)
   updateSleepers()
   // The condition ladder runs after the animals have moved, so a settle
   // triggered this tick is applied against the farm as measured, which the
@@ -1541,7 +1544,8 @@ function frame(now: number): void {
   updateCameraTour(delta)
   const simSteps = simClock.advance(delta)
   for (let step = 0; step < simSteps; step += 1) runSimTick(simClock.stepSeconds, now / 1000)
-  animals.forEach((animal) => animal.update(delta))
+  const simAlpha = simClock.alpha
+  animals.forEach((animal) => animal.update(delta, simAlpha))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
   collideAnimals(now / 1000)
   if (!menu.isOpen && !salePanel.isOpen) {
