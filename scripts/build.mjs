@@ -48,7 +48,9 @@ const result = await build({
 // in CSS, a sibling `main-<hash>.css` reported via the JS output's `cssBundle`.
 const emitted = new Map()
 for (const [path, output] of Object.entries(result.metafile.outputs)) {
-  if (!output.entryPoint || !path.endsWith('.js')) continue
+  // Code splitting reports every dynamic-import chunk (the scenarios, the
+  // WebGPU kit) with an entryPoint too; only src/main.ts is the page's script.
+  if (output.entryPoint !== 'src/main.ts' || !path.endsWith('.js')) continue
   emitted.set('js', path.slice(path.lastIndexOf('/') + 1))
   if (output.cssBundle) emitted.set('css', output.cssBundle.slice(output.cssBundle.lastIndexOf('/') + 1))
 }
