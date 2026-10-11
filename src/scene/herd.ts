@@ -27,6 +27,24 @@ export interface HerdDeps {
 export function createHerd(deps: HerdDeps) {
   const { camera, gameCanvas, fairgroundRoot, gardenTerrain, activeGardenBounds, progress, isLoose, animals, animalById, animalNames, generatedAnimalNames, animalPopulationLimit, animalCreations, farmHomes, crowdFixtures } = deps
   const worldRaycaster = new THREE.Raycaster()
+  const animalNumber = (id: string): number => Number(id.replace(/^animal-/, '')) || 0
+
+  /**
+   * Where the rest of a visiting pack is: the position of the lowest-numbered
+   * pack member still on the grounds. The leader itself has nobody to follow.
+   */
+  function packAnchorFor(id: string): { x: number; z: number } | null {
+    const me = progress.animal(id)
+    if (!me || !me.packId || me.stage !== 1 || me.departing) return null
+    let leader: AnimalRecord | null = null
+    for (const other of progress.all()) {
+      if (other.packId !== me.packId || other.stage !== 1 || other.departing) continue
+      if (!leader || animalNumber(other.id) < animalNumber(leader.id)) leader = other
+    }
+    if (!leader || leader.id === id) return null
+    const model = animalById.get(leader.id)
+    return model ? { x: model.currentPosition.x, z: model.currentPosition.z } : null
+  }
   const worldPointer = new THREE.Vector2()
 
   function pickAnimal(clientX: number, clientY: number): BalloonAnimal | null {
@@ -173,6 +191,7 @@ export function createHerd(deps: HerdDeps) {
       captureOnClick: false,
       spawn: position ? [position.x, position.z] : carnivalSpawnFor(record.species),
       isLoose: () => isLoose(record.id),
+      getPackAnchor: () => packAnchorFor(record.id),
       getGardenBounds: activeGardenBounds,
     })
     animal.stage = record.stage

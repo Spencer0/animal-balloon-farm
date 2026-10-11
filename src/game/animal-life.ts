@@ -13,6 +13,28 @@ export interface SpeciesAnimalTuning {
   readonly babyDurationSeconds?: number
 }
 
+/** How many animals of a species turn up together, inclusive. */
+export interface PackSize {
+  readonly min: number
+  readonly max: number
+}
+
+/**
+ * Herd animals arrive as a small pack; loners and night hunters come alone.
+ * A species left out here always arrives singly.
+ */
+export const DEFAULT_PACK_SIZES: Readonly<Record<string, PackSize>> = {
+  cow: { min: 1, max: 2 },
+  sheep: { min: 2, max: 4 },
+  pig: { min: 1, max: 2 },
+  chicken: { min: 2, max: 3 },
+  duck: { min: 2, max: 4 },
+  goose: { min: 2, max: 3 },
+  mouse: { min: 2, max: 3 },
+  rat: { min: 2, max: 3 },
+  raccoon: { min: 1, max: 2 },
+}
+
 export interface AnimalLifeConfig {
   readonly visitDelaySeconds: number
   readonly enterFarmSeconds: number
@@ -31,14 +53,28 @@ export interface AnimalLifeConfig {
   readonly maxBreedingPairs: number
   readonly babyDurationSeconds: number
   readonly maxNewVisitorsPerTick: number
+  /**
+   * Seconds before a species can be seen again after one of its animals was sold
+   * or lost. Each cooldown is stretched by a random factor, so a sale never
+   * summons an instant replacement.
+   */
+  readonly replacementCooldownSeconds: number
+  /** Animals loose on the grounds at once on a bare plot, and the extra for each farm expansion. */
+  readonly groundsVisitorsBase: number
+  readonly groundsVisitorsPerLevel: number
+  /** Seconds a visitor whose farm is not ready browses the grounds before it wanders off. */
+  readonly visitStaySeconds: number
+  /** Seconds a leaving visitor takes to walk out of sight. */
+  readonly departSeconds: number
+  readonly packSizes: Readonly<Record<string, PackSize>>
   readonly adultScale: number
   readonly species?: Readonly<Record<string, SpeciesAnimalTuning>>
 }
 
 export const ANIMAL_LIFE_CONFIG: AnimalLifeConfig = {
-  visitDelaySeconds: 10,
-  enterFarmSeconds: 3,
-  arrivalIntervalSeconds: 24,
+  visitDelaySeconds: 22,
+  enterFarmSeconds: 8,
+  arrivalIntervalSeconds: 20,
   unhousedPerSpecies: OUTDOOR_LIMITS.perSpecies,
   houseCapacity: HOUSE_CAPACITY,
   maximumPopulation: 400,
@@ -46,8 +82,22 @@ export const ANIMAL_LIFE_CONFIG: AnimalLifeConfig = {
   maxBreedingPairs: 3,
   babyDurationSeconds: 60,
   maxNewVisitorsPerTick: 1,
+  replacementCooldownSeconds: 120,
+  groundsVisitorsBase: 4,
+  groundsVisitorsPerLevel: 2,
+  visitStaySeconds: 150,
+  departSeconds: 18,
+  packSizes: DEFAULT_PACK_SIZES,
   adultScale: 1,
 }
+
+/** Random stretch factors: no two waits, arrivals or visits come out the same. */
+const ARRIVAL_FACTOR = { min: 0.5, max: 1.8 } as const
+const DWELL_FACTOR = { min: 0.6, max: 2.2 } as const
+const COOLDOWN_FACTOR = { min: 0.75, max: 1.5 } as const
+const STAY_FACTOR = { min: 0.7, max: 1.6 } as const
+/** A pack's followers decide to step inside a few seconds after their leader. */
+const PACK_FOLLOW_SECONDS = 4
 
 export interface AnimalRecord {
   readonly id: string
@@ -71,11 +121,17 @@ export interface AnimalRecord {
   readonly helium: number
   /** True while a resident's home requirement is unmet and its helium is leaking. */
   readonly unsettled: boolean
+  /** True while a visitor that will not be staying is walking off the grounds. */
+  readonly departing: boolean
+  /** Animals that arrived together share a pack id; null for one that came alone. */
+  readonly packId: string | null
 }
 
 export interface AnimalLifeEvent {
-  readonly kind: 'arriveCarnival' | 'enterFarm' | 'settle' | 'fallInLove' | 'birth' | 'growUp' | 'unsettle' | 'resettle' | 'deflate'
+  readonly kind: 'arriveCarnival' | 'departCarnival' | 'enterFarm' | 'settle' | 'fallInLove' | 'birth' | 'growUp' | 'unsettle' | 'resettle' | 'deflate'
   readonly animalId?: string
+  /** For an arrival in a pack: the animal it came with. The leader has none. */
+  readonly leaderId?: string
   /** For a birth: the two parents. */
   readonly parentIds?: readonly string[]
   /** For a birth: the house the baby was born in. */
@@ -181,6 +237,14 @@ interface MutableAnimal {
   insideId: string | null
   helium: number
   unsettled: boolean
+  /** Seconds at stage 1 before it steps onto the farm, and at stage 2 before it settles. */
+  visitAfter: number
+  enterAfter: number
+  /** Seconds a visitor browses the grounds before giving up on a farm that does not suit it. */
+  stayLimit: number
+  /** Seconds left of its walk off the grounds, or null while it is staying. */
+  leaving: number | null
+  packId: string | null
 }
 
 export function createAnimalLife(speciesIds: readonly string[], options: AnimalLifeOptions = {}): AnimalLife {
@@ -195,6 +259,13 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
   /** Seconds each species has spent ready to breed since its last birth. */
   const breedElapsed = new Map<string, number>()
   let nextParent = 0
+  let nextPackId = 1
+  const random = options.random ?? Math.random
+  /** Seconds left before a species may arrive again, after one of its animals left for good. */
+  const cooldowns = new Map<string, number>()
+  const between = (range: { readonly min: number; readonly max: number }): number => range.min + random() * (range.max - range.min)
+  const rollArrivalWait = (): number => config.arrivalIntervalSeconds * between(ARRIVAL_FACTOR)
+  let arrivalWait = rollArrivalWait()
 
   function tuningFor(species: string): Required<SpeciesAnimalTuning> {
     return {
@@ -219,7 +290,13 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       insideId: null,
       helium: 1,
       unsettled: false,
+      visitAfter: 0,
+      enterAfter: 0,
+      stayLimit: Number.POSITIVE_INFINITY,
+      leaving: null,
+      packId: null,
     }
+    rollWaits(animal)
     animals.set(id, animal)
     return animal
   }
@@ -242,7 +319,24 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       adultScale: config.adultScale,
       helium: animal.helium,
       unsettled: animal.unsettled,
+      departing: animal.leaving !== null,
+      packId: animal.packId,
     }
+  }
+
+  /** Roll how long an animal lingers at the rung it has just reached. */
+  function rollWaits(animal: MutableAnimal): void {
+    const tuning = tuningFor(animal.species)
+    if (animal.stage === 1) {
+      animal.visitAfter = tuning.visitDelaySeconds * between(DWELL_FACTOR)
+      animal.stayLimit = config.visitStaySeconds * between(STAY_FACTOR)
+    } else if (animal.stage === 2) {
+      animal.enterAfter = tuning.enterFarmSeconds * between(DWELL_FACTOR)
+    }
+  }
+
+  function startCooldown(species: string, scale = 1): void {
+    cooldowns.set(species, config.replacementCooldownSeconds * scale * between(COOLDOWN_FACTOR))
   }
 
   function eventsFor(animal: MutableAnimal, to: AnimalStage, events: AnimalLifeEvent[], action = true): void {
@@ -252,6 +346,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       animal.stage = rung
       animal.elapsed = 0
       animal.invited ||= rung >= 2
+      rollWaits(animal)
       const kind = rung === 1 ? 'arriveCarnival' : rung === 2 ? 'enterFarm' : rung === 3 ? 'settle' : 'fallInLove'
       events.push({ kind, animalId: animal.id, species: animal.species, stage: rung, ...(action && (rung === 1 || rung === 3) ? { action: rung === 1 ? 'visitSpecies' : 'residentSpecies' } : {}) })
     }
@@ -279,13 +374,26 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     }
   }
 
-  function hasRoomFor(species: string): boolean {
-    if (!hasPopulationSlot()) return false
+  /** How many more of a species the farm could take: spare outdoor places plus free beds. */
+  function roomLeftFor(species: string): number {
+    if (!hasPopulationSlot()) return 0
     let outdoors = 0
     for (const animal of animals.values()) {
       if (animal.species === species && animal.stage > 0 && !animal.insideId) outdoors += 1
     }
-    return outdoors < config.unhousedPerSpecies || freeRoomFor(species, houses, occupancy(), config.houseCapacity) > 0
+    return Math.max(0, config.unhousedPerSpecies - outdoors) + freeRoomFor(species, houses, occupancy(), config.houseCapacity)
+  }
+
+  function hasRoomFor(species: string): boolean {
+    return roomLeftFor(species) > 0
+  }
+
+  function packSizeFor(species: string): number {
+    const size = config.packSizes[species]
+    if (!size) return 1
+    const min = Math.max(1, Math.floor(size.min))
+    const max = Math.max(min, Math.floor(size.max))
+    return min + Math.floor(random() * (max - min + 1))
   }
 
   /**
@@ -337,15 +445,34 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       pendingVisitors.push(species)
     }
   }
+  /**
+   * Queue one more guest of a species that already has a resident. The choice is
+   * weighted toward species the farm has few of, so it is not always the same
+   * animal at the gate, and a species on cooldown is left alone.
+   */
   function addRepeatGuest(farm: FarmSnapshot): void {
+    const level = lastSnapshot?.expansionLevel ?? 0
+    const candidates: { species: string; weight: number }[] = []
     for (const species of speciesIds) {
+      if ((cooldowns.get(species) ?? 0) > 0) continue
       const hasResident = [...animals.values()].some((animal) => animal.species === species && !animal.baby && animal.stage >= 3)
       const homeRequirement = getSpeciesConditions(species)[2]?.requirement
       if (!hasResident || !requirementMet(homeRequirement, farm) || !hasRoomFor(species)) continue
-      if (populationBySpecies(species) >= Math.max(2, 2 + Math.floor((lastSnapshot?.expansionLevel ?? 0) / 2))) continue
-      pendingVisitors.push(species)
-      return
+      const population = populationBySpecies(species)
+      if (population >= 3 + Math.floor(level / 2)) continue
+      candidates.push({ species, weight: 1 / (1 + population) })
     }
+    const total = candidates.reduce((sum, candidate) => sum + candidate.weight, 0)
+    if (total <= 0) return
+    let pick = random() * total
+    for (const candidate of candidates) {
+      pick -= candidate.weight
+      if (pick <= 0) {
+        pendingVisitors.push(candidate.species)
+        return
+      }
+    }
+    pendingVisitors.push(candidates[candidates.length - 1].species)
   }
 
   const api: AnimalLife = {
@@ -421,6 +548,13 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       // never see another cow after the first one left.
       const speciesLeft = [...animals.values()].some((other) => other.species === animal.species && other.stage > 0)
       if (animal.stage > 0 && !speciesLeft && !pendingVisitors.includes(animal.species)) pendingVisitors.push(animal.species)
+      // A sale is not a vacancy sign: the next guest takes its time, and the
+      // species it was sold from waits a while longer still.
+      if (animal.stage > 0) {
+        startCooldown(animal.species)
+        arrivalElapsed = 0
+        arrivalWait = rollArrivalWait()
+      }
       return view(animal)
     },
     reset() {
@@ -438,6 +572,9 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       }
       nextAnimalId = 1
       arrivalElapsed = 0
+      cooldowns.clear()
+      nextPackId = 1
+      arrivalWait = rollArrivalWait()
       for (const species of speciesIds.slice(0, config.maximumPopulation)) newAnimal(species, 0)
       lastSnapshot = null
     },
@@ -467,6 +604,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       const ids = (value: unknown): string[] => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
       animals.clear()
       breedElapsed.clear()
+      cooldowns.clear()
       discovered.clear()
       pendingVisitors.length = 0
       let highestAnimal = 0
@@ -486,13 +624,20 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           insideId: null,
           helium: Math.max(0, Math.min(1, finite(saved.helium, 1))),
           unsettled: false,
+          visitAfter: 0,
+          enterAfter: 0,
+          stayLimit: Number.POSITIVE_INFINITY,
+          leaving: null,
+          packId: null,
         })
+        rollWaits(animals.get(saved.id)!)
         highestAnimal = Math.max(highestAnimal, Number(saved.id.replace(/^animal-/, '')) || 0)
       }
       for (const species of state.discovered) if (known(species)) discovered.add(species)
       for (const species of state.pendingVisitors) if (known(species)) pendingVisitors.push(species)
       nextAnimalId = Math.max(highestAnimal + 1, Math.floor(finite(state.nextAnimalId, 1)))
       arrivalElapsed = Math.max(0, finite(state.arrivalElapsed))
+      arrivalWait = rollArrivalWait()
       lastSnapshot = null
     },
     tick(snapshot, deltaSeconds) {
@@ -515,15 +660,26 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         const nightShift = NIGHT_ONLY_SPECIES.includes(species)
         return Math.max(0, 1 + Math.floor(snapshot.expansionLevel / 2) - visitorsOnShift(nightShift))
       }
-      const interval = config.arrivalIntervalSeconds / Math.max(1, 1 + snapshot.expansionLevel * 0.35)
+      for (const [species, left] of cooldowns) {
+        if (left - dt <= 0) cooldowns.delete(species)
+        else cooldowns.set(species, left - dt)
+      }
+      // The wait is rolled afresh after every arrival, so visits never settle
+      // into a metronome, and it is capped so a long quiet spell is not banked
+      // up and then spent as a burst.
+      const interval = arrivalWait / Math.max(1, 1 + snapshot.expansionLevel * 0.35)
+      arrivalElapsed = Math.min(arrivalElapsed, interval + 30)
       if (pendingVisitors.length === 0 && arrivalElapsed >= interval) addRepeatGuest(snapshot.farm)
+      const groundsCap = config.groundsVisitorsBase + config.groundsVisitorsPerLevel * Math.max(0, snapshot.expansionLevel)
+      const onGrounds = (): number => [...animals.values()].filter((animal) => animal.stage === 1).length
       // Every species keeps to its own shift: owls turn up after dark, everything
       // else by day. A species whose shift is not on waits in the queue rather
       // than blocking it. A snapshot that does not say (older tests) allows both.
       const darkNow = snapshot.farm.night
       const onShift = (species: string): boolean => darkNow === undefined || isNightOnly(species) === darkNow
-      const arrivingIndex = pendingVisitors.findIndex((species) => onShift(species) && pacingFor(species) > 0 && hasRoomFor(species))
-      if (arrivingIndex >= 0 && arrivalElapsed >= interval) {
+      const arrivingIndex = pendingVisitors.findIndex((species) => onShift(species) && pacingFor(species) > 0 && hasRoomFor(species)
+        && (cooldowns.get(species) ?? 0) <= 0)
+      if (arrivingIndex >= 0 && arrivalElapsed >= interval && onGrounds() < groundsCap) {
         const species = pendingVisitors.splice(arrivingIndex, 1)[0]
         let arrival = [...animals.values()].find((animal) => animal.species === species && animal.stage === 0)
         if (!arrival && hasPopulationSlot()) arrival = newAnimal(species, 0)
@@ -534,6 +690,24 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           const arrivalEvent = events[events.length - 1]
           events[events.length - 1] = { ...arrivalEvent, action: 'visitSpecies' }
           arrivalElapsed = 0
+          arrivalWait = rollArrivalWait()
+          // Some species come as a pack. The rest of it trails in behind the
+          // leader and makes up its mind about the farm a few seconds after it.
+          const followers = Math.min(packSizeFor(species) - 1, groundsCap - onGrounds(), roomLeftFor(species))
+          if (followers > 0) {
+            const packId = `pack-${nextPackId++}`
+            arrival.packId = packId
+            for (let index = 0; index < followers; index += 1) {
+              const follower = [...animals.values()].find((animal) => animal.species === species && animal.stage === 0)
+                ?? (hasPopulationSlot() ? newAnimal(species, 0) : undefined)
+              if (!follower) break
+              eventsFor(follower, 1, events, false)
+              const followerEvent = events[events.length - 1]
+              events[events.length - 1] = { ...followerEvent, leaderId: arrival.id }
+              follower.packId = packId
+              follower.visitAfter = arrival.visitAfter + (tuningFor(species).visitDelaySeconds > 0 ? random() * PACK_FOLLOW_SECONDS : 0)
+            }
+          }
         }
       }
 
@@ -550,10 +724,24 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         if (animal.stage >= 1 && animal.stage < 4) {
           animal.elapsed += stageDt
           const next = getSpeciesConditions(animal.species)[animal.stage]
-          const tuning = tuningFor(animal.species)
           const onTheirShift = onShift(animal.species)
-          if (animal.stage === 1 && animal.elapsed >= tuning.visitDelaySeconds && onTheirShift && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 2, events)
-          else if (animal.stage === 2 && animal.elapsed >= tuning.enterFarmSeconds && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 3, events)
+          const suitable = next ? requirementMet(next.requirement, snapshot.farm) : false
+          if (animal.stage === 1 && animal.leaving !== null) {
+            // Walking off the grounds; the scene watches `departing` and sends it on its way.
+            animal.leaving -= stageDt
+            if (animal.leaving <= 0) {
+              animal.leaving = null
+              animal.stage = 0
+              animal.elapsed = 0
+              animal.packId = null
+              events.push({ kind: 'departCarnival', animalId: animal.id, species: animal.species, stage: 0 })
+              // It will wander back some other day.
+              if (!pendingVisitors.includes(animal.species)) pendingVisitors.push(animal.species)
+              startCooldown(animal.species, 0.75)
+            }
+          } else if (animal.stage === 1 && animal.elapsed >= animal.visitAfter && onTheirShift && suitable) eventsFor(animal, 2, events)
+          else if (animal.stage === 1 && animal.elapsed >= animal.stayLimit && onTheirShift && !suitable) animal.leaving = config.departSeconds
+          else if (animal.stage === 2 && animal.elapsed >= animal.enterAfter && suitable) eventsFor(animal, 3, events)
           else if (animal.stage === 3 && next && requirementMet(next.requirement, snapshot.farm)) eventsFor(animal, 4, events)
         }
       }
