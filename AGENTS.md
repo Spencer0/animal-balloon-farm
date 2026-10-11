@@ -72,8 +72,9 @@ entry in `TOOL_UNLOCK_FILMS`, with no Blender work.
 
 - **Rendering:** Three.js renders the farm and the world-space bits of the HUD
   (the tool bar, the balloon). Don't add Vite.
-- **WebGPU:** `?renderer=webgpu` swaps in `WebGPURenderer`; WebGL stays the
-  default. A shader that has GLSL for WebGL needs a TSL twin in
+- **WebGPU:** `WebGPURenderer` is the default; the game falls back to WebGL
+  when WebGPU is missing or fails to start, and `?renderer=webgl` forces it
+  (the perf gate pins it). A shader that has GLSL for WebGL needs a TSL twin in
   `src/render/webgpu/kit.ts` (the GLSL source stays the reference). Read
   `docs/WEBGPU.md` before touching either renderer path, and never statically import
   `three/webgpu` or `three/tsl` outside `src/render/webgpu/` (it is a lazy chunk).

@@ -1,0 +1,88 @@
+/* Loading screen. The markup is static in index.html so it paints before the
+ * script bundle is parsed; loading-dom.ts only updates the stage text and fades
+ * it out. Same Farm Journal look as journal-dom.css. */
+
+.ld-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #183e3b;
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+.ld-overlay[data-state="done"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ld-overlay[hidden] {
+  display: none;
+}
+
+.ld-card {
+  width: min(360px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 22px 26px 20px;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.ld-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.ld-divider {
+  border: 0;
+  border-top: 2px dashed #b08c5e;
+  margin: 12px 0;
+}
+
+.ld-stage {
+  margin: 0;
+  min-height: 1.3em;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ld-bar {
+  position: relative;
+  height: 10px;
+  margin-top: 14px;
+  overflow: hidden;
+  background: #f5ead2;
+  border: 2px solid #b08c5e;
+  border-radius: 8px;
+}
+
+.ld-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: #c65a3a;
+  border-radius: 6px;
+  animation: ld-slide 1.3s ease-in-out infinite;
+}
+
+@keyframes ld-slide {
+  from { left: -40%; }
+  to { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ld-overlay { transition: none; }
+  .ld-bar::after { animation: none; left: 30%; }
+}

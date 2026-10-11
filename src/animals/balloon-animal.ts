@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
+import { webgpuKit } from '../render/backend'
 import { FARM_EXPANSION_CONFIG, type GardenBounds } from '../game/farm-expansion'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
@@ -101,6 +102,10 @@ export interface BalloonAnimal {
   readonly currentPosition: THREE.Vector3
   readonly currentHeading: number
   readonly currentScale: number
+  /** World height of the ground under the animal (the root rides above it while a flier flies or a capture lifts). */
+  readonly groundHeight: number
+  /** Half the animal's longest side in world units, growth included: how wide its contact shadow reads. */
+  readonly footprintRadius: number
   readonly renderPriority: number
   /** True for a species that is positioned by the predator sim instead of wandering. */
   readonly isFlier: boolean
@@ -304,6 +309,13 @@ function createCaptureMaterial(source: THREE.Material, range: CaptureVerticalRan
     bottom: { value: range.bottom },
     top: { value: Math.max(range.top, range.bottom + 0.001) },
   }
+  material.customProgramCacheKey = () => 'balloon-paint-reveal-v1'
+  CAPTURE_MATERIAL_STATES.set(material, state)
+  const nodeKit = webgpuKit()
+  if (nodeKit) {
+    nodeKit.applyPaintReveal(material, state, WILD_BALLOON_COLOR)
+    return material
+  }
   const previousCompile = material.onBeforeCompile
   material.onBeforeCompile = (shader, renderer) => {
     previousCompile(shader, renderer)
@@ -336,8 +348,6 @@ float captureShimmer = 1.0 - smoothstep(0.012, 0.055, abs(captureHeight + captur
 diffuseColor.rgb = mix(uCaptureWildColor, diffuseColor.rgb, captureReveal);
 diffuseColor.rgb += vec3(0.055, 0.04, 0.025) * captureShimmer * (1.0 - uCaptureProgress);`)
   }
-  material.customProgramCacheKey = () => 'balloon-paint-reveal-v1'
-  CAPTURE_MATERIAL_STATES.set(material, state)
   return material
 }
 
@@ -835,6 +845,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get currentPosition(): THREE.Vector3 { return wrapper.position },
     get currentHeading(): number { return wrapper.rotation.y },
     get currentScale(): number { return wrapper.scale.x },
+    get groundHeight(): number { return groundYCurrent },
+    get footprintRadius(): number { return options.size * 0.5 * wrapper.scale.x },
     get renderPriority(): number {
       return (focused ? 100 : 0) + (capture ? 90 : 0) + (sim.stage >= 3 ? 10 : 0)
     },

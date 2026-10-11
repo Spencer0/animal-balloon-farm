@@ -38,7 +38,8 @@ import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } fro
 import type { GardenToolId } from './scene/garden-tool-art'
 import { createFarmCamera } from './scene/farm-camera'
 import { createUILayer, type UIPanel } from './ui/ui-layer'
-import { advanceClock, calendarOf, createDayNightClock, phaseOf } from './game/day-night'
+import { advanceClock, calendarOf, createDayNightClock, daylightAmount, phaseOf } from './game/day-night'
+import { createAnimalShadows } from './animals/animal-shadows'
 import { createDayNightRig } from './scene/day-night-rig'
 import { createShadowRefresh } from './scene/shadow-refresh'
 import { weekdayName } from './game/carnival-schedule'
@@ -81,14 +82,19 @@ import type { CutscenePlayer } from './scene/cutscene-kit'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
 import { createFarmRenderer, precompile } from './render/backend'
+import { createLoadingScreen } from './ui/loading-dom'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
-const gameCanvas = canvas
+const loading = createLoadingScreen()
+await loading.setStage('renderer')
 
-// `?renderer=webgpu` selects WebGPURenderer (async init); WebGL is the default.
+// WebGPU by default, with an automatic WebGL fallback; `?renderer=webgl` forces WebGL.
 // Top-level await is fine here: nothing below can run without a renderer.
-const { renderer, backend: renderBackend } = await createFarmRenderer(gameCanvas)
+const { renderer, backend: renderBackend } = await createFarmRenderer(canvas)
+// A failed WebGPU start can leave the original canvas unusable, in which case the
+// renderer brought its own; everything below uses the one actually drawn on.
+const gameCanvas = renderer.domElement
 // Cap the drawing buffer below the display pixel ratio: at devicePixelRatio the
 // canvas raster gets enormous (and so do any screenshots of it). 1.25 keeps
 // edges acceptably smooth while keeping captures far under attachment limits.
@@ -102,6 +108,7 @@ renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.info.autoReset = false // reset manually each frame so stats survive the HUD pass
 document.documentElement.dataset.renderer = renderBackend
 
+await loading.setStage('models')
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#c2d8cf')
 scene.fog = new THREE.Fog('#c2d8cf', 185, 345)
@@ -184,6 +191,10 @@ if (loadedSave) {
 /** Debug only: a held clock stays put, so a scenario's night does not slip into morning. */
 let clockHeld = false
 const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, sky.colors)
+// One instanced draw call of soft ground decals under every animal (animals stay out of the sun's shadow map).
+const animalShadows = createAnimalShadows(scene, ANIMAL_LIFE_CONFIG.maximumPopulation + 16)
+/** Herd plus harness crowd fixtures, so the perf gate counts the shadow draw as players get it. */
+const refreshAnimalShadows = (): void => animalShadows.update([animals, crowdFixtures], daylightAmount(dayNightClock.timeOfDay))
 const clockCalendarHud = createClockCalendarHud(window.innerWidth, window.innerHeight)
 
 const fairground = createFairground(dayNightClock.elapsedDays)
@@ -1203,6 +1214,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     pageParams,
     renderer,
     forceShadowRedraw: shadowRefresh.forceNext,
+    refreshAnimalShadows,
     scene,
     camera,
     cameraTarget,
@@ -1566,6 +1578,7 @@ function frame(now: number): void {
   const simAlpha = simClock.alpha
   animals.forEach((animal) => animal.update(delta, simAlpha))
   crowdFixtures.forEach((fixture) => fixture.update(delta, simAlpha))
+  refreshAnimalShadows()
   if (huntsActive) presentHunts(delta, simAlpha)
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
@@ -1676,5 +1689,22 @@ function frame(now: number): void {
 }
 // WebGPU builds pipelines lazily, and the first draw of each stalls the frame.
 // Build the farm's up front so the menu opens smoothly.
-if (renderBackend === 'webgpu') await precompile(renderer, scene, camera)
-requestAnimationFrame(frame)
+await loading.setStage('shaders')
+try {
+  await precompile(renderer, scene, camera)
+} catch (error) {
+  // A WebGPU device that starts but cannot build the farm's pipelines (a driver
+  // or browser mismatch) would leave a dead canvas; restart the page on WebGL.
+  if (renderBackend === 'webgpu') {
+    console.warn('[renderer] WebGPU could not compile the farm; reloading on WebGL', error)
+    const url = new URL(window.location.href)
+    url.searchParams.set('renderer', 'webgl')
+    window.location.replace(url.href)
+  }
+  throw error
+}
+requestAnimationFrame((now) => {
+  frame(now)
+  // The first frame has been submitted; the next paint shows the farm.
+  requestAnimationFrame(() => loading.done())
+})
