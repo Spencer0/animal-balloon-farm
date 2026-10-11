@@ -313,6 +313,9 @@ async function runSingle(cdp, name, options) {
   /** @type {Array<{ raw: any, render: { renderCalls: number, triangles: number }, timing: any, problem: string | null }>} */
   const runs = [];
   for (let run = 0; run < options.runs; run += 1) {
+    // Each repeat starts from a fresh page: a scenario that plants or digs leaves its
+    // state behind, and a second run would then fail on that leftover state.
+    if (run > 0) await openDebugPage(cdp, undefined, true);
     const raw = await cdp.evaluate(scenario.expression);
     // Draw calls and triangles come from one forced render of the scene the run left behind.
     const render = await cdp.evaluate('window.__gardenDebug.renderSnapshot()');
