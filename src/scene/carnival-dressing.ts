@@ -6,7 +6,7 @@ import type { GardenBounds } from '../game/farm-expansion'
 import type { CarnivalKind } from '../game/carnival-migration'
 
 export interface DressingProp { readonly group: THREE.Group; readonly radius: number; readonly kind: CarnivalKind }
-const standard = (color: string) => new THREE.MeshStandardMaterial({ color, roughness: .9 })
+const standard = (color: string) => new THREE.MeshLambertMaterial({ color })
 
 /** Merge a static Blender prop by material while keeping each prop independently removable. */
 function compactModel(source: THREE.Object3D): THREE.Group {
@@ -173,7 +173,7 @@ export function createCarnivalDressing(parent: THREE.Group): { props: readonly D
 
   const count = 90
   const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(.19, 7, 5), standard('#e5c4a3'), count)
-  const bodies = new THREE.InstancedMesh(new THREE.CylinderGeometry(.17, .23, .6, 6), new THREE.MeshStandardMaterial({ roughness: 1 }), count)
+  const bodies = new THREE.InstancedMesh(new THREE.CylinderGeometry(.17, .23, .6, 6), new THREE.MeshLambertMaterial({ }), count)
   heads.name = 'Midway visitors · instanced heads'; bodies.name = 'Midway visitors · instanced coats'
   midway.add(heads, bodies)
   const dummy = new THREE.Object3D()

@@ -137,6 +137,8 @@ interface GardenDebugHarness {
   simulate(seconds: number, steps?: number): AnimalConditionReport
   /** Stand n real animal models on the lawn, render once, and report draw calls and triangles. The fixtures stay until clearCrowd. */
   crowdStressTest(count?: number): Promise<{ readonly count: number; readonly renderCalls: number; readonly triangles: number }>
+  /** Render the current scene once, with the shadow map forced to redraw, and report draw calls and triangles. Deterministic for a given scene. */
+  renderSnapshot(): { readonly renderCalls: number; readonly triangles: number }
   /** One-line usage for every harness command, so agents stop rediscovering this surface. */
   help(): Record<string, string>
   /**
@@ -506,6 +508,25 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       subject: farmCamera.tour?.subjectId ?? null,
     },
   })
+  /**
+   * One render of the current scene, reporting its draw calls and triangles.
+   * The shadow map is forced to redraw first: it normally redraws only when the
+   * sun or the casters move, so without this the count would depend on whether
+   * that redraw happened to land in this render. Same scene, same count.
+   */
+  const renderSnapshot = (): { renderCalls: number; triangles: number } => {
+    const previousAutoReset = renderer.info.autoReset
+    try {
+      renderer.info.autoReset = true
+      renderer.info.reset()
+      renderer.shadowMap.needsUpdate = true
+      renderer.render(scene, camera)
+      return { renderCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles }
+    } finally {
+      renderer.info.autoReset = previousAutoReset
+      renderer.info.reset()
+    }
+  }
   let scenarioList: Record<string, string> = {}
   void import('../../dev/scenarios/index').then((module) => { scenarioList = module.listScenarios() })
   const debugHarness: GardenDebugHarness = {
@@ -743,17 +764,9 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     crowdStressTest: async (requestedCount = OUTDOOR_LIMITS.total) => {
       const count = await setCrowdFixtures(requestedCount)
       focusCamera()
-      const previousAutoReset = renderer.info.autoReset
-      try {
-        renderer.info.autoReset = true
-        renderer.info.reset()
-        renderer.render(scene, camera)
-        return { count, renderCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles }
-      } finally {
-        renderer.info.autoReset = previousAutoReset
-        renderer.info.reset()
-      }
+      return { count, ...renderSnapshot() }
     },
+    renderSnapshot,
     setCrowd: async (requestedCount = OUTDOOR_LIMITS.total) => {
       const count = await setCrowdFixtures(requestedCount)
       focusCamera()
@@ -794,6 +807,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'grantPoints / grantSeeds': 'Jump progression level / stock the seed shed without playing.',
       'grantCoins / shop / buy / placeProp / placeFence / propCounts': 'Wallet + prop placement without UI clicks.',
       crowdStressTest: 'crowdStressTest(n) — stand n real animal models up and render once; returns calls/tris.',
+      renderSnapshot: 'renderSnapshot() — render the current scene once (shadows forced); returns calls/tris.',
       'setCrowd / clearCrowd': 'setCrowd(n) keeps n real animal models live for sustained ramps; clearCrowd removes them.',
       'scenarios / runScenario / holdTime': 'scenarios() lists saved test states; runScenario(id) jumps into one; ?scenario=id does it on load; holdTime(bool) freezes the clock.',
       performanceSamples: 'Per-frame work/interval splits. Basis for every perf scenario; see TESTING.md.',

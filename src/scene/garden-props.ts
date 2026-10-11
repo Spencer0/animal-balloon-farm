@@ -8,6 +8,7 @@ import type { HoverGlowTarget } from './hover-glow'
 import { isHouse } from '../game/animal-housing'
 import { createShopBuild, SHOP_BUILD_NODE, type ShopBuild, type ShopBuildReport } from './shop-build'
 import { mergeStaticMeshes, objectBounds } from './merge-static-meshes'
+import { freezeTransform, matteModel } from './matte-material'
 import {
   createPropInventory,
   createPropOccupancy,
@@ -251,6 +252,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
       PROP_CATALOG[id].modelUrl,
       (gltf) => {
         ghostSources.set(id, gltf.scene.clone(true))
+        // Matte parts draw as Lambert; the ghost clone above keeps its own Standard materials.
+        matteModel(gltf.scene)
         // Merged once here, so every placed clone shares a few meshes instead of dozens.
         mergeStaticMeshes(gltf.scene)
         sources.set(id, gltf.scene)
@@ -314,6 +317,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
     }
     const centre = footprintCenterWorld(prop.id, prop.cell, prop.rotation)
     group.position.set(centre.x, GARDEN_LAWN_Y + terrain.heightAt(centre.x, centre.z), centre.z)
+    // Placed props never move: a move removes this visual and places a new one.
+    freezeTransform(group)
     root.add(group)
     visualByProp.set(prop, { prop, object: group, models })
   }
@@ -335,10 +340,12 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
 
   const fenceRoot = new THREE.Group()
   fenceRoot.name = 'Placed fences'
+  // Identity transform: fence pieces are instances, so only their instance matrices change.
+  freezeTransform(fenceRoot)
   root.add(fenceRoot)
   const postGeometry = new THREE.BoxGeometry(0.15, 1.02, 0.15)
   const railGeometry = new THREE.BoxGeometry(1.86, 0.15, 0.08)
-  const fenceMaterial = new THREE.MeshStandardMaterial({ color: '#b98a55', roughness: 0.78 })
+  const fenceMaterial = new THREE.MeshLambertMaterial({ color: '#b98a55' })
   const postMesh = new THREE.InstancedMesh(postGeometry, fenceMaterial, MAX_POSTS)
   const railMesh = new THREE.InstancedMesh(railGeometry, fenceMaterial, MAX_RAILS)
   postMesh.name = 'Fence posts'
@@ -670,8 +677,8 @@ export function createGardenProps(options: GardenPropsOptions): GardenProps {
   // the placed fence will have, in pooled instances, so a long drag previews in
   // full and shows exactly where the posts land.
   const MAX_GHOST_SEGMENTS = 64
-  const ghostFenceMaterial = new THREE.MeshStandardMaterial({
-    color: '#8cff61', transparent: true, opacity: 0.6, roughness: 0.78, depthWrite: false,
+  const ghostFenceMaterial = new THREE.MeshLambertMaterial({
+    color: '#8cff61', transparent: true, opacity: 0.6, depthWrite: false,
   })
   const ghostPosts = new THREE.InstancedMesh(postGeometry, ghostFenceMaterial, MAX_GHOST_SEGMENTS + 1)
   const ghostRails = new THREE.InstancedMesh(railGeometry, ghostFenceMaterial, MAX_GHOST_SEGMENTS * 2)

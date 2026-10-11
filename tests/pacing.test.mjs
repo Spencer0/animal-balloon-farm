@@ -21,6 +21,7 @@ const farm = (state = {}, night = false) => ({
 const quick = {
   visitDelaySeconds: 0, enterFarmSeconds: 0, arrivalIntervalSeconds: 0,
   baseResidentCapacity: 20, residentsPerExpansion: 2, romanceChance: 0,
+  packSizes: {}, replacementCooldownSeconds: 0, groundsVisitorsBase: 50,
 }
 const SPECIES = ['cow', 'sheep', 'chicken', 'owl']
 const lifeOf = () => createAnimalLife(SPECIES, { config: quick })

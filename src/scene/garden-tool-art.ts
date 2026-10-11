@@ -62,14 +62,14 @@ function createGrassSeederModel(pack: GrassPack): THREE.Group {
   const model = new THREE.Group()
   model.name = 'Grass seed bag'
 
-  const burlap = new THREE.MeshStandardMaterial({ color: '#c9a06b', roughness: 0.92 })
-  const burlapDark = new THREE.MeshStandardMaterial({ color: '#b58e5c', roughness: 0.94 })
-  const burlapLight = new THREE.MeshStandardMaterial({ color: '#d4af75', roughness: 0.9 })
+  const burlap = new THREE.MeshLambertMaterial({ color: '#c9a06b' })
+  const burlapDark = new THREE.MeshLambertMaterial({ color: '#b58e5c' })
+  const burlapLight = new THREE.MeshLambertMaterial({ color: '#d4af75' })
   model.userData.packMaterials = { body: burlap, shade: burlapDark, light: burlapLight }
-  const twine = new THREE.MeshStandardMaterial({ color: '#8a6f3f', roughness: 0.85 })
-  const sprout = new THREE.MeshStandardMaterial({ color: '#6fa055', roughness: 0.62 })
-  const seedTan = new THREE.MeshStandardMaterial({ color: '#a5804e', roughness: 0.7 })
-  const seedGreen = new THREE.MeshStandardMaterial({ color: '#7fae62', roughness: 0.7 })
+  const twine = new THREE.MeshLambertMaterial({ color: '#8a6f3f' })
+  const sprout = new THREE.MeshLambertMaterial({ color: '#6fa055' })
+  const seedTan = new THREE.MeshLambertMaterial({ color: '#a5804e' })
+  const seedGreen = new THREE.MeshLambertMaterial({ color: '#7fae62' })
 
   // Slouching sack body, flattened front-to-back like the other tool reliefs.
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 22, 16), burlap)
@@ -192,10 +192,10 @@ function createShovelModel(): THREE.Group {
   const wood = new THREE.MeshStandardMaterial({ color: '#a8754c', roughness: 0.54 })
   const lightWood = new THREE.MeshStandardMaterial({ color: '#d7b47a', roughness: 0.48 })
   const brass = new THREE.MeshStandardMaterial({ color: '#d7b765', roughness: 0.3, metalness: 0.48 })
-  const twine = new THREE.MeshStandardMaterial({ color: '#8a6f3f', roughness: 0.85 })
+  const twine = new THREE.MeshLambertMaterial({ color: '#8a6f3f' })
   const steel = new THREE.MeshStandardMaterial({ color: '#c3ccd6', roughness: 0.32, metalness: 0.6 })
   const steelDark = new THREE.MeshStandardMaterial({ color: '#98a1ac', roughness: 0.42, metalness: 0.55 })
-  const sprout = new THREE.MeshStandardMaterial({ color: '#6fa055', roughness: 0.62 })
+  const sprout = new THREE.MeshLambertMaterial({ color: '#6fa055' })
 
   // Shaft rises from the blade toward the cursor ring's grip corner.
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.05, 0.92, 12), wood)
@@ -274,7 +274,7 @@ function createSnowerModel(): THREE.Group {
   const frost = new THREE.MeshStandardMaterial({ color: '#f4fbff', roughness: 0.45 })
   const ice = new THREE.MeshStandardMaterial({ color: '#cdeeff', roughness: 0.15, metalness: 0.05, transparent: true, opacity: 0.9 })
   const coral = new THREE.MeshStandardMaterial({ color: '#f2796b', roughness: 0.3 })
-  const string = new THREE.MeshStandardMaterial({ color: '#f6efe0', roughness: 0.8 })
+  const string = new THREE.MeshLambertMaterial({ color: '#f6efe0' })
 
   // The balloon itself: slightly egg-shaped, tipped over the nozzle.
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 24, 18), balloon)

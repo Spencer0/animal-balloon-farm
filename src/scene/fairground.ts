@@ -5,6 +5,7 @@ import { createCarnivalSchedule, placeOutsideFarm } from '../game/carnival-sched
 import { createCarnivalBackdrop } from './carnival-backdrop'
 import { createCarnivalDressing } from './carnival-dressing'
 import { mergeStaticMeshes, objectBounds } from './merge-static-meshes'
+import { freezeTransform } from './matte-material'
 import { applyGroundVariation, createGroundVariationBounds } from './ground-variation'
 import { createFarmExpansion, FARM_EXPANSION_CONFIG, GARDEN_MAX_BOUNDS, type FarmExpansion, type GardenBounds } from '../game/farm-expansion'
 
@@ -100,7 +101,9 @@ export function consolidateMaterialGroups(geometry: THREE.BufferGeometry): void 
   geometry.setIndex(reordered)
 }
 
-function standard(color: THREE.ColorRepresentation, roughness = 0.85): THREE.MeshStandardMaterial {
+/** Matte surfaces use Lambert (no specular term); glossier paint keeps Standard's highlight. */
+function standard(color: THREE.ColorRepresentation, roughness = 0.85): THREE.MeshStandardMaterial | THREE.MeshLambertMaterial {
+  if (roughness >= 0.55) return new THREE.MeshLambertMaterial({ color })
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.02 })
 }
 
@@ -370,7 +373,7 @@ export function updateLandRevealMask(
   colors.needsUpdate = true
 }
 
-function addTufts(parent: THREE.Group, random: () => number, count: number, insideGarden: boolean, material: THREE.MeshStandardMaterial): void {
+function addTufts(parent: THREE.Group, random: () => number, count: number, insideGarden: boolean, material: THREE.MeshStandardMaterial | THREE.MeshLambertMaterial): void {
   const geometry = new THREE.BufferGeometry()
   const positions: number[] = []
   const indices: number[] = []
@@ -569,7 +572,7 @@ function addTent(parent: THREE.Group, x: number, z: number, scale: number, varia
   pennantGeometry.setAttribute('position', new THREE.Float32BufferAttribute([-0.26, 0, 0, 0.26, 0, 0, 0, -0.66, 0.07], 3))
   pennantGeometry.setIndex([0, 1, 2])
   pennantGeometry.computeVertexNormals()
-  const pennants = new THREE.InstancedMesh(pennantGeometry, new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: .72 }), sides)
+  const pennants = new THREE.InstancedMesh(pennantGeometry, new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }), sides)
   pennants.name = 'Tent eave pennants'
   const pennant = new THREE.Object3D()
   const pennantColor = new THREE.Color()
@@ -920,18 +923,20 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   // digs (future ponds) stay visible instead of being capped by a grass plane.
   // The cutout hugs the plot it surrounds and is rebuilt as the plot grows, so
   // these planes never sit underneath soil the farm has already revealed.
-  const meadow=new THREE.Mesh(groundPlaneGeometry(520,520,farmExpansion.state.bounds),new THREE.MeshStandardMaterial({color:'#a7ba6d',map:far,roughness:1,side:THREE.DoubleSide}))
+  const meadow=new THREE.Mesh(groundPlaneGeometry(520,520,farmExpansion.state.bounds),new THREE.MeshLambertMaterial({color:'#a7ba6d',map:far,side:THREE.DoubleSide}))
   // No ground variation here: the outer lawn above has the same footprint and
   // hides this plane completely, so shading it too would only double the cost.
   meadow.position.y=-.22
   meadow.receiveShadow=true
+  freezeTransform(meadow)
   root.add(meadow)
   const outerTexture=makeGrassTexture(73,'#88bb69','#578e53')
   outerTexture.repeat.set(18,14)
-  const outer=new THREE.Mesh(groundPlaneGeometry(520,520,farmExpansion.state.bounds),new THREE.MeshStandardMaterial({color:'#b8c99b',map:outerTexture,roughness:1,side:THREE.DoubleSide}))
-  applyGroundVariation(outer.material as THREE.MeshStandardMaterial,{kind:'meadow',bounds:groundBounds})
+  const outer=new THREE.Mesh(groundPlaneGeometry(520,520,farmExpansion.state.bounds),new THREE.MeshLambertMaterial({color:'#b8c99b',map:outerTexture,side:THREE.DoubleSide}))
+  applyGroundVariation(outer.material as THREE.MeshLambertMaterial,{kind:'meadow',bounds:groundBounds})
   outer.position.y=-.13
   outer.receiveShadow=true
+  freezeTransform(outer)
   root.add(outer)
 
   // The gravel apron is the only paved ground outside the plot, and it hugs the
@@ -949,6 +954,8 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   gravel.rotation.x=-Math.PI/2
   gravel.position.y=.018
   gravel.receiveShadow=true
+  // The apron group scales as the plot grows; this child's own transform never changes.
+  freezeTransform(gravel)
   apron.add(gravel)
 
   // Pit backstop well below the deepest diggable surface (grid min −2.6 →
@@ -959,11 +966,12 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   underSoil.rotation.x=-Math.PI/2
   underSoil.position.y=-2.85
   underSoil.receiveShadow=true
+  freezeTransform(underSoil)
   root.add(underSoil)
 
   // Bare tilled soil is the untouched garden ground; the growable lawn above it
   // is a transparent paint layer that only turns green where the seeder works.
-  const soil=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false,roughness:1}))
+  const soil=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshLambertMaterial({map:makeSoilTexture(211),vertexColors:true,transparent:true,depthWrite:false}))
   soil.material.map!.repeat.set(6,4)
   applyGroundVariation(soil.material,{kind:'soil',bounds:groundBounds})
   soil.rotation.x=-Math.PI/2
@@ -975,7 +983,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   soil.receiveShadow=true
   root.add(soil)
 
-  const lawn=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshStandardMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0'),roughness:.96}))
+  const lawn=new THREE.Mesh(makeGardenLawnGeometry(GARDEN_MAX_BOUNDS),new THREE.MeshLambertMaterial({color:'#ffffff',vertexColors:true,transparent:true,map:makeGrassTexture(119,'#ffffff','#dcedc0')}))
   lawn.material.map!.repeat.set(7,5)
   applyGroundVariation(lawn.material,{kind:'lawn',bounds:groundBounds})
   lawn.rotation.x=-Math.PI/2
@@ -1020,7 +1028,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   mergeProp(boundaryStakes)
 
   // The quieter hills live in the horizon layer; nothing blocks the midway.
-  const tufts=new THREE.MeshStandardMaterial({color:'#a1c66b',roughness:.9,side:THREE.DoubleSide})
+  const tufts=new THREE.MeshLambertMaterial({color:'#a1c66b',side:THREE.DoubleSide})
   addTufts(root,random,2700,false,tufts)
   addFlowerPatches(root,random)
 
@@ -1065,7 +1073,7 @@ export function createFairground(initialElapsedDays = 0): Fairground {
   dressing.props.forEach((prop) => trackProp(prop.group, prop.radius, prop.kind))
 
   const skyPuffs=new THREE.Group()
-  const cloudMat=new THREE.MeshStandardMaterial({color:'#fff3d9',roughness:.94,transparent:true,opacity:.76})
+  const cloudMat=new THREE.MeshLambertMaterial({color:'#fff3d9',transparent:true,opacity:.76})
   for(const [x,y,z,size] of [[-44,32,-77,1],[16,41,-103,1.2],[63,35,-70,.9],[-75,38,2,.8],[72,43,44,1.1]] as const){
     const cloud=new THREE.Group();cloud.position.set(x,y,z)
     for(let p=0;p<5;p+=1){const puff=new THREE.Mesh(new THREE.SphereGeometry(1,14,10),cloudMat);puff.position.set((p-2)*1.3*size,Math.sin(p*1.8)*.55*size,Math.cos(p)*.52*size);puff.scale.set(1.45*size,.72*size,.86*size);cloud.add(puff)}
