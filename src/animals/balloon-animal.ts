@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
+import { webgpuKit } from '../render/backend'
 import { FARM_EXPANSION_CONFIG, type GardenBounds } from '../game/farm-expansion'
 import { containsFarmPoint } from '../game/farm-footprint'
 import type { BalloonAnimalId } from './animal-catalog'
@@ -312,6 +313,13 @@ function createCaptureMaterial(source: THREE.Material, range: CaptureVerticalRan
     bottom: { value: range.bottom },
     top: { value: Math.max(range.top, range.bottom + 0.001) },
   }
+  material.customProgramCacheKey = () => 'balloon-paint-reveal-v1'
+  CAPTURE_MATERIAL_STATES.set(material, state)
+  const nodeKit = webgpuKit()
+  if (nodeKit) {
+    nodeKit.applyPaintReveal(material, state, WILD_BALLOON_COLOR)
+    return material
+  }
   const previousCompile = material.onBeforeCompile
   material.onBeforeCompile = (shader, renderer) => {
     previousCompile(shader, renderer)
@@ -344,8 +352,6 @@ float captureShimmer = 1.0 - smoothstep(0.012, 0.055, abs(captureHeight + captur
 diffuseColor.rgb = mix(uCaptureWildColor, diffuseColor.rgb, captureReveal);
 diffuseColor.rgb += vec3(0.055, 0.04, 0.025) * captureShimmer * (1.0 - uCaptureProgress);`)
   }
-  material.customProgramCacheKey = () => 'balloon-paint-reveal-v1'
-  CAPTURE_MATERIAL_STATES.set(material, state)
   return material
 }
 

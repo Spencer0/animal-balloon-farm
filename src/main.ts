@@ -82,14 +82,19 @@ import type { CutscenePlayer } from './scene/cutscene-kit'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
 import { createFarmRenderer, precompile } from './render/backend'
+import { createLoadingScreen } from './ui/loading-dom'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
-const gameCanvas = canvas
+const loading = createLoadingScreen()
+await loading.setStage('renderer')
 
-// `?renderer=webgpu` selects WebGPURenderer (async init); WebGL is the default.
+// WebGPU by default, with an automatic WebGL fallback; `?renderer=webgl` forces WebGL.
 // Top-level await is fine here: nothing below can run without a renderer.
-const { renderer, backend: renderBackend } = await createFarmRenderer(gameCanvas)
+const { renderer, backend: renderBackend } = await createFarmRenderer(canvas)
+// A failed WebGPU start can leave the original canvas unusable, in which case the
+// renderer brought its own; everything below uses the one actually drawn on.
+const gameCanvas = renderer.domElement
 // Cap the drawing buffer below the display pixel ratio: at devicePixelRatio the
 // canvas raster gets enormous (and so do any screenshots of it). 1.25 keeps
 // edges acceptably smooth while keeping captures far under attachment limits.
@@ -103,6 +108,7 @@ renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.info.autoReset = false // reset manually each frame so stats survive the HUD pass
 document.documentElement.dataset.renderer = renderBackend
 
+await loading.setStage('models')
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#c2d8cf')
 scene.fog = new THREE.Fog('#c2d8cf', 185, 345)
@@ -1673,5 +1679,22 @@ function frame(now: number): void {
 }
 // WebGPU builds pipelines lazily, and the first draw of each stalls the frame.
 // Build the farm's up front so the menu opens smoothly.
-if (renderBackend === 'webgpu') await precompile(renderer, scene, camera)
-requestAnimationFrame(frame)
+await loading.setStage('shaders')
+try {
+  await precompile(renderer, scene, camera)
+} catch (error) {
+  // A WebGPU device that starts but cannot build the farm's pipelines (a driver
+  // or browser mismatch) would leave a dead canvas; restart the page on WebGL.
+  if (renderBackend === 'webgpu') {
+    console.warn('[renderer] WebGPU could not compile the farm; reloading on WebGL', error)
+    const url = new URL(window.location.href)
+    url.searchParams.set('renderer', 'webgl')
+    window.location.replace(url.href)
+  }
+  throw error
+}
+requestAnimationFrame((now) => {
+  frame(now)
+  // The first frame has been submitted; the next paint shows the farm.
+  requestAnimationFrame(() => loading.done())
+})

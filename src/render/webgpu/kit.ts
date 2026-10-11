@@ -4,6 +4,7 @@ import {
   Fn,
   If,
   atan,
+  attribute,
   cameraPosition,
   clamp,
   cos,
@@ -256,6 +257,69 @@ function applyGroundVariation(
   material.needsUpdate = true
 }
 
+// --------------------------------------------------------------- animals --
+
+const heartEyePositions = new Map<boolean, Tsl>()
+
+/**
+ * Port of `installHeartEyeShader` in animals/animal-eyes.ts. A collapsed vertex
+ * scales to the origin, so its triangles have no area. The node is shared per
+ * mode so every eye material of a mode reuses one pipeline.
+ */
+function applyHeartEyes(material: THREE.Material, hearts: boolean, partAttribute: string): void {
+  let node = heartEyePositions.get(hearts)
+  if (!node) {
+    const amount = float(hearts ? 1 : 0)
+    node = positionLocal.mul(select(attribute(partAttribute, 'float').greaterThan(0.5), amount, float(1).sub(amount)))
+    heartEyePositions.set(hearts, node)
+  }
+  ;(material as THREE.MeshStandardMaterial & { positionNode: Tsl }).positionNode = node
+  material.needsUpdate = true
+}
+
+/**
+ * Port of the `onBeforeCompile` hook in `createCaptureMaterial`
+ * (animals/balloon-animal.ts): the paint sweeps up the animal from the wild
+ * colour. The colour node folds the map and vertex colours in itself, as the
+ * GLSL edits `diffuseColor` after `color_fragment`.
+ */
+function applyPaintReveal(
+  material: THREE.MeshStandardMaterial,
+  state: { progress: { value: number }; bottom: { value: number }; top: { value: number } },
+  wildColor: THREE.Color,
+): void {
+  const live = (source: { value: number }): Tsl => {
+    const node = uniform(source.value)
+    node.onRenderUpdate(() => {
+      node.value = source.value
+    })
+    return node
+  }
+  const progress = live(state.progress)
+  const bottom = live(state.bottom)
+  const top = live(state.top)
+  const wild = uniform(wildColor)
+  const hasVertexColors = material.vertexColors
+
+  const shade = Fn(() => {
+    const base = vec4(materialColor as Tsl).toVar()
+    if (hasVertexColors) base.mulAssign(vertexColor())
+    const world = positionWorld
+    const height = clamp(world.y.sub(bottom).div(max(top.sub(bottom), 0.001)), 0, 1)
+    const edge = float(1.03).sub(progress.mul(1.06))
+    const noise = sin(world.x.mul(9).add(world.z.mul(6))).add(sin(world.z.mul(13).sub(world.y.mul(5)))).mul(0.012)
+    const shifted = height.add(noise)
+    const reveal = smoothstep(edge.sub(0.035), edge.add(0.035), shifted)
+    const shimmer = float(1).sub(smoothstep(0.012, 0.055, shifted.sub(edge).abs()))
+    const rgb = mix(wild, base.rgb, reveal).add(vec3(0.055, 0.04, 0.025).mul(shimmer).mul(float(1).sub(progress)))
+    return vec4(rgb, base.a)
+  })
+
+  ;(material as THREE.MeshStandardMaterial & { colorNode: Tsl }).colorNode = shade()
+  material.vertexColors = false // the colour node already includes it
+  material.needsUpdate = true
+}
+
 // ------------------------------------------------------------- film post --
 
 /** Port of `createGradeShader` in scene/cutscene-kit.ts. */
@@ -400,5 +464,5 @@ function createRoomEnvironment(renderer: Parameters<WebGPUKit['createFilmPost']>
 }
 
 export function createWebGPUKit(): WebGPUKit {
-  return { createSkyMaterial, createIntroSkyMaterial, createCrtMaterial, applyGroundVariation, createFilmPost, createRoomEnvironment }
+  return { createSkyMaterial, createIntroSkyMaterial, createCrtMaterial, applyGroundVariation, applyHeartEyes, applyPaintReveal, createFilmPost, createRoomEnvironment }
 }

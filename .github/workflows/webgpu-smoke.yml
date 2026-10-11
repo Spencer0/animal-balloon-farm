@@ -1,7 +1,7 @@
 name: WebGPU smoke
 
-# The WebGPU renderer (?renderer=webgpu) is opt-in while WebGL stays the default,
-# so the performance gate does not cover it. This job loads the farm under
+# WebGPU is the game's default renderer, but the performance gate pins
+# ?renderer=webgl (its budgets are WebGL numbers), so it does not cover it. This job loads the farm under
 # WebGPU on SwiftShader, checks it draws and plays the intro film, and fails on
 # page errors. It does not measure speed: a software adapter says nothing about
 # a real GPU, and budgets live in perf/budgets.json for WebGL only.

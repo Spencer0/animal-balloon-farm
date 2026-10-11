@@ -9,6 +9,14 @@
     <link rel="stylesheet" href="./main.css" />
   </head>
   <body>
+    <div id="boot-loading" class="ld-overlay" role="status">
+      <div class="ld-card">
+        <h1 class="ld-title">Animal Balloon Farm</h1>
+        <hr class="ld-divider" />
+        <p class="ld-stage" data-ld-stage>Loading renderer</p>
+        <div class="ld-bar"></div>
+      </div>
+    </div>
     <canvas id="game" aria-label="Animal Balloon Farm game canvas"></canvas>
     <script type="module" src="./main.js"></script>
   </body>
