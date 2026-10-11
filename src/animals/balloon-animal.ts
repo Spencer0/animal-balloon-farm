@@ -6,6 +6,7 @@ import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { applyHeartEyeMaterial, clearHeartEyes, heartEyeCount as countHeartEyes, installHeartEyeShader, setHeartEyes } from './animal-eyes'
 import { lowestClipPoseY } from './animal-grounding'
+import { nearestRayHit } from '../scene/skinned-pick'
 import { cloneMerged, objectBounds, skeletonsOf } from '../scene/merge-static-meshes'
 import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
@@ -792,6 +793,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     playSimEvents()
   }
 
+  const pressRaycaster = new THREE.Raycaster()
   const onPointerDown = (event: PointerEvent): void => {
     if (sold || options.captureOnClick === false || event.button !== 0 || event.detail >= 2
       || options.isPointerBlocked?.(event.clientX, event.clientY)
@@ -801,10 +803,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
       -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
     )
-    const raycaster = new THREE.Raycaster()
-    raycaster.setFromCamera(pointer, options.camera)
-    const hit = raycaster.intersectObjects([wrapper], true)[0]
-    if (!hit) return
+    pressRaycaster.setFromCamera(pointer, options.camera)
+    if (nearestRayHit(pressRaycaster.ray, wrapper) === Infinity) return
     if (!beginCapture()) return
     event.preventDefault()
   }
