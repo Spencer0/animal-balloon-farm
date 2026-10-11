@@ -232,10 +232,10 @@ export { SCENARIOS };
 
 /**
  * @param {string[]} argv
- * @returns {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], list: boolean, help: boolean, reload: boolean }}
+ * @returns {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], runs: number, list: boolean, help: boolean, reload: boolean }}
  */
 function parseArgs(argv) {
-  const options = /** @type {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], list: boolean, help: boolean, reload: boolean }} */ ({ scenario: 'shovel', minFps: DEFAULT_MIN_FPS, json: null, settleMs: 1200, sampleMs: 1500, ramp: [10, 20, 30, 40, 50], list: false, help: false, reload: false });
+  const options = /** @type {{ scenario: string, minFps: number, json: string | null, settleMs: number, sampleMs: number, ramp: number[], runs: number, list: boolean, help: boolean, reload: boolean }} */ ({ scenario: 'shovel', minFps: DEFAULT_MIN_FPS, json: null, settleMs: 1200, sampleMs: 1500, ramp: [10, 20, 30, 40, 50], runs: 1, list: false, help: false, reload: false });
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--list') options.list = true;
@@ -246,6 +246,7 @@ function parseArgs(argv) {
     else if (arg === '--settleMs') options.settleMs = Number(argv[++i]);
     else if (arg === '--sampleMs') options.sampleMs = Number(argv[++i]);
     else if (arg === '--ramp') options.ramp = argv[++i].split(',').map(Number);
+    else if (arg === '--runs') options.runs = Number(argv[++i]);
     else if (arg === '--help' || arg === '-h') options.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -253,13 +254,44 @@ function parseArgs(argv) {
 }
 
 /**
- * @param {{ sampleCount: number, p95WorkMs: number | null, p95FrameIntervalMs: number | null, sustainedFps: number | null }} summary
+ * Why a run came back short of its sample count. A slow runner stops at the
+ * sampling cap before it has enough frames; that is a different problem from a
+ * scenario that ran too briefly, so the message says which one it is.
+ * @param {{ sampleCount: number, averageIntervalMs: number | null }} timing
+ * @param {number} minSamples
+ */
+export function explainShortSamples(timing, minSamples) {
+  const capSeconds = MAX_SAMPLE_MS / 1000;
+  const secondsPerFrame = timing.averageIntervalMs === null ? null : timing.averageIntervalMs / 1000;
+  if (secondsPerFrame !== null && secondsPerFrame * minSamples > capSeconds) {
+    return `frames too slow: ${secondsPerFrame.toFixed(2)} s/frame, got ${timing.sampleCount}/${minSamples} samples (${capSeconds}s sampling cap)`;
+  }
+  return `only ${timing.sampleCount} samples (need ${minSamples})`;
+}
+
+/**
+ * The run whose p95 work is the middle of the set. One run can catch a GC
+ * pause or a noisy neighbour on a shared runner; the median run ignores it.
+ * @template T
+ * @param {T[]} runs
+ * @param {(run: T) => number | null} p95Of
+ * @returns {T}
+ */
+export function medianRun(runs, p95Of) {
+  /** @param {T} run */
+  const key = (run) => p95Of(run) ?? Number.POSITIVE_INFINITY;
+  const ranked = [...runs].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  return ranked[Math.floor(ranked.length / 2)];
+}
+
+/**
+ * @param {{ sampleCount: number, p95WorkMs: number | null, p95FrameIntervalMs: number | null, sustainedFps: number | null, averageIntervalMs: number | null }} summary
  * @param {{ minFps: number, minSamples: number }} budget
  */
 function gateSingle(summary, { minFps, minSamples }) {
   if (!Number.isFinite(minFps) || minFps <= 0) return { pass: true, reason: 'measure-only (minFps 0)' };
   const maxFrameMs = 1000 / minFps;
-  if (summary.sampleCount < minSamples) return { pass: false, reason: `only ${summary.sampleCount} samples (need ${minSamples})` };
+  if (summary.sampleCount < minSamples) return { pass: false, reason: explainShortSamples(summary, minSamples) };
   if (summary.p95WorkMs === null || summary.p95WorkMs > maxFrameMs) {
     return { pass: false, reason: `p95 work ${summary.p95WorkMs}ms exceeds ${maxFrameMs.toFixed(2)}ms budget` };
   }
@@ -272,24 +304,77 @@ function gateSingle(summary, { minFps, minSamples }) {
 /**
  * @param {import('./cdp-lib.mjs').CDPClient} cdp
  * @param {string} name
- * @param {{ minFps: number }} options
+ * @param {{ minFps: number, runs: number }} options
  */
 async function runSingle(cdp, name, options) {
   const scenario = /** @type {Record<string, { description: string, minSamples: number, expression: string, check: (result: any) => string | null }>} */ (SCENARIOS)[name];
   if (!scenario) throw new Error(`Unknown scenario: ${name}. Try --list.`);
   const viewport = await assertViewport(cdp);
-  const raw = await cdp.evaluate(scenario.expression);
-  const summary = summarizeTiming(raw.samples ?? [], raw.intervals ?? []);
-  const fixtureProblem = scenario.check(raw);
-  const gate = fixtureProblem
-    ? { pass: false, reason: fixtureProblem }
-    : gateSingle(summary, { minFps: options.minFps, minSamples: scenario.minSamples });
-  return { scenario: name, description: scenario.description, viewport, ...raw, samples: undefined, intervals: undefined, timing: summary, gate };
+  /** @type {Array<{ raw: any, render: { renderCalls: number, triangles: number }, timing: any, problem: string | null }>} */
+  const runs = [];
+  for (let run = 0; run < options.runs; run += 1) {
+    // Each repeat starts from a fresh page: a scenario that plants or digs leaves its
+    // state behind, and a second run would then fail on that leftover state.
+    if (run > 0) await openDebugPage(cdp, undefined, true);
+    const raw = await cdp.evaluate(scenario.expression);
+    // Draw calls and triangles come from one forced render of the scene the run left behind.
+    const render = await cdp.evaluate('window.__gardenDebug.renderSnapshot()');
+    runs.push({ raw, render, timing: summarizeTiming(raw.samples ?? [], raw.intervals ?? []), problem: scenario.check(raw) });
+  }
+  const median = medianRun(runs, (run) => run.timing.p95WorkMs);
+  const problem = runs.find((run) => run.problem)?.problem ?? null;
+  // The worst run's counts, so one lucky run cannot hide a regression.
+  const render = {
+    renderCalls: Math.max(...runs.map((run) => run.render.renderCalls)),
+    triangles: Math.max(...runs.map((run) => run.render.triangles)),
+  };
+  const gate = problem
+    ? { pass: false, reason: problem }
+    : gateSingle(median.timing, { minFps: options.minFps, minSamples: scenario.minSamples });
+  return {
+    scenario: name,
+    description: scenario.description,
+    viewport,
+    ...median.raw,
+    samples: undefined,
+    intervals: undefined,
+    timing: median.timing,
+    runs: runs.map((run) => run.timing.p95WorkMs),
+    render,
+    gate,
+  };
 }
 
 /**
+ * One sampling window over the live crowd: frame work and intervals until the
+ * window is up and the sample floor is met (or the cap is hit).
+ * @param {number} sampleMs
+ */
+const crowdSampleExpression = (sampleMs) => `(async () => {
+  const debug = window.__gardenDebug;
+  const waitFrames = (n) => new Promise((r) => {
+    const step = () => --n <= 0 ? r() : requestAnimationFrame(step);
+    requestAnimationFrame(step);
+  });
+  const samples = [];
+  const intervals = [];
+  const start = performance.now();
+  let n = -1;
+  while (performance.now() - start < ${sampleMs} || (samples.length < ${CROWD_MIN_SAMPLES} && performance.now() - start < ${MAX_SAMPLE_MS})) {
+    await waitFrames(1);
+    const latest = debug.performanceSamples().at(-1);
+    if (latest && latest.frameNumber !== n && latest.intervalMs > 0) {
+      n = latest.frameNumber;
+      samples.push(latest.workMs);
+      intervals.push(latest.intervalMs);
+    }
+  }
+  return { samples, intervals };
+})()`;
+
+/**
  * @param {import('./cdp-lib.mjs').CDPClient} cdp
- * @param {{ minFps: number, settleMs: number, sampleMs: number, ramp: number[] }} options
+ * @param {{ minFps: number, settleMs: number, sampleMs: number, ramp: number[], runs: number }} options
  */
 async function runCrowdRamp(cdp, options) {
   const viewport = await assertViewport(cdp);
@@ -303,28 +388,15 @@ async function runCrowdRamp(cdp, options) {
     // Then keep the fixtures live and sample sustained frame times.
     await cdp.evaluate(`window.__gardenDebug.setCrowd(${count})`);
     await new Promise((resolve) => setTimeout(resolve, options.settleMs));
-    const collected = await cdp.evaluate(`(async () => {
-      const debug = window.__gardenDebug;
-      const waitFrames = (n) => new Promise((r) => {
-        const step = () => --n <= 0 ? r() : requestAnimationFrame(step);
-        requestAnimationFrame(step);
-      });
-      const samples = [];
-      const intervals = [];
-      const start = performance.now();
-      let n = -1;
-      while (performance.now() - start < ${options.sampleMs} || (samples.length < ${CROWD_MIN_SAMPLES} && performance.now() - start < ${MAX_SAMPLE_MS})) {
-        await waitFrames(1);
-        const latest = debug.performanceSamples().at(-1);
-        if (latest && latest.frameNumber !== n && latest.intervalMs > 0) {
-          n = latest.frameNumber;
-          samples.push(latest.workMs);
-          intervals.push(latest.intervalMs);
-        }
-      }
-      return { samples, intervals };
-    })()`);
-    const timing = summarizeTiming(collected.samples, collected.intervals);
+    // The floor is the step the gate judges, so it is sampled `runs` times and the median window counts.
+    /** @type {Array<{ timing: any }>} */
+    const windows = [];
+    const sampleWindows = count === options.ramp[0] ? options.runs : 1;
+    for (let window = 0; window < sampleWindows; window += 1) {
+      const collected = await cdp.evaluate(crowdSampleExpression(options.sampleMs));
+      windows.push({ timing: summarizeTiming(collected.samples, collected.intervals) });
+    }
+    const { timing } = medianRun(windows, (entry) => entry.timing.p95WorkMs);
     const withinWork = timing.p95WorkMs !== null && timing.p95WorkMs <= budgetMs;
     const withinInterval = timing.p95FrameIntervalMs !== null && timing.p95FrameIntervalMs <= budgetMs;
     if (withinWork && withinInterval) recommendedAnimals = count;
@@ -333,24 +405,26 @@ async function runCrowdRamp(cdp, options) {
       renderCalls: snapshot.renderCalls,
       triangles: snapshot.triangles,
       timing,
+      runs: windows.map((entry) => entry.timing.p95WorkMs),
       withinBudget: withinWork && withinInterval,
     });
     console.log(`crowd ${count}: p95 work ${timing.p95WorkMs}ms, p95 interval ${timing.p95FrameIntervalMs}ms / ${timing.sustainedFps?.toFixed(1)} FPS, ${snapshot.renderCalls} calls, ${(snapshot.triangles / 1000).toFixed(0)}k tris`);
   }
   await cdp.evaluate('window.__gardenDebug.clearCrowd(); window.__gardenDebug.clearGarden();');
   const floor = steps[0];
-  const gate = options.minFps <= 0
+  const floorGate = options.minFps <= 0 ? null : gateSingle(floor.timing, { minFps: options.minFps, minSamples: 30 });
+  const gate = floorGate === null
     ? { pass: true, reason: `measure-only; curve suggests ~${recommendedAnimals} animals at 60 FPS nominal` }
-    : gateSingle(floor.timing, { minFps: options.minFps, minSamples: 30 }).pass
+    : floorGate.pass
       ? { pass: true, reason: `floor (${floor.count} animals) holds; curve suggests ~${recommendedAnimals} animals` }
-      : { pass: false, reason: `floor (${floor.count} animals) already over budget` };
+      : { pass: false, reason: `floor (${floor.count} animals): ${floorGate.reason}` };
   return { scenario: 'crowd-ramp', description: 'Sustained load curve of real animal models (the farm draws at most 40).', viewport, ramp: options.ramp, steps, recommendedAnimals, gate };
 }
 
 /**
  * Shared entry so perf-stress.mjs stays a thin compatibility wrapper.
  * @param {string} name
- * @param {{ minFps?: number, settleMs?: number, sampleMs?: number, ramp?: number[], cdpUrl?: string, baseUrl?: string, reload?: boolean }} [options]
+ * @param {{ minFps?: number, settleMs?: number, sampleMs?: number, ramp?: number[], runs?: number, cdpUrl?: string, baseUrl?: string, reload?: boolean }} [options]
  */
 export async function runScenario(name, options = {}) {
   const full = {
@@ -358,7 +432,9 @@ export async function runScenario(name, options = {}) {
     settleMs: options.settleMs ?? 1200,
     sampleMs: options.sampleMs ?? 1500,
     ramp: options.ramp ?? [10, 20, 30, 40, 50],
+    runs: options.runs ?? 1,
   };
+  if (!Number.isInteger(full.runs) || full.runs < 1) throw new Error('runs must be a whole number of at least 1.');
   if (!Number.isFinite(full.minFps) || full.minFps < 0) throw new Error('minFps must be a non-negative number.');
   return withSession(options, async (cdp) => {
     await openDebugPage(cdp, undefined, options.reload ?? false);
