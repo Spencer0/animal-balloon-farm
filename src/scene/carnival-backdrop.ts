@@ -5,7 +5,7 @@ import type { CarnivalKind } from '../game/carnival-migration'
 import { isInShopClearing } from '../game/shop-site'
 
 const PALETTE = ['#c78385', '#d9bd83', '#73aaa6', '#99a2bd', '#c19aaa', '#e2d4b1']
-const material = (color: string) => new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true })
+const material = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true })
 const distantMaterials = PALETTE.map(material)
 const cream = material('#e2d4b1')
 const wood = material('#a89275')

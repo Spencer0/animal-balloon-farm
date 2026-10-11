@@ -257,7 +257,7 @@ const GLSL_BODY = /* glsl */ `
  * Patch a standard material in place. Safe to call once per material; the
  * program cache key is per kind so different kinds do not share a program.
  */
-export function applyGroundVariation(material: THREE.MeshStandardMaterial, options: GroundVariationOptions): void {
+export function applyGroundVariation(material: THREE.MeshStandardMaterial | THREE.MeshLambertMaterial, options: GroundVariationOptions): void {
   const kind = KINDS[options.kind]
   const defines = [
     kind.field ? '#define GV_FIELD' : '',

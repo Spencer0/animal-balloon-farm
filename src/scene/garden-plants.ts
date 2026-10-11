@@ -243,8 +243,8 @@ function makeGroundCover(species: PlantId): THREE.Group {
   root.name = `Plant · ${species} patch`
   const clover = species === 'clover'
   const random = patchRandom(clover ? 311 : 523)
-  const matMaterial = new THREE.MeshStandardMaterial({
-    color: clover ? '#6fae55' : '#7ab356', roughness: 0.92,
+  const matMaterial = new THREE.MeshLambertMaterial({
+    color: clover ? '#6fae55' : '#7ab356',
     map: patchTexture(), transparent: true, depthWrite: false,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   })
@@ -255,9 +255,9 @@ function makeGroundCover(species: PlantId): THREE.Group {
   mat.renderOrder = 1
   root.add(mat)
 
-  const leafMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.8 })
-  const bloomMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.6 })
-  const stemMaterial = new THREE.MeshStandardMaterial({ color: '#5a9150', roughness: 0.85 })
+  const leafMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff' })
+  const bloomMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff' })
+  const stemMaterial = new THREE.MeshLambertMaterial({ color: '#5a9150' })
   const leafGeometry = new THREE.SphereGeometry(1, 7, 5)
   const stemGeometry = new THREE.CylinderGeometry(0.012, 0.016, 1, 5)
   const dummy = new THREE.Object3D()
@@ -353,10 +353,10 @@ function makePlantModel(species: PlantId): THREE.Group {
   if (species === 'clover' || species === 'dandelion') return makeGroundCover(species)
   const root = new THREE.Group()
   root.name = `Plant · ${species}`
-  const stemMaterial = new THREE.MeshStandardMaterial({ color: '#4f8750', roughness: 0.82 })
-  const leafMaterial = new THREE.MeshStandardMaterial({ color: '#609a55', roughness: 0.78 })
-  const flowerMaterial = new THREE.MeshStandardMaterial({ color: species === 'water-lily' ? '#df9bcf' : '#e87965', roughness: 0.65 })
-  const centerMaterial = new THREE.MeshStandardMaterial({ color: '#efc55d', roughness: 0.68 })
+  const stemMaterial = new THREE.MeshLambertMaterial({ color: '#4f8750' })
+  const leafMaterial = new THREE.MeshLambertMaterial({ color: '#609a55' })
+  const flowerMaterial = new THREE.MeshLambertMaterial({ color: species === 'water-lily' ? '#df9bcf' : '#e87965' })
+  const centerMaterial = new THREE.MeshLambertMaterial({ color: '#efc55d' })
   const leafGeometry = new THREE.SphereGeometry(1, 10, 7)
   const stemGeometry = new THREE.CylinderGeometry(0.025, 0.04, 1, 7)
   const addLeaf = (x: number, y: number, z: number, sx: number, sy: number, sz: number, rotation = 0): void => {
@@ -379,7 +379,7 @@ function makePlantModel(species: PlantId): THREE.Group {
     const height = species === 'water-lily' ? 0.5 : 0.62
     addStem(0, height, 0)
     if (species === 'water-lily') {
-      const padMaterial = new THREE.MeshStandardMaterial({ color: '#4f9e70', side: THREE.DoubleSide, roughness: 0.7 })
+      const padMaterial = new THREE.MeshLambertMaterial({ color: '#4f9e70', side: THREE.DoubleSide })
       root.userData.disposeMaterials = [stemMaterial, leafMaterial, flowerMaterial, centerMaterial, padMaterial]
       const pad = new THREE.Mesh(new THREE.CircleGeometry(0.46, 32), padMaterial)
       pad.rotation.x = -Math.PI / 2

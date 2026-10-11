@@ -394,16 +394,16 @@ export function createGardenTools(
   root.add(lawn)
 
   const grassGeometry = makeGrassGeometry()
-  const grassMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.84, metalness: 0.01 })
+  const grassMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff' })
   const tuftGeometry = new THREE.SphereGeometry(0.5, 14, 8)
-  const tuftMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, metalness: 0 })
+  const tuftMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff' })
   const shardGeometry = new THREE.ConeGeometry(0.5, 1, 5)
   shardGeometry.translate(0, 0.5, 0)
   const shardMaterial = new THREE.MeshStandardMaterial({
     color: '#ffffff', roughness: 0.12, metalness: 0.1, flatShading: true, transparent: true, opacity: 0.88,
   })
   const snowballGeometry = new THREE.SphereGeometry(0.5, 14, 10)
-  const snowballMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.86, metalness: 0 })
+  const snowballMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff' })
   const grassGroup = new THREE.Group()
   grassGroup.name = 'Hand-painted grass · spatially batched instancing'
   root.add(grassGroup)
