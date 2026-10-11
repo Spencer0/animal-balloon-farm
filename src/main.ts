@@ -38,7 +38,8 @@ import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } fro
 import type { GardenToolId } from './scene/garden-tool-art'
 import { createFarmCamera } from './scene/farm-camera'
 import { createUILayer, type UIPanel } from './ui/ui-layer'
-import { advanceClock, calendarOf, createDayNightClock, phaseOf } from './game/day-night'
+import { advanceClock, calendarOf, createDayNightClock, daylightAmount, phaseOf } from './game/day-night'
+import { createAnimalShadows } from './animals/animal-shadows'
 import { createDayNightRig } from './scene/day-night-rig'
 import { createShadowRefresh } from './scene/shadow-refresh'
 import { weekdayName } from './game/carnival-schedule'
@@ -184,6 +185,10 @@ if (loadedSave) {
 /** Debug only: a held clock stays put, so a scenario's night does not slip into morning. */
 let clockHeld = false
 const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, sky.colors)
+// One instanced draw call of soft ground decals under every animal (animals stay out of the sun's shadow map).
+const animalShadows = createAnimalShadows(scene, ANIMAL_LIFE_CONFIG.maximumPopulation + 16)
+/** Herd plus harness crowd fixtures, so the perf gate counts the shadow draw as players get it. */
+const refreshAnimalShadows = (): void => animalShadows.update([animals, crowdFixtures], daylightAmount(dayNightClock.timeOfDay))
 const clockCalendarHud = createClockCalendarHud(window.innerWidth, window.innerHeight)
 
 const fairground = createFairground(dayNightClock.elapsedDays)
@@ -1204,6 +1209,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     pageParams,
     renderer,
     forceShadowRedraw: shadowRefresh.forceNext,
+    refreshAnimalShadows,
     scene,
     camera,
     cameraTarget,
@@ -1552,6 +1558,7 @@ function frame(now: number): void {
   const simAlpha = simClock.alpha
   animals.forEach((animal) => animal.update(delta, simAlpha))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
+  refreshAnimalShadows()
   collideAnimals(now / 1000)
   if (!menu.isOpen && !salePanel.isOpen) {
     updateOwlHunt(delta)

@@ -105,6 +105,10 @@ export interface BalloonAnimal {
   readonly currentPosition: THREE.Vector3
   readonly currentHeading: number
   readonly currentScale: number
+  /** World height of the ground under the animal (the root rides above it while a flier flies or a capture lifts). */
+  readonly groundHeight: number
+  /** Half the animal's longest side in world units, growth included: how wide its contact shadow reads. */
+  readonly footprintRadius: number
   readonly renderPriority: number
   readonly isRomancing: boolean
   /** True for a species that is positioned by the predator sim instead of wandering. */
@@ -931,6 +935,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get currentPosition(): THREE.Vector3 { return wrapper.position },
     get currentHeading(): number { return wrapper.rotation.y },
     get currentScale(): number { return wrapper.scale.x },
+    get groundHeight(): number { return groundYCurrent },
+    get footprintRadius(): number { return options.size * 0.5 * wrapper.scale.x },
     get renderPriority(): number {
       return (focused ? 100 : 0) + (capture ? 90 : 0) + (romancing ? 80 : 0) + (stage >= 3 ? 10 : 0)
     },

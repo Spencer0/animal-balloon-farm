@@ -295,6 +295,8 @@ export interface GardenHarnessDeps {
   readonly renderer: FarmRenderer
   /** Arms the sun's shadow pass for the next render. */
   readonly forceShadowRedraw: () => void
+  /** Re-place the animal contact decals, so a snapshot taken before any frame still counts them. */
+  readonly refreshAnimalShadows: () => void
   readonly scene: THREE.Scene
   readonly camera: THREE.OrthographicCamera
   readonly cameraTarget: THREE.Vector3
@@ -533,6 +535,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       renderer.info.autoReset = true
       renderer.info.reset()
       deps.forceShadowRedraw()
+      deps.refreshAnimalShadows()
       renderer.render(scene, camera)
       return frameRenderStats(renderer)
     } finally {
