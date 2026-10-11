@@ -230,6 +230,20 @@ Needs the stronger model and a replay test per hunt scenario.
 
 ### Slice 4: capture, sleep, progress
 
+Progress so far (in landing order):
+
+- **Sleep (done).** `AnimalSimRecord.sleepSpot` / `asleep`, `stepSleep` in
+  `animal-routes.ts`. `tickSim` now orders its walks home trip, pursuit, bed,
+  then (free animals only) the visit cooldown, gate route and wander, which is
+  the order the per-frame update had; the cooldown no longer counts down while
+  an animal is on a home trip or a pursuit, as before slice 3. The view keeps
+  the crouch squash and breath (`applySleepPose`) and picks the clip, mixer
+  speed and the slow turn to the bed heading from `record.motion === 'sleep'`.
+  `setAnimation` only mirrors into `record.motion` while the view still moves
+  the animal.
+
+Plan:
+
 - Stage and conditions move onto the record; `animal-progress.ts` already is
   pure, so it reads records instead of closures.
 - Sleep spot, the walk to bed and `asleep` become sim state; the view keeps the

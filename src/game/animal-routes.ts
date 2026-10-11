@@ -1,7 +1,7 @@
 /**
  * Walks that are not wandering, as simulation systems: the trip to a house door
  * (a stroll, or a sprint when something is chasing it), steering toward a point
- * (a hunting snake, a visitor crossing the meadow) and the visitor's route
+ * (a hunting snake, a visitor crossing the meadow), the walk to bed and the visitor's route
  * through the farm gate. All of them steer an `AnimalSimRecord` on the fixed tick; the
  * view only shows the result.
  *
@@ -15,6 +15,10 @@ import { headingOf, type AnimalSimRecord, type AnimalVisit } from './animal-sim'
 
 /** Closer than this to the door counts as arrived. */
 export const HOME_ARRIVE_DISTANCE = 0.25
+/** Closer than this to its bed it is curled up there. */
+export const SLEEP_ARRIVE_DISTANCE = 0.12
+/** The walk to bed is a stroll: this share of its walking speed. */
+export const SLEEP_WALK_SCALE = 0.8
 /** Closer than this to its pursuit point it stops. */
 export const PURSUIT_ARRIVE_DISTANCE = 0.05
 
@@ -60,6 +64,30 @@ export function stepPursuit(record: AnimalSimRecord, walkSpeed: number, dt: numb
     record.motion = 'walk'
   } else {
     record.motion = 'idle'
+  }
+}
+
+/**
+ * One tick of the walk to bed, then of lying in it. The caller has opened the
+ * step with `beginSimStep`. A sleeper that was nudged away gets up and goes back.
+ */
+export function stepSleep(record: AnimalSimRecord, walkSpeed: number, dt: number): void {
+  const spot = record.sleepSpot
+  if (!spot) return
+  const dx = spot.x - record.x
+  const dz = spot.z - record.z
+  const distance = Math.hypot(dx, dz)
+  if (distance > SLEEP_ARRIVE_DISTANCE) {
+    record.asleep = false
+    record.heading = headingOf(dx, dz)
+    const travel = Math.min(walkSpeed * SLEEP_WALK_SCALE * dt, distance)
+    record.x += (dx / distance) * travel
+    record.z += (dz / distance) * travel
+    record.motion = 'walk'
+  } else {
+    record.asleep = true
+    record.heading = spot.heading
+    record.motion = 'sleep'
   }
 }
 

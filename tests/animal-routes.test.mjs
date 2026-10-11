@@ -168,3 +168,70 @@ test('a flier crosses the fence by air: only its side changes', () => {
   assert.equal(r.visit.route, null)
   assert.equal(r.visit.direction, null)
 })
+
+// ---- Sleep: the walk to bed and lying in it ----
+
+const bed = { x: 4, z: -2, heading: 1.2 }
+
+function runSleep(ticks, speed = 0.9, start = [-3, 3], disturb = null) {
+  const r = record(start[0], start[1])
+  r.sleepSpot = bed
+  const path = []
+  for (let tick = 0; tick < ticks; tick += 1) {
+    if (disturb && tick === disturb.at) sim.shiftAnimalSim(r, disturb.dx, disturb.dz)
+    sim.beginSimStep(r)
+    routes.stepSleep(r, speed, STEP)
+    path.push([r.x, r.z, r.motion, r.asleep, r.heading])
+  }
+  return { r, path }
+}
+
+test('a sleeper strolls to its bed at 0.8 of walking speed, then lies down facing the bed heading', () => {
+  const { r, path } = runSleep(400)
+  assert.equal(r.asleep, true)
+  assert.equal(r.motion, 'sleep')
+  assert.equal(r.heading, bed.heading)
+  assert.ok(Math.hypot(r.x - bed.x, r.z - bed.z) <= routes.SLEEP_ARRIVE_DISTANCE + 1e-9)
+  let previous = [-3, 3]
+  for (const [x, z, motion, asleep] of path) {
+    assert.ok(Math.hypot(x - previous[0], z - previous[1]) <= 0.9 * routes.SLEEP_WALK_SCALE * STEP + 1e-9)
+    if (motion === 'walk') assert.equal(asleep, false, 'not asleep until it arrives')
+    previous = [x, z]
+  }
+  assert.equal(routes.SLEEP_WALK_SCALE, 0.8)
+})
+
+test('a sleeper that is nudged away gets up and goes back to bed', () => {
+  const { r, path } = runSleep(600, 0.9, [-3, 3], { at: 300, dx: 2, dz: 2 })
+  assert.equal(path[299][3], true, 'asleep before the shove')
+  assert.equal(path[300][3], false, 'up again the tick after')
+  assert.equal(path[300][2], 'walk')
+  assert.equal(r.asleep, true)
+  assert.ok(Math.hypot(r.x - bed.x, r.z - bed.z) <= routes.SLEEP_ARRIVE_DISTANCE + 1e-9)
+})
+
+test('a seeded run that wanders, sleeps and wakes replays exactly and resumes wandering from the bed', () => {
+  const ctx = { limitX: 10, limitZ: 8, carnival: false, alarmed: false, speed: 0.9, anchor: null, gardenBounds: plot }
+  const run = (seed) => {
+    const r = record(1, 1)
+    const rng = seededRandom(seed)
+    wander.chooseWanderTarget(r, ctx, rng)
+    const path = []
+    for (let tick = 0; tick < 1200; tick += 1) {
+      if (tick === 150) r.sleepSpot = bed
+      if (tick === 700) { r.sleepSpot = null; r.asleep = false }
+      sim.beginSimStep(r)
+      if (r.sleepSpot) routes.stepSleep(r, ctx.speed, STEP)
+      else wander.stepWander(r, ctx, STEP, rng)
+      path.push([r.x, r.z, r.motion, r.asleep])
+    }
+    return path
+  }
+  const a = run(5)
+  assert.deepEqual(a, run(5))
+  assert.equal(a[699][3], true)
+  assert.equal(a[699][2], 'sleep')
+  assert.equal(a[1199][3], false)
+  assert.ok(a.slice(701).some((entry) => entry[2] === 'walk'), 'it wanders off again')
+  assert.ok(Math.hypot(a[701][0] - bed.x, a[701][1] - bed.z) < 1, 'from where it lay')
+})

@@ -11,8 +11,8 @@ import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
 import { carnivalRing } from '../game/animal-travel'
-import { beginSimStep, createAnimalSimRecord, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, shiftAnimalSim, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord } from '../game/animal-sim'
-import { beginGateTravel, stepGateTravel, stepHomeTrip, stepPursuit, tickVisitCooldown } from '../game/animal-routes'
+import { beginSimStep, createAnimalSimRecord, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, shiftAnimalSim, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord, type AnimalSleepSpot } from '../game/animal-sim'
+import { beginGateTravel, stepGateTravel, stepHomeTrip, stepPursuit, stepSleep, tickVisitCooldown } from '../game/animal-routes'
 import { ALARM_SPEED_SCALE, chooseWanderTarget, stepWander, type WanderContext } from '../game/animal-wander'
 import { seededRandom } from '../game/seeded-random'
 
@@ -91,11 +91,7 @@ export interface FlightPose {
 }
 
 /** Where a night animal curls up for the day, and which way it faces (yaw about +Y, +X-forward model). */
-export interface SleepSpot {
-  readonly x: number
-  readonly z: number
-  readonly heading: number
-}
+export type SleepSpot = AnimalSleepSpot
 
 export interface BalloonAnimal {
   readonly id: BalloonAnimalId
@@ -478,20 +474,16 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let shownAlarmed = false
   let wasPursuing = false
   let flightRate = 1
-  let sleepSpot: SleepSpot | null = null
   let sleepBlend = 0
-  let asleep = false
-  const sleepFacing = new THREE.Quaternion()
   // Shared by every walk, chase and wander branch; each one uses it at once, so
   // one scratch quaternion per animal replaces a fresh allocation per frame.
   const facingScratch = new THREE.Quaternion()
-  const sleepYaw = new THREE.Vector3(0, 1, 0)
   let flightVisible = !options.flier
   const alarmScale = (): number => (sim.alarmed ? ALARM_SPEED_SCALE : 1)
   const hasSleepClip = (): boolean => Boolean(loaded?.actions.has('SLEEP'))
   /** Ease the crouch in or out and breathe; only the pivot is touched, never the wrapper. */
   const applySleepPose = (delta: number): void => {
-    sleepBlend = THREE.MathUtils.clamp(sleepBlend + (asleep ? delta : -delta * 1.5) / 1.4, 0, 1)
+    sleepBlend = THREE.MathUtils.clamp(sleepBlend + (sim.asleep ? delta : -delta * 1.5) / 1.4, 0, 1)
     const eased = sleepBlend * sleepBlend * (3 - 2 * sleepBlend)
     // A species with a SLEEP clip lies down by itself; only the others are crouched in code.
     if (hasSleepClip()) return
@@ -509,7 +501,6 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let lastCaptureProgress = 0
   const pivotBasePosition = new THREE.Vector3()
   const pivotBaseRotation = new THREE.Euler()
-  const direction = new THREE.Vector3()
   const romanceTarget = new THREE.Vector3()
   const romanceDirection = new THREE.Vector3()
   const modelForward = new THREE.Vector3(1, 0, 0)
@@ -709,7 +700,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
 
   const setAnimation = (name: AnimalClip, fadeSeconds = 0.22): void => {
     // The sim's wander reads this, so a clip chosen by another behaviour is what it resumes from.
-    sim.motion = name === 'WALK' ? 'walk' : name === 'SLEEP' ? 'sleep' : 'idle'
+    if (viewDrivesPosition()) sim.motion = name === 'WALK' ? 'walk' : name === 'SLEEP' ? 'sleep' : 'idle'
     if (active === name && (!loaded || loaded.activeAnimation === name)) return
     active = name
     if (!loaded || !detailActive) return
@@ -864,9 +855,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    */
   function viewDrivesPosition(): boolean {
     if (capture || options.flier || romancing) return true
-    // A walk to a door beats pursuit, sleep and standing still; the sim runs it.
-    if (sim.home || sim.pursuit) return false
-    return Boolean(sleepSpot || options.wandering === false)
+    // A walk to a door beats pursuit, sleep and standing still; the sim runs them all.
+    if (sim.home || sim.pursuit || sim.sleepSpot) return false
+    return options.wandering === false
   }
 
   /** Take the position, and the facing, the view-driven behaviours left behind. */
@@ -886,13 +877,21 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       return
     }
     if (positionOwnedByView) adoptViewPosition()
-    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-    tickVisitCooldown(sim, stepSeconds, bounds, Boolean(options.flier), stage, random)
     beginSimStep(sim)
-    if (sim.home) stepHomeTrip(sim, options.speed, stepSeconds)
-    else if (sim.pursuit) stepPursuit(sim, options.speed, stepSeconds)
-    else if (sim.visit.route) stepGateTravel(sim, options.speed * alarmScale(), stepSeconds, stage, random)
-    else stepWander(sim, readWanderContext(), stepSeconds, random)
+    if (sim.home) {
+      stepHomeTrip(sim, options.speed, stepSeconds)
+    } else if (sim.pursuit) {
+      stepPursuit(sim, options.speed, stepSeconds)
+    } else if (sim.sleepSpot) {
+      stepSleep(sim, options.speed, stepSeconds)
+    } else {
+      // Only stage-two visitors browse both sides of the gate: their rest counts down
+      // while they are free, and ends in a walk through the gate.
+      const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
+      tickVisitCooldown(sim, stepSeconds, bounds, Boolean(options.flier), stage, random)
+      if (sim.visit.route) stepGateTravel(sim, options.speed * alarmScale(), stepSeconds, stage, random)
+      else stepWander(sim, readWanderContext(), stepSeconds, random)
+    }
   }
 
   return {
@@ -913,7 +912,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     tickSim,
     get flightVisible(): boolean { return flightVisible },
     get isAlarmed(): boolean { return sim.alarmed },
-    get isSleeping(): boolean { return asleep },
+    get isSleeping(): boolean { return sim.asleep },
     get isAtDoor(): boolean { return sim.atDoor },
     get isGoingHome(): boolean { return sim.home !== null },
     get simDriven(): boolean { return !viewDrivesPosition() },
@@ -959,8 +958,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     },
     setSleepSpot(spot: SleepSpot | null): void {
       if (options.flier) return
-      sleepSpot = spot
-      if (!spot) asleep = false
+      sim.sleepSpot = spot
+      if (!spot) sim.asleep = false
     },
     setAlarmed(next: boolean): void {
       if (options.flier || sim.alarmed === next) return
@@ -1135,41 +1134,15 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         if (detailActive) loaded?.mixer.update(delta)
         return
       }
-      if (sleepSpot && !sim.home && !sim.pursuit) {
-        direction.set(sleepSpot.x - wrapper.position.x, 0, sleepSpot.z - wrapper.position.z)
-        const distance = direction.length()
-        if (distance > 0.12) {
-          // Walk to the bed. A sleeper that was nudged away gets up and goes back.
-          asleep = false
-          direction.normalize()
-          sleepFacing.setFromUnitVectors(modelForward, direction)
-          wrapper.quaternion.slerp(sleepFacing, 1 - Math.exp(-4.5 * delta))
-          wrapper.position.addScaledVector(direction, Math.min(options.speed * 0.8 * delta, distance))
-          setAnimation('WALK', 0.24)
-        } else {
-          asleep = true
-          sleepFacing.setFromAxisAngle(sleepYaw, sleepSpot.heading)
-          wrapper.quaternion.slerp(sleepFacing, 1 - Math.exp(-3 * delta))
-          setAnimation(hasSleepClip() ? 'SLEEP' : 'IDLE', 0.6)
-        }
-        if (loaded) loaded.mixer.timeScale = asleep ? (hasSleepClip() ? 0.5 : 0.3) : 1
-        applySleepPose(delta)
-        if (detailActive) loaded?.mixer.update(delta)
-        if (options.groundSampler) {
-          const targetY = options.groundY + options.groundSampler(wrapper.position.x, wrapper.position.z)
-          groundYCurrent += (targetY - groundYCurrent) * (1 - Math.exp(-8 * delta))
-          wrapper.position.y = groundYCurrent
-        }
-        wrapper.updateMatrixWorld(true)
-        return
-      }
-      if (sleepBlend > 0 && !sim.home && !sim.pursuit) {
+      // A bed beats a gate walk and wandering, but a walk to a door or a pursuit beats the bed.
+      const sleeping = Boolean(sim.sleepSpot) && !sim.home && !sim.pursuit
+      if (sleepBlend > 0 && !sleeping && !sim.home && !sim.pursuit) {
         // Waking: stand back up before wandering off.
         if (loaded) loaded.mixer.timeScale = sim.alarmed ? 2.2 : 1
         applySleepPose(delta)
       }
 
-      if (options.wandering === false && !sim.home && !sim.pursuit) {
+      if (options.wandering === false && !sim.home && !sim.pursuit && !sim.sleepSpot) {
         if (detailActive) loaded?.mixer.update(delta)
         return
       }
@@ -1191,9 +1164,19 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-turnRate * delta))
         setAnimation('WALK', pursuit ? 0.18 : 0.24)
         if (pursuit && loaded) loaded.mixer.timeScale = Math.max(0.6, pursuit.speedScale * 0.55)
+      } else if (sim.motion === 'sleep') {
+        // Lying in bed: turn to the bed's heading, slowly. There is no sleep clip for most
+        // species: the model keeps its IDLE pose, slowed, and the pivot is squashed into a crouch.
+        facingScratch.setFromAxisAngle(upAxis, sim.heading)
+        wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-3 * delta))
+        setAnimation(hasSleepClip() ? 'SLEEP' : 'IDLE', 0.6)
       } else if (sim.motion === 'idle') {
         setAnimation('IDLE', pursuit ? 0.3 : 0.28)
         if (pursuit && loaded) loaded.mixer.timeScale = 0.6
+      }
+      if (sleeping) {
+        if (loaded) loaded.mixer.timeScale = sim.asleep ? (hasSleepClip() ? 0.5 : 0.3) : 1
+        applySleepPose(delta)
       }
 
       if (detailActive) loaded?.mixer.update(delta)

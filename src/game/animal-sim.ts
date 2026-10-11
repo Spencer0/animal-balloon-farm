@@ -32,6 +32,13 @@ export interface AnimalPursuit {
   readonly speedScale: number
 }
 
+/** Where a night animal curls up for the day, and which way it faces (yaw about +Y, +X-forward model). */
+export interface AnimalSleepSpot {
+  readonly x: number
+  readonly z: number
+  readonly heading: number
+}
+
 /**
  * Where an animal is in its comings and goings through the farm gate. A visitor
  * walks `route` between the carnival and the plot, and rests `cooldown` seconds
@@ -74,6 +81,10 @@ export interface AnimalSimRecord {
   pursuit: AnimalPursuit | null
   /** Prey in a panic: runs 2.2 times faster in short dashes. */
   alarmed: boolean
+  /** The bed it was sent to. A home trip and a pursuit beat it; it beats the gate route and wandering. */
+  sleepSpot: AnimalSleepSpot | null
+  /** True once it has reached its bed and is curled up (not merely on its way there). */
+  asleep: boolean
 }
 
 export function createAnimalSimRecord(init: {
@@ -101,6 +112,8 @@ export function createAnimalSimRecord(init: {
     visit: { route: null, direction: null, side: init.side ?? 'carnival', cooldown: 0 },
     pursuit: null,
     alarmed: false,
+    sleepSpot: null,
+    asleep: false,
   }
 }
 
