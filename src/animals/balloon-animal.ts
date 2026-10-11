@@ -465,6 +465,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let appearance = options.appearance ?? 'wild'
   let active: AnimalClip = 'WALK'
   let elapsed = 0
+  // Built already settled (a restored save, an animal leaving its house): it was captured before, so it is sellable and plays no reveal.
   let captured = startsCaptured(appearance)
   let sold = false
   let focused = false

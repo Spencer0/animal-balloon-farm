@@ -77,3 +77,10 @@ test('an animal built standard (a resident leaving a house) starts captured and 
   assert.equal(sales.canSellAnimal(emerged), true)
   assert.equal(sales.canSellAnimal({ ...emerged, captured: false }), false)
 })
+
+test('a restored resident (built captured, standard, stage 3+) is sellable with no reveal pending', () => {
+  const restored = { sold: false, captured: true, capturing: false, stage: 3, appearance: 'standard' }
+  assert.equal(sales.canSellAnimal(restored), true)
+  // The old restore path built a wild stage-0 animal, then promoted it, which started a reveal.
+  assert.equal(sales.canSellAnimal({ ...restored, captured: false, appearance: 'wild' }), false)
+})
