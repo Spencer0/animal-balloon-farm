@@ -3,7 +3,8 @@ import { containsGardenPoint, GARDEN_BOUNDS, GARDEN_LAWN_Y, GARDEN_MAX_BOUNDS } 
 import type { GardenBounds } from '../game/farm-expansion'
 import { createGardenToolModel, GARDEN_TOOLS, tintSeedPack, type GardenToolId } from './garden-tool-art'
 import { GRASS_PACKS, SHORT_GRASS_CEILING, SHORT_GRASS_MAX_HEIGHT, TALL_GRASS_MAX_HEIGHT, type GrassPack } from '../game/tool-unlocks'
-import type { GardenTerrain } from './garden-terrain'
+import { TERRAIN_MAX_H, TERRAIN_MIN_H, type GardenTerrain } from './garden-terrain'
+import { pickHeightField } from './terrain-pick'
 import { measureMeadow, type MeadowBlade } from '../game/farm-state'
 import type { GardenWaterField } from '../game/garden-water'
 import {
@@ -222,6 +223,8 @@ const BLADE_GROWTH_PER_SECOND = 0.7
 const LAWN_UNGREEN_PER_SECOND = 0.34
 const ACTION_INTERVAL = 0.08
 const LAWN_VERTEX_SPACING = 0.58
+/** Pointer-to-lawn search over the terrain field; see pickHeightField. */
+const TERRAIN_PICK = { top: TERRAIN_MAX_H, bottom: TERRAIN_MIN_H, step: 0.12, refine: 10 }
 const GRASS_STROKE_SPACING = 0.34
 const GROW_PAINT_FACTOR = 1.06
 export interface SeederConfig {
@@ -410,6 +413,11 @@ export function createGardenTools(
   let lawnGeometry = lawn.geometry
   let lawnPositions = lawnGeometry.getAttribute('position') as THREE.BufferAttribute
   let lawnColors = lawnGeometry.getAttribute('color') as THREE.BufferAttribute
+  // Vertex span written since the last upload. Re-sending the whole ~20k-vertex
+  // colour buffer for every brush tick cost far more than the few vertices a
+  // tick changes, so only this span goes to the GPU (see uploadLawnColors).
+  let lawnDirtyFirst = Infinity
+  let lawnDirtyLast = -1
   let groundCoverage = new Float32Array(lawnColors.count)
   let groundSnow = new Float32Array(lawnColors.count)
   let lawnVertices: { index: number; x: number; z: number }[] = []
@@ -423,6 +431,7 @@ export function createGardenTools(
     lawnGeometry = nextGeometry
     lawnPositions = lawnGeometry.getAttribute('position') as THREE.BufferAttribute
     lawnColors = lawnGeometry.getAttribute('color') as THREE.BufferAttribute
+    lawnColors.onUpload(resetLawnColorSpan)
     if (geometryChanged || groundCoverage.length !== lawnColors.count || lawnVertices.length !== lawnPositions.count) {
       const nextCoverage = new Float32Array(lawnColors.count)
       const nextVertices = Array.from({ length: lawnPositions.count }, (_, index) => ({
@@ -766,8 +775,16 @@ export function createGardenTools(
     return true
   }
 
+  const terrainHeight = (x: number, z: number): number => terrain.heightAt(x, z)
+  /**
+   * Where the pointer ray first meets the lawn. The lawn mesh is the terrain
+   * field drawn as a surface, so the ray is resolved against the field
+   * (terrain-pick.ts): the mesh has ~40k triangles, and its raycast cost tens
+   * of milliseconds per call while the tools ask several times per pointer move.
+   */
   function floorPosition(): THREE.Vector3 | null {
-    return raycaster.intersectObject(lawn, false)[0]?.point ?? null
+    const hit = pickHeightField(raycaster.ray.origin, raycaster.ray.direction, terrainHeight, TERRAIN_PICK)
+    return hit ? new THREE.Vector3(hit.x, hit.y, hit.z) : null
   }
 
   /**
@@ -785,6 +802,29 @@ export function createGardenTools(
       GROUND_GREEN.b + (GROUND_SNOW.b - GROUND_GREEN.b) * snow,
       Math.max(grass, snow),
     )
+    if (index < lawnDirtyFirst) lawnDirtyFirst = index
+    if (index > lawnDirtyLast) lawnDirtyLast = index
+  }
+
+  /** Forget the written span once the buffer is on the GPU (three.js calls onUpload). */
+  function resetLawnColorSpan(): void {
+    lawnDirtyFirst = Infinity
+    lawnDirtyLast = -1
+  }
+
+  /** Send only the vertices written since the last upload. */
+  function uploadLawnColors(): void {
+    lawnColors.clearUpdateRanges()
+    if (lawnDirtyLast >= lawnDirtyFirst) {
+      lawnColors.addUpdateRange(lawnDirtyFirst * lawnColors.itemSize, (lawnDirtyLast - lawnDirtyFirst + 1) * lawnColors.itemSize)
+    }
+    lawnColors.needsUpdate = true
+  }
+
+  /** Every vertex changed (the lawn was rebuilt or cleared): send the whole buffer. */
+  function uploadWholeLawnColors(): void {
+    lawnColors.clearUpdateRanges()
+    lawnColors.needsUpdate = true
   }
 
   function snowAt(x: number, z: number): number {
@@ -881,7 +921,7 @@ export function createGardenTools(
       }
     }
     if (changes > 0) {
-      lawnColors.needsUpdate = true
+      uploadLawnColors()
       if (tufts) flushTufts()
       if (amount < 0) dropBuriedFeatures()
       snowRevision += 1
@@ -1167,7 +1207,7 @@ export function createGardenTools(
         }
       }
     }
-    if (changes > 0) lawnColors.needsUpdate = true
+    if (changes > 0) uploadLawnColors()
     return changes
   }
 
@@ -1493,7 +1533,7 @@ export function createGardenTools(
     snowVertexCount = groundSnow.filter((snow) => snow > 0.05).length
     snowRevision += 1
     refreshAllTufts()
-    lawnColors.needsUpdate = true
+    uploadWholeLawnColors()
   }
 
   /** Everything `clearGrass` does except reshape the ground. */
@@ -1528,7 +1568,7 @@ export function createGardenTools(
     for (let index = 0; index < lawnColors.count; index += 1) {
       lawnColors.setXYZW(index, 1, 1, 1, 0)
     }
-    lawnColors.needsUpdate = true
+    uploadWholeLawnColors()
     tallestBladeHeight = 0
     lastGrassSpawnMaxY = 0
   }
@@ -1596,7 +1636,7 @@ export function createGardenTools(
       writeLawnColor(index)
       painted = true
     }
-    if (painted) lawnColors.needsUpdate = true
+    if (painted) uploadLawnColors()
   }
 
   function clearGrass(): void {

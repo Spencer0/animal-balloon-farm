@@ -128,6 +128,70 @@ const SCENARIOS = {
     },
   },
 
+  'grass-brush': {
+    description: 'Drag the grass brush across a sown lawn (lawn paint, blade growth, pointer ray work).',
+    minSamples: DEFAULT_MIN_SAMPLES,
+    expression: `(async () => {${PRELUDE}${GRASS_FIXTURE}
+    debug.selectTool('grass');
+    const startPoint = debug.projectGardenPoint(-1.5, -1.0);
+    const endPoint = debug.projectGardenPoint(1.5, 0.8);
+    if (!startPoint || !endPoint) throw new Error('Could not project the grass brush drag into the canvas.');
+    const rect = canvas.getBoundingClientRect();
+    if (![startPoint.x, startPoint.y, endPoint.x, endPoint.y].every((value) =>
+      value >= rect.left && value <= rect.right && value >= rect.top && value <= rect.bottom)) {
+      throw new Error('Projected grass brush drag is outside the visible garden canvas.');
+    }
+    pointer('pointermove', startPoint.x, startPoint.y);
+    await waitFrames(3);
+    pointer('pointerdown', startPoint.x, startPoint.y);
+    await waitFrames(10);
+    let samples = [];
+    let intervals = [];
+    try {
+      const duration = 2200;
+      const start = performance.now();
+      let sampledFrameNumber = -1;
+      // The brush's pointer ray work runs in the pointermove handler, before the
+      // frame, so frame workMs alone misses it. Each sample adds the handler time
+      // spent since the previous sampled frame.
+      let handlerMs = 0;
+      while (performance.now() - start < duration || (samples.length < ${DEFAULT_MIN_SAMPLES} && performance.now() - start < ${MAX_SAMPLE_MS})) {
+        const t = Math.min(1, (performance.now() - start) / duration);
+        const moveStart = performance.now();
+        pointer('pointermove', startPoint.x + (endPoint.x - startPoint.x) * t, startPoint.y + (endPoint.y - startPoint.y) * t);
+        handlerMs += performance.now() - moveStart;
+        await waitFrames(1);
+        const latest = debug.performanceSamples().at(-1);
+        if (latest && latest.frameNumber !== sampledFrameNumber && latest.intervalMs > 0) {
+          sampledFrameNumber = latest.frameNumber;
+          samples.push(latest.workMs + handlerMs);
+          handlerMs = 0;
+          intervals.push(latest.intervalMs);
+        }
+      }
+    } finally {
+      pointer('pointerup', endPoint.x, endPoint.y);
+    }
+    await waitFrames(3);
+    const after = debug.state().tools;
+    return {
+      kind: 'grass-brush',
+      viewport: [innerWidth, innerHeight],
+      fixtureBlades: fixtureTools.grassBlades,
+      grassHoldSeconds: after?.holdSeconds ?? 0,
+      grassBlades: after?.grassBlades ?? 0,
+      greenGroundVertices: after?.greenGroundVertices ?? 0,
+      samples, intervals,
+    };
+  })()`,
+    /** @param {any} result @returns {string | null} */
+    check: (result) => {
+      if (result.grassHoldSeconds < 1) return 'grass brush was not held down for a full second';
+      if (!(result.greenGroundVertices > 0)) return 'no green ground painted under the grass brush';
+      return null;
+    },
+  },
+
   dig: {
     description: 'Hold the shovel down in one spot (deep-hole terrain + water settle load).',
     minSamples: DEFAULT_MIN_SAMPLES,

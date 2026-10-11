@@ -8,6 +8,11 @@
       "maxRenderCalls": 103,
       "maxTriangles": 478000
     },
+    "grass-brush": {
+      "minSamples": 30,
+      "maxP95WorkMs": 25,
+      "runs": 1
+    },
     "dig": {
       "minSamples": 30,
       "maxP95WorkMs": 40,

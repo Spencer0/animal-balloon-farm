@@ -31,7 +31,7 @@ export const DEBUG_OUTDIR = '.gate/debug';
 const PROFILE_DIR = '.gate/chrome-profile';
 const RESULTS_PATH = '.gate/results/stress.json';
 const BUDGETS_PATH = 'perf/budgets.json';
-const DEFAULT_SCENARIOS = ['shovel', 'dig', 'plant', 'expand', 'crowd-ramp'];
+const DEFAULT_SCENARIOS = ['shovel', 'dig', 'grass-brush', 'plant', 'expand', 'crowd-ramp'];
 /** @type {Record<string, string>} */
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
