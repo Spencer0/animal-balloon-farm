@@ -46,20 +46,104 @@ export function createHerd(deps: HerdDeps) {
     return model ? { x: model.currentPosition.x, z: model.currentPosition.z } : null
   }
   const worldPointer = new THREE.Vector2()
+  const pickBox = new THREE.Box3()
+  const pickSphere = new THREE.Sphere()
+  const PICK_BOX_PAD = 0.35
+  /** The last answer, reused for the same pointer spot within one frame or two. */
+  const PICK_MEMO_MS = 100
+  let memoX = Number.NaN
+  let memoY = Number.NaN
+  let memoAt = -Infinity
+  let memoAnimal: BalloonAnimal | null = null
 
+  /**
+   * The animal under the pointer. Hover, the cursor, the glow and the press
+   * each ask this several times per frame, and a skinned raycast poses every
+   * triangle on the CPU, so: repeat asks for the same spot reuse one answer,
+   * and only animals whose padded box the ray crosses are ray-tested at all.
+   */
   function pickAnimal(clientX: number, clientY: number): BalloonAnimal | null {
+    const now = performance.now()
+    if (clientX === memoX && clientY === memoY && now - memoAt < PICK_MEMO_MS && !memoAnimal?.isSold) return memoAnimal
+    memoX = clientX
+    memoY = clientY
+    memoAt = now
+    memoAnimal = pickAnimalUncached(clientX, clientY)
+    return memoAnimal
+  }
+
+  const pickHits: THREE.Intersection[] = []
+  const pickVertex = new THREE.Vector3()
+  const pickA = new THREE.Vector3()
+  const pickB = new THREE.Vector3()
+  const pickC = new THREE.Vector3()
+  const pickHitPoint = new THREE.Vector3()
+  let posedVertices = new Float32Array(0)
+
+  function plainHitDistance(mesh: THREE.Mesh): number {
+    pickHits.length = 0
+    mesh.raycast(worldRaycaster, pickHits)
+    let nearest = Infinity
+    for (const hit of pickHits) nearest = Math.min(nearest, hit.distance)
+    return nearest
+  }
+
+  /**
+   * Nearest ray hit on a skinned mesh. `SkinnedMesh.raycast` poses all three
+   * corners of every triangle on the CPU, so each shared vertex is skinned
+   * about six times; posing each vertex once and testing triangles against the
+   * cached world positions finds the same hit for a sixth of the bone maths.
+   */
+  function skinnedHitDistance(mesh: THREE.SkinnedMesh): number {
+    const geometry = mesh.geometry
+    const position = geometry.getAttribute('position')
+    if (!position) return Infinity
+    if (mesh.boundingSphere === null) mesh.computeBoundingSphere()
+    if (!worldRaycaster.ray.intersectsSphere(pickSphere.copy(mesh.boundingSphere!).applyMatrix4(mesh.matrixWorld))) return Infinity
+    if (posedVertices.length < position.count * 3) posedVertices = new Float32Array(position.count * 3)
+    for (let index = 0; index < position.count; index += 1) {
+      mesh.getVertexPosition(index, pickVertex)
+      pickVertex.applyMatrix4(mesh.matrixWorld).toArray(posedVertices, index * 3)
+    }
+    const indices = geometry.index
+    const triangles = (indices ? indices.count : position.count) / 3
+    const cull = !Array.isArray(mesh.material) && mesh.material.side === THREE.FrontSide
+    let nearest = Infinity
+    for (let triangle = 0; triangle < triangles; triangle += 1) {
+      const a = indices ? indices.getX(triangle * 3) : triangle * 3
+      const b = indices ? indices.getX(triangle * 3 + 1) : triangle * 3 + 1
+      const c = indices ? indices.getX(triangle * 3 + 2) : triangle * 3 + 2
+      pickA.fromArray(posedVertices, a * 3)
+      pickB.fromArray(posedVertices, b * 3)
+      pickC.fromArray(posedVertices, c * 3)
+      if (!worldRaycaster.ray.intersectTriangle(pickA, pickB, pickC, cull, pickHitPoint)) continue
+      nearest = Math.min(nearest, pickHitPoint.distanceTo(worldRaycaster.ray.origin))
+    }
+    return nearest
+  }
+
+  function pickAnimalUncached(clientX: number, clientY: number): BalloonAnimal | null {
     const rect = gameCanvas.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) return null
     worldPointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
     worldRaycaster.setFromCamera(worldPointer, camera)
-    const detailedMeshes = animals.filter((animal) => !animal.isSold && animal.root.visible).flatMap((animal) => {
+    let best: BalloonAnimal | null = null
+    let bestDistance = Infinity
+    for (const animal of animals) {
+      if (animal.isSold || !animal.root.visible) continue
+      pickBox.setFromObject(animal.root).expandByScalar(PICK_BOX_PAD)
+      if (!worldRaycaster.ray.intersectsBox(pickBox)) continue
       const meshes: THREE.Mesh[] = []
       animal.root.traverse((object) => { if (object instanceof THREE.Mesh && object.visible) meshes.push(object) })
-      return meshes
-    })
-    const detailedHit = worldRaycaster.intersectObjects(detailedMeshes, false)[0]
-    if (!detailedHit) return null
-    return animals.find((animal) => animal.root === detailedHit.object || animal.root.getObjectById(detailedHit.object.id) !== undefined) ?? null
+      for (const mesh of meshes) {
+        const distance = mesh instanceof THREE.SkinnedMesh ? skinnedHitDistance(mesh) : plainHitDistance(mesh)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          best = animal
+        }
+      }
+    }
+    return best
   }
 
   /**
