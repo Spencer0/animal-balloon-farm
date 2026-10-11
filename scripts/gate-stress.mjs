@@ -17,14 +17,14 @@
 // so the same budget means the same thing on a laptop and on CI.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { extname, join, normalize, sep } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { connectCDP } from './cdp-lib.mjs';
-import { runScenario } from './perf-scenario.mjs';
+import { explainShortSamples, runScenario } from './perf-scenario.mjs';
 import { findTestCodeLeaks } from './check-no-scenarios.mjs';
 
 export const DEBUG_OUTDIR = '.gate/debug';
@@ -232,19 +232,69 @@ function workP95Of(result) {
 }
 
 /**
+ * Draw calls and triangles are the noise-free half of the gate: they come from
+ * renderer.info on a forced render, so the same code gives the same numbers on
+ * any runner. A budget missing from budgets.json is not checked.
+ * @param {{ renderCalls?: number, triangles?: number }} measured
+ * @param {{ maxRenderCalls?: number, maxTriangles?: number }} budget
+ * @param {string} label
+ */
+function judgeRender(measured, budget, label) {
+  const failures = [];
+  if (budget.maxRenderCalls !== undefined && measured.renderCalls > budget.maxRenderCalls) {
+    failures.push(`${label} ${measured.renderCalls} draw calls over the ${budget.maxRenderCalls} budget`);
+  }
+  if (budget.maxTriangles !== undefined && measured.triangles > budget.maxTriangles) {
+    failures.push(`${label} ${measured.triangles} triangles over the ${budget.maxTriangles} budget`);
+  }
+  return failures;
+}
+
+/**
  * @param {any} result
- * @param {{ maxP95WorkMs: number, minSamples?: number }} budget
+ * @param {{ maxP95WorkMs: number, minSamples?: number, maxRenderCalls?: number, maxTriangles?: number, steps?: Record<string, { maxRenderCalls?: number, maxTriangles?: number }> }} budget
  */
 function judge(result, budget) {
   const failures = [];
   if (result.error) failures.push(result.error);
   if (result.gate && !result.gate.pass) failures.push(result.gate.reason);
-  const samples = result.scenario === 'crowd-ramp' ? result.steps?.[0]?.timing?.sampleCount ?? 0 : result.timing?.sampleCount ?? 0;
-  if (samples < (budget.minSamples ?? 30)) failures.push(`only ${samples} samples`);
+  const timing = result.scenario === 'crowd-ramp' ? result.steps?.[0]?.timing : result.timing;
+  const samples = timing?.sampleCount ?? 0;
+  if (samples < (budget.minSamples ?? 30)) failures.push(explainShortSamples(timing ?? { sampleCount: 0, averageIntervalMs: null }, budget.minSamples ?? 30));
   const p95 = workP95Of(result);
   if (p95 === null) failures.push('no work samples recorded');
   else if (p95 > budget.maxP95WorkMs) failures.push(`p95 work ${p95}ms over the ${budget.maxP95WorkMs}ms budget`);
+  if (result.scenario === 'crowd-ramp') {
+    for (const step of result.steps ?? []) {
+      const stepBudget = budget.steps?.[String(step.count)];
+      if (!stepBudget) failures.push(`no draw-call budget for ${step.count} crowd animals`);
+      else failures.push(...judgeRender(step, stepBudget, `crowd ${step.count}:`));
+    }
+  } else if (result.render) {
+    failures.push(...judgeRender(result.render, budget, 'scene:'));
+  }
   return failures;
+}
+
+/**
+ * The stress table as Markdown for the workflow's job summary, so a failure
+ * shows its numbers without opening the log.
+ * @param {Array<any>} rows
+ */
+function summaryMarkdown(rows) {
+  const lines = [
+    '## Performance gate',
+    '',
+    '| scenario | runs (p95 work, ms) | budget ms | draw calls | triangles | result |',
+    '| --- | --- | --- | --- | --- | --- |',
+  ];
+  for (const row of rows) {
+    const status = row.failures.length ? `FAIL: ${row.failures.join('; ')}` : 'PASS';
+    const runs = row.runs?.length ? row.runs.map((value) => (value === null ? '-' : value.toFixed(1))).join(', ') : '-';
+    const budget = row.budget === undefined ? 'none' : `${row.budget}`;
+    lines.push(`| ${row.name} | ${runs} | ${budget} | ${row.calls ?? '-'} | ${row.tris ?? '-'} | ${status} |`);
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 /** @param {Array<{ name: string, p95: number | null, budget: number | undefined, fps: number | null, samples: number, failures: string[] }>} rows */
@@ -283,7 +333,9 @@ async function main() {
       try {
         // Three crowd steps keep the gate short; the full curve is still available via perf-scenario.mjs.
         const ramp = name === 'crowd-ramp' ? [10, 30, 50] : undefined;
-        result = await runScenario(name, { minFps: options.fps, cdpUrl, baseUrl, ramp });
+        // Each scenario's budget says how many runs it gets; the median run is judged.
+        const runs = budgets[name]?.runs ?? 1;
+        result = await runScenario(name, { minFps: options.fps, cdpUrl, baseUrl, ramp, runs });
       } catch (error) {
         result = { scenario: name, error: error instanceof Error ? error.message : String(error) };
       }
@@ -298,12 +350,16 @@ async function main() {
     const budget = budgets[result.scenario];
     const failures = budget ? judge(result, budget) : [`no budget for ${result.scenario} in ${options.budgets}`];
     const timing = result.scenario === 'crowd-ramp' ? result.steps?.[0]?.timing : result.timing;
+    const steps = result.scenario === 'crowd-ramp' ? result.steps ?? [] : null;
     return {
       name: result.scenario,
       p95: workP95Of(result),
       budget: budget?.maxP95WorkMs,
       fps: timing?.sustainedFps ?? null,
       samples: timing?.sampleCount ?? 0,
+      runs: result.scenario === 'crowd-ramp' ? result.steps?.[0]?.runs : result.runs,
+      calls: steps ? steps.map((step) => `${step.count}:${step.renderCalls}`).join(' ') : result.render?.renderCalls,
+      tris: steps ? steps.map((step) => `${step.count}:${step.triangles}`).join(' ') : result.render?.triangles,
       failures,
     };
   });
@@ -314,6 +370,8 @@ async function main() {
   mkdirSync(join(process.cwd(), options.json, '..'), { recursive: true });
   await writeFile(options.json, JSON.stringify(report, null, 2));
   console.log(`Wrote ${options.json}`);
+  // GitHub shows this on the run page; locally the variable is unset and nothing happens.
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summaryMarkdown(rows));
   if (pass) console.log('PASS stress: every scenario is within budget.');
   else {
     console.error('FAIL stress: at least one scenario regressed or could not run.');
