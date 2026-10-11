@@ -30,6 +30,7 @@ const {
   phaseOf,
   sunElevation,
   daylightAmount,
+  skyBlendOf,
   calendarOf,
   formatClockTime,
   formatCalendarDate,
@@ -102,4 +103,31 @@ test('clock and calendar format for the HUD', () => {
   assert.equal(formatClockTime(0.5), '12:00p')
   assert.equal(formatClockTime(0), '12:00a')
   assert.equal(formatCalendarDate(calendarOf(0)), CALENDAR_MONTHS[0].name + ' 1, Y1')
+})
+
+test('sky blend weights are bounded, pick the right ends, and never jump', () => {
+  const noon = skyBlendOf(0.5)
+  assert.equal(noon.day, 1)
+  assert.equal(noon.night, 0)
+  const midnight = skyBlendOf(0)
+  assert.equal(midnight.night, 1)
+  const steps = 20000
+  let previous = skyBlendOf(0)
+  let maxJump = 0
+  for (let i = 1; i <= steps; i += 1) {
+    const current = skyBlendOf(i / steps)
+    for (const key of ['day', 'night']) {
+      assert.ok(current[key] >= 0 && current[key] <= 1)
+      maxJump = Math.max(maxJump, Math.abs(current[key] - previous[key]))
+    }
+    previous = current
+  }
+  // A full day is 480s; a 1/20000 step is ~24ms. Smoothstep slope keeps this tiny.
+  assert.ok(maxJump < 0.01, 'largest per-step jump ' + maxJump)
+  // The old rig jumped at the phase edges; the blend must be smooth across them.
+  for (const edge of [0.22, 0.3, 0.7, 0.78]) {
+    const a = skyBlendOf(edge - 0.0005)
+    const b = skyBlendOf(edge + 0.0005)
+    assert.ok(Math.abs(a.day - b.day) < 0.02 && Math.abs(a.night - b.night) < 0.02)
+  }
 })

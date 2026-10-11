@@ -88,6 +88,32 @@ export function daylightAmount(timeOfDay: number): number {
   return Math.min(1, elevation * 1.6)
 }
 
+export interface SkyBlend {
+  /** 0 = golden hour palette, 1 = full day palette. */
+  readonly day: number
+  /** 0 = no night wash, 1 = full night palette (applied on top of the day blend). */
+  readonly night: number
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const k = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
+  return k * k * (3 - 2 * k)
+}
+
+/**
+ * Continuous sky weights for the scene rig, from sun elevation only. Unlike
+ * `phaseOf` (a discrete gameplay label) this never jumps: golden -> day by
+ * `day`, then toward night by `night`, so dusk and dawn fade through the
+ * horizon instead of switching at fixed times.
+ */
+export function skyBlendOf(timeOfDay: number): SkyBlend {
+  const elevation = sunElevation(timeOfDay)
+  return {
+    day: smoothstep(0.02, 0.6, elevation),
+    night: smoothstep(0.08, -0.22, elevation),
+  }
+}
+
 export function calendarOf(elapsedDays: number): CalendarDate {
   const total = Math.max(0, Math.floor(elapsedDays))
   const year = Math.floor(total / DAYS_PER_YEAR) + 1
