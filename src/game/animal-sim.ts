@@ -13,6 +13,7 @@
 /** What the animal is doing with its legs. The view maps it to a clip. */
 export type AnimalMotion = 'walk' | 'idle' | 'sleep'
 
+import type { AnimalStage } from './animal-conditions'
 import type { AnimalTravelRoute } from './animal-travel'
 
 /** A walk to a house door, and how hard to run: above 1 is a sprint, e.g. a mouse fleeing a snake. */
@@ -31,6 +32,12 @@ export interface AnimalPursuit {
   readonly z: number
   readonly speedScale: number
 }
+
+/** Something the sim decided that the view plays: a picture, a sound, a notice. */
+export type AnimalSimEvent =
+  /** The rung it shows moved up (`from` to `to`); a settle is a rise to 3 or more from below. */
+  | { readonly type: 'stage-up'; readonly from: AnimalStage; readonly to: AnimalStage }
+  | { readonly type: 'stage-down'; readonly from: AnimalStage; readonly to: AnimalStage }
 
 /** Where a night animal curls up for the day, and which way it faces (yaw about +Y, +X-forward model). */
 export interface AnimalSleepSpot {
@@ -85,6 +92,17 @@ export interface AnimalSimRecord {
   sleepSpot: AnimalSleepSpot | null
   /** True once it has reached its bed and is curled up (not merely on its way there). */
   asleep: boolean
+  /**
+   * The rung on the condition ladder it shows. The ladder's verdict (animal-life)
+   * can run ahead of it: a settle that arrives out at the tents waits in `pendingStage`.
+   */
+  stage: AnimalStage
+  /** A settle waiting for the walk in; the rung stays put until it has browsed the plot a while. */
+  pendingStage: AnimalStage | null
+  /** Seconds spent inside the plot while a settle is pending. */
+  dwell: number
+  /** Decisions for the view to play, oldest first. Drain with `drainSimEvents`. */
+  events: AnimalSimEvent[]
 }
 
 export function createAnimalSimRecord(init: {
@@ -93,6 +111,7 @@ export function createAnimalSimRecord(init: {
   motion: AnimalMotion
   radius?: number
   side?: 'carnival' | 'farm'
+  stage?: AnimalStage
 }): AnimalSimRecord {
   return {
     x: init.x,
@@ -114,6 +133,10 @@ export function createAnimalSimRecord(init: {
     alarmed: false,
     sleepSpot: null,
     asleep: false,
+    stage: init.stage ?? 1,
+    pendingStage: null,
+    dwell: 0,
+    events: [],
   }
 }
 
@@ -185,4 +208,9 @@ export function setSimAlarmed(record: AnimalSimRecord, alarmed: boolean): void {
     record.paused = 0
     record.nextDecision = 0
   }
+}
+
+/** Hand every queued event to `handle`, oldest first, and empty the queue. */
+export function drainSimEvents(record: AnimalSimRecord, handle: (event: AnimalSimEvent) => void): void {
+  while (record.events.length > 0) handle(record.events.shift() as AnimalSimEvent)
 }

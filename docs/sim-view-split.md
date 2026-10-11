@@ -1,6 +1,6 @@
 # Animal sim / view split
 
-Status: slices 1 (wander and walk), 2 (collision and home trip) and 3 (owl and snake hunts) are implemented; slices 4 and 5 are planned below.
+Status: slices 1 (wander and walk), 2 (collision and home trip), 3 (owl and snake hunts) and 4 (sleep, stage and residency; the capture reveal guard stays in the view, see below) are implemented; slice 5 is planned below.
 
 ## Why
 

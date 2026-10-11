@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
 import { FARM_EXPANSION_CONFIG, type GardenBounds } from '../game/farm-expansion'
-import { containsFarmPoint } from '../game/farm-footprint'
 import type { BalloonAnimalId } from './animal-catalog'
 import { createCapturePresentation, type CapturePresentation } from './balloon-capture'
 import { applyHeartEyeMaterial, clearHeartEyes, heartEyeCount as countHeartEyes, installHeartEyeShader, setHeartEyes } from './animal-eyes'
@@ -11,8 +10,9 @@ import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
 import { carnivalRing } from '../game/animal-travel'
-import { beginSimStep, createAnimalSimRecord, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, shiftAnimalSim, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord, type AnimalSleepSpot } from '../game/animal-sim'
-import { beginGateTravel, stepGateTravel, stepHomeTrip, stepPursuit, stepSleep, tickVisitCooldown } from '../game/animal-routes'
+import { requestStage, tickResidency } from '../game/animal-residency'
+import { beginSimStep, createAnimalSimRecord, drainSimEvents, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, shiftAnimalSim, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord, type AnimalSleepSpot } from '../game/animal-sim'
+import { stepGateTravel, stepHomeTrip, stepPursuit, stepSleep, tickVisitCooldown } from '../game/animal-routes'
 import { ALARM_SPEED_SCALE, chooseWanderTarget, stepWander, type WanderContext } from '../game/animal-wander'
 import { seededRandom } from '../game/seeded-random'
 
@@ -513,6 +513,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     motion: options.wandering === false ? 'idle' : 'walk',
     radius: options.size * BODY_RADIUS_SHARE * (options.growthScale ?? 1),
     side: (options.stage ?? 1) >= 2 ? 'farm' : 'carnival',
+    stage: options.stage ?? 1,
   })
   /** The position the view last wrote, and a scratch point for the blend. */
   const shown = { x: sim.x, z: sim.z }
@@ -520,7 +521,6 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   /** Set while another behaviour owns the position, so the sim re-reads it afterwards. */
   let positionOwnedByView = false
   const upAxis = new THREE.Vector3(0, 1, 0)
-  let stage: AnimalStage = options.stage ?? 1
   wrapper.userData.animalInstanceId = instanceId
 
   const ensureDetailedModel = (): Promise<void> => {
@@ -586,7 +586,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
           }
         })
         if (appearance === 'wild') setAnimalAppearance(modelRoot, 'wild')
-        if (stage >= 4) setHeartEyes(modelRoot)
+        if (sim.stage >= 4) setHeartEyes(modelRoot)
         if (active !== 'IDLE' || options.wandering === false) {
           const action = actions.get(active)
           if (action) action.play()
@@ -610,7 +610,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         placeholderLoaded = true
         setAnimalAppearance(posePivot, appearance)
       }
-      if (detailActive) wrapper.visible = stage > 0 && !sold
+      if (detailActive) wrapper.visible = sim.stage > 0 && !sold
       options.onDetailedModelReady?.()
       if (pendingCapture) {
         pendingCapture = false
@@ -620,31 +620,10 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     })().finally(() => { modelLoading = null })
     return modelLoading
   }
-  /**
-   * A settle that arrives while the visitor is still out at the tents is a
-   * promise, not yet a fact. The rung stays at 2 -- so the animal keeps its
-   * visitor leash and walks in -- and the promotion is applied once it has
-   * actually been browsing the plot for a while.
-   */
-  const RESIDENT_DWELL_SECONDS = 4
-  const RESIDENT_INSIDE_MARGIN = 0.6
-  let pendingResidentStage: AnimalStage | null = null
-  let farmDwellSeconds = 0
-
-  /** Inside the plot proper: not mid-route, and comfortably past the boundary. */
-  function insideFarmPlot(): boolean {
-    if (sim.visit.route !== null) return false
-    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-    return containsFarmPoint(wrapper.position.x, wrapper.position.z, bounds, RESIDENT_INSIDE_MARGIN)
-  }
-
   /** The ground point the animal stands on: its sim record, or the wrapper while the view moves it. */
   const standingPoint = (): { readonly x: number; readonly z: number } => (viewDrivesPosition() ? wrapper.position : sim)
 
-  function beginTravel(direction: 'enter' | 'leave'): void {
-    const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-    beginGateTravel(sim, direction, standingPoint(), bounds, Boolean(options.flier), stage, random)
-  }
+  const gardenBoundsNow = (): GardenBounds => options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
 
   /** True while this animal lives out at the tents instead of inside the fence. */
   const isCarnivalSide = (): boolean => Boolean(options.isLoose?.())
@@ -777,7 +756,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   }
 
   /**
-   * Move an animal to a rung of the condition ladder.
+   * Play what the sim decided about the animal's rung (game/animal-residency.ts):
+   * when to settle, and whether the settle waits for the walk in, are the sim's. The
+   * look of it is here.
    *
    * The wild -> standard change reuses the existing 6.8s paint-reveal flourish
    * as its transition animation, because that flourish was already exactly
@@ -786,47 +767,34 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    * for hearts, which is the only visual change in the game that is not a
    * material mask.
    */
-  const setStage = (next: AnimalStage): void => {
-    // A demotion cancels residency that was still waiting for the walk inside.
-    if (next < 3) {
-      pendingResidentStage = null
-      farmDwellSeconds = 0
-    }
-    if (next === stage) return
-    const previous = stage
-    const becomingResident = next >= 3 && stage < 3
-    const becomingWild = next <= 2 && stage >= 3
-    if (previous < 2 && next === 2) beginTravel('enter')
-    if (previous < 3 && next >= 3 && sim.visit.side === 'carnival' && sim.visit.direction !== 'enter') {
-      beginTravel('enter')
-    }
-    if (previous >= 3 && next < 2) {
-      sim.visit.route = null
-      sim.visit.direction = null
-      sim.visit.side = 'farm'
-    }
-    if (next >= 3 && stage < 3 && !insideFarmPlot()) {
-      // The condition ladder has decided; only the arrival waits. Leaving the
-      // rung at 2 is what keeps the animal walking in as a visitor instead of
-      // donning residence while it is still out on the meadow.
-      if (pendingResidentStage === null) farmDwellSeconds = 0
-      pendingResidentStage = next
-      return
-    }
+  const playStageChange = (from: AnimalStage, next: AnimalStage): void => {
+    const becomingResident = next >= 3 && from < 3
+    const becomingWild = next <= 2 && from >= 3
     if (becomingResident) {
       // Play the reveal. beginCapture refuses while another is running, which
       // is what we want: a second settle arriving mid-flourish should queue on
       // the next stage change rather than snap.
       if (beginCapture()) {
-        stage = next
         applyHeartEyes(stageHasHeartEyes(next))
         return
       }
     }
     if (becomingWild) setAppearance('wild')
     else if (next >= 3) setAppearance('standard')
-    stage = next
     applyHeartEyes(stageHasHeartEyes(next))
+  }
+
+  const playSimEvents = (): void => {
+    if (sim.events.length === 0) return
+    drainSimEvents(sim, (event) => {
+      if (event.type === 'stage-up' || event.type === 'stage-down') playStageChange(event.from, event.to)
+    })
+  }
+
+  /** Command: move to a rung of the condition ladder. The sim decides when it takes effect. */
+  const setStage = (next: AnimalStage): void => {
+    requestStage(sim, next, standingPoint(), gardenBoundsNow(), Boolean(options.flier), random)
+    playSimEvents()
   }
 
   const onPointerDown = (event: PointerEvent): void => {
@@ -872,6 +840,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
 
   function tickSim(stepSeconds: number): void {
     if (sold) return
+    // A settle waiting for the walk in counts its time inside the plot, whatever else the animal is doing.
+    if (sim.pendingStage !== null) {
+      tickResidency(sim, stepSeconds, standingPoint(), gardenBoundsNow(), Boolean(options.flier), random)
+      playSimEvents()
+    }
     if (viewDrivesPosition()) {
       positionOwnedByView = true
       return
@@ -887,9 +860,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     } else {
       // Only stage-two visitors browse both sides of the gate: their rest counts down
       // while they are free, and ends in a walk through the gate.
-      const bounds = options.getGardenBounds?.() ?? FARM_EXPANSION_CONFIG.startBounds
-      tickVisitCooldown(sim, stepSeconds, bounds, Boolean(options.flier), stage, random)
-      if (sim.visit.route) stepGateTravel(sim, options.speed * alarmScale(), stepSeconds, stage, random)
+      tickVisitCooldown(sim, stepSeconds, gardenBoundsNow(), Boolean(options.flier), sim.stage, random)
+      if (sim.visit.route) stepGateTravel(sim, options.speed * alarmScale(), stepSeconds, sim.stage, random)
       else stepWander(sim, readWanderContext(), stepSeconds, random)
     }
   }
@@ -904,7 +876,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get currentHeading(): number { return wrapper.rotation.y },
     get currentScale(): number { return wrapper.scale.x },
     get renderPriority(): number {
-      return (focused ? 100 : 0) + (capture ? 90 : 0) + (romancing ? 80 : 0) + (stage >= 3 ? 10 : 0)
+      return (focused ? 100 : 0) + (capture ? 90 : 0) + (romancing ? 80 : 0) + (sim.stage >= 3 ? 10 : 0)
     },
     get isRomancing(): boolean { return romancing },
     get isFlier(): boolean { return Boolean(options.flier) },
@@ -981,7 +953,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get isLoose(): boolean { return Boolean(options.isLoose?.()) },
     get animationPhase(): number { return stableAnimationPhase },
     setDetailedVisible(visible: boolean): void {
-      detailActive = visible && !sold && stage > 0
+      detailActive = visible && !sold && sim.stage > 0
       if (detailActive) {
         if (loaded && modelRoot && modelRoot.parent !== posePivot) posePivot.add(modelRoot)
         void ensureDetailedModel()
@@ -999,10 +971,10 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       wrapper.visible = detailActive && Boolean(loaded || placeholderLoaded)
     },
     get canSell(): boolean {
-      return canSellAnimal({ sold, captured, capturing: capture !== null || pendingCapture, stage, appearance })
+      return canSellAnimal({ sold, captured, capturing: capture !== null || pendingCapture, stage: sim.stage, appearance })
     },
     sell(): boolean {
-      if (!canSellAnimal({ sold, captured, capturing: capture !== null, stage, appearance })) return false
+      if (!canSellAnimal({ sold, captured, capturing: capture !== null, stage: sim.stage, appearance })) return false
       sold = true
       focused = false
       wrapper.visible = false
@@ -1046,8 +1018,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get captureProgress(): number { return lastCaptureProgress },
     get appearance(): AnimalAppearance { return appearance },
     get isAtFarm(): boolean { return sim.visit.side === 'farm' && sim.visit.route === null },
-    get isResidencyPending(): boolean { return pendingResidentStage !== null },
-    get stage(): AnimalStage { return stage },
+    get isResidencyPending(): boolean { return sim.pendingStage !== null },
+    get stage(): AnimalStage { return sim.stage },
     set stage(next: AnimalStage) { setStage(next) },
     update(deltaSeconds, simAlpha): void {
       if (sold) return
@@ -1066,21 +1038,6 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       // Nothing is ticking this animal's sim (a debug stepper, a test): step it here, once.
       if (simAlpha === undefined) tickSim(delta)
       if (viewDrivesPosition()) positionOwnedByView = true
-      if (pendingResidentStage !== null) {
-        if (insideFarmPlot()) {
-          farmDwellSeconds += delta
-          if (farmDwellSeconds >= RESIDENT_DWELL_SECONDS) {
-            const next = pendingResidentStage
-            pendingResidentStage = null
-            farmDwellSeconds = 0
-            setStage(next)
-          }
-        } else {
-          // Still out on the meadow: the clock restarts, so the animal has to
-          // spend the dwell time actually inside before residence sticks.
-          farmDwellSeconds = 0
-        }
-      }
       if (capture) {
         if (!loaded && !placeholderLoaded && !modelLoading) void ensureDetailedModel()
         if (detailActive) loaded?.mixer.update(delta)
