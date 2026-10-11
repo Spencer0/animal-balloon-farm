@@ -80,12 +80,15 @@ import { toolUnlockFilmFor } from './game/tool-unlock-script'
 import type { CutscenePlayer } from './scene/cutscene-kit'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
+import { createFarmRenderer, precompile } from './render/backend'
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')
 if (!canvas) throw new Error('Missing game canvas')
 const gameCanvas = canvas
 
-const renderer = new THREE.WebGLRenderer({ canvas: gameCanvas, antialias: true, powerPreference: 'high-performance' })
+// `?renderer=webgpu` selects WebGPURenderer (async init); WebGL is the default.
+// Top-level await is fine here: nothing below can run without a renderer.
+const { renderer, backend: renderBackend } = await createFarmRenderer(gameCanvas)
 // Cap the drawing buffer below the display pixel ratio: at devicePixelRatio the
 // canvas raster gets enormous (and so do any screenshots of it). 1.25 keeps
 // edges acceptably smooth while keeping captures far under attachment limits.
@@ -97,12 +100,13 @@ renderer.toneMappingExposure = 1.12
 renderer.shadowMap.enabled = true
 renderer.shadowMap.type = THREE.PCFShadowMap
 renderer.info.autoReset = false // reset manually each frame so stats survive the HUD pass
+document.documentElement.dataset.renderer = renderBackend
 
 const scene = new THREE.Scene()
 scene.background = new THREE.Color('#c2d8cf')
 scene.fog = new THREE.Fog('#c2d8cf', 185, 345)
-const skyDome = createSkyDome()
-scene.add(skyDome)
+const sky = createSkyDome()
+scene.add(sky.mesh)
 
 /**
  * Substituted at build time by scripts/build.mjs and scripts/dev.mjs. It has to
@@ -155,7 +159,7 @@ sunlight.target.position.set(0, 0, 0)
 scene.add(sunlight, sunlight.target)
 // Casters change only on edits, so the sun's shadow map is drawn on demand (see
 // scene/shadow-refresh.ts) rather than on every frame.
-const shadowRefresh = createShadowRefresh(renderer)
+const shadowRefresh = createShadowRefresh(sunlight)
 
 const fill = new THREE.DirectionalLight('#c1edec', 0.82)
 fill.position.set(27, 22, 28)
@@ -179,7 +183,7 @@ if (loadedSave) {
 }
 /** Debug only: a held clock stays put, so a scenario's night does not slip into morning. */
 let clockHeld = false
-const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, skyDome)
+const dayNightRig = createDayNightRig(scene, renderer, { sun: sunlight, ambient, fill, rim }, sky.colors)
 const clockCalendarHud = createClockCalendarHud(window.innerWidth, window.innerHeight)
 
 const fairground = createFairground(dayNightClock.elapsedDays)
@@ -1199,6 +1203,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     wallet,
     pageParams,
     renderer,
+    forceShadowRedraw: shadowRefresh.forceNext,
     scene,
     camera,
     cameraTarget,
@@ -1655,4 +1660,7 @@ function frame(now: number): void {
   }
   requestAnimationFrame(frame)
 }
+// WebGPU builds pipelines lazily, and the first draw of each stalls the frame.
+// Build the farm's up front so the menu opens smoothly.
+if (renderBackend === 'webgpu') await precompile(renderer, scene, camera)
 requestAnimationFrame(frame)

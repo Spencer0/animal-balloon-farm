@@ -31,6 +31,9 @@ const result = await build({
   format: 'esm',
   target: 'es2022',
   outdir,
+  // The WebGPU renderer and its node shaders load on demand (`?renderer=webgpu`),
+  // so a WebGL session never downloads them.
+  splitting: true,
   define: { __GARDEN_DEBUG__: gardenDebug },
   // Hash bundle names so a redeploy is never shadowed by a browser that still
   // has the previous, stable-named bundle cached.

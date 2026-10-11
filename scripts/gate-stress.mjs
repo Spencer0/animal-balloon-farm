@@ -57,7 +57,7 @@ function parseArgs(argv) {
 }
 
 /** Build the debug bundle the scenarios drive. Throws on build failure. */
-function buildDebugBundle() {
+export function buildDebugBundle() {
   const build = spawnSync(process.execPath, ['scripts/build.mjs'], {
     stdio: 'inherit',
     env: { ...process.env, PAGES_OUTDIR: DEBUG_OUTDIR, GARDEN_DEBUG: '1' },
@@ -76,7 +76,7 @@ async function assertDetectorFires() {
 }
 
 /** @returns {Promise<number>} */
-function freePort() {
+export function freePort() {
   return new Promise((resolve, reject) => {
     const server = createNetServer();
     server.once('error', reject);
@@ -135,9 +135,9 @@ export function findChrome() {
 
 /**
  * @param {string} chromePath
- * @param {{ port: number, headed: boolean, gpu: boolean }} options
+ * @param {{ port: number, headed: boolean, gpu: boolean, extraArgs?: string[] }} options
  */
-export function launchChrome(chromePath, { port, headed, gpu }) {
+export function launchChrome(chromePath, { port, headed, gpu, extraArgs = [] }) {
   mkdirSync(PROFILE_DIR, { recursive: true });
   const args = [
     `--remote-debugging-port=${port}`,
@@ -156,12 +156,13 @@ export function launchChrome(chromePath, { port, headed, gpu }) {
   if (!gpu) args.push('--enable-gpu', '--use-gl=angle', '--use-angle=swiftshader-webgl');
   // Linux runners without a user namespace need this; Windows and macOS do not.
   if (process.platform === 'linux') args.push('--no-sandbox');
+  args.push(...extraArgs);
   args.push('about:blank');
   return spawn(chromePath, args, { stdio: 'ignore' });
 }
 
 /** @param {number} port */
-async function waitForDevTools(port) {
+export async function waitForDevTools(port) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const ok = await fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.ok, () => false);

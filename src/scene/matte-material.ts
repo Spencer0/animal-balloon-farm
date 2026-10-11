@@ -1,6 +1,17 @@
 import * as THREE from 'three'
 
 /**
+ * True for a material whose shading is patched at compile time (an
+ * `onBeforeCompile` hook under WebGL, a node override under WebGPU, which marks
+ * `userData.customShading`). Such a material only ever matches itself.
+ */
+export function hasCustomShading(material: THREE.Material): boolean {
+  return Object.hasOwn(material, 'onBeforeCompile')
+    || Object.hasOwn(material, 'customProgramCacheKey')
+    || material.userData.customShading !== undefined
+}
+
+/**
  * Matte Standard materials (rough, non-metal, no maps that drive the PBR terms)
  * render the same as Lambert but skip the GGX specular term per pixel. Glossy,
  * metallic and map-driven materials stay Standard, so their highlights survive.
@@ -13,7 +24,7 @@ export function isMatte(material: THREE.Material): material is THREE.MeshStandar
     && !material.roughnessMap
     && !material.metalnessMap
     && !material.envMap
-    && !Object.hasOwn(material, 'onBeforeCompile')
+    && !hasCustomShading(material)
 }
 
 /** Lambert twin of a matte Standard material, keeping the maps and flags that show. */

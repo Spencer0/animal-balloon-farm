@@ -1,12 +1,5 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
-import { BokehPass } from 'three/addons/postprocessing/BokehPass.js'
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import {
   TOOL_UNLOCK_DURATION,
   TOOL_UNLOCK_SOUND_CUES,
@@ -18,7 +11,9 @@ import { createUILayer, type UILayer } from '../ui/ui-layer'
 import { createIntroCaptions, type IntroCaptions } from '../ui/intro-captions'
 import { createIntroAudio } from './intro-audio'
 import { createGardenToolModel, tintSeedPack } from './garden-tool-art'
-import { createGradeShader, disposeTree, makeActor, poseActor, prepareShadows, type Actor, type CutscenePlayer } from './cutscene-kit'
+import { disposeTree, makeActor, poseActor, prepareShadows, type Actor, type CutscenePlayer } from './cutscene-kit'
+import { createFilmEnvironment, createFilmPost } from './film-post'
+import { precompile, type FarmRenderer, type FilmPost } from '../render/backend'
 
 /**
  * The tool-unlock cutscene: Pip hands the boy the tool the player just bought.
@@ -51,7 +46,7 @@ const ASSETS = {
 const SUN_DIRECTION = new THREE.Vector3(-0.7, 0.62, 0.35).normalize()
 
 export function createToolUnlockCutscene(
-  renderer: THREE.WebGLRenderer,
+  renderer: FarmRenderer,
   film: ToolUnlockFilm,
   cssWidth: number,
   cssHeight: number,
@@ -68,11 +63,8 @@ export function createToolUnlockCutscene(
   const camera = new THREE.PerspectiveCamera(40, cssWidth / Math.max(1, cssHeight), 0.05, 60)
   camera.name = 'Tool unlock camera'
 
-  const pmrem = new THREE.PMREMGenerator(renderer)
-  const roomEnvironment = new RoomEnvironment()
-  const environment = pmrem.fromScene(roomEnvironment, 0.04).texture
-  roomEnvironment.dispose()
-  scene.environment = environment
+  const filmEnvironment = createFilmEnvironment(renderer)
+  scene.environment = filmEnvironment.texture
   scene.environmentIntensity = 0.45
 
   // ----- a sunny shop: daylight through the window, warm fill, a lamp over the counter.
@@ -121,21 +113,20 @@ export function createToolUnlockCutscene(
   scene.add(toolCarrier)
 
   // ----- post: depth of field, bloom, tone map, then the film grade.
-  const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { samples: 4, type: THREE.HalfFloatType }))
-  composer.setPixelRatio(renderer.getPixelRatio())
-  composer.addPass(new RenderPass(scene, camera))
-  const bokeh = new BokehPass(scene, camera, { focus: 2, aperture: 0.0016, maxblur: 0.007 })
-  composer.addPass(bokeh)
-  const bokehUniforms = bokeh.uniforms as Record<'focus' | 'aperture' | 'maxblur', THREE.IUniform<number>>
-  const bloom = new UnrealBloomPass(new THREE.Vector2(cssWidth, cssHeight), 0.22, 0.5, 1.4)
-  composer.addPass(bloom)
-  composer.addPass(new OutputPass())
-  const grade = new ShaderPass(createGradeShader('ToolUnlockGradeShader'))
-  composer.addPass(grade)
 
   const ui: UILayer = createUILayer()
   const captions: IntroCaptions = createIntroCaptions(ui.viewport)
   ui.add(captions)
+
+  const post: FilmPost = createFilmPost(renderer, scene, camera, {
+    width: cssWidth,
+    height: cssHeight,
+    bloomStrength: 0.22,
+    bloomRadius: 0.5,
+    bloomThreshold: 1.4,
+    overlay: ui,
+    name: 'ToolUnlockGradeShader',
+  })
 
   const audio = createIntroAudio(TOOL_UNLOCK_SOUND_CUES)
   let boy: Actor | null = null
@@ -146,9 +137,7 @@ export function createToolUnlockCutscene(
   function resize(width: number, height: number): void {
     camera.aspect = width / Math.max(1, height)
     camera.updateProjectionMatrix()
-    composer.setPixelRatio(renderer.getPixelRatio())
-    composer.setSize(width, height)
-    grade.uniforms['aspect'].value = camera.aspect
+    post.setSize(width, height)
     ui.resize(width, height)
   }
   resize(cssWidth, cssHeight)
@@ -182,12 +171,8 @@ export function createToolUnlockCutscene(
       camera.updateProjectionMatrix()
     }
     const focus = camera.position.distanceTo(focusPoint.set(...frame.camera.target))
-    bokehUniforms.focus.value = focus
-    bokehUniforms.aperture.value = THREE.MathUtils.clamp(0.0035 / Math.max(0.4, focus), 0.0004, 0.004)
-    grade.uniforms['time'].value = frame.t
-    grade.uniforms['letterbox'].value = frame.letterbox
-    grade.uniforms['fadeBlack'].value = frame.fadeBlack
-    grade.uniforms['fadeWhite'].value = frame.fadeWhite
+    post.setFocus(focus, THREE.MathUtils.clamp(0.0035 / Math.max(0.4, focus), 0.0004, 0.004))
+    post.setGrade({ time: frame.t, letterbox: frame.letterbox, fadeBlack: frame.fadeBlack, fadeWhite: frame.fadeWhite })
     if (boy) {
       boy.root.position.set(...frame.boyPosition)
       boy.root.rotation.y = frame.boyYaw
@@ -230,7 +215,8 @@ export function createToolUnlockCutscene(
     if (!boyGrip || !pipGrip) console.warn('[tool unlock] a hand grip is missing; the tool will not show')
     // Compile up front so the first cut never hitches on a shader.
     toolCarrier.visible = true
-    renderer.compile(scene, camera)
+    await precompile(renderer, scene, camera)
+    if (disposed) return
     loaded = true
     apply(toolUnlockFrameAt(film, time))
   }
@@ -261,8 +247,8 @@ export function createToolUnlockCutscene(
         renderer.clear()
         return
       }
-      composer.render()
-      ui.render(renderer)
+      post.render()
+      if (!post.includesOverlay) ui.render(renderer)
     },
     seek(seconds: number): void {
       time = THREE.MathUtils.clamp(seconds, 0, TOOL_UNLOCK_DURATION)
@@ -293,12 +279,8 @@ export function createToolUnlockCutscene(
       disposeTree(scene)
       boy?.mixer.stopAllAction()
       pip?.mixer.stopAllAction()
-      environment.dispose()
-      pmrem.dispose()
-      bokeh.dispose()
-      bloom.dispose()
-      grade.dispose()
-      composer.dispose()
+      filmEnvironment.dispose()
+      post.dispose()
       ui.dispose()
       scene.clear()
     },

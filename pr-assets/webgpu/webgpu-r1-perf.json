@@ -1,0 +1,52 @@
+{
+  "info": {
+    "renderer": "webgpu",
+    "adapter": {
+      "vendor": "amd",
+      "arch": "rdna-1",
+      "desc": ""
+    }
+  },
+  "results": {
+    "10": {
+      "frames": 180,
+      "fps": 30.6,
+      "intervalP95": 71.1,
+      "workP50": 10,
+      "workP95": 37.6,
+      "renderP95": 27.5,
+      "snapshot": {
+        "renderCalls": 206,
+        "triangles": 549201
+      },
+      "summary": {
+        "population": 0,
+        "outside": 0,
+        "drawn": 0,
+        "crowdFixtures": 10,
+        "houseRoom": 0,
+        "houseUsed": 0
+      }
+    },
+    "30": {
+      "frames": 180,
+      "fps": 12.7,
+      "intervalP95": 464.8,
+      "workP50": 26,
+      "workP95": 169,
+      "renderP95": 119.8,
+      "snapshot": {
+        "renderCalls": 538,
+        "triangles": 873407
+      },
+      "summary": {
+        "population": 0,
+        "outside": 0,
+        "drawn": 0,
+        "crowdFixtures": 30,
+        "houseRoom": 0,
+        "houseUsed": 0
+      }
+    }
+  }
+}

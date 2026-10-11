@@ -68,6 +68,9 @@ const ctx = await context({
   format: 'esm',
   target: 'es2022',
   outdir,
+  // The WebGPU renderer and its node shaders load on demand (`?renderer=webgpu`),
+  // so a WebGL session never downloads them.
+  splitting: true,
   entryNames: 'main',
   // The dev server is the place to exercise the debug harness, so it is on by
   // default. GARDEN_DEBUG=0 reproduces a production build locally.
