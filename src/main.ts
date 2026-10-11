@@ -5,6 +5,7 @@ import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
 import { isHouse } from './game/animal-housing'
 import { createHousing } from './scene/housing'
 import type { Bed } from './game/sleep'
+import { SIM_HZ, SIM_MAX_STEPS_PER_FRAME, createSimClock } from './game/sim-clock'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from './scene/fairground'
 import { ANIMAL_LIFE_CONFIG, createAnimalLife } from './game/animal-life'
 import { createProgressLedger } from './game/farm-progression'
@@ -1452,6 +1453,42 @@ function plantShadowKey(): number {
   return key
 }
 
+/**
+ * Logic that does not need per-frame smoothness runs on a fixed simulation clock
+ * (see game/sim-clock.ts). Motion, animation, camera and water stay per frame, and
+ * so do the hunts: they steer the owls and snakes as well as deciding catches.
+ */
+const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
+
+function runSimTick(stepSeconds: number, nowSeconds: number): void {
+  updateSleepers()
+  // The condition ladder runs after the animals have moved, so a settle
+  // triggered this tick is applied against the farm as measured, which the
+  // sim refreshes at most once a second (see measureFarmForSim).
+  updateAnimalProgress(stepSeconds)
+  refreshAnimalVisibility(nowSeconds)
+  gardenPlants?.tick(stepSeconds, !menu.isOpen && !journal.isOpen && !salePanel.isOpen)
+  const matureIds = new Set<number>()
+  for (const plant of gardenPlants?.simulation.plants ?? []) {
+    if (!plant.mature) continue
+    matureIds.add(plant.instanceId)
+    if (!knownMaturePlants.has(plant.instanceId)) {
+      knownMaturePlants.add(plant.instanceId)
+      const earned = accomplishments.discoverPlantGrown(plant.species)
+      if (earned) unlockAccomplishment(earned)
+      else notificationPanel.notifyPlantGrown(plantDisplayName(plant.species))
+    }
+  }
+  for (const knownId of [...knownMaturePlants]) if (!matureIds.has(knownId)) knownMaturePlants.delete(knownId)
+}
+
+/**
+ * Panels that show live numbers refresh at most this often. Actions that change
+ * what a panel shows (buying, selling, selecting) still refresh it at once.
+ */
+const DOM_REFRESH_INTERVAL_MS = 250
+let lastDomRefreshAt = Number.NEGATIVE_INFINITY
+
 function frame(now: number): void {
   fpsCounter.frame(now)
   const intervalMs = previousFrameTimestamp === null ? 0 : now - previousFrameTimestamp
@@ -1500,6 +1537,8 @@ function frame(now: number): void {
   stageStartedAt = timingEnabled ? performance.now() : 0
   farmCamera.updateMenuDrift(delta, now / 1000)
   updateCameraTour(delta)
+  const simSteps = simClock.advance(delta)
+  for (let step = 0; step < simSteps; step += 1) runSimTick(simClock.stepSeconds, now / 1000)
   animals.forEach((animal) => animal.update(delta))
   crowdFixtures.forEach((fixture) => fixture.update(delta))
   collideAnimals(now / 1000)
@@ -1507,7 +1546,6 @@ function frame(now: number): void {
     updateOwlHunt(delta)
     updateSnakeHunt(delta)
   }
-  updateSleepers()
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
   for (let burstIndex = sellBursts.length - 1; burstIndex >= 0; burstIndex -= 1) {
@@ -1517,11 +1555,6 @@ function frame(now: number): void {
     burst.dispose()
     sellBursts.splice(burstIndex, 1)
   }
-  // The condition ladder runs after the animals have moved, so a settle
-  // triggered this frame is applied against the farm as measured, which the
-  // sim refreshes at most once a second (see measureFarmForSim).
-  updateAnimalProgress(delta)
-  refreshAnimalVisibility(now / 1000)
   input.refreshHover(now / 1000, delta)
   const animalsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
@@ -1551,31 +1584,24 @@ function frame(now: number): void {
       farmCamera.shakeForExpansion()
     }
   }
-  gardenPlants?.update(delta, !menu.isOpen && !journal.isOpen && !salePanel.isOpen)
+  gardenPlants?.update(delta)
   syncPlantCard(delta)
   gardenProps?.update(delta, progression.level)
-  const matureIds = new Set<number>()
-  for (const plant of gardenPlants?.simulation.plants ?? []) {
-    if (!plant.mature) continue
-    matureIds.add(plant.instanceId)
-    if (!knownMaturePlants.has(plant.instanceId)) {
-      knownMaturePlants.add(plant.instanceId)
-      const earned = accomplishments.discoverPlantGrown(plant.species)
-      if (earned) unlockAccomplishment(earned)
-      else notificationPanel.notifyPlantGrown(plantDisplayName(plant.species))
-    }
-  }
-  for (const knownId of [...knownMaturePlants]) if (!matureIds.has(knownId)) knownMaturePlants.delete(knownId)
-  if (playerDom.isOpen) playerDom.refresh(playerDomStats())
-  if (notificationDom.isOpen) notificationDom.refresh(notificationPanel.getLetters(), notificationPanel.nowSeconds())
-  {
-    const unread = notificationPanel.getUnreadCount()
-    balloon.setPostBadge(unread > 9 ? '9+' : unread > 0 ? String(unread) : '')
-  }
+  // Cheap and state-driven, so they stay per frame: the letter tray must hide the
+  // frame a panel opens, not 250 ms later.
   notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen)
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
-  if (!menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
-  shedDom.refresh()
+  // Open panels rebuild their DOM, so they refresh at a fixed low rate. Closed
+  // panels skip the work entirely; their stats are only gathered when open.
+  if (now - lastDomRefreshAt >= DOM_REFRESH_INTERVAL_MS) {
+    lastDomRefreshAt = now
+    if (playerDom.isOpen) playerDom.refresh(playerDomStats())
+    if (notificationDom.isOpen) notificationDom.refresh(notificationPanel.getLetters(), notificationPanel.nowSeconds())
+    const unread = notificationPanel.getUnreadCount()
+    balloon.setPostBadge(unread > 9 ? '9+' : unread > 0 ? String(unread) : '')
+    if (!menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
+    shedDom.refresh()
+  }
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   input.updateCameraPan(delta)

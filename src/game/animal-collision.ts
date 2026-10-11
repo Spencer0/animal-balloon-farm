@@ -31,6 +31,9 @@ export interface CollisionBox {
 
 /** Grid cell size in metres: comfortably larger than any animal's diameter. */
 const CELL = 2.5
+/** Packs a grid cell into one number: cells stay well inside ±32k, far beyond any farm. */
+const CELL_KEY_OFFSET = 32768
+const CELL_KEY_STRIDE = 65536
 
 /** Push a circle out of a box, if it overlaps. Returns true when it moved. */
 export function pushOutOfBox(body: CollisionBody, box: CollisionBox): boolean {
@@ -84,8 +87,9 @@ function pushOutOfBoxes(bodies: readonly CollisionBody[], boxes: readonly Collis
 }
 
 function separatePairs(bodies: readonly CollisionBody[]): void {
-  const grid = new Map<string, number[]>()
-  const keyOf = (cx: number, cz: number): string => `${cx},${cz}`
+  // Numeric cell keys: a string key per cell per frame was most of this pass's garbage.
+  const grid = new Map<number, number[]>()
+  const keyOf = (cx: number, cz: number): number => (cx + CELL_KEY_OFFSET) * CELL_KEY_STRIDE + (cz + CELL_KEY_OFFSET)
   bodies.forEach((body, index) => {
     const key = keyOf(Math.floor(body.x / CELL), Math.floor(body.z / CELL))
     const cell = grid.get(key)
