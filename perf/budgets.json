@@ -2,6 +2,7 @@
   "calibratedOn": "Windows 10, Chrome headless with SwiftShader, 2026-10-08. Local p95 work: shovel 14-24ms, dig 15-26ms, plant 10-16ms, expand 13-72ms, crowd 13-14ms. CI (ubuntu, SwiftShader) p95 work: shovel 16ms, dig 17ms, plant 19ms, expand 11ms, crowd 11ms, at ~0.6-0.7 FPS, so a 60s sampling cap yields ~40 frames.",
   "scenarios": {
     "shovel": { "minSamples": 30, "maxP95WorkMs": 40 },
+    "grass-brush": { "minSamples": 30, "maxP95WorkMs": 25 },
     "dig": { "minSamples": 30, "maxP95WorkMs": 40 },
     "plant": { "minSamples": 30, "maxP95WorkMs": 30 },
     "expand": { "minSamples": 30, "maxP95WorkMs": 60 },
