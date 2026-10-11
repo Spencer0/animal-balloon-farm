@@ -33,7 +33,10 @@ export interface GardenPlants {
   plantAt(clientX: number, clientY: number): HoverPlant | null
   /** The plant the pointer is over; it grows a little while hovered. */
   setHoveredPlant(instanceId: number | null): void
-  update(deltaSeconds: number, allowGrowth: boolean): void
+  /** Per-frame visuals: sway, celebrations, previews. Growth runs in `tick`. */
+  update(deltaSeconds: number): void
+  /** One fixed simulation step: growth, and the celebration when a plant first matures. */
+  tick(stepSeconds: number, allowGrowth: boolean): void
   dispose(): void
 }
 
@@ -876,18 +879,20 @@ export function createGardenPlants(
       if (target.kind === 'mature') return 'mature'
       return plantsById().get(target.visual.instanceId)?.careNeeded ?? null
     },
-    update(deltaSeconds, allowGrowth): void {
+    tick(stepSeconds, allowGrowth): void {
       const previousMaturity = new Set(simulation.plants.filter((plant) => plant.mature).map((plant) => plant.instanceId))
-      elapsed += deltaSeconds
-      invalidSeconds = Math.max(0, invalidSeconds - deltaSeconds)
-      for (const visual of visuals.values()) {
-        visual.maturityCelebrationRemaining = Math.max(0, visual.maturityCelebrationRemaining - deltaSeconds)
-      }
-      if (allowGrowth) simulation.tick(deltaSeconds)
+      if (allowGrowth) simulation.tick(stepSeconds)
       for (const plant of simulation.plants) {
         if (!plant.mature || previousMaturity.has(plant.instanceId)) continue
         const visual = visuals.get(plant.instanceId)
         if (visual) visual.maturityCelebrationRemaining = CELEBRATION_SECONDS
+      }
+    },
+    update(deltaSeconds): void {
+      elapsed += deltaSeconds
+      invalidSeconds = Math.max(0, invalidSeconds - deltaSeconds)
+      for (const visual of visuals.values()) {
+        visual.maturityCelebrationRemaining = Math.max(0, visual.maturityCelebrationRemaining - deltaSeconds)
       }
       syncVisuals()
       if (selectedSpecies && previewPosition) updatePreview(previewPosition)
