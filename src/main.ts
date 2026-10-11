@@ -20,6 +20,7 @@ import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
+import { createVisitorMotion } from './scene/visitor-motion'
 import { createFarmModes } from './ui/farm-modes'
 import { tourSubjectsOf } from './scene/tour-subjects'
 import { animalDisplayName, plantDisplayName } from './game/display-names'
@@ -1031,6 +1032,7 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
 })
 window.addEventListener('pagehide', autosave)
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave() })
+const visitorMotion = createVisitorMotion({ animalById, activeGardenBounds, carnivalSpawnFor })
 const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateAnimalProgress, ownedSeedSpecies, unlockAccomplishment } = createFarmLifecycle({
   animalNames,
   popAnimal,
@@ -1058,7 +1060,7 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   measureFarmForSim,
   dayNightClock,
   createAnimalInstance,
-  carnivalSpawnFor,
+  visitorMotion,
   animalDisplayName,
   noteJournalStages,
 })

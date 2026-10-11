@@ -33,6 +33,71 @@ const APPROACH_CLEARANCE = 2.4
 /** Meadow kept between a carnival animal and the garden wall. */
 export const FARM_WALL_CLEARANCE = 1.8
 
+/**
+ * The open meadow around the plot that visitors roam. It is a rectangle around
+ * the middle of the farm that never shrinks below the floor and keeps a margin
+ * beyond the wall as the plot grows, so a grown farm cannot swallow the midway.
+ */
+export const CARNIVAL_RING_FLOOR = { x: 50, z: 40 } as const
+export const CARNIVAL_RING_MARGIN = { x: 26, z: 24 } as const
+
+export function carnivalRing(bounds?: { readonly halfWidth: number; readonly halfDepth: number }): { readonly x: number; readonly z: number } {
+  return {
+    x: Math.max(CARNIVAL_RING_FLOOR.x, (bounds?.halfWidth ?? 0) + CARNIVAL_RING_MARGIN.x),
+    z: Math.max(CARNIVAL_RING_FLOOR.z, (bounds?.halfDepth ?? 0) + CARNIVAL_RING_MARGIN.z),
+  }
+}
+
+/** How far in from the edge of the ring a visitor steps onto the grounds, as a fraction of the ring. */
+const RING_EDGE_INSET = 0.94
+
+/**
+ * Where a visitor first comes into view: the species usual spot pushed straight
+ * out to the edge of the ring, then slid `lateral` units along the edge so that
+ * two arrivals of one species do not use the same footprints.
+ */
+export function groundsEntryPoint(
+  spawn: AnimalPosition,
+  ring: { readonly x: number; readonly z: number },
+  lateral = 0,
+): AnimalPosition {
+  const rx = ring.x * RING_EDGE_INSET
+  const rz = ring.z * RING_EDGE_INSET
+  const ax = Math.abs(spawn.x) / rx
+  const az = Math.abs(spawn.z) / rz
+  const scale = Math.max(ax, az)
+  const edge = scale > 1e-6 ? { x: spawn.x / scale, z: spawn.z / scale } : { x: rx, z: 0 }
+  const alongX = az >= ax
+  return {
+    x: clamp(edge.x + (alongX ? lateral : 0), -rx, rx),
+    z: clamp(edge.z + (alongX ? 0 : lateral), -rz, rz),
+  }
+}
+
+/** The spot at the edge of the ring a leaving visitor walks to: straight out from the farm. */
+export function groundsExitPoint(
+  from: AnimalPosition,
+  ring: { readonly x: number; readonly z: number },
+): AnimalPosition {
+  const rx = ring.x * RING_EDGE_INSET
+  const rz = ring.z * RING_EDGE_INSET
+  const scale = Math.max(Math.abs(from.x) / rx, Math.abs(from.z) / rz)
+  if (scale < 1e-3) return { x: rx, z: 0 }
+  return { x: from.x / scale, z: from.z / scale }
+}
+
+/**
+ * Where member `index` of a pack stands relative to its leader (index 0). Members
+ * are spread round the leader at slightly different distances so a pack reads
+ * as a loose bunch rather than a ring.
+ */
+export function packOffset(index: number, spacing = 2.4): AnimalPosition {
+  if (index <= 0) return { x: 0, z: 0 }
+  const angle = index * 2.4 + 0.6
+  const distance = spacing * (0.85 + 0.15 * ((index * 7) % 5))
+  return { x: Math.cos(angle) * distance, z: Math.sin(angle) * distance * 0.8 }
+}
+
 /** Stage 2 is a visitor; settled/breedable residents stay on the farm. */
 export function canAnimalLeaveFarm(stage: number): boolean {
   return stage === 2

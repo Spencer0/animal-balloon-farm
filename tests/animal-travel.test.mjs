@@ -71,3 +71,43 @@ test('leaving the farm uses the same gate in reverse', () => {
   assert.ok(Math.hypot(firstStep.position.x - 4, firstStep.position.z + 2) <= 0.250001)
   assert.ok(firstStep.route)
 })
+
+test('the carnival ring is wide, never shrinks, and grows with the farm', () => {
+  const start = travel.carnivalRing({ halfWidth: 10, halfDepth: 9 })
+  assert.ok(start.x >= 50 && start.z >= 40, 'visitors can roam far beyond the old 30 unit pen')
+  const grown = travel.carnivalRing({ halfWidth: 60, halfDepth: 50 })
+  assert.ok(grown.x >= 60 + travel.CARNIVAL_RING_MARGIN.x)
+  assert.ok(grown.z >= 50 + travel.CARNIVAL_RING_MARGIN.z)
+  assert.deepEqual(travel.carnivalRing(), { x: travel.CARNIVAL_RING_FLOOR.x, z: travel.CARNIVAL_RING_FLOOR.z })
+})
+
+test('arrivals step on at the edge of the ring, in the direction of their usual spot', () => {
+  const ring = { x: 56, z: 44 }
+  const entry = travel.groundsEntryPoint({ x: 18, z: -13 }, ring)
+  assert.ok(entry.x > 0 && entry.z < 0, 'same side of the farm as the spot')
+  assert.ok(Math.abs(entry.x) <= ring.x && Math.abs(entry.z) <= ring.z)
+  assert.ok(Math.max(Math.abs(entry.x) / ring.x, Math.abs(entry.z) / ring.z) > 0.9, 'out at the edge')
+  const slid = travel.groundsEntryPoint({ x: 18, z: -13 }, ring, 6)
+  assert.notDeepEqual(slid, entry)
+  assert.ok(Math.abs(slid.x) <= ring.x && Math.abs(slid.z) <= ring.z, 'sliding never leaves the ring')
+  const origin = travel.groundsEntryPoint({ x: 0, z: 0 }, ring)
+  assert.ok(Number.isFinite(origin.x) && Number.isFinite(origin.z))
+})
+
+test('a leaving visitor walks straight out from the farm to the edge of the ring', () => {
+  const ring = { x: 56, z: 44 }
+  const exit = travel.groundsExitPoint({ x: 12, z: 6 }, ring)
+  assert.ok(exit.x > 12 && exit.z > 6)
+  assert.ok(Math.abs(exit.z / exit.x - 0.5) < 1e-6, 'along the same line from the middle')
+  assert.ok(Math.max(Math.abs(exit.x) / ring.x, Math.abs(exit.z) / ring.z) > 0.9)
+  assert.deepEqual(travel.groundsExitPoint({ x: 0, z: 0 }, ring).z, 0)
+})
+
+test('a pack spreads round its leader without piling members on top of each other', () => {
+  assert.deepEqual(travel.packOffset(0), { x: 0, z: 0 })
+  const spots = [1, 2, 3, 4].map((index) => travel.packOffset(index))
+  for (const spot of spots) assert.ok(Math.hypot(spot.x, spot.z) > 1.2, 'clear of the leader')
+  for (let a = 0; a < spots.length; a += 1) {
+    for (let b = a + 1; b < spots.length; b += 1) assert.ok(Math.hypot(spots[a].x - spots[b].x, spots[a].z - spots[b].z) > 1, 'clear of each other')
+  }
+})

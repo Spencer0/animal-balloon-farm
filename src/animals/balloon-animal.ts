@@ -10,14 +10,7 @@ import { cloneMerged, objectBounds, skeletonsOf } from '../scene/merge-static-me
 import { mergeAnimalParts } from './animal-batching'
 import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal } from '../game/sales'
-import { advanceAnimalTravel, canAnimalLeaveFarm, clearOfFarmBounds, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
-
-/**
- * Near-extents of the carnival ring around the plot. The authored carnival pen
- * reaches 30 x 30 around the 14 x 9.5 starter plot, so the midway keeps exactly
- * that much meadow beyond the wall at every expansion level.
- */
-const CARNIVAL_RING_OFFSET = { x: 16, z: 20.5 } as const
+import { advanceAnimalTravel, canAnimalLeaveFarm, carnivalRing, clearOfFarmBounds, createAnimalTravelRoute, type AnimalTravelRoute } from '../game/animal-travel'
 
 export type AnimalClip = 'IDLE' | 'WALK' | 'SLEEP'
 export type AnimalAppearance = 'standard' | 'wild'
@@ -59,8 +52,13 @@ export interface BalloonAnimalOptions {
    * "visited the farm, inside the carnival".
    */
   readonly isLoose?: () => boolean
-  /** Half-extents to roam when loose at the carnival. */
+  /** Half-extents to roam when loose at the carnival. Defaults to the whole meadow ring. */
   readonly carnivalBounds?: { readonly x: number; readonly z: number }
+  /**
+   * Where the rest of this animal pack is, while it is out at the carnival.
+   * Null when it came alone, is the pack leader, or its pack has moved on.
+   */
+  readonly getPackAnchor?: () => { readonly x: number; readonly z: number } | null
   /** Terrain height at garden (x, z); enables walking over deformed ground. */
   readonly groundSampler?: (x: number, z: number) => number
   /**
@@ -622,7 +620,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
    */
   function visitCooldown(side: 'carnival' | 'farm'): number {
     if (stage >= 3) return 28 + random() * 18
-    return side === 'farm' ? 4.5 + random() * 3.5 : 9 + random() * 8
+    // Long enough to look like browsing, and different every time.
+    return side === 'farm' ? 16 + random() * 34 : 14 + random() * 36
   }
 
   function beginTravel(direction: 'enter' | 'leave'): void {
@@ -665,14 +664,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   function leash(): { readonly x: number; readonly z: number } {
     const gardenBounds = options.getGardenBounds?.()
     if (isCarnivalSide()) {
-      const carnival = options.carnivalBounds ?? { x: 30, z: 30 }
-      // The carnival is a ring around the plot, not a fixed patch of meadow: as
-      // the farm grows its props slide outward, and the pen they sit in has to
-      // come with them or a grown plot would swallow the whole midway.
-      return {
-        x: Math.max(carnival.x, (gardenBounds?.halfWidth ?? FARM_EXPANSION_CONFIG.startBounds.halfWidth) + CARNIVAL_RING_OFFSET.x),
-        z: Math.max(carnival.z, (gardenBounds?.halfDepth ?? FARM_EXPANSION_CONFIG.startBounds.halfDepth) + CARNIVAL_RING_OFFSET.z),
-      }
+      // The carnival is a wide ring of meadow around the plot, not a fixed patch:
+      // as the farm grows the ring grows with it, so visitors can always roam a
+      // long way out.
+      const ring = carnivalRing(gardenBounds ?? FARM_EXPANSION_CONFIG.startBounds)
+      return options.carnivalBounds
+        ? { x: Math.max(options.carnivalBounds.x, ring.x), z: Math.max(options.carnivalBounds.z, ring.z) }
+        : ring
     }
     const expansionX = Math.max(0, (gardenBounds?.halfWidth ?? FARM_EXPANSION_CONFIG.startBounds.halfWidth) - FARM_EXPANSION_CONFIG.startBounds.halfWidth)
     const expansionZ = Math.max(0, (gardenBounds?.halfDepth ?? FARM_EXPANSION_CONFIG.startBounds.halfDepth) - FARM_EXPANSION_CONFIG.startBounds.halfDepth)
@@ -681,12 +679,42 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     return { x: halfWidth, z: halfDepth }
   }
 
+  /** Past this many units from its pack leader, a visitor heads back to it. */
+  const PACK_STRAY_DISTANCE = 6.5
+  let longWalk = false
+
   const chooseTarget = (): void => {
-    const angle = random() * Math.PI * 2
-    const radius = (alarmed ? 4.2 : 2.4) + random() * 5.8
     const limits = leash()
-    let nextX = THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -limits.x, limits.x)
-    let nextZ = THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * 0.62, -limits.z, limits.z)
+    const carnival = isCarnivalSide()
+    const anchor = carnival && !alarmed ? options.getPackAnchor?.() ?? null : null
+    longWalk = false
+    let nextX: number
+    let nextZ: number
+    if (anchor && Math.hypot(anchor.x - wrapper.position.x, anchor.z - wrapper.position.z) > PACK_STRAY_DISTANCE) {
+      // Keep with the pack: head for a spot beside the leader.
+      const around = random() * Math.PI * 2
+      const gap = 1.6 + random() * 3
+      nextX = THREE.MathUtils.clamp(anchor.x + Math.cos(around) * gap, -limits.x, limits.x)
+      nextZ = THREE.MathUtils.clamp(anchor.z + Math.sin(around) * gap * 0.8, -limits.z, limits.z)
+    } else {
+      const angle = random() * Math.PI * 2
+      let radius = (alarmed ? 4.2 : 2.4) + random() * 5.8
+      let squash = 0.62
+      if (carnival && !alarmed && !anchor) {
+        // Mostly a nibble here and there, now and then a stroll, and once in a
+        // while a long trek out across the meadow.
+        const roll = random()
+        if (roll > 0.86) {
+          radius = 18 + random() * 20
+          squash = 0.85
+          longWalk = true
+        } else if (roll > 0.58) {
+          radius = 8 + random() * 8
+        }
+      }
+      nextX = THREE.MathUtils.clamp(wrapper.position.x + Math.cos(angle) * radius, -limits.x, limits.x)
+      nextZ = THREE.MathUtils.clamp(wrapper.position.z + Math.sin(angle) * radius * squash, -limits.z, limits.z)
+    }
     if (isCarnivalSide()) {
       // Walk targets stay outside the fence too, so a carnival animal never
       // presses against the wall trying to reach a spot it cannot enter.
@@ -704,6 +732,11 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     }
     target.set(nextX, 0, nextZ)
     nextDecision = alarmed ? 0.7 + random() * 0.9 : 2 + random() * 2.4
+    if (longWalk) {
+      // Do not change its mind half way across the meadow.
+      const walk = Math.hypot(nextX - wrapper.position.x, nextZ - wrapper.position.z)
+      nextDecision = Math.max(nextDecision, (walk / Math.max(0.1, options.speed)) * 1.25 + 2)
+    }
   }
 
   const setAnimation = (name: AnimalClip, fadeSeconds = 0.22): void => {
@@ -1225,6 +1258,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
             if (active !== 'IDLE' && !alarmed) {
               setAnimation('IDLE', 0.28)
               paused = pauseDurations.min + random() * (pauseDurations.max - pauseDurations.min)
+              // Out at the carnival there is time to stand about: now and then a long rest.
+              if (isCarnivalSide() && !alarmed && random() < 0.22) paused += 4 + random() * 9
               nextDecision = 0
             } else {
               chooseTarget()

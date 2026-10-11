@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
 import { PLANT_CATALOG } from '../game/plants'
-import { GARDEN_LAWN_Y } from './fairground'
 import type { GardenPlants } from './garden-plants'
 import type { GardenProps, HouseSpot } from './garden-props'
 import type { FarmState } from '../game/farm-state'
@@ -10,6 +9,7 @@ import type { AnimalLifeEvent, AnimalLifeSnapshot, AnimalRecord, createAnimalLif
 import type { AccomplishmentDef, AccomplishmentStage, createAccomplishmentTracker } from '../game/accomplishments'
 import type { createProgressLedger } from '../game/farm-progression'
 import { isNightTime } from '../game/predator'
+import type { VisitorMotion } from './visitor-motion'
 
 export interface FarmLifecycleDeps {
   readonly progress: ReturnType<typeof createAnimalLife>
@@ -33,7 +33,7 @@ export interface FarmLifecycleDeps {
   readonly measureFarmForSim: () => FarmState
   readonly dayNightClock: { readonly timeOfDay: number }
   readonly createAnimalInstance: (record: AnimalRecord, position?: { x: number; z: number }, emerging?: boolean) => Promise<BalloonAnimal>
-  readonly carnivalSpawnFor: (species: string) => readonly [number, number]
+  readonly visitorMotion: VisitorMotion
   readonly fairgroundRoot: THREE.Object3D
   readonly refreshAnimalVisibility: (nowSeconds: number, force?: boolean) => void
   readonly animalDisplayName: (species: string) => string
@@ -44,7 +44,7 @@ export interface FarmLifecycleDeps {
 }
 
 export function createFarmLifecycle(deps: FarmLifecycleDeps) {
-  const { progress, progression, accomplishments, notificationPanel, animals, animalById, animalNames, popAnimal, animalCard, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarmForSim, dayNightClock, createAnimalInstance, carnivalSpawnFor, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
+  const { progress, progression, accomplishments, notificationPanel, animals, animalById, animalNames, popAnimal, animalCard, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarmForSim, dayNightClock, createAnimalInstance, visitorMotion, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
   /**
    * Advance every animal one step and play whatever transition it earned.
    *
@@ -95,6 +95,7 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
   }
 
   function handleAnimalLifeEvents(events: readonly AnimalLifeEvent[]): void {
+    visitorMotion.beginBatch()
     for (const event of events) {
       const animal = event.animalId ? animalById.get(event.animalId) : undefined
       const stage = accomplishmentStageForKind(event.kind)
@@ -105,10 +106,10 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
       if (event.stage !== undefined && animal) {
         animal.stage = event.stage
         animal.setDetailedVisible(animal.instanceId === getFocusedAnimal() || animal.isCapturing)
-        if (event.kind === 'arriveCarnival') {
-          const spawn = carnivalSpawnFor(event.species)
-          animal.root.position.set(spawn[0], GARDEN_LAWN_Y, spawn[1])
-        }
+        // A new arrival comes in at the far edge of the meadow and walks to its
+        // spot; one that is stepping onto the farm, or has left, stops being walked.
+        if (event.kind === 'arriveCarnival') visitorMotion.beginArrival(animal, visitorMotion.planArrival(event))
+        if (event.kind === 'enterFarm' || event.kind === 'departCarnival') visitorMotion.cancel(animal.instanceId)
         if (event.kind === 'settle' || event.kind === 'fallInLove') {
           // Logged here rather than beside the tick so the debug setStage reports
           // the same thing a live promotion does.
@@ -117,9 +118,13 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
       }
       if (event.kind === 'arriveCarnival' && event.animalId && !animal) {
         const record = progress.animal(event.animalId)
-        if (record) void createAnimalInstance(record).then((created) => {
-          farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairgroundRoot, position: created.root.position.clone() })
-        })
+        if (record) {
+          const plan = visitorMotion.planArrival(event)
+          void createAnimalInstance(record, plan.entry).then((created) => {
+            farmHomes.set(created.instanceId, { parent: created.root.parent ?? fairgroundRoot, position: created.root.position.clone() })
+            visitorMotion.beginArrival(created, plan)
+          })
+        }
       }
       if (event.kind === 'birth' && event.animalId) {
         // The baby is born indoors; keeping it in view for a while brings it out of the door.
@@ -168,9 +173,11 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
     for (const record of progress.all()) {
       const animal = animalById.get(record.id)
       if (!animal || animal.isSold) continue
+      if (record.departing) visitorMotion.beginDeparture(animal)
       // A leaking balloon visibly sags: it shrinks toward just over half size at flat.
       animal.setGrowth(record.growth * record.adultScale * (0.55 + 0.45 * record.helium))
     }
+    visitorMotion.step()
     const focused = getFocusedAnimal()
     if (focused) animalCard.setHelium(progress.animal(focused)?.helium ?? 1)
     updateHousing(performance.now() / 1000)

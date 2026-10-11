@@ -462,6 +462,27 @@ The farm fills one animal at a time, and each arrival is earned.
   (`isNightOnly`). Residents are never sent away at night: chickens have to be there for the owl.
 - Only a visitor that is **ready to walk in** holds the arrival queue.
 
+### Visitors should feel alive, not scheduled
+
+All of this is tuned in `ANIMAL_LIFE_CONFIG` (`src/game/animal-life.ts`) and covered by
+`tests/animal-life.test.mjs`.
+
+- **No metronome.** Every wait is the configured number times a random factor: the gap between
+  arrivals, how long a visitor lingers before stepping onto the farm, how long it stays inside.
+- **Selling is not a vacancy sign.** A sold (or popped) animal starts a per-species cooldown
+  (`replacementCooldownSeconds`) and resets the arrival timer, so its replacement is minutes away.
+  Repeat guests are picked by weighted random, favouring species the farm has few of.
+- **More on the grounds.** Up to `groundsVisitorsBase + groundsVisitorsPerLevel x expansion`
+  animals can be loose at the tents at once.
+- **Packs.** `packSizes` lets herd species arrive together; followers carry `leaderId` and a shared
+  `packId`. A pack walks in as a bunch and stays close to its leader while out at the tents.
+- **Visitors come and go.** One whose farm is not ready browses for `visitStaySeconds`, then
+  `departing` is set, the scene walks it off the meadow, and `departCarnival` returns it to
+  stage 0. It is queued again later.
+- **Far and wide.** Arrivals step on at the edge of the meadow ring (`carnivalRing` in
+  `src/game/animal-travel.ts`) and walk in; loose animals graze nearby, stroll, and sometimes trek
+  out across the whole ring. `src/scene/visitor-motion.ts` owns the walking.
+
 Ground-cover plants set `groundCover` in `PLANT_CATALOG` and are drawn as a round patch that melts into
 the lawn. Care is a short list of stops along the growth curve; a plant that is waiting for you just
 waits. It never withers.
