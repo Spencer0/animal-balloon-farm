@@ -307,6 +307,15 @@ export interface FoodWeb {
 /** Most meals a feed pantry holds, so a fortune of sacks cannot be banked forever. */
 export const FEED_CAPACITY = 200
 
+/**
+ * One feed sack from the Larder panel: this many meals for this many coins.
+ * Feed deliberately costs more than the goods it keeps coming (a cow eats
+ * 1.5 meals a day, so a day of feed is about 3.75 coins against 2 coins of
+ * milk), so it carries a herd through a shortage but never prints money.
+ */
+export const FEED_SACK_MEALS = 10
+export const FEED_SACK_PRICE = 25
+
 /** Most meals of scraps the farm can pile up from spoiled goods. */
 export const SCRAPS_CAPACITY = 40
 

@@ -1,0 +1,460 @@
+/* Harmony chip, its tooltip, and the Larder panel (DOM, Farm Journal look):
+ * cream paper, chocolate borders, dashed tan dividers, terracotta accents.
+ * The panel reuses the journal's overlay, backdrop, header and close button.
+ */
+
+/* ------------------------------------------------------------- the chip -- */
+
+.ld-chip {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px 5px 6px;
+  background: rgba(250, 243, 226, 0.94);
+  border: 3px solid #6b4a33;
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(60, 35, 15, 0.3), inset 0 0 0 2px rgba(255, 253, 246, 0.6);
+  color: #5a3d2b;
+  font: 800 14px/1 "Trebuchet MS", Verdana, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ld-chip[hidden] {
+  display: none;
+}
+
+.ld-chip:hover,
+.ld-chip:focus-visible {
+  background: #fffdf6;
+  border-color: #c65a3a;
+  outline: none;
+}
+
+.ld-ring {
+  --ld-fill: 0%;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, #faf3e2 0 54%, transparent 56%),
+    conic-gradient(#c65a3a var(--ld-fill), #e8d9bd 0);
+  box-shadow: 0 0 0 2px #6b4a33;
+}
+
+/* ---------------------------------------------------------- the tooltip -- */
+
+.ld-tip {
+  /* top-anchored (the base card grows upward from a tool bar); never takes the pointer. */
+  bottom: auto;
+  z-index: 41;
+}
+
+.ld-tip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ld-tip-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 10px;
+  padding-bottom: 6px;
+  border-bottom: 2px dashed #b08c5e;
+  font-size: 13px;
+}
+
+.ld-tip-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.ld-tip-name {
+  font-weight: 800;
+}
+
+.ld-tip-pts {
+  font-weight: 800;
+  color: #c65a3a;
+}
+
+.ld-tip-note {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: #8a6749;
+}
+
+.ld-tip-foot {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a6749;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ the panel -- */
+
+.fj-journal.ld-journal {
+  width: min(760px, 94vw);
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  max-height: min(86vh, 800px);
+}
+
+.ld-coins {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: #fffdf6;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.ld-coins + .fj-close {
+  margin-left: 0;
+}
+
+.ld-coin {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f2c14e;
+  border: 2px solid #b8862b;
+  box-sizing: border-box;
+}
+
+.ld-scroll {
+  overflow-y: auto;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ld-h {
+  margin: 4px 0 2px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a6749;
+}
+
+.ld-hint {
+  margin: 0;
+  padding: 8px 12px;
+  background: #fbe9c4;
+  border: 2px solid #d99a2b;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #7a4a10;
+}
+
+.ld-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ld-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  background: #fffdf6;
+  border: 2px solid #6b4a33;
+  border-left-width: 8px;
+  border-radius: 12px;
+}
+
+.ld-row[data-status="ok"] {
+  border-left-color: #5a9a4a;
+}
+
+.ld-row[data-status="short"] {
+  border-left-color: #d99a2b;
+  background: #fff8e6;
+}
+
+.ld-row[data-status="bought"] {
+  border-left-color: #b08c5e;
+}
+
+.ld-icon {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #f5ead2;
+  border: 2px solid #b08c5e;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+/* The letter shows only when the picture is missing (the img removes itself on error). */
+.ld-icon::before {
+  content: attr(data-letter);
+  font-size: 20px;
+  font-weight: 900;
+  color: #8a6749;
+}
+
+.ld-icon img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #f5ead2;
+}
+
+.ld-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ld-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.ld-name {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.ld-stock {
+  font-size: 13px;
+  font-weight: 800;
+  color: #8a6749;
+}
+
+.ld-bar {
+  height: 10px;
+  background: #e8d9bd;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  overflow: hidden;
+  box-sizing: content-box;
+}
+
+.ld-bar > span {
+  display: block;
+  height: 100%;
+  background: #5a9a4a;
+}
+
+.ld-row[data-status="short"] .ld-bar > span {
+  background: #d99a2b;
+}
+
+.ld-row[data-status="bought"] .ld-bar > span {
+  background: #c65a3a;
+}
+
+.ld-nums {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ld-nums b {
+  font-weight: 800;
+}
+
+.ld-row[data-status="ok"] .ld-nums b {
+  color: #3f6b39;
+}
+
+.ld-row[data-status="short"] .ld-nums b {
+  color: #a8650a;
+}
+
+.ld-eaters {
+  font-size: 12px;
+  color: #8a6749;
+}
+
+.ld-buy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 2px dashed #b08c5e;
+}
+
+.ld-btn {
+  flex: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 16px;
+  background: #c65a3a;
+  border: 3px solid #8d3d2a;
+  border-radius: 12px;
+  color: #fff6e8;
+  font: 800 15px/1.1 "Trebuchet MS", Verdana, sans-serif;
+  cursor: pointer;
+}
+
+.ld-btn:hover {
+  background: #d4664a;
+}
+
+.ld-btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ld-btn-sub {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.ld-feedback {
+  font-size: 12px;
+  line-height: 1.35;
+  color: #8a6749;
+}
+
+.ld-feedback[data-ok="true"] {
+  color: #3f6b39;
+  font-weight: 800;
+}
+
+.ld-feedback[data-ok="false"] {
+  color: #a8300f;
+  font-weight: 800;
+}
+
+.ld-split {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 16px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 3px dashed #b08c5e;
+}
+
+.ld-hungers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.ld-hunger {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #fffdf6;
+  border: 2px solid #b08c5e;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.ld-hunger b {
+  font-size: 18px;
+}
+
+.ld-hunger[data-level="full"] b {
+  color: #3f6b39;
+}
+
+.ld-hunger[data-level="fed"] b {
+  color: #6b8a2a;
+}
+
+.ld-hunger[data-level="hungry"] b {
+  color: #a8650a;
+}
+
+.ld-hunger[data-level="starving"] b {
+  color: #a8300f;
+}
+
+.ld-small {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #8a6749;
+}
+
+.ld-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ld-part {
+  display: grid;
+  grid-template-columns: 64px 1fr 44px;
+  align-items: center;
+  column-gap: 8px;
+  font-size: 13px;
+}
+
+.ld-part-name {
+  font-weight: 800;
+}
+
+.ld-bar-thin {
+  height: 8px;
+}
+
+.ld-bar-thin > span {
+  background: #c65a3a;
+}
+
+.ld-part-pts {
+  font-weight: 800;
+  text-align: right;
+  color: #c65a3a;
+}
+
+.ld-part-note {
+  grid-column: 2 / -1;
+  font-size: 12px;
+  color: #8a6749;
+}
+
+@media (max-width: 720px) {
+  .ld-split {
+    grid-template-columns: 1fr;
+  }
+}

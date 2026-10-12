@@ -12,6 +12,7 @@ import type { createBalloonPanel } from './balloon-panel'
 import type { createClockCalendarHud } from './clock-calendar-hud'
 import type { createNotificationDomPanel } from './notification-dom'
 import type { createPlayerDomPanel } from './player-dom'
+import type { LarderDom } from './larder-dom'
 import type { OptionsDomPanel } from './options-dom'
 import type { createFarmsPanel } from './farms-panel'
 
@@ -27,6 +28,7 @@ export interface FarmModesDeps {
   readonly clockCalendarHud: ReturnType<typeof createClockCalendarHud>
   readonly notificationDom: ReturnType<typeof createNotificationDomPanel>
   readonly playerDom: ReturnType<typeof createPlayerDomPanel>
+  readonly larderDom: LarderDom
   readonly optionsDom: OptionsDomPanel
   readonly farmsPanel: ReturnType<typeof createFarmsPanel>
   readonly markEntered: () => void
@@ -41,7 +43,7 @@ export interface FarmModesDeps {
 }
 
 export function createFarmModes(deps: FarmModesDeps) {
-  const { menu, salePanel, shed, shop, journal, toolsHud, balloon, clockCalendarHud, notificationDom, playerDom, optionsDom, farmsPanel, markEntered, introWanted, startIntro, gardenTools, gardenPlants, gardenProps, toolIsOwned, endCameraTour, refreshCursor } = deps
+  const { menu, salePanel, shed, shop, journal, toolsHud, balloon, clockCalendarHud, notificationDom, playerDom, larderDom, optionsDom, farmsPanel, markEntered, introWanted, startIntro, gardenTools, gardenPlants, gardenProps, toolIsOwned, endCameraTour, refreshCursor } = deps
 
   function selectGardenTool(id: GardenToolId | null, force = false): void {
     if (id !== null && !force && !toolIsOwned(id)) return
@@ -94,7 +96,7 @@ export function createFarmModes(deps: FarmModesDeps) {
     if (menu.isOpen && shop.isOpen) shop.setOpen(false)
     const shopOpen = shop.isOpen
     const shedOpen = shed.isOpen
-    const playerOpen = playerDom.isOpen
+    const playerOpen = playerDom.isOpen || larderDom.isOpen
     toolsHud.setVisible(farmOnly && !journal.isOpen && !shedOpen && !salePanel.isOpen && !shopOpen && !gardenProps()?.placingId && !playerOpen)
     shed.setVisible(false)
     shed.setInteractEnabled(toolsHud.selectedTool === null)
