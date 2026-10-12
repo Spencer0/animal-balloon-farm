@@ -1,4 +1,4 @@
-import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, holdsResidency, isNightOnly, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
+import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, holdsResidency, isNightOnly, isUniqueSpecies, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
 import { requirementMet, type FarmSnapshot, type RequirementStatus } from './animal-progress'
 import { farmMetric } from './farm-state'
 import { stepHelium } from './predator'
@@ -248,6 +248,8 @@ export interface AnimalLife {
   addFeed(meals: number): void
   /** Set what the farm's gem treasures multiply food by. */
   setFoodBoosts(boosts: FoodBoosts): void
+  /** How fast a starving balloon leaks helium, as a share of the normal rate (1 = normal, 0.5 = the Helium Pump). A farm that stopped suiting it still leaks at full speed. */
+  setStarveLeakFactor(factor: number): void
   /** Set an animal's fullness outright, 0..1. The debug harness and the tests use it. */
   setFullness(id: string, level: number): void
   /** True while a predator should be out hunting: any visitor still earning its home, or a hungry resident. */
@@ -314,6 +316,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
   const random = options.random ?? Math.random
   const foodWeb = createFoodWeb()
   let foodBoosts: FoodBoosts = {}
+  let starveLeakFactor = 1
   /** Goods waiting in each house, by house id. */
   const houseGoods = new Map<string, Map<GoodId, number>>()
   /** Goods from a save, waiting for this session's houses to be known. */
@@ -629,7 +632,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     const level = lastSnapshot?.expansionLevel ?? 0
     const candidates: { species: string; weight: number }[] = []
     for (const species of speciesIds) {
-      if ((cooldowns.get(species) ?? 0) > 0) continue
+      if ((cooldowns.get(species) ?? 0) > 0 || isUniqueSpecies(species)) continue
       const hasResident = [...animals.values()].some((animal) => animal.species === species && !animal.baby && animal.stage >= 3)
       const homeRequirement = getSpeciesConditions(species)[2]?.requirement
       if (!hasResident || !requirementMet(homeRequirement, farm) || !hasRoomFor(species)) continue
@@ -699,6 +702,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     foodReport: () => foodWeb.report(),
     addFeed(meals) { foodWeb.add('feed', meals) },
     setFoodBoosts(boosts) { foodBoosts = { ...boosts } },
+    setStarveLeakFactor(factor) { starveLeakFactor = Number.isFinite(factor) ? Math.max(0, Math.min(1, factor)) : 1 },
     setFullness(id, level) {
       const animal = animals.get(id)
       if (animal && Number.isFinite(level)) animal.fullness = Math.max(0, Math.min(1, level))
@@ -990,7 +994,10 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         if (!holds && !starving && animal.helium >= 1) continue
         const home = getSpeciesConditions(animal.species)[2]?.requirement ?? null
         const suited = !holds || requirementMet(home, snapshot.farm)
-        animal.helium = stepHelium(animal.helium, !suited || starving, Math.min(dt, 1))
+        const leaking = !suited || starving
+        // Starving alone leaks at the treasure-adjusted rate; an unsuited farm always leaks at full speed.
+        const leakScale = leaking && suited ? starveLeakFactor : 1
+        animal.helium = stepHelium(animal.helium, leaking, Math.min(dt, 1) * (leaking ? leakScale : 1))
         if (animal.helium <= 0) deflated.push({ animal, reason: starving ? 'starved' : 'unsuited' })
         if (!holds) continue
         if (!suited && !animal.unsettled) {

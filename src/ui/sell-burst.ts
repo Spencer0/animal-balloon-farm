@@ -21,7 +21,7 @@ const pool: PooledBurst[] = []
 
 interface PooledBurst extends SellBurst {
   /** Re-arm for a new sale at `position`. */
-  reset(position: THREE.Vector3, price: number): void
+  reset(position: THREE.Vector3, price: number, unit?: string): void
   destroy(): void
 }
 
@@ -78,7 +78,7 @@ function buildBurst(): PooledBurst {
   let elapsed = 0
   const burst: PooledBurst = {
     root,
-    reset(position: THREE.Vector3, price: number): void {
+    reset(position: THREE.Vector3, price: number, unit = 'coins'): void {
       elapsed = 0
       root.position.copy(position)
       root.visible = true
@@ -92,7 +92,7 @@ function buildBurst(): PooledBurst {
       labelContext.fillStyle = '#7c4a1e'
       labelContext.fillText(`+${price}`, 140, 38)
       labelContext.font = 'italic 24px Georgia, serif'
-      labelContext.fillText('coins', 140, 74)
+      labelContext.fillText(unit, 140, 74)
       labelTexture.needsUpdate = true
       for (let index = 0; index < SPARK_COUNT; index += 1) {
         const angle = (index / SPARK_COUNT) * Math.PI * 2 + Math.random() * 0.5
@@ -146,9 +146,9 @@ function buildBurst(): PooledBurst {
  * the programs they share were dropped and recompiled on the next sale; pooled
  * bursts keep them alive.
  */
-export function createSellBurst(position: THREE.Vector3, price: number): SellBurst {
+export function createSellBurst(position: THREE.Vector3, price: number, unit = 'coins'): SellBurst {
   const burst = pool.pop() ?? buildBurst()
-  burst.reset(position, price)
+  burst.reset(position, price, unit)
   return burst
 }
 

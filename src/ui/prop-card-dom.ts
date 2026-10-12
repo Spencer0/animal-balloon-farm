@@ -31,6 +31,8 @@ export interface PropResidents {
   readonly saleValue: number
   /** Goods waiting in the house, by kind. */
   readonly goods: GoodsCounts
+  /** Coins per coin of value when collected: 2 with the Golden Pail treasure. Absent reads 1. */
+  readonly goodsMultiplier?: number
   /** "Fed cows make milk here." for a house whose residents make goods; null when none do. */
   readonly makes: string | null
 }
@@ -177,7 +179,7 @@ export function createPropCardDom(actions: PropCardActions, cssWidth: number, cs
     // A house whose residents make nothing never shows the block.
     if (rows.length === 0 && !residents.makes) return ''
     const full = goodsFull(residents.goods)
-    const value = goodsValue(residents.goods)
+    const value = goodsValue(residents.goods) * (residents.goodsMultiplier ?? 1)
     const meter = `<div class="pc-meter-row"><span class="pc-label">Stored goods</span>` +
       `<span class="pc-count${full ? ' is-full' : ''}">${total} / ${HOUSE_GOODS_CAPACITY}</span></div>` +
       `<span class="pc-meter pc-goods-meter${full ? ' is-full' : ''}" role="meter" aria-label="Stored goods" aria-valuemin="0" aria-valuemax="${HOUSE_GOODS_CAPACITY}" aria-valuenow="${total}">` +

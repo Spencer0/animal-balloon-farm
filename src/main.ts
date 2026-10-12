@@ -7,7 +7,7 @@ import { createHousing } from './scene/housing'
 import type { Bed } from './game/sleep'
 import { SIM_HZ, SIM_MAX_STEPS_PER_FRAME, createSimClock } from './game/sim-clock'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from './scene/fairground'
-import { ANIMAL_LIFE_CONFIG, createAnimalLife } from './game/animal-life'
+import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalLifeEvent } from './game/animal-life'
 import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker } from './game/accomplishments'
 import {
@@ -35,6 +35,7 @@ import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
 import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
 import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
+import { createTreasureLedger, purchaseTreasure, treasureEffects, TREASURE_CATALOG, type TreasureId } from './game/treasures'
 import type { GardenToolId } from './scene/garden-tool-art'
 import { createFarmCamera } from './scene/farm-camera'
 import { createUILayer, type UIPanel } from './ui/ui-layer'
@@ -442,6 +443,20 @@ await Promise.all(progress.all()
   .filter((record) => !savedIndoors.has(record.id))
   .map((record) => createAnimalInstance(record, savedPlaces.get(record.id), true)))
   const wallet = createWallet(STARTING_COINS)
+/** Star gems: a second purse, filled only by the starhorn and spent on treasures at the shop. */
+const gems = createWallet(0)
+const treasures = createTreasureLedger()
+/**
+ * Push what the owned treasures give into the sim: food multipliers (Clover Charm,
+ * Rain Barrel) and the starving leak rate (Helium Pump). The Golden Pail's goods
+ * multiplier is read where goods are collected: `treasureEffects(treasures.owned()).goodsValueMultiplier`.
+ */
+function applyTreasureEffects(): void {
+  const effects = treasureEffects(treasures.owned())
+  progress.setFoodBoosts(effects.foodBoosts)
+  progress.setStarveLeakFactor(effects.starveLeakFactor)
+}
+applyTreasureEffects()
 /** Tools and land the shop has sold. Farmer level decides what it will sell next. */
 const upgrades = createUpgradeLedger()
 
@@ -455,14 +470,21 @@ const upgrades = createUpgradeLedger()
 
 
 
+/** Adult residents: stage 3 up, not babies, not sold. What `residentCount` conditions and Harmony read. */
+function adultResidents() {
+  return progress.all().filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold)
+}
+
 /** Adult residents per species, which is what a `residentCount` condition reads. */
 function residentCounts(): Record<string, number> {
   const counts: Record<string, number> = {}
-  for (const entry of progress.all()) {
-    if (entry.stage < 3 || entry.baby || animalById.get(entry.id)?.isSold) continue
-    counts[entry.species] = (counts[entry.species] ?? 0) + 1
-  }
+  for (const entry of adultResidents()) counts[entry.species] = (counts[entry.species] ?? 0) + 1
   return counts
+}
+
+/** Who counts toward the farm's Harmony score, with how well fed they are. */
+function harmonyResidents(): readonly { readonly species: string; readonly fullness: number }[] {
+  return adultResidents().map((entry) => ({ species: entry.species, fullness: entry.fullness }))
 }
 
 
@@ -731,7 +753,8 @@ const propCard = createPropCardDom({
     if (!house || !isHouse(house.id)) return null
     const collected = progress.collectGoods(house.siteId)
     if (collected.length === 0) return null
-    const coins = goodsValue(collected)
+    // The Golden Pail treasure doubles what goods fetch.
+    const coins = goodsValue(collected) * treasureEffects(treasures.owned()).goodsValueMultiplier
     if (coins > 0) {
       salePanel.setWallet(wallet.credit(coins))
       const burst = createSellBurst(new THREE.Vector3(house.anchor.x, house.anchor.y, house.anchor.z), coins)
@@ -782,10 +805,44 @@ const shedDom: ShedDomPanel = createShedDomPanel({
   seedsFor: (species) => gardenPlants?.simulation.seedsFor(species) ?? 0,
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
   balance: () => wallet.balance,
+  gems: () => gems.balance,
 })
 
 /* Keep the shed and the shop showing the same counts the world does. */
 
+
+/** Spend gems on a treasure and apply what it gives straight away. */
+function buyTreasure(id: TreasureId): { ok: boolean; text: string } {
+  const definition = TREASURE_CATALOG[id]
+  const result = purchaseTreasure(gems, treasures, id)
+  if (!result.ok) {
+    if (result.failure === 'owned') return { ok: false, text: `You already own the ${definition.name}.` }
+    return { ok: false, text: `Not enough star gems for the ${definition.name} -- it costs ${definition.price}.` }
+  }
+  applyTreasureEffects()
+  saveSoon()
+  shedDom.refresh()
+  shop.refresh()
+  return { ok: true, text: `The ${definition.name} is yours.` }
+}
+
+/** A resident made a good. Only the starhorn's gem lands here: it has no house to keep it in, so it goes straight in the purse. */
+function onProduce(event: AnimalLifeEvent): void {
+  if (event.good !== 'gem') return
+  gems.credit(1)
+  const name = (event.animalId ? animalNames.get(event.animalId) : undefined) ?? animalDisplayName(event.species)
+  notificationPanel.notifyAccomplishment(`${name} found a star gem`, `${gems.balance} in the purse. Treasures at Pip's shop are bought with star gems.`)
+  const animal = event.animalId ? animalById.get(event.animalId) : undefined
+  if (animal && !animal.isSold) {
+    // The sell burst's ring and sparks, reused: a cheap twinkle where it stands.
+    const burst = createSellBurst(animal.root.getWorldPosition(new THREE.Vector3()), 1, 'star gem')
+    scene.add(burst.root)
+    sellBursts.push(burst)
+  }
+  saveSoon()
+  shedDom.refresh()
+  shop.refresh()
+}
 
 const shop: ShopDomPanel = createShopDomPanel({
   onClose: () => {
@@ -825,6 +882,11 @@ const shop: ShopDomPanel = createShopDomPanel({
     return { ok: true, text: `One ${name} seed tucked into the shed.` }
   },
   farmerLevel: () => progression.level,
+  gems: () => gems.balance,
+  // The Treasures tab is a secret until the first star gem: before then it would only be a puzzle.
+  treasuresVisible: () => gems.balance > 0 || treasures.owned().length > 0 || progress.all().some((animal) => animal.species === 'starhorn' && animal.stage > 0),
+  quoteTreasure: (id: TreasureId) => ({ owned: treasures.owns(id), price: TREASURE_CATALOG[id].price }),
+  onBuyTreasure: (id: TreasureId) => buyTreasure(id),
   quoteUpgrade: (id: UpgradeId) => upgradeQuote(id, upgrades, progression.level),
   onBuyUpgrade: (id: UpgradeId) => buyUpgrade(id),
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
@@ -988,7 +1050,7 @@ const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil,
   speciesPluralName: (species) => speciesPluralName(species),
   dayNightClock,
 })
-const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = createFarmMeasure({
+const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts, setHarmonyOverride } = createFarmMeasure({
   gardenSurface: () => fairground.gardenSurface,
   gardenTerrain,
   gardenWater,
@@ -996,6 +1058,7 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = c
   gardenPlants: () => gardenPlants,
   gardenProps: () => gardenProps,
   residentCounts,
+  harmonyResidents,
   preyEaten: () => predationLedger.totals,
   frozenWaterCells,
   activeGardenBounds,
@@ -1003,6 +1066,7 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = c
 })
 const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimalsTick, updateSleepers } = createHousing({
   progress,
+  goodsMultiplier: () => treasureEffects(treasures.owned()).goodsValueMultiplier,
   animals,
   animalById,
   farmHomes,
@@ -1032,6 +1096,9 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
   saveEnabled,
   dayNightClock,
   wallet,
+  gems,
+  treasures,
+  applyTreasureEffects,
   progression,
   upgrades,
   accomplishments,
@@ -1095,6 +1162,7 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   animalDisplayName,
   noteJournalStages,
   speciesPluralName: (species) => speciesPluralName(species),
+  onProduce: (event) => onProduce(event),
 })
 const { openAnimalCardFor, completeAnimalSale, openPropCardFor, refreshShopUi, buyUpgrade, playerDomStats, balloonInboxAnchor, openPlantCardFor, syncPlantCard } = createFarmActions({
   syncOwnedTools,
@@ -1228,6 +1296,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     syncOwnedTools,
     canvas: gameCanvas,
     wallet,
+    gems,
+    treasures,
+    buyTreasure,
+    setHarmonyOverride,
     pageParams,
     renderer,
     forceShadowRedraw: shadowRefresh.forceNext,

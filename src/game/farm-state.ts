@@ -20,6 +20,8 @@
  * moment the game starts. Sheep settle on pasture, not on a dirt field.
  */
 
+import { FLOWER_PLANTS } from './animal-diet'
+
 /** A grass cell only counts once it is at least this mature. */
 export const DEFAULT_MATURITY = 0.75
 
@@ -72,6 +74,8 @@ export interface FarmState {
   readonly terrainShares?: Readonly<Partial<Record<TerrainKind, number>>>
   /** Garden tools the farmer has bought from the shop, by tool id, for `toolOwned` conditions. */
   readonly toolsOwned?: Readonly<Record<string, boolean>>
+  /** The farm's Harmony score, 0..100, for `harmony` conditions (see `harmony.ts`). */
+  readonly harmony?: number
 }
 
 export interface LawnSample {
@@ -304,6 +308,8 @@ export function farmMetric(state: FarmState, kind: string, species?: string): nu
     case 'propCount': return species ? state.propCounts?.[species] ?? 0 : 0
     // The terrain's id rides in `species`, the same way a plant's does.
     case 'toolOwned': return species && state.toolsOwned?.[species] ? 1 : 0
+    case 'harmony': return state.harmony ?? 0
+    case 'flowerCount': return FLOWER_PLANTS.reduce((sum, plant) => sum + (state.plantCounts[plant] ?? 0), 0)
     case 'terrainShare': return species ? state.terrainShares?.[species as TerrainKind] ?? 0 : 0
     default: return 0
   }

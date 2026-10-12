@@ -14,6 +14,8 @@ import { makesHint } from '../game/house-goods'
 
 export interface HousingDeps {
   readonly progress: ReturnType<typeof createAnimalLife>
+  /** What collected goods fetch per coin of value (the Golden Pail treasure doubles it). */
+  readonly goodsMultiplier?: () => number
   readonly animals: BalloonAnimal[]
   readonly animalById: Map<string, BalloonAnimal>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
@@ -300,6 +302,7 @@ export function createHousing(deps: HousingDeps) {
       saleValue: inside.reduce((sum, record) => sum + animalSaleValue(record.species as BalloonAnimalId, record.stage), 0),
       rows: occupancy.species.map((row) => ({ name: speciesPluralName(row.species), inside: row.inside })),
       goods: progress.goodsIn(selection.siteId),
+      goodsMultiplier: deps.goodsMultiplier?.() ?? 1,
       makes: makesHint(occupancy.species.map((row) => ({ id: row.species, plural: speciesPluralName(row.species) }))),
     }
   }
