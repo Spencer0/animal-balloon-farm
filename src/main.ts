@@ -70,6 +70,9 @@ import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createLarderDom } from './ui/larder-dom'
+import { createChapterDom } from './ui/chapter-dom'
+import { createFarmChapters, type ChapterDef, type ChapterSignals } from './game/farm-chapters'
+import { measureHarmony } from './game/harmony'
 import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from './game/animal-diet'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
 import { setCursor } from './ui/ui-cursor'
@@ -492,6 +495,60 @@ function harmonyResidents(): readonly { readonly species: string; readonly fulln
   return adultResidents().map((entry) => ({ species: entry.species, fullness: entry.fullness }))
 }
 
+// ------------------------------------------------------------- chapters --
+// Systems open one at a time (GAME_VISION.md). Until a chapter opens, its rules
+// stay quiet: no starvation, no goods, no predators, no mythic guests.
+const chapters = createFarmChapters()
+/** Coins earned from collected goods, ever. Chapter 3 ends on it. */
+let goodsCoinsTotal = loadedSave?.goodsCoins ?? 0
+const chapterDom = createChapterDom()
+/** Game seconds since the last chapter check. */
+let chapterClockSeconds = 0
+
+function chapterSignals(): ChapterSignals {
+  const farm = measureFarmForSim()
+  const plants = gardenPlants?.simulation.plants ?? []
+  return {
+    grownPlants: plants.filter((plant) => plant.mature).length,
+    lawnArea: farm.tallGrassArea,
+    residentSpecies: new Set(adultResidents().map((entry) => entry.species)),
+    goodsCoins: goodsCoinsTotal,
+    harmony: farm.harmony ?? 0,
+    predatorLinks: measureHarmony(harmonyResidents()).activeLinks.length,
+    day: Math.floor(dayNightClock.elapsedDays),
+  }
+}
+
+/** Push the open chapters' flags into the sim. Call at startup, after a load and after chapters open. */
+function applyChapterFlags(): void {
+  const flags = chapters.flags()
+  progress.setRules({
+    starvation: flags.starvation,
+    goods: flags.goods,
+    discoverable: (species) => (species === 'owl' || species === 'snake' ? flags.predators : species === 'starhorn' ? flags.mythic : true),
+  })
+}
+
+function refreshChapterChip(signals: ChapterSignals = chapterSignals()): void {
+  const current = chapters.current()
+  chapterDom.update({ number: current.number, title: current.title, goal: current.goal, progress: current.progress(signals) })
+}
+
+function announceChapter(def: ChapterDef): void {
+  // TODO chapter film: start the chapter's cutscene here (CUTSCENE_PIPELINE.md) and hold the letter until it ends.
+  notificationPanel.notifyAccomplishment(`Chapter ${def.number}: ${def.title}`, def.letter)
+  applyChapterFlags()
+  // Show the new goal now, not up to a second later.
+  refreshChapterChip()
+}
+
+/** Once a second of game time: open any chapter whose goal the farm has met. */
+function tickChapters(): void {
+  const signals = chapterSignals()
+  for (const def of chapters.tick(signals)) announceChapter(def)
+  refreshChapterChip(signals)
+}
+
 
 
 
@@ -761,6 +818,7 @@ const propCard = createPropCardDom({
     // The Golden Pail treasure doubles what goods fetch.
     const coins = goodsValue(collected) * treasureEffects(treasures.owned()).goodsValueMultiplier
     if (coins > 0) {
+      goodsCoinsTotal += coins
       salePanel.setWallet(wallet.credit(coins))
       const burst = createSellBurst(new THREE.Vector3(house.anchor.x, house.anchor.y, house.anchor.z), coins)
       scene.add(burst.root)
@@ -1171,6 +1229,8 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
   notificationPanel,
   menuOpen: () => menu.isOpen,
   syncFarmChrome: () => syncFarmChrome(),
+  chapterState: () => chapters.exportState(),
+  goodsCoins: () => goodsCoinsTotal,
 })
 window.addEventListener('pagehide', autosave)
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave() })
@@ -1320,6 +1380,11 @@ menu.open()
 syncFarmChrome()
 if (loadedSave) applySavedWorld(loadedSave)
 else if (startup.notice) farmsPanel.open(startup.notice)
+// Chapters load after the farm, so a legacy save can catch up from its real farm.
+if (loadedSave) chapters.importState(loadedSave.chapters, loadedSave.chapters ? undefined : chapterSignals())
+else chapters.reset()
+applyChapterFlags()
+refreshChapterChip()
 // No pointer has entered the window yet, so nothing to place. Once it does,
 // the first move resolves the cursor.
 setCursor('idle', gameCanvas)
@@ -1451,6 +1516,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     panels,
     selectGardenTool,
     syncFarmChrome: () => syncFarmChrome(),
+    chapters,
+    chapterSignals,
+    announceChapter,
+    applyChapterFlags,
   })
 }
 
@@ -1775,7 +1844,10 @@ function frame(now: number): void {
   // frame a panel opens, not 250 ms later.
   notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen)
   // The chip belongs to the bare farm view: any open panel or the main menu hides it.
-  larderDom.setChipVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen && !optionsDom.isOpen && !farmsPanel.isOpen && !notificationDom.isOpen)
+  const bareFarmView = !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen && !optionsDom.isOpen && !farmsPanel.isOpen && !notificationDom.isOpen
+  larderDom.setChipVisible(bareFarmView)
+  chapterDom.setVisible(bareFarmView)
+  chapterClockSeconds += delta
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
   // Open panels rebuild their DOM, so they refresh at a fixed low rate. Closed
   // panels skip the work entirely; their stats are only gathered when open.
@@ -1793,6 +1865,10 @@ function frame(now: number): void {
     // Goods accrue and animals come and go while a house's card is open.
     if (propCard.isOpen && selectedProp && isHouse(selectedProp.id)) propCard.setResidents(residentsOf(selectedProp))
     larderDom.refresh()
+    if (chapterClockSeconds >= 1) {
+      chapterClockSeconds = 0
+      tickChapters()
+    }
   }
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0

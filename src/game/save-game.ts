@@ -16,6 +16,7 @@
 import type { AnimalLifeState } from './animal-life'
 import type { PlantSimulationState } from './plants'
 import type { ProgressLedgerState } from './farm-progression'
+import type { ChapterState } from './farm-chapters'
 
 export const SAVE_APP_ID = 'animal-balloon-farm'
 /** Bumped when the shape of `SaveGameData` changes in a way old code cannot read. */
@@ -84,6 +85,10 @@ export interface SaveGameData {
   readonly gems?: number
   /** Ids of the treasures bought with gems. Optional for the same reason. */
   readonly treasures?: readonly string[]
+  /** Chapters opened so far. Optional: a save from before chapters is caught up from its farm on load. */
+  readonly chapters?: ChapterState
+  /** Coins earned from collected goods, ever (the chapter that teaches goods reads it). Optional: old saves start at 0. */
+  readonly goodsCoins?: number
   readonly progression: ProgressLedgerState
   readonly upgrades: Readonly<Record<string, number>>
   readonly accomplishments: readonly string[]
@@ -238,6 +243,8 @@ export function parseEnvelope(text: string | null): ParseResult {
   const dataOk = isNumber(data.playSeconds) && isNumber(data.coins) && isNumber(data.expansionLevel)
     && (data.gems === undefined || isNumber(data.gems))
     && (data.treasures === undefined || Array.isArray(data.treasures))
+    && (data.chapters === undefined || (isRecord(data.chapters) && Array.isArray(data.chapters.open)))
+    && (data.goodsCoins === undefined || isNumber(data.goodsCoins))
     && isRecord(data.clock) && isNumber(data.clock.timeOfDay) && isNumber(data.clock.elapsedDays)
     && isRecord(data.progression) && Array.isArray(data.progression.awarded)
     && isRecord(data.upgrades) && Array.isArray(data.accomplishments)

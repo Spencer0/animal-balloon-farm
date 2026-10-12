@@ -30,6 +30,7 @@ import type { GardenToolId } from '../scene/garden-tool-art'
 import type { ShopBuildReport } from '../scene/shop-build'
 import type { createWallet } from '../game/sales'
 import { treasureEffects, type TreasureId, type TreasureLedger } from '../game/treasures'
+import type { ChapterDef, ChapterFlags, ChapterId, ChapterSignals, FarmChapters } from '../game/farm-chapters'
 import type { createPredationLedger } from '../game/predator'
 import type { OwlSim, SnakeSim } from '../game/animal-hunt'
 import { SIM_HZ } from '../game/sim-clock'
@@ -245,6 +246,10 @@ interface GardenDebugHarness {
   treasures(): { readonly gems: number; readonly owned: readonly string[]; readonly effects: ReturnType<typeof treasureEffects> }
   /** Pin the farm's Harmony score for the sim (0..100), or null to measure it again. */
   setHarmony(value: number | null): void
+  /** Open chapters up to and including `id`, announce each and apply its flags. */
+  openChapter(id: ChapterId): readonly string[]
+  /** Open chapters, the current one, its flags and the signals the chapter check reads. */
+  chapters(): { readonly open: readonly ChapterId[]; readonly current: string; readonly flags: ChapterFlags; readonly signals: ChapterSignals }
   /** Spawn the starhorn as a resident (stage 4 by default) with Harmony pinned high and its residency held, for screenshots. */
   spawnStarhorn(stage?: number): string | null
   /** Award progression points outright, e.g. 500 reaches farmer level 10. */
@@ -336,6 +341,11 @@ export interface GardenHarnessDeps {
   readonly treasures: TreasureLedger
   readonly buyTreasure: (id: TreasureId) => { readonly ok: boolean; readonly text: string }
   readonly setHarmonyOverride: (value: number | null) => void
+  /** Chapter state, and the same signals the frame loop reads. */
+  readonly chapters: FarmChapters
+  readonly chapterSignals: () => ChapterSignals
+  readonly announceChapter: (def: ChapterDef) => void
+  readonly applyChapterFlags: () => void
   readonly focusCamera: () => void
   readonly frameAt: (target: THREE.Vector3, height: number) => void
   readonly beginCameraTour: (seed?: number) => boolean
@@ -446,6 +456,10 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     treasures,
     buyTreasure,
     setHarmonyOverride,
+    chapters,
+    chapterSignals,
+    announceChapter,
+    applyChapterFlags,
     renderer,
     scene,
     camera,
@@ -1075,6 +1089,18 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     setHarmony: (value) => {
       setHarmonyOverride(value)
     },
+    openChapter: (id) => {
+      const opened = chapters.openThrough(id)
+      for (const def of opened) announceChapter(def)
+      applyChapterFlags()
+      return opened.map((def) => def.id)
+    },
+    chapters: () => ({
+      open: chapters.exportState().open,
+      current: chapters.current().id,
+      flags: chapters.flags(),
+      signals: chapterSignals(),
+    }),
     spawnStarhorn: (stage = 4) => {
       setHarmonyOverride(100)
       setResidencyOverride('starhorn', false)
