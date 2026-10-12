@@ -937,6 +937,7 @@ const { journalConditionsSource } = createJournalConditions({
 })
 journal.setConditionsSource(journalConditionsSource)
 journalDom.setConditionsSource(journalConditionsSource)
+journalDom.setHerdSource(() => progress.all())
 
 for (const panel of panels) ui.add(panel)
 

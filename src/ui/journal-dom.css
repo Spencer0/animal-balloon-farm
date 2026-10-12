@@ -488,3 +488,149 @@
     width: 86px;
   }
 }
+
+/* Food web: diet block on species pages and the Food web chapter. */
+
+.fj-diet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fj-foods,
+.fj-eaters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fj-food {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f3e6c9;
+  border: 2px solid #8a6749;
+  border-radius: 999px;
+  padding: 3px 12px 3px 4px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.fj-food img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.fj-then {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8a6749;
+}
+
+.fj-makes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 2px dashed #b08c5e;
+  padding-top: 8px;
+  margin-top: 4px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.fj-makes img {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  object-fit: contain;
+}
+
+.fj-herd {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 2px dashed #b08c5e;
+  padding-top: 8px;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.fj-herd-hint {
+  font-size: 13px;
+  font-weight: 700;
+  color: #c65a3a;
+}
+
+.fj-fw-row {
+  margin-bottom: 10px;
+}
+
+.fj-fw-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.fj-fw-head img {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  object-fit: contain;
+}
+
+.fj-eater,
+.fj-eater-label {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.fj-eater {
+  background: #e8f0d6;
+  border: 2px solid #7aa14f;
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+
+.fj-eater.is-unknown {
+  background: #eadfc8;
+  border: 2px dashed #a0805a;
+  color: #8a6749;
+}
+
+.fj-eater-label {
+  color: #8a6749;
+}
+
+.fj-ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fj-rung {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 14px;
+}
+
+.fj-rung b {
+  flex: none;
+  width: 110px;
+  font-weight: 900;
+}
+
+.fj-rung b i {
+  font-style: normal;
+  font-weight: 700;
+  color: #8a6749;
+  margin-left: 4px;
+}
+
+.fj-rung.is-full b { color: #4f7a2c; }
+.fj-rung.is-fed b { color: #7a7a2c; }
+.fj-rung.is-hungry b { color: #b9742a; }
+.fj-rung.is-starving b { color: #c65a3a; }
