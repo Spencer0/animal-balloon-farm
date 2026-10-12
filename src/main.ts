@@ -71,7 +71,7 @@ import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createLarderDom } from './ui/larder-dom'
-import { CHAPTER_ORDER, createFarmChapters, type ChapterDef, type ChapterId, type ChapterSignals } from './game/farm-chapters'
+import { CHAPTER_ORDER, chapterPages, createFarmChapters, type ChapterDef, type ChapterId, type ChapterSignals } from './game/farm-chapters'
 import { measureHarmony } from './game/harmony'
 import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from './game/animal-diet'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -626,6 +626,10 @@ const journal = createJournalPanel(window.innerWidth, window.innerHeight, (isJou
 })
 const journalDom: JournalDomPanel = createJournalDomPanel({
   onClose: () => journal.close(),
+  // Lazy: `chapters` and `chapterSignals` are only read when the Stages tab renders.
+  chapterPages: () => chapterPages(chapters, chapterSignals()),
+  dietShown: () => chapters.flags().hungerShown,
+  foodWebShown: () => chapters.flags().harmonyShown,
 })
 journal.setSpreadSuppressed(true)
 
