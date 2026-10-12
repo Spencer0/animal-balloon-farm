@@ -1600,6 +1600,9 @@ function startToolFilm(id: UpgradeId | ChapterToolGift): void {
   const film = toolUnlockFilmFor(id)
   if (!film || intro) return
   toolFilm?.dispose()
+  // A tool film takes over from a chapter film still on screen (its title card included).
+  chapterFilm?.dispose()
+  chapterFilm = null
   const cutscene = createToolUnlockCutscene(renderer, film, window.innerWidth, window.innerHeight)
   toolFilm = cutscene
   // Every DOM panel (the shop included) hides while the film owns the screen.
