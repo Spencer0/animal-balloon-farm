@@ -2,6 +2,20 @@ import "./journal-dom.css";
 import { ANIMAL_CATALOG } from "../animals/animal-catalog";
 import { GARDEN_TOOLS } from "../scene/garden-tool-art";
 import { PLANT_CATALOG } from "../game/plants";
+import { HUNGER_LABELS, hungerLevel } from "../game/animal-diet";
+import {
+  dietBlock,
+  foodOverview,
+  goodsList,
+  herdLine,
+  huntOverview,
+  HARMONY_INTRO,
+  HARMONY_PARTS,
+  HUNGER_INTRO,
+  HUNGER_LADDER,
+  type HerdAnimal,
+  type OverviewEater,
+} from "../game/journal-food-web";
 import type { JournalAlsoNeeds, JournalConditionSource } from "./journal-panel";
 
 /**
@@ -19,10 +33,12 @@ import type { JournalAlsoNeeds, JournalConditionSource } from "./journal-panel";
  * `art/blender/journal_icons.py`). No emoji anywhere.
  */
 
-export type JournalDomCategory = "animals" | "plants" | "tools" | "photos";
+export type JournalDomCategory = "animals" | "plants" | "tools" | "photos" | "foodweb";
 
 export interface JournalDomPanel {
   setConditionsSource(source: JournalConditionSource | null): void;
+  /** Where the live "Your 6 cows" lines read the player's herd from. */
+  setHerdSource(source: (() => readonly HerdAnimal[]) | null): void;
   setOpen(open: boolean): void;
   /** Jump the reader to a species page; unknown ids keep the current page. */
   selectSpecies(speciesId: string): void;
@@ -63,6 +79,12 @@ const DEFAULT_META: SpeciesMeta = { rarity: "Common", traits: [] };
 const STAGE_SHORT = ["Spotted in wild", "At the circus", "Visited farm", "Lives here"];
 
 const ICON_BASE = "assets/journal";
+
+const FOOD_WEB_PAGES = [
+  { id: "ladder", label: "Hunger & Harmony", icon: "assets/goods/hunger-bubble.png" },
+  { id: "web", label: "Who eats what", icon: "assets/goods/food-grass.png" },
+  { id: "goods", label: "Goods", icon: "assets/goods/good-milk.png" },
+] as const;
 
 function escapeHtml(text: string): string {
   return text
@@ -142,6 +164,7 @@ function alsoNeeds(extras: readonly JournalAlsoNeeds[] | undefined): string {
 
 export function createJournalDomPanel(options: { onClose: () => void }): JournalDomPanel {
   let conditionsSource: JournalConditionSource | null = null;
+  let herdSource: (() => readonly HerdAnimal[]) | null = null;
   let open = false;
   let category: JournalDomCategory = "animals";
   let selectedId: string = ANIMAL_CATALOG.some((entry) => entry.id === "cow")
@@ -185,8 +208,32 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
     }
   }
 
+  function herd(): readonly HerdAnimal[] {
+    try {
+      return herdSource?.() ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  function discoveredSet(): Set<string> {
+    return new Set(ANIMAL_CATALOG.filter((entry) => stageOf(entry.id) >= 1).map((entry) => entry.id));
+  }
+
+  function nameOf(id: string): string {
+    return ANIMAL_CATALOG.find((entry) => entry.id === id)?.name ?? id;
+  }
+
   function signature(): string {
     const parts = [category, selectedId, open ? "1" : "0"];
+    // Residents' hunger changes the live herd lines, so it belongs in the signature.
+    parts.push(
+      herd()
+        .filter((animal) => animal.stage >= 3)
+        .map((animal) => `${animal.species}:${hungerLevel(animal.fullness)}`)
+        .sort()
+        .join(","),
+    );
     for (const entry of ANIMAL_CATALOG) {
       const data = conditionsSource?.get(entry.id) ?? null;
       if (!data) {
@@ -203,12 +250,13 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
   }
 
   function renderChrome(): string {
-    const tabs: JournalDomCategory[] = ["animals", "plants", "tools", "photos"];
+    const tabs: JournalDomCategory[] = ["animals", "plants", "tools", "photos", "foodweb"];
     const labels: Record<JournalDomCategory, string> = {
       animals: "Animals",
       plants: "Plants",
       tools: "Tools",
       photos: "Photos",
+      foodweb: "Food web",
     };
     return `<header class="fj-header">
       <div class="fj-title">${bookSvg()}<span>Farm Journal</span></div>
@@ -258,7 +306,108 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
       }).join("");
       return;
     }
+    if (category === "foodweb") {
+      sidebar.innerHTML = FOOD_WEB_PAGES.map(
+        (page) =>
+          `<button type="button" class="fj-row" data-select="fw:${page.id}" aria-current="${selectedId === `fw:${page.id}`}"><img src="${escapeHtml(page.icon)}" alt="" draggable="false"><span>${escapeHtml(page.label)}</span></button>`,
+      ).join("");
+      return;
+    }
     sidebar.innerHTML = `<div class="fj-found">Snapshots you take out in the garden will live here.</div>`;
+  }
+
+  function chips(foods: readonly { label: string; icon: string | null }[]): string {
+    return foods
+      .map((food, index) => {
+        const art = food.icon ? `<img src="${escapeHtml(food.icon)}" alt="" draggable="false">` : "";
+        const arrow = index > 0 ? `<span class="fj-then">then</span>` : "";
+        return `${arrow}<span class="fj-food">${art}${escapeHtml(food.label)}</span>`;
+      })
+      .join("");
+  }
+
+  function dietSection(speciesId: string, speciesName: string): string {
+    const diet = dietBlock(speciesId, nameOf);
+    if (!diet) return "";
+    const live = herdLine(speciesId, herd(), speciesName);
+    const lines = [
+      `<div class="fj-foods">${chips(diet.foods)}</div>`,
+      `<div class="fj-card-sub">Eats: ${escapeHtml(diet.eatsText)}</div>`,
+      diet.appetiteText ? `<div class="fj-card-sub">${escapeHtml(diet.appetiteText)}</div>` : "",
+      diet.huntText ? `<div class="fj-card-sub">${escapeHtml(diet.huntText)}</div>` : "",
+      diet.huntedByText ? `<div class="fj-card-sub">${escapeHtml(diet.huntedByText)}</div>` : "",
+      diet.makes
+        ? `<div class="fj-makes"><img src="${escapeHtml(diet.makes.icon)}" alt="" draggable="false"><span>Makes: ${escapeHtml(diet.makes.text)}</span></div>`
+        : "",
+      live
+        ? `<div class="fj-herd"><b>${escapeHtml(live.text)}</b>${live.hint ? `<span class="fj-herd-hint">${escapeHtml(live.hint)}</span>` : ""}</div>`
+        : "",
+    ].join("");
+    return `<h3 class="fj-how">Diet &amp; goods</h3><div class="fj-card fj-diet">${lines}</div>`;
+  }
+
+  function eaterChips(eaters: readonly OverviewEater[]): string {
+    return eaters
+      .map((eater) =>
+        eater.name === null
+          ? `<span class="fj-eater is-unknown">???</span>`
+          : `<span class="fj-eater">${escapeHtml(eater.name)}</span>`,
+      )
+      .join("");
+  }
+
+  function renderFoodWebDetail(detail: Element): void {
+    const page = selectedId.startsWith("fw:") ? selectedId.slice(3) : "ladder";
+    const catalog = ANIMAL_CATALOG.map((entry) => entry.id);
+    const found = discoveredSet();
+    if (page === "web") {
+      const foodRows = foodOverview(catalog, found, nameOf)
+        .map(
+          (row) => `<div class="fj-card fj-fw-row">
+          <div class="fj-fw-head">${row.icon ? `<img src="${escapeHtml(row.icon)}" alt="" draggable="false">` : ""}<div><div class="fj-card-title">${escapeHtml(row.label)}</div><div class="fj-card-sub">${escapeHtml(row.source)}</div></div></div>
+          <div class="fj-eaters">${eaterChips(row.eaters)}</div></div>`,
+        )
+        .join("");
+      const hunts = huntOverview(catalog, found, nameOf)
+        .map(
+          (row) => `<div class="fj-card fj-fw-row">
+          <div class="fj-fw-head"><img src="${ICON_BASE}/journal-icon-friend-paw.png" alt="" draggable="false"><div><div class="fj-card-title">${row.hunter.name === null ? "???" : escapeHtml(row.hunter.name)}</div><div class="fj-card-sub">Hunts</div></div></div>
+          <div class="fj-eaters">${eaterChips(row.prey)}</div></div>`,
+        )
+        .join("");
+      detail.innerHTML = `<h2 class="fj-name">Who eats what</h2>
+        <p class="fj-desc">Each animal has a favourite meal and a back-up. Animals you have not met yet show as ???.</p>
+        ${foodRows}
+        <h3 class="fj-how">Hunters</h3>
+        <p class="fj-desc">Hunters eat what they catch. A fed hunter leaves the flock be.</p>
+        ${hunts}`;
+      return;
+    }
+    if (page === "goods") {
+      const rows = goodsList(catalog, found, nameOf)
+        .map(
+          (row) => `<div class="fj-card fj-fw-row">
+          <div class="fj-fw-head"><img src="${escapeHtml(row.icon)}" alt="" draggable="false"><div><div class="fj-card-title">${escapeHtml(row.name)}</div><div class="fj-card-sub">Worth ${escapeHtml(row.valueText)}</div></div></div>
+          <div class="fj-eaters"><span class="fj-eater-label">Made by</span>${eaterChips(row.makers)}</div></div>`,
+        )
+        .join("");
+      detail.innerHTML = `<h2 class="fj-name">Goods</h2>
+        <p class="fj-desc">Fed animals make goods in their house. Collect them to earn coins. A full house lets the rest spoil into scraps.</p>
+        ${rows}`;
+      return;
+    }
+    const rungs = HUNGER_LADDER.map(
+      (rung) => `<div class="fj-rung is-${rung.level}"><b>${escapeHtml(HUNGER_LABELS[rung.level])}</b><span>${escapeHtml(rung.text)}</span></div>`,
+    ).join("");
+    const parts = HARMONY_PARTS.map(
+      (part) => `<div class="fj-rung"><b>${escapeHtml(part.name)} <i>${part.points}</i></b><span>${escapeHtml(part.text)}</span></div>`,
+    ).join("");
+    detail.innerHTML = `<h2 class="fj-name">Hunger &amp; Harmony</h2>
+      <p class="fj-desc">${escapeHtml(HUNGER_INTRO)}</p>
+      <div class="fj-card fj-ladder">${rungs}</div>
+      <h3 class="fj-how">Harmony</h3>
+      <p class="fj-desc">${escapeHtml(HARMONY_INTRO)}</p>
+      <div class="fj-card fj-ladder">${parts}</div>`;
   }
 
   function renderAnimalDetail(detail: Element): void {
@@ -317,6 +466,7 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
         <span class="fj-bar" role="progressbar" aria-valuenow="${row.current}" aria-valuemax="${row.target}" aria-label="${escapeHtml(visual.label)}"><i style="width:${(pct * 100).toFixed(1)}%"></i></span>
         <span class="fj-numbers">${formatMetric(row.current, visual.isCount)} / ${formatMetric(row.target, visual.isCount)}${unit}</span></div>${alsoNeeds(row.alsoNeeds)}</div>`;
     }).join("");
+    const dietHtml = dietSection(entry.id, entry.name);
     detail.innerHTML = `<div class="fj-hero">
       <div class="fj-portrait"><img src="${escapeHtml(entry.spriteUrl)}" alt="Balloon ${escapeHtml(entry.name)}"></div>
       <div><div class="fj-id"><span class="fj-number">No. ${String(index + 1).padStart(3, "0")} &middot; Species &middot; ${escapeHtml(meta.rarity)}</span></div>
@@ -327,6 +477,7 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
     <div class="fj-stages">${pills}</div>
     <h3 class="fj-how">How to win it over</h3>
     ${cards || `<div class="fj-empty">No pages yet for this friend.</div>`}
+    ${dietHtml}
     <p class="fj-note">${escapeHtml(entry.note)}</p>`;
   }
 
@@ -371,6 +522,7 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
     if (sidebar) renderSidebar(sidebar);
     if (fresh) {
       if (category === "animals") renderAnimalDetail(fresh);
+      else if (category === "foodweb") renderFoodWebDetail(fresh);
       else renderSimpleDetail(fresh);
       if (fresh instanceof HTMLElement) fresh.scrollTop = scrollTop;
     }
@@ -388,7 +540,8 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
       category = tab;
       if (tab === "plants" && PLANT_CATALOG[0]) selectedId = `plant:${PLANT_CATALOG[0].id}`;
       else if (tab === "tools" && GARDEN_TOOLS[0]) selectedId = `tool:${GARDEN_TOOLS[0].id}`;
-      else if (tab === "animals") selectedId = selectedId.startsWith("plant:") || selectedId.startsWith("tool:") ? "cow" : selectedId;
+      else if (tab === "foodweb") selectedId = "fw:ladder";
+      else if (tab === "animals") selectedId = selectedId.startsWith("plant:") || selectedId.startsWith("tool:") || selectedId.startsWith("fw:") ? "cow" : selectedId;
       lastSignature = "";
       render();
       return;
@@ -411,6 +564,11 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
   const panel: JournalDomPanel = {
     setConditionsSource(source: JournalConditionSource | null): void {
       conditionsSource = source;
+      lastSignature = "";
+      if (open) render();
+    },
+    setHerdSource(source: (() => readonly HerdAnimal[]) | null): void {
+      herdSource = source;
       lastSignature = "";
       if (open) render();
     },

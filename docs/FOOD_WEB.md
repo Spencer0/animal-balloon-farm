@@ -76,3 +76,14 @@ a dozen species that are all fed.
 | Fed predators stop hunting, a catch is a meal | `src/scene/predation.ts`, `src/game/animal-hunt.ts` |
 | Hunger notices | `src/scene/farm-lifecycle.ts` |
 | Tests | `tests/animal-diet.test.mjs` |
+
+## In the Farm Journal
+
+Every discovered species page has a "Diet & goods" block (what it eats in
+order, appetite, what it makes and where, who hunts it, and a live line for
+the player's own residents). A "Food web" chapter explains the hunger ladder
+and Harmony, shows which discovered species eat each food and who hunts whom,
+and lists every good with its maker and coin value. Undiscovered species show
+as "???". The copy is built from `DIETS`, `PRODUCE`, `GOODS` and `PREY_OF` in
+`src/game/journal-food-web.ts` (tested in `tests/journal-food-web.test.mjs`),
+so a new species with a diet appears with no journal edit.
