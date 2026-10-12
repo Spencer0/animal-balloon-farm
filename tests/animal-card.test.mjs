@@ -37,8 +37,6 @@ const {
   resetAnimalCardState,
   placeInfoCard,
   hungerView,
-  eatsView,
-  makesView,
   huntingStatus,
 } = card
 
@@ -113,14 +111,7 @@ test('the hunger meter names its rung, colours it, and warns when hungry', () =>
   assert.equal(hungerView(Number.NaN).level, 'full')
 })
 
-test('the diet lines say what it eats and makes, and predators hunt or laze', () => {
-  assert.equal(eatsView('cow').text, 'Eats: Grass, then feed sacks')
-  assert.deepEqual([...eatsView('cow').foods], ['grass', 'feed'])
-  assert.equal(eatsView('owl').text, 'Eats: what it catches')
-  assert.equal(eatsView('owl').predator, true)
-  assert.equal(makesView('cow').text, 'Makes: Milk in its barn, when fed')
-  assert.match(makesView('pig').text, /needs an oak/)
-  assert.equal(makesView('mole'), null)
+test('a predator hunts or lazes', () => {
   assert.equal(huntingStatus(true), 'Hunting')
   assert.equal(huntingStatus(false), 'Lazing (fed)')
 })

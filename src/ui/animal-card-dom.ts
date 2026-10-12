@@ -3,13 +3,11 @@ import {
   armSellConfirm,
   cancelSellConfirm,
   createAnimalCardState,
-  eatsView,
   heliumLevel,
   heliumStatus,
   hungerView,
   huntingStatus,
   isValidAnimalName,
-  makesView,
   MAX_NAME_LENGTH,
   placeInfoCard,
   resetAnimalCardState,
@@ -17,7 +15,7 @@ import {
   sanitizeAnimalName,
   stageChipLabel,
 } from '../game/animal-card'
-import { dietOf, FOOD_LABELS, type FoodId, type GoodId, type HungerLevel } from '../game/animal-diet'
+import type { HungerLevel } from '../game/animal-diet'
 
 /**
  * The animal info card: a small pinned note beside the clicked balloon.
@@ -97,50 +95,11 @@ export interface AnimalCardPanel {
 const CARD_WIDTH = 400
 const EDGE_MARGIN = 10
 
-/** Emoji stand-ins shown when a food or good icon has not been rendered yet. */
-const FOOD_EMOJI: Readonly<Record<FoodId, string>> = {
-  grass: '🌱',
-  meadow: '🌾',
-  pondweed: '🌿',
-  seeds: '🌼',
-  scraps: '🍎',
-  worms: '🪱',
-  blooms: '🌸',
-  feed: '🌽',
-  prey: '🐭',
-}
-
-const GOOD_EMOJI: Readonly<Record<GoodId, string>> = {
-  milk: '🥛',
-  wool: '🧶',
-  egg: '🥚',
-  'duck-egg': '🥚',
-  down: '🪶',
-  truffle: '🍄',
-  trinket: '✨',
-  gem: '💎',
-}
-
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag)
   node.className = className
   if (text !== undefined) node.textContent = text
   return node
-}
-
-/** A small icon that turns into an emoji chip if the image is missing. */
-function icon(src: string, fallback: string, label: string): HTMLElement {
-  const image = element('img', 'ac-icon')
-  image.src = src
-  image.alt = ''
-  image.title = label
-  image.draggable = false
-  image.addEventListener('error', () => {
-    const chip = element('span', 'ac-icon ac-icon-text', fallback)
-    chip.title = label
-    image.replaceWith(chip)
-  }, { once: true })
-  return image
 }
 
 function button(className: string, label: string): HTMLButtonElement {
@@ -374,42 +333,11 @@ export function createAnimalCard(actions: AnimalCardActions, cssWidth: number, c
     hungerWordNode = hunger.word
     hungerFillNode = hunger.fill
     hungerMeterNode = hunger.wrap
-    hintNode = element('p', 'ac-hint')
-    hintNode.hidden = true
-
-    // Diet lines.
-    const diet = element('div', 'ac-diet')
-    const eats = eatsView(current.speciesId)
-    const eatsRow = element('p', 'ac-line')
-    eatsRow.append(element('span', 'ac-line-key', 'Eats:'))
-    if (eats.predator) {
-      eatsRow.append(icon('assets/goods/food-prey.png', FOOD_EMOJI.prey, 'Prey'), element('span', 'ac-line-text', 'what it catches'))
-    } else if (dietOf(current.speciesId)) {
-      eats.foods.forEach((food, index) => {
-        if (index > 0) eatsRow.append(element('span', 'ac-then', 'then'))
-        const label = index === 0 ? FOOD_LABELS[food] : FOOD_LABELS[food].toLowerCase()
-        eatsRow.append(icon(`assets/goods/food-${food}.png`, FOOD_EMOJI[food], label), element('span', 'ac-line-text', label))
-      })
-    } else {
-      eatsRow.append(element('span', 'ac-line-text', 'whatever it finds'))
-    }
-    diet.append(eatsRow)
+    // What it eats, makes and who hunts it live in the journal (the Journal
+    // button below opens its page); the card only shows how it is doing.
+    hintNode = null
     huntNode = null
-    if (eats.predator) {
-      huntNode = element('p', 'ac-hunt')
-      diet.append(huntNode)
-    }
-    const makes = makesView(current.speciesId)
-    if (makes) {
-      const makesRow = element('p', 'ac-line')
-      makesRow.append(
-        element('span', 'ac-line-key', 'Makes:'),
-        icon(makes.good.icon, GOOD_EMOJI[makes.good.id], makes.good.name),
-        element('span', 'ac-line-text', makes.text.replace(/^Makes: /, '')),
-      )
-      diet.append(makesRow)
-    }
-    body.append(helium.wrap, hunger.wrap, diet, hintNode)
+    body.append(helium.wrap, hunger.wrap)
 
     actionsNode = element('footer', 'ac-actions')
     root.replaceChildren(header, chips, body, actionsNode)
@@ -497,8 +425,6 @@ export function createAnimalCard(actions: AnimalCardActions, cssWidth: number, c
         editing,
         helium: { level: heliumLevel(target?.helium), status: heliumStatus(target?.helium) },
         hunger: { fullness: view.fill, level: view.level, label: view.label, hint: view.hint, hunting: target?.hunting ?? null },
-        eats: target ? eatsView(target.speciesId).text : null,
-        makes: target ? makesView(target.speciesId)?.text ?? null : null,
         card: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
       }
     },

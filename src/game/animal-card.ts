@@ -9,19 +9,7 @@
  * condition ladder uses on purpose.
  */
 
-import {
-  dietOf,
-  FOOD_LABELS,
-  GOODS,
-  HUNGER_LABELS,
-  hungerLevel,
-  isPredatorDiet,
-  PRODUCE,
-  type FoodId,
-  type GoodSpec,
-  type HungerLevel,
-} from './animal-diet';
-import { houseFor } from './animal-housing';
+import { HUNGER_LABELS, hungerLevel, type HungerLevel } from './animal-diet';
 
 /** The first stage that counts as settled. Matches `canSellAnimal` in sales. */
 export const RESIDENT_STAGE = 3;
@@ -174,44 +162,6 @@ export function hungerView(fullness: number): HungerView {
   const fill = Number.isFinite(fullness) ? Math.min(1, Math.max(0, fullness)) : 1;
   const level = hungerLevel(fill);
   return { level, label: HUNGER_LABELS[level], fill, tone: level, hint: HUNGER_HINTS[level] };
-}
-
-export interface EatsView {
-  /** Foods in the order it prefers them (empty when the species has no diet). */
-  readonly foods: readonly FoodId[];
-  /** Plain text, e.g. "Eats: Grass, then feed sacks". */
-  readonly text: string;
-  readonly predator: boolean;
-}
-
-/** "Grass, then feed sacks": the first food as named, later ones in lower case. */
-export function foodListLabel(foods: readonly FoodId[]): string {
-  return foods
-    .map((food, index) => (index === 0 ? FOOD_LABELS[food] : FOOD_LABELS[food].toLowerCase()))
-    .join(', then ');
-}
-
-export function eatsView(species: string): EatsView {
-  const diet = dietOf(species);
-  if (!diet) return { foods: [], text: 'Eats: whatever it finds', predator: false };
-  if (isPredatorDiet(species)) return { foods: ['prey'], text: 'Eats: what it catches', predator: true };
-  return { foods: diet.foods, text: `Eats: ${foodListLabel(diet.foods)}`, predator: false };
-}
-
-export interface MakesView {
-  readonly good: GoodSpec;
-  /** Plain text, e.g. "Makes: Milk in its barn, when fed". */
-  readonly text: string;
-}
-
-export function makesView(species: string): MakesView | null {
-  const recipe = PRODUCE[species];
-  if (!recipe) return null;
-  const good = GOODS[recipe.good];
-  const house = houseFor(species);
-  const where = house ? ` in its ${house.replace(/-/g, ' ')}` : '';
-  const needs = recipe.needsProp ? ` (needs ${/^[aeiou]/.test(recipe.needsProp) ? 'an' : 'a'} ${recipe.needsProp} on the farm)` : '';
-  return { good, text: `Makes: ${good.name}${where}, when fed${needs}` };
 }
 
 /** The predator line: a hungry (or visiting) one hunts, a fed one laze about. */
