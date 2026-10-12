@@ -44,6 +44,8 @@ export interface FarmLifecycleDeps {
   readonly noteJournalStages: () => void
   /** A resident made a good (milk into the barn, a gem from the starhorn). */
   readonly onProduce?: (event: AnimalLifeEvent) => void
+  /** False until Animal Care (Chapter 3) introduces hunger: before then it stays quiet. */
+  readonly hungerShown?: () => boolean
   /** Plural display name, e.g. "Cows", for herd-wide notices. */
   readonly speciesPluralName?: (species: string) => string
 }
@@ -64,7 +66,7 @@ const FOOD_HINTS: Readonly<Record<string, string>> = {
 }
 
 export function createFarmLifecycle(deps: FarmLifecycleDeps) {
-  const { onProduce, speciesPluralName } = deps
+  const { onProduce, speciesPluralName, hungerShown } = deps
   /** Game seconds left before each species' next hunger notice may show. */
   const hungerNoticeCooldown = new Map<string, number>()
   const { progress, progression, accomplishments, notificationPanel, animals, animalById, animalNames, popAnimal, animalCard, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarmForSim, dayNightClock, createAnimalInstance, visitorMotion, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
@@ -165,7 +167,7 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
       const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
       notificationPanel.notifyAccomplishment(`${name} is topping up again`, 'The farm suits it once more.')
     }
-    if (event.kind === 'hunger' && (event.hunger === 'hungry' || event.hunger === 'starving')) {
+    if (event.kind === 'hunger' && (event.hunger === 'hungry' || event.hunger === 'starving') && (hungerShown?.() ?? true)) {
       const key = `${event.species}:${event.hunger}`
       if ((hungerNoticeCooldown.get(key) ?? 0) <= 0) {
         hungerNoticeCooldown.set(key, HUNGER_NOTICE_SECONDS)

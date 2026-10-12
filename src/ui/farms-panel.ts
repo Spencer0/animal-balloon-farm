@@ -46,6 +46,7 @@ const FAILURE_COPY = {
   unreadable: 'This save could not be read.',
   'wrong-app': 'This is not a farm save.',
   'too-new': 'Saved by a newer version of the game.',
+  outdated: 'Saved by an older version of the game.',
   malformed: 'This save is damaged.',
 } as const
 

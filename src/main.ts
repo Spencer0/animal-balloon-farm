@@ -71,7 +71,6 @@ import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createLarderDom } from './ui/larder-dom'
-import { createChapterDom } from './ui/chapter-dom'
 import { CHAPTER_ORDER, createFarmChapters, type ChapterDef, type ChapterId, type ChapterSignals } from './game/farm-chapters'
 import { measureHarmony } from './game/harmony'
 import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from './game/animal-diet'
@@ -89,7 +88,7 @@ import { createNotificationPanel } from './ui/notification-panel'
 import { createNotificationDomPanel } from './ui/notification-dom'
 import { createIntroCutscene, type IntroCutscene } from './scene/intro-cutscene'
 import { createToolUnlockCutscene, type ToolUnlockCutscene } from './scene/tool-unlock-cutscene'
-import { toolUnlockFilmFor } from './game/tool-unlock-script'
+import { toolUnlockFilmFor, type ChapterToolGift } from './game/tool-unlock-script'
 import type { CutscenePlayer } from './scene/cutscene-kit'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
@@ -502,7 +501,6 @@ function harmonyResidents(): readonly { readonly species: string; readonly fulln
 const chapters = createFarmChapters()
 /** Coins earned from collected goods, ever. Chapter 3 ends on it. */
 let goodsCoinsTotal = loadedSave?.goodsCoins ?? 0
-const chapterDom = createChapterDom()
 /** Game seconds since the last chapter check. */
 let chapterClockSeconds = 0
 
@@ -520,7 +518,11 @@ function chapterSignals(): ChapterSignals {
   }
 }
 
-/** Push the open chapters' flags into the sim. Call at startup, after a load and after chapters open. */
+/**
+ * Push the open chapters' flags into the sim and the interface. Call at
+ * startup, after a load and after chapters open. A system that is not open yet
+ * is hidden outright, not shown locked: the player meets it with its chapter.
+ */
 function applyChapterFlags(): void {
   const flags = chapters.flags()
   progress.setRules({
@@ -528,26 +530,23 @@ function applyChapterFlags(): void {
     goods: flags.goods,
     discoverable: (species) => (species === 'owl' || species === 'snake' ? flags.predators : species === 'starhorn' ? flags.mythic : true),
   })
-}
-
-function refreshChapterChip(signals: ChapterSignals = chapterSignals()): void {
-  const current = chapters.current()
-  chapterDom.update({ number: current.number, title: current.title, goal: current.goal, progress: current.progress(signals) })
+  // DOM panels built elsewhere read these classes (animal-card-dom.css, prop-card-dom.css).
+  document.body.classList.toggle('chapter-hunger', flags.hungerShown)
+  document.body.classList.toggle('chapter-goods', flags.goods)
+  hungerBubbles.setEnabled(flags.hungerShown)
+  syncOwnedTools()
+  shop.refresh()
 }
 
 function announceChapter(def: ChapterDef): void {
   startChapterFilm(def.id)
   notificationPanel.notifyAccomplishment(`Chapter ${def.number}: ${def.title}`, def.letter)
   applyChapterFlags()
-  // Show the new goal now, not up to a second later.
-  refreshChapterChip()
 }
 
 /** Once a second of game time: open any chapter whose goal the farm has met. */
 function tickChapters(): void {
-  const signals = chapterSignals()
-  for (const def of chapters.tick(signals)) announceChapter(def)
-  refreshChapterChip(signals)
+  for (const def of chapters.tick(chapterSignals())) announceChapter(def)
 }
 
 
@@ -667,8 +666,9 @@ const toolsHud = createToolsHud(
   window.innerHeight,
 )
 
+/** Chapter 1 is planting by hand: every tool waits for Chapter 2, which hands over the seeder. */
 function toolIsOwned(id: GardenToolId): boolean {
-  return ownsGardenTool(upgrades, id)
+  return chapters.flags().grassSeeder && ownsGardenTool(upgrades, id)
 }
 
 /**
@@ -948,7 +948,13 @@ const shop: ShopDomPanel = createShopDomPanel({
   farmerLevel: () => progression.level,
   gems: () => gems.balance,
   // The Treasures tab is a secret until the first star gem: before then it would only be a puzzle.
-  treasuresVisible: () => gems.balance > 0 || treasures.owned().length > 0 || progress.all().some((animal) => animal.species === 'starhorn' && animal.stage > 0),
+  treasuresVisible: () => chapters.flags().mythic && (gems.balance > 0 || treasures.owned().length > 0 || progress.all().some((animal) => animal.species === 'starhorn' && animal.stage > 0)),
+  // Pip stocks what the farm's chapter has introduced: no tools or lawn seeds in the garden chapter, no feed before animal care.
+  offers: {
+    upgrade: (id) => id === 'land-deed' || chapters.flags().grassSeeder,
+    seed: (id) => plantSpecies(id).substrate === 'soil' || chapters.flags().grassSeeder,
+    feed: () => chapters.flags().feedShop,
+  },
   quoteTreasure: (id: TreasureId) => ({ owned: treasures.owns(id), price: TREASURE_CATALOG[id].price }),
   onBuyTreasure: (id: TreasureId) => buyTreasure(id),
   feedInPantry: () => feedInPantry(),
@@ -1241,6 +1247,7 @@ const hungerBubbles = createHungerBubbles({ scene, animals, recordOf: (id) => pr
 const houseBadges = createHouseGoodsBadges({ scene, houses: () => houses(), goodsIn: (id) => progress.goodsIn(id) })
 const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateAnimalProgress, ownedSeedSpecies, unlockAccomplishment } = createFarmLifecycle({
   animalNames,
+  hungerShown: () => chapters.flags().hungerShown,
   popAnimal,
   animalCard,
   progress,
@@ -1381,11 +1388,9 @@ menu.open()
 syncFarmChrome()
 if (loadedSave) applySavedWorld(loadedSave)
 else if (startup.notice) farmsPanel.open(startup.notice)
-// Chapters load after the farm, so a legacy save can catch up from its real farm.
 if (loadedSave) chapters.importState(loadedSave.chapters)
 else chapters.reset()
 applyChapterFlags()
-refreshChapterChip()
 // No pointer has entered the window yet, so nothing to place. Once it does,
 // the first move resolves the cursor.
 setCursor('idle', gameCanvas)
@@ -1575,6 +1580,8 @@ function finishIntro(): void {
   cutscene.dispose()
   previousTime = performance.now()
   handleMenuChoice('enter')
+  // A new farm opens on Chapter 1's film, straight after the intro.
+  if (!loadedSave && chapters.current().id === 'garden') announceChapter(chapters.current())
 }
 
 // ------------------------------------------------------- tool-unlock film --
@@ -1585,7 +1592,7 @@ function finishIntro(): void {
 
 let toolFilm: ToolUnlockCutscene | null = null
 
-function startToolFilm(id: UpgradeId): void {
+function startToolFilm(id: UpgradeId | ChapterToolGift): void {
   const film = toolUnlockFilmFor(id)
   if (!film || intro) return
   toolFilm?.dispose()
@@ -1625,9 +1632,12 @@ function startChapterFilm(id: ChapterId): void {
 }
 
 function finishChapterFilm(): void {
+  const id = chapterFilm?.id ?? null
   chapterFilm?.dispose()
   chapterFilm = null
   document.body.classList.remove('film-playing')
+  // Chapter 2 is the grass seeder: Pip hands it over in its own film, after the chapter's.
+  if (id === 'land') startToolFilm('grass-seeder')
 }
 
 /** Whichever film is on screen: the intro, a tool being handed over, or a chapter opening. */
@@ -1879,8 +1889,7 @@ function frame(now: number): void {
   notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen)
   // The chip belongs to the bare farm view: any open panel or the main menu hides it.
   const bareFarmView = !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen && !optionsDom.isOpen && !farmsPanel.isOpen && !notificationDom.isOpen
-  larderDom.setChipVisible(bareFarmView)
-  chapterDom.setVisible(bareFarmView)
+  larderDom.setChipVisible(bareFarmView && chapters.flags().harmonyShown)
   chapterClockSeconds += delta
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
   // Open panels rebuild their DOM, so they refresh at a fixed low rate. Closed

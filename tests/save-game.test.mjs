@@ -109,6 +109,8 @@ test('parseEnvelope refuses what it should, and says why', () => {
   assert.equal(save.parseEnvelope(JSON.stringify({ app: 'other-game' })).failure, 'wrong-app')
   const future = { ...envelopeAt(1), version: save.SAVE_VERSION + 1 }
   assert.equal(save.parseEnvelope(JSON.stringify(future)).failure, 'too-new')
+  const past = { ...envelopeAt(1), version: save.SAVE_VERSION - 1 }
+  assert.equal(save.parseEnvelope(JSON.stringify(past)).failure, 'outdated')
   const noCoins = envelopeAt(1, { ...sampleData(), coins: 'lots' })
   assert.equal(save.parseEnvelope(JSON.stringify(noCoins)).failure, 'malformed')
   const noLife = envelopeAt(1, { ...sampleData(), life: null })
@@ -129,6 +131,17 @@ test('the store writes, lists, reads and erases three slots', () => {
   store.erase(2)
   assert.equal(store.slots()[1].status, 'empty')
   assert.equal(store.newestSlot(), null)
+})
+
+test('opening the store erases saves from an older version, and keeps the rest', () => {
+  const storage = memoryStorage()
+  const writer = save.createSaveStore(storage)
+  writer.write(1, { ...envelopeAt(100), version: save.SAVE_VERSION - 1 })
+  writer.write(2, envelopeAt(200))
+  writer.write(3, { ...envelopeAt(300), version: save.SAVE_VERSION + 1 })
+  const store = save.createSaveStore(storage)
+  assert.deepEqual(store.slots().map((slot) => slot.status), ['empty', 'ok', 'damaged'])
+  assert.equal(store.newestSlot(), 2)
 })
 
 test('the store rejects slots outside 1..3', () => {
@@ -165,7 +178,7 @@ test('a damaged slot is listed as damaged and never wins newestSlot', () => {
   const storage = memoryStorage()
   const store = save.createSaveStore(storage)
   store.write(1, envelopeAt(100))
-  storage.items.set('animal-balloon-farm.save.slot2', '{"app":"animal-balloon-farm","version":1}')
+  storage.items.set('animal-balloon-farm.save.slot2', JSON.stringify({ app: 'animal-balloon-farm', version: save.SAVE_VERSION }))
   const slots = store.slots()
   assert.equal(slots[1].status, 'damaged')
   assert.equal(slots[1].failure, 'malformed')
@@ -354,6 +367,7 @@ test('the wallet restores a balance but never a negative or fractional one', () 
 test('plants keep their growth, care stops and the seed bag', () => {
   const sim = save.createPlantSimulation()
   sim.addSeeds('poppy', 3)
+  const seeds = sim.seedsFor('poppy')
   const land = { substrate: 'soil', waterDepth: 0, inBounds: true }
   const plant = sim.plant('poppy', 1, 1, land)
   assert.ok(plant)
@@ -362,7 +376,7 @@ test('plants keep their growth, care stops and the seed bag', () => {
   const clone = save.createPlantSimulation()
   clone.importState(state)
   assert.deepEqual(clone.plants, sim.plants)
-  assert.equal(clone.seedsFor('poppy'), 2)
+  assert.equal(clone.seedsFor('poppy'), seeds - 1)
   const second = clone.plant('poppy', 5, 5, land)
   assert.ok(second.instanceId > plant.instanceId, 'new plants never reuse a saved id')
 })

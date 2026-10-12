@@ -307,3 +307,6 @@
   color: #fff6e8;
   padding: 8px 14px;
 }
+
+/* Goods are introduced with Chapter 3 (main.ts applyChapterFlags sets the class). */
+body:not(.chapter-goods) .pc-goods { display: none; }
