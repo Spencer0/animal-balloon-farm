@@ -39,7 +39,7 @@ shape of the late game: a good farm is a *balanced* one, and Harmony scores it.
    its field runs short. Feed costs more than the goods it keeps coming, so it
    carries a herd through a shortage but never prints money.
 7. **The starhorn** comes only to a farm in harmony, eats nectar, and makes
-   **star gems**, the currency for end-game treasures.
+   **star gems**, the currency for end-game treasures (see below).
 
 ## Diets
 
@@ -66,6 +66,51 @@ shape of the late game: a good farm is a *balanced* one, and Harmony scores it.
 links living on the farm (10). Forty cows on a lawn for ten scores worse than
 a dozen species that are all fed.
 
+## The starhorn and star gems
+
+The starhorn is the end-game goal: a unique pearly lilac balloon pony (horn with
+a star tip, rainbow cloud mane, a star on its flank). Its whole ladder is the
+farm's **Harmony** (a `harmony` condition, read from `FarmState.harmony`, which
+`src/scene/farm-measure.ts` fills from `measureHarmony` over the adult residents):
+
+| Rung | Needs |
+| --- | --- |
+| Appears at the carnival (`DISCOVERY`) | Harmony 60 |
+| Visits the farm | Harmony 65 |
+| Calls the farm home | Harmony 70 and 6 grown flowers (`flowerCount`: dandelion, poppy, clover) |
+| Loves the farm | Harmony 85 |
+
+- It **holds its residency** (`holdsResidency`): if Harmony drops below 70 or the
+  flowers go, it loses helium and deflates like the mole does.
+- It is **unique and has no house**. `houseFor('starhorn')` is `null`, so it never
+  breeds, never goes indoors, and `isUniqueSpecies` keeps it out of the repeat-guest
+  pool. Its last rung means a glow, not young. A houseless species is fine
+  everywhere that asks `houseFor`; `tests/animal-housing.test.mjs` lists the one exception.
+- It eats `blooms` (nectar, 0.35 meals a day per grown flower) and, when full, makes
+  one **star gem** a day (half when merely fed). A gem has no house to be stored in:
+  the `produce` event has no `houseId`, and `main.ts`'s `onProduce` credits the gem purse,
+  shows "Twinkle found a star gem", and plays a small burst where it stands.
+- **Star gems** are a second wallet (`createWallet`, saved as `gems` in the save game;
+  old saves load with 0). They show beside the coins in the shop and the shed.
+
+## Treasures
+
+`src/game/treasures.ts` (pure, `tests/treasures.test.mjs`). One of each, bought with
+gems on the shop's Treasures tab (it appears with the first gem). `treasureEffects(owned)`
+returns the multipliers; `applyTreasureEffects()` in `main.ts` pushes them into the sim at load
+and on purchase.
+
+| Treasure | Gems | Effect |
+| --- | --- | --- |
+| Helium Pump | 3 | Starving balloons leak helium at half speed (`AnimalLife.setStarveLeakFactor`). A farm that no longer suits a resident still leaks at full speed. |
+| Clover Charm | 5 | Every grown food +25% (`setFoodBoosts({ all: 1.25 })`) |
+| Rain Barrel | 8 | Grass grows +50% (`setFoodBoosts({ grass: 1.5 })`, on top of the charm) |
+| Golden Pail | 6 | Goods are worth double when collected: `treasureEffects(...).goodsValueMultiplier` (2, else 1) |
+
+**For the Collect button:** it should multiply a good's coin value by
+`treasureEffects(treasures.owned()).goodsValueMultiplier`. The multiplier is exposed and tested;
+nothing applies it yet.
+
 ## Where it lives
 
 | What | Where |
@@ -73,6 +118,13 @@ a dozen species that are all fed.
 | Diets, yields, hunger ladder, goods, larders | `src/game/animal-diet.ts` |
 | Eating, breeding brake, starvation, goods in houses, save | `src/game/animal-life.ts` |
 | Harmony | `src/game/harmony.ts` |
+| Starhorn ladder, `harmony` and `flowerCount` conditions | `src/game/animal-conditions.ts`, `src/game/farm-state.ts` |
+| Treasures and their effects | `src/game/treasures.ts` |
+| Starhorn model | `art/blender/balloon_starhorn.py` |
 | Fed predators stop hunting, a catch is a meal | `src/scene/predation.ts`, `src/game/animal-hunt.ts` |
 | Hunger notices | `src/scene/farm-lifecycle.ts` |
-| Tests | `tests/animal-diet.test.mjs` |
+| Tests | `tests/animal-diet.test.mjs`, `tests/starhorn.test.mjs`, `tests/treasures.test.mjs` |
+
+Debug harness (`?gardenDebug=1`): `grantGems(n)`, `buyTreasure(id)`, `treasures()`, `setHarmony(n|null)`,
+`spawnStarhorn()` (a resident starhorn with Harmony pinned high and its residency held).
+The scenario `starhorn/gem-farm` lands on a farm with the starhorn and gems.

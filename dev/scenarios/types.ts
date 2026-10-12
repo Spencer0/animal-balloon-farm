@@ -19,6 +19,10 @@ export interface ScenarioHarness {
   grantSeeds(count: number): void
   expandFarm(level: number): number
   addAnimal(species: string, stage?: number): string | null
+  /** Put star gems in the purse. */
+  grantGems(amount: number): number
+  /** A resident starhorn with Harmony pinned high and its residency held. */
+  spawnStarhorn(stage?: number): string | null
   buy(id: string): unknown
   /** Buy a shop upgrade ('shovel' | 'water-bucket' | 'tall-grass' | 'land-deed') by the shop's rules. */
   buyUpgrade(id: string): { readonly ok: boolean; readonly text: string }
