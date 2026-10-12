@@ -17,6 +17,7 @@ import {
   type OverviewEater,
 } from "../game/journal-food-web";
 import type { JournalAlsoNeeds, JournalConditionSource } from "./journal-panel";
+import type { ChapterPage } from "../game/farm-chapters";
 
 /**
  * Farm Journal as a DOM overlay (feature/journal-redesign-dom).
@@ -33,7 +34,7 @@ import type { JournalAlsoNeeds, JournalConditionSource } from "./journal-panel";
  * `art/blender/journal_icons.py`). No emoji anywhere.
  */
 
-export type JournalDomCategory = "animals" | "plants" | "tools" | "photos" | "foodweb";
+export type JournalDomCategory = "animals" | "plants" | "tools" | "photos" | "foodweb" | "stages";
 
 export interface JournalDomPanel {
   setConditionsSource(source: JournalConditionSource | null): void;
@@ -93,6 +94,13 @@ function escapeHtml(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** Status mark for a chapter row. The lock is drawn in CSS, so the journal stays emoji-free. */
+function stageMark(status: ChapterPage["status"]): string {
+  if (status === "done") return "&#10003;";
+  if (status === "current") return "&#9679;";
+  return `<span class="fj-lock"></span>`;
 }
 
 function formatMetric(value: number, isCount: boolean): string {
@@ -165,7 +173,14 @@ function alsoNeeds(extras: readonly JournalAlsoNeeds[] | undefined): string {
   }).join("");
 }
 
-export function createJournalDomPanel(options: { onClose: () => void }): JournalDomPanel {
+export interface JournalDomOptions {
+  onClose: () => void;
+  /** The game's chapters for the Stages tab. Without it the tab is hidden. */
+  chapterPages?: () => readonly ChapterPage[];
+}
+
+export function createJournalDomPanel(options: JournalDomOptions): JournalDomPanel {
+  const pagesSource = options.chapterPages ?? null;
   let conditionsSource: JournalConditionSource | null = null;
   let herdSource: (() => readonly HerdAnimal[]) | null = null;
   let open = false;
@@ -227,8 +242,26 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
     return ANIMAL_CATALOG.find((entry) => entry.id === id)?.name ?? id;
   }
 
+  function chapterList(): readonly ChapterPage[] {
+    try {
+      return pagesSource?.() ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** The chapter the Stages tab shows: the one picked in the list, else the current one. */
+  function selectedChapter(pages: readonly ChapterPage[]): ChapterPage | undefined {
+    const picked = selectedId.startsWith("ch:") ? selectedId.slice("ch:".length) : "";
+    return pages.find((page) => page.def.id === picked) ?? pages.find((page) => page.status === "current") ?? pages[0];
+  }
+
   function signature(): string {
     const parts = [category, selectedId, open ? "1" : "0"];
+    // Chapter progress is live: the Stages page re-renders when any of it moves.
+    if (category === "stages" && pagesSource) {
+      parts.push(JSON.stringify(chapterList().map((page) => [page.def.id, page.status, Math.round(page.progress * 1000), page.parts])));
+    }
     // Residents' hunger changes the live herd lines, so it belongs in the signature.
     parts.push(
       herd()
@@ -253,8 +286,16 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
   }
 
   function renderChrome(): string {
-    const tabs: JournalDomCategory[] = ["animals", "plants", "tools", "photos", "foodweb"];
+    const tabs: JournalDomCategory[] = [
+      ...(pagesSource ? (["stages"] as JournalDomCategory[]) : []),
+      "animals",
+      "plants",
+      "tools",
+      "photos",
+      "foodweb",
+    ];
     const labels: Record<JournalDomCategory, string> = {
+      stages: "Stages",
       animals: "Animals",
       plants: "Plants",
       tools: "Tools",
@@ -278,6 +319,18 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
   }
 
   function renderSidebar(sidebar: Element): void {
+    if (category === "stages") {
+      const pages = chapterList();
+      const current = selectedChapter(pages);
+      const done = pages.filter((page) => page.status === "done").length;
+      sidebar.innerHTML =
+        pages.map((page) => {
+          const title = page.status === "locked" ? "???" : page.def.title;
+          return `<button type="button" class="fj-row" data-select="ch:${escapeHtml(page.def.id)}" aria-current="${current?.def.id === page.def.id}"><span class="fj-mark is-${page.status}" aria-hidden="true">${stageMark(page.status)}</span><span>Chapter ${page.def.number} &middot; ${escapeHtml(title)}</span></button>`;
+        }).join("") +
+        `<div class="fj-found">${done} / ${pages.length} chapters done.</div>`;
+      return;
+    }
     if (category === "animals") {
       const found = ANIMAL_CATALOG.filter((entry) => stageOf(entry.id) >= 1).length;
       sidebar.innerHTML =
@@ -513,6 +566,54 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
     detail.innerHTML = `<div class="fj-empty">No photos yet &mdash; spot animals in the wild to fill this page.</div>`;
   }
 
+  function renderStagesDetail(detail: Element): void {
+    const pages = chapterList();
+    const page = selectedChapter(pages);
+    if (!page) {
+      detail.innerHTML = `<div class="fj-empty">No chapters yet.</div>`;
+      return;
+    }
+    const { def } = page;
+    const eyebrow = `Chapter ${def.number}`;
+    const unlockList = (heading: string) =>
+      `<h3 class="fj-how">${heading}</h3><ul class="fj-unlocks">${def.unlocks.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`;
+    if (page.status === "locked") {
+      detail.innerHTML = `<div class="fj-locked">
+        <div class="fj-q-big">?</div>
+        <h2 class="fj-name">???</h2>
+        <p class="fj-desc">${eyebrow} &middot; Locked</p>
+        <p class="fj-desc">Finish the chapter before to find out.</p>
+      </div>`;
+      return;
+    }
+    const head = `<p class="fj-desc fj-chapter-eyebrow">${eyebrow} &middot; ${page.status === "done" ? "Completed" : "In progress"}</p>
+      <h2 class="fj-name">${escapeHtml(def.title)}</h2>
+      <p class="fj-desc">${escapeHtml(def.tagline)}</p>`;
+    if (page.status === "done") {
+      detail.innerHTML = `${head}
+        <div class="fj-card fj-chapter-done"><span class="fj-badge">&#10003; Completed</span></div>
+        ${unlockList("Unlocked")}`;
+      return;
+    }
+    const pct = Math.round(Math.max(0, Math.min(1, page.progress)) * 100);
+    const parts = page.parts
+      .map(
+        (part) => `<div class="fj-goal-part${part.done ? " is-done" : ""}"><span class="fj-goal-check" aria-hidden="true">${part.done ? "&#10003;" : ""}</span><span class="fj-goal-text">${escapeHtml(part.label)} <span class="fj-goal-dash">&mdash;</span> <b>${escapeHtml(part.value)}</b></span></div>`,
+      )
+      .join("");
+    detail.innerHTML = `${head}
+      <div class="fj-card">
+        <div class="fj-goal">Goal: ${escapeHtml(def.goal)}</div>
+        <div class="fj-req"><span class="fj-req-label">Progress</span>
+        <span class="fj-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="Chapter progress"><i style="width:${pct}%"></i></span>
+        <span class="fj-numbers">${pct}%</span></div>
+        ${parts ? `<div class="fj-goal-parts">${parts}</div>` : ""}
+      </div>
+      <h3 class="fj-how">Pip's letter</h3>
+      <p class="fj-letter">${escapeHtml(def.letter)}</p>
+      ${unlockList("Unlocks")}`;
+  }
+
   function render(): void {
     const next = signature();
     if (next === lastSignature && journal.isConnected) return;
@@ -525,6 +626,7 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
     if (sidebar) renderSidebar(sidebar);
     if (fresh) {
       if (category === "animals") renderAnimalDetail(fresh);
+      else if (category === "stages") renderStagesDetail(fresh);
       else if (category === "foodweb") renderFoodWebDetail(fresh);
       else renderSimpleDetail(fresh);
       if (fresh instanceof HTMLElement) fresh.scrollTop = scrollTop;
@@ -541,10 +643,14 @@ export function createJournalDomPanel(options: { onClose: () => void }): Journal
     const tab = target.dataset["tab"] as JournalDomCategory | undefined;
     if (tab) {
       category = tab;
-      if (tab === "plants" && PLANT_CATALOG[0]) selectedId = `plant:${PLANT_CATALOG[0].id}`;
+      if (tab === "stages") {
+        // Opening the tab selects the current chapter.
+        const pages = chapterList();
+        selectedId = `ch:${(pages.find((page) => page.status === "current") ?? pages[0])?.def.id ?? ""}`;
+      } else if (tab === "plants" && PLANT_CATALOG[0]) selectedId = `plant:${PLANT_CATALOG[0].id}`;
       else if (tab === "tools" && GARDEN_TOOLS[0]) selectedId = `tool:${GARDEN_TOOLS[0].id}`;
       else if (tab === "foodweb") selectedId = "fw:ladder";
-      else if (tab === "animals") selectedId = selectedId.startsWith("plant:") || selectedId.startsWith("tool:") || selectedId.startsWith("fw:") ? "cow" : selectedId;
+      else if (tab === "animals") selectedId = selectedId.startsWith("plant:") || selectedId.startsWith("tool:") || selectedId.startsWith("fw:") || selectedId.startsWith("ch:") ? "cow" : selectedId;
       lastSignature = "";
       render();
       return;
