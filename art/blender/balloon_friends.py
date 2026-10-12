@@ -395,16 +395,45 @@ def animate(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positi
     finish_action(idle, "IDLE", animal)
 
 
+def choose_render_engine(scene):
+    """Pick a render engine that works on this machine: EEVEE where a GPU/GL context exists, else Cycles on the CPU.
+
+    Blender 4.2 calls EEVEE `BLENDER_EEVEE_NEXT` and 5.x `BLENDER_EEVEE`; a headless box with no GPU
+    cannot start either, so fall back to Cycles (set `ABF_RENDER_ENGINE=CYCLES` to force it).
+    """
+    import os
+    forced = os.environ.get("ABF_RENDER_ENGINE")
+    order = [forced] if forced else ["BLENDER_EEVEE_NEXT", "BLENDER_EEVEE", "CYCLES"]
+    for engine in order:
+        try:
+            scene.render.engine = engine
+        except TypeError:
+            continue
+        if engine == "CYCLES":
+            scene.cycles.device = "CPU"
+            scene.cycles.samples = int(os.environ.get("ABF_CYCLES_SAMPLES", "48"))
+            scene.cycles.use_denoising = True
+        else:
+            scene.eevee.taa_render_samples = 64
+        print(f"Render engine: {engine}")
+        return engine
+    raise RuntimeError("no usable render engine")
+
+
 def portrait(animal, m):
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    choose_render_engine(scene)
     scene.render.resolution_x, scene.render.resolution_y = 1200, 1000
     scene.render.resolution_percentage = 100
-    scene.eevee.taa_render_samples = 64
     scene.render.image_settings.file_format = "PNG"
     scene.render.film_transparent = False
     scene.view_settings.view_transform = "AgX"
-    scene.view_settings.look = "AgX - Medium High Contrast"
+    for look in ("AgX - Medium High Contrast", "Medium High Contrast"):
+        try:
+            scene.view_settings.look = look
+            break
+        except TypeError:
+            pass  # the look was renamed between Blender releases
     scene.view_settings.exposure = .12
     scene.render.threads_mode = "FIXED"
     scene.render.threads = 8
@@ -482,13 +511,16 @@ def export_asset(root, animal, review_yaw=0.0, review_frame=7, texcoords=True):
 
     select_tree(root)
     bpy.context.view_layer.objects.active = root
-    bpy.ops.export_scene.gltf(
+    options = dict(
         filepath=str(glb_path), export_format="GLB", use_selection=True,
         export_apply=True, export_animations=True, export_animation_mode="NLA_TRACKS",
         export_nla_strips=True, export_nla_strips_merged_animation_name=f"BALLOON {animal.upper()}",
         export_force_sampling=True, export_frame_step=1, export_materials="EXPORT",
         export_cameras=False, export_lights=False, export_texcoords=texcoords,
     )
+    # Drop options this Blender's glTF exporter no longer has (they move between releases).
+    known = set(bpy.ops.export_scene.gltf.get_rna_type().properties.keys())
+    bpy.ops.export_scene.gltf(**{name: value for name, value in options.items() if name in known})
     print(f"{animal.title()} Blender source: {blend_path}")
     print(f"{animal.title()} art review: {render_path}")
     print(f"{animal.title()} animated GLB: {glb_path} · clips WALK/IDLE · Blender Z-up · forward +X")
@@ -1399,12 +1431,21 @@ def reset_scene():
                 collection.remove(block)
 
 
+
 MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon, "mouse": make_mouse, "rat": make_rat, "mole": make_mole, "snake": make_snake}
-arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
-invalid = [value for value in requested if value not in MAKERS]
-if invalid:
-    raise SystemExit(f"Unknown animal(s): {', '.join(invalid)}. Choose from {', '.join(MAKERS)}.")
-for animal in requested:
-    reset_scene()
-    MAKERS[animal]()
+
+
+def main():
+    arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    requested = [value.lower() for value in arguments] if arguments else ["duck", "goose"]  # Preserve approved assets unless named explicitly.
+    invalid = [value for value in requested if value not in MAKERS]
+    if invalid:
+        raise SystemExit(f"Unknown animal(s): {', '.join(invalid)}. Choose from {', '.join(MAKERS)}.")
+    for animal in requested:
+        reset_scene()
+        MAKERS[animal]()
+
+
+# Guarded so other authoring scripts (balloon_starhorn.py) can import the helpers above.
+if __name__ == "__main__":
+    main()

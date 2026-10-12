@@ -1040,7 +1040,15 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     spawnStarhorn: (stage = 4) => {
       setHarmonyOverride(100)
       setResidencyOverride('starhorn', false)
-      return debugHarness.addAnimal('starhorn', stage)
+      // There is only one starhorn: promote the one waiting at the carnival and walk it in, rather than adding a twin.
+      const waiting = animals.find((entry) => entry.id === 'starhorn' && !entry.isSold)
+      if (!waiting) return debugHarness.addAnimal('starhorn', stage)
+      const rung = Math.max(0, Math.min(4, Math.floor(stage))) as AnimalStage
+      handleAnimalLifeEvents(progress.setStage(waiting.instanceId, rung))
+      waiting.stage = rung
+      waiting.placeAt(-3.5, 2.6)
+      refreshAnimalVisibility(performance.now() / 1000, true)
+      return waiting.instanceId
     },
     grantCoins: (amount) => {
       const balance = wallet.credit(amount)
