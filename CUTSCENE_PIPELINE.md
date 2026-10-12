@@ -82,3 +82,37 @@ Implement `CutscenePlayer`, then add a `let` and a branch in `frame()` in
 `main.ts` next to `toolFilm`. Add it to `activeFilm()` so Escape and the
 double-press skip work. Add `document.body.classList.add('film-playing')`
 while it plays so DOM panels hide.
+
+## Chapter films
+
+Each chapter opens with a seven-second film over the player's own farm: a
+camera move, a title card ("Chapter N", the title, the tagline) and one line
+from Pip. There is no Blender work and no actors.
+
+| Piece | File |
+| --- | --- |
+| Shots, captions, timing (pure) | `src/game/chapter-film.ts` |
+| Player (camera, restore, `CutscenePlayer`) | `src/scene/chapter-film-player.ts` |
+| Title card and subtitles (DOM) | `src/ui/chapter-card-dom.ts` and `.css` |
+
+- `chapterFilmAt(id, seconds, farmRadius)` is a pure function of time and
+  returns the pose, fov, letterbox, the caption and `done`. Shots are written
+  in farm radii, so a bigger farm stands the camera further out.
+- Every film is seven seconds. The title card holds on
+  `CHAPTER_TITLE_AT`. Tests pin that each chapter has a card there, one line
+  after it, finite poses, and determinism.
+- To change a chapter's shot, edit its entry in `SHOTS`. To change its words,
+  edit `CHAPTER_LINES`. The title and tagline come from `farm-chapters.ts`.
+- The player saves the camera's pose (position, rotation, fov or zoom) on
+  `start` and restores it when the film ends or `skip()` is called. An
+  orthographic camera (the farm's) has no perspective, so a push-in is a zoom.
+- The player does not draw the farm. The caller renders as usual, and must
+  not update the farm camera while `update()` is driving it. `render()` is a
+  no-op.
+- Wire it like the tool film in `main.ts`: start it when the chapter opens,
+  call `update(delta)` in the frame loop and skip the farm camera update while
+  it plays, finish when `update()` returns false, and add it to `activeFilm()`
+  so Escape and the double press skip it. Add `film-playing` to the body while
+  it plays. The card keeps itself visible under that class.
+- The debug harness has `chapterFilm(id, seconds)`. It does nothing until
+  `main.ts` passes `chapterFilm` into the harness dependencies.

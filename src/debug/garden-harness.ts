@@ -186,6 +186,8 @@ interface GardenDebugHarness {
   holdResidency(species: string, holds: boolean | null): void
   /** Play the tool-unlock film for a shop upgrade, optionally held at a moment, and report what it shows. */
   toolFilm(id: string, seconds?: number): unknown
+  /** Play a chapter's opening film (e.g. 'care'), optionally held at a moment. Inert until main wires `chapterFilm`. */
+  chapterFilm(id: string, seconds?: number): unknown
   /** Make the owls and snakes hunt as soon as they can, instead of waiting out the cooldown. */
   hurryHunt(): void
   /** Step the owl and snake hunts and any pops forward without waiting on rendered frames. */
@@ -401,6 +403,8 @@ export interface GardenHarnessDeps {
   readonly syncGrassPack: () => void
   readonly syncOwnedTools: () => void
   readonly toolFilm: (id: string, seconds?: number) => unknown
+  /** Optional until main.ts passes it: a chapter film player's start/seek, reported as the harness reads it. */
+  readonly chapterFilm?: (id: string, seconds?: number) => unknown
   readonly swapGrassPack: () => boolean
   readonly menu: { readonly isOpen: boolean; open(): void; close(): void }
   readonly openAnimalCardFor: (animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }) => void
@@ -584,6 +588,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     enabled: true,
     intro: (seconds) => deps.intro(seconds),
     toolFilm: (id, seconds) => deps.toolFilm(id, seconds),
+    chapterFilm: (id, seconds) => deps.chapterFilm?.(id, seconds) ?? null,
     holdResidency: (species, holds) => { setResidencyOverride(species, holds) },
     setFullness: (species, level) => {
       let changed = 0
