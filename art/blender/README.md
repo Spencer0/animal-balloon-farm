@@ -195,3 +195,14 @@ blender --background --factory-startup --python art/blender/animal_houses.py -- 
 ```
 
 With no names it rebuilds all four. Each house shares the coop's palette (cream boards, teal trim, terracotta roofs) and faces its door toward -Y (glTF +Z): the game walks animals to that side of the footprint to go in and out. The coop and barn keep their own scripts. After a rebuild, refresh the shop icons with `prop_thumbs.py -- <id>`.
+
+## Food web icons (goods, foods, hunger bubbles)
+
+- Authoring script: [`goods_icons.py`](goods_icons.py); outputs `../../public/assets/goods/*.png` (128x128, transparent, 10-20 KB each).
+- Goods: `good-{milk,wool,egg,duck-egg,down,truffle,trinket,gem}.png`. Foods: `food-{grass,meadow,pondweed,seeds,scraps,worms,blooms,feed}.png`. Bubbles: `hunger-bubble.png` and `starving-bubble.png` (red bowl, exclamation and sweat drop).
+
+```powershell
+blender --background --factory-startup --python art/blender/goods_icons.py
+```
+
+Regeneration command: overwrites every icon (name icons after `--` to render only those). Glossy Principled materials are lit by three area lamps and rendered with Cycles on the CPU (low samples, fixed seed, no GPU or EGL needed; falls back to EEVEE when Cycles is missing). Each icon is rendered at 256px and averaged down to 128px. The contact sheet `goods-review.png` is written to `$GOODS_REVIEW_DIR` (default: the system temp dir), never into the repo. The script also runs directly under the `bpy` module (`python art/blender/goods_icons.py`).

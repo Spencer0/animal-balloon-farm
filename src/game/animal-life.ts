@@ -4,7 +4,7 @@ import { farmMetric } from './farm-state'
 import { stepHelium } from './predator'
 import { freeRoomFor, HOUSE_CAPACITY, houseAccepts, houseWithRoom, occupantsByHouse, OUTDOOR_LIMITS, type HouseSite } from './animal-housing'
 import type { ProgressAction } from './farm-progression'
-import { createFoodWeb, DIETS, GOODS, HOUSE_GOODS_CAPACITY, hungerLevel, isPredatorDiet, PREDATOR_HUNTS_BELOW, CATCH_MEAL, PRODUCE, produceRate, servingOrder, SPOILED_SCRAPS, type FoodBoosts, type FoodReport, type FoodWebState, type GoodId, type HungerLevel } from './animal-diet'
+import { createFoodWeb, DIETS, GOODS, HOUSE_GOODS_CAPACITY, hungerLevel, isPredatorDiet, PREDATOR_HUNTS_BELOW, catchMeal, PRODUCE, produceRate, servingOrder, SPOILED_SCRAPS, type FoodBoosts, type FoodReport, type FoodWebState, type GoodId, type HungerLevel } from './animal-diet'
 import { DAY_LENGTH_SECONDS } from './day-night'
 
 export interface SpeciesAnimalTuning {
@@ -710,7 +710,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     },
     feedCatch(id) {
       const animal = animals.get(id)
-      if (animal) animal.fullness = Math.min(1, animal.fullness + CATCH_MEAL)
+      if (animal) animal.fullness = Math.min(1, animal.fullness + catchMeal(animal.species))
     },
     goodsIn(houseId) {
       return Object.fromEntries(houseGoods.get(houseId) ?? [])

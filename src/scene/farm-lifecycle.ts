@@ -180,8 +180,12 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
     if (event.kind === 'deflate' && animal) {
       const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
       popAnimal(animal, 'deflate')
-      if (event.reason === 'starved') notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'It went too long without enough to eat, and slowly went flat.')
-      else notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'The farm stopped suiting it, and it slowly went flat.')
+      if (event.reason !== 'starved') notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'The farm stopped suiting it, and it slowly went flat.')
+      else if ((hungerNoticeCooldown.get(`${event.species}:flat`) ?? 0) <= 0) {
+        // An overgrown herd can lose several at once; one notice per species is enough.
+        hungerNoticeCooldown.set(`${event.species}:flat`, HUNGER_NOTICE_SECONDS)
+        notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'It went too long without enough to eat, and slowly went flat. The herd is bigger than the farm can feed.')
+      }
       console.info(`[Animal Balloon Farm] ${event.species} popped: the farm stopped suiting it`)
     }
     }

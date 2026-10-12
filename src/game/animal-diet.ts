@@ -80,15 +80,17 @@ export const DIETS: Readonly<Record<string, Diet>> = {
   sheep: { foods: ['grass', 'feed'], appetite: 1 },
   goose: { foods: ['pondweed', 'grass', 'feed'], appetite: 1 },
   duck: { foods: ['pondweed', 'feed'], appetite: 0.8 },
-  chicken: { foods: ['seeds', 'feed'], appetite: 0.6 },
-  pig: { foods: ['scraps', 'feed'], appetite: 1.2 },
+  chicken: { foods: ['seeds', 'feed'], appetite: 0.5 },
+  // Pigs root through slop first and graze when there is none.
+  pig: { foods: ['scraps', 'grass', 'feed'], appetite: 1.2 },
   frog: { foods: ['pondweed'], appetite: 0.4 },
   mouse: { foods: ['meadow'], appetite: 0.4 },
   rat: { foods: ['scraps', 'meadow'], appetite: 0.5 },
   raccoon: { foods: ['scraps'], appetite: 1 },
   mole: { foods: ['worms'], appetite: 0.6 },
-  owl: { foods: ['prey'], appetite: 1 },
-  snake: { foods: ['prey'], appetite: 1 },
+  // A predator's appetite is how much of its belly one catch fills (`catchMeal`): about a catch a day.
+  owl: { foods: ['prey'], appetite: 0.5 },
+  snake: { foods: ['prey'], appetite: 0.6 },
   starhorn: { foods: ['blooms'], appetite: 1.2 },
 }
 
@@ -114,7 +116,7 @@ export const FOOD_YIELDS = {
   pondweedPerSquareMeter: 0.12,
   pondweedPerLily: 0.6,
   /** Per grown flower patch, for chickens (seed) and the starhorn (nectar). */
-  seedsPerFlower: 0.5,
+  seedsPerFlower: 0.6,
   bloomsPerFlower: 0.35,
   /** Per garbage can and per dumpster. Spoiled goods add to this too. */
   scrapsPerCan: 1.5,
@@ -189,8 +191,14 @@ export const EAT_BELOW = 0.92
 /** How fast a meal goes down, in fullness per second, so eating takes a beat. */
 export const EAT_RATE = 1 / 30
 
-/** A predator's catch is a big meal: this much fullness. */
-export const CATCH_MEAL = 0.65
+/** A catch is this many meals. A predator's belly fills by `catchMeal`. */
+export const CATCH_MEAL = 0.5
+
+/** Fullness one catch gives a predator: a small eater is filled up by it. */
+export function catchMeal(species: string): number {
+  const appetite = DIETS[species]?.appetite ?? 1
+  return Math.min(1, CATCH_MEAL / Math.max(0.05, appetite))
+}
 
 /** A predator hunts only below this; a fed one lazes about and leaves the prey be. */
 export const PREDATOR_HUNTS_BELOW = 0.55
