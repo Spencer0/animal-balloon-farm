@@ -485,8 +485,8 @@ const MOLE_CONDITIONS: SpeciesConditions = {
   stages: withStageNumbers([
     COUNT_STAGE(
       'Appear at the carnival',
-      'Hears a shovel somewhere and comes over to see: buy the shovel at the shop.',
-      { kind: 'toolOwned', species: 'shovel', amount: 1 },
+      'Smells a plot of bare, freshly turned earth: most of the farm is still dirt.',
+      { kind: 'terrainShare', species: 'dirt', amount: 80 },
       'Turns up at the carnival in wild balloon red.',
     ),
     COUNT_STAGE(
@@ -712,7 +712,7 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
   mouse: { kind: 'meadowArea', amount: 4, description: 'Long grass rustling at the fence line is all a field mouse needs to hear.' },
   rat: { kind: 'residentCount', species: 'mouse', amount: 1, description: 'Where one mouse has settled, a rat is never far behind.' },
   snake: { kind: 'residentCount', species: 'mouse', amount: 2, description: 'Mice in the long grass draw something patient and green.' },
-  mole: { kind: 'toolOwned', species: 'shovel', amount: 1, description: 'The sound of a shovel biting into soil carries a long way underground.' },
+  mole: { kind: 'terrainShare', species: 'dirt', amount: 80, description: 'A plot of bare, turned earth is an open invitation to anything that tunnels.' },
   starhorn: { kind: 'harmony', amount: 70, description: 'A farm in tune hums, and something starry hears it.' },
 }
 

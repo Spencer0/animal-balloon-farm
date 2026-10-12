@@ -214,6 +214,12 @@ export interface AnimalLifeState {
   readonly goods?: readonly SavedHouseGoods[]
 }
 
+export interface LifeRules {
+  readonly starvation: boolean
+  readonly goods: boolean
+  readonly discoverable: (species: string) => boolean
+}
+
 export interface AnimalLifeOptions {
   readonly config?: Partial<AnimalLifeConfig>
   readonly random?: () => number
@@ -246,6 +252,13 @@ export interface AnimalLife {
   foodReport(): readonly FoodReport[]
   /** Put bought feed (meals) in the pantry. */
   addFeed(meals: number): void
+  /**
+   * Which rules are switched on (the chapters in `farm-chapters.ts` decide).
+   * `starvation` off: a starving balloon keeps its helium, so hunger only
+   * stops breeding. `goods` off: residents make nothing. `discoverable` says
+   * whether a species may be discovered at all; a species it refuses waits.
+   */
+  setRules(rules: Partial<LifeRules>): void
   /** Set what the farm's gem treasures multiply food by. */
   setFoodBoosts(boosts: FoodBoosts): void
   /** How fast a starving balloon leaks helium, as a share of the normal rate (1 = normal, 0.5 = the Helium Pump). A farm that stopped suiting it still leaks at full speed. */
@@ -318,6 +331,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
   const random = options.random ?? Math.random
   const foodWeb = createFoodWeb()
   let foodBoosts: FoodBoosts = {}
+  let rules: LifeRules = { starvation: true, goods: true, discoverable: () => true }
   let starveLeakFactor = 1
   /** Goods waiting in each house, by house id. */
   const houseGoods = new Map<string, Map<GoodId, number>>()
@@ -551,6 +565,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
 
   /** Well-fed adults make goods into their house. A full house lets the good spoil into scraps. */
   function produce(farm: AnimalLifeSnapshot['farm'], dt: number, events: AnimalLifeEvent[]): void {
+    if (!rules.goods) return
     for (const animal of animals.values()) {
       if (animal.baby || animal.stage < 3 || animal.leaving !== null) continue
       const recipe = PRODUCE[animal.species]
@@ -620,7 +635,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
   function queueEligibleGuests(farm: FarmSnapshot): void {
     for (const species of speciesIds) {
       const trigger = DISCOVERY[species]
-      if (!trigger || !requirementMet(trigger, farm) || discovered.has(species)) continue
+      if (!trigger || !requirementMet(trigger, farm) || discovered.has(species) || !rules.discoverable(species)) continue
       discovered.add(species)
       pendingVisitors.push(species)
     }
@@ -704,6 +719,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     foodReport: () => foodWeb.report(),
     addFeed(meals) { foodWeb.add('feed', meals) },
     setFoodBoosts(boosts) { foodBoosts = { ...boosts } },
+    setRules(next) { rules = { ...rules, ...next } },
     setStarveLeakFactor(factor) { starveLeakFactor = Number.isFinite(factor) ? Math.max(0, Math.min(1, factor)) : 1 },
     setFullness(id, level) {
       const animal = animals.get(id)
@@ -997,7 +1013,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       const deflated: { animal: MutableAnimal; reason: 'starved' | 'unsuited' }[] = []
       for (const animal of animals.values()) {
         if (animal.baby || animal.stage < 3) continue
-        const starving = hungerLevel(animal.fullness) === 'starving'
+        const starving = rules.starvation && hungerLevel(animal.fullness) === 'starving'
         const holds = holdsResidency(animal.species)
         if (!holds && !starving && animal.helium >= 1) continue
         const home = getSpeciesConditions(animal.species)[2]?.requirement ?? null
