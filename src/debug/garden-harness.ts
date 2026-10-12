@@ -15,6 +15,7 @@ import type { ShopDomPanel } from '../ui/shop-dom'
 import type { SellBurst } from '../ui/sell-burst'
 import type { FrameTimer, GardenFrameTiming } from './frame-timing'
 import type { createAnimalLife, AnimalRecord } from '../game/animal-life'
+import type { GoodId } from '../game/animal-diet'
 import type { Bed } from '../game/sleep'
 import type { createProgressLedger } from '../game/farm-progression'
 import type { createAccomplishmentTracker } from '../game/accomplishments'
@@ -184,6 +185,8 @@ interface GardenDebugHarness {
   stepHunt(seconds: number, secondsPerStep?: number): ReturnType<OwlSim['report']>['owls']
   /** Add a tracked animal at a rung of the ladder, standing at its farm spawn; returns its id. */
   addAnimal(species: string, stage?: number): string | null
+  /** Put goods in a house by its site id (see `houses()`), e.g. `addGoods('barn-1', 'milk', 5)`. */
+  addGoods(houseId: string, good: string, count: number): Readonly<Record<string, number>>
   /**
    * Retire an animal's model and rebuild it the way a house door does
    * (`emerging`), so a settled resident that arrives with no flourish to play
@@ -366,7 +369,7 @@ export interface GardenHarnessDeps {
   readonly newbornUntil: Map<string, number>
   readonly lastHouseOf: Map<string, string>
   readonly updateHousing: (nowSeconds: number) => void
-  readonly residentsOf: (selection: { readonly id: PropId; readonly siteId: string }) => import('../ui/prop-card').PropResidents | null
+  readonly residentsOf: (selection: { readonly id: PropId; readonly siteId: string }) => import('../ui/prop-card-dom').PropResidents | null
   readonly ui: UILayer
   readonly frameTimer: FrameTimer | null
   readonly journal: ReturnType<typeof createJournalPanel>
@@ -892,6 +895,10 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
         presentHunts(stepSeconds, 1)
       }
       return owlHunt.report().owls
+    },
+    addGoods: (houseId, good, count) => {
+      progress.debugAddGoods(houseId, good as GoodId, count)
+      return progress.goodsIn(houseId) as Readonly<Record<string, number>>
     },
     addAnimal: (species, stage = 3) => {
       const record = progress.add(species, Math.max(0, Math.min(4, Math.floor(stage))) as AnimalStage)

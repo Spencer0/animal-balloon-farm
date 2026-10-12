@@ -9,7 +9,8 @@ import { SLEEP_PROPS, bedBeside, pickAnchor, shouldSleep, type Bed } from '../ga
 import { footprintWorldRect, propDefinition, type PropId } from '../game/farm-props'
 import { resolveCollisions, type CollisionBody, type CollisionBox } from '../game/animal-collision'
 import type { GardenProps, HouseSpot } from './garden-props'
-import type { PropResidents } from '../ui/prop-card'
+import type { PropResidents } from '../ui/prop-card-dom'
+import { makesHint } from '../game/house-goods'
 
 export interface HousingDeps {
   readonly progress: ReturnType<typeof createAnimalLife>
@@ -30,8 +31,6 @@ export interface HousingDeps {
   readonly animalCreations: Map<string, Promise<BalloonAnimal>>
   readonly refreshAnimalVisibility: (nowSeconds: number, force?: boolean) => void
   readonly dayNightClock: { readonly timeOfDay: number }
-  readonly getSelectedProp: () => { readonly id: PropId; readonly siteId: string } | null
-  readonly propCard: { readonly isOpen: boolean; setResidents(residents: PropResidents | null): void }
   readonly creditCoins: (amount: number) => void
   readonly animalDisplayName: (species: string) => string
   readonly crowdFixtures: BalloonAnimal[]
@@ -39,7 +38,7 @@ export interface HousingDeps {
 }
 
 export function createHousing(deps: HousingDeps) {
-  const { progress, animalCreations, animals, animalById, farmHomes, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, dayNightClock, getSelectedProp, propCard, creditCoins, animalDisplayName, crowdFixtures, gardenProps } = deps
+  const { progress, animalCreations, animals, animalById, farmHomes, goingIn, newbornUntil, knownDoors, lastHouseOf, savedIndoors, sleepBeds, bolting, hidingUntil, getFocusedAnimal, isHunted, createAnimalInstance, refreshAnimalVisibility, dayNightClock, creditCoins, animalDisplayName, crowdFixtures, gardenProps } = deps
   /**
    * Night animals sleep by day: a resident curls up beside a garbage can, anything else
    * where it stands. Everyone wakes at dusk. Beds are chosen once per sleep so the
@@ -253,8 +252,6 @@ export function createHousing(deps: HousingDeps) {
         else cancelTrip(record.id)
       }
     }
-    const selected = getSelectedProp()
-    if (propCard.isOpen && selected && isHouse(selected.id)) propCard.setResidents(residentsOf(selected))
   }
 
   /** Plural display name for a species row on a house card, e.g. "Geese". */
@@ -302,6 +299,8 @@ export function createHousing(deps: HousingDeps) {
       saleCount: inside.length,
       saleValue: inside.reduce((sum, record) => sum + animalSaleValue(record.species as BalloonAnimalId, record.stage), 0),
       rows: occupancy.species.map((row) => ({ name: speciesPluralName(row.species), inside: row.inside })),
+      goods: progress.goodsIn(selection.siteId),
+      makes: makesHint(occupancy.species.map((row) => ({ id: row.species, plural: speciesPluralName(row.species) }))),
     }
   }
 

@@ -256,6 +256,8 @@ export interface AnimalLife {
   feedCatch(id: string): void
   /** Goods waiting in one house. */
   goodsIn(houseId: string): Readonly<Partial<Record<GoodId, number>>>
+  /** Debug only: put goods in a house, capped like real ones. The garden harness uses it. */
+  debugAddGoods(houseId: string, good: GoodId, count: number): void
   /** Take every good out of a house. Returns what was in it. */
   collectGoods(houseId: string): readonly { readonly good: GoodId; readonly count: number }[]
   reset(): void
@@ -714,6 +716,10 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     },
     goodsIn(houseId) {
       return Object.fromEntries(houseGoods.get(houseId) ?? [])
+    },
+    debugAddGoods(houseId, good, count) {
+      const goods = goodsOf(houseId)
+      goods.set(good, Math.min(HOUSE_GOODS_CAPACITY - goodsCount(houseId) + (goods.get(good) ?? 0), (goods.get(good) ?? 0) + Math.max(0, Math.floor(count))))
     },
     collectGoods(houseId) {
       const goods = houseGoods.get(houseId)

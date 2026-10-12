@@ -1,0 +1,309 @@
+/* Prop info card (DOM). Farm Journal look: cream paper, chocolate borders,
+ * dashed tan dividers, terracotta accents. Header and close button come from
+ * journal-dom.css (.fj-header, .fj-title, .fj-close). */
+
+.pc-card {
+  position: fixed;
+  z-index: 30;
+  left: 0;
+  top: 0;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(60, 35, 15, 0.38), inset 0 0 0 2px #fffdf6;
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  user-select: none;
+}
+
+.pc-card[hidden] {
+  display: none;
+}
+
+.pc-header {
+  padding: 8px 10px 8px 14px;
+  gap: 10px;
+}
+
+.pc-title {
+  min-width: 0;
+  font-size: 20px;
+}
+
+.pc-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pc-header .fj-close {
+  width: 32px;
+  height: 32px;
+  border-width: 2px;
+  font-size: 20px;
+  flex: none;
+}
+
+.pc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 12px;
+}
+
+.pc-chip {
+  align-self: flex-start;
+  background: #5aa3a0;
+  color: #fff6e8;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+.pc-blurb,
+.pc-note,
+.pc-warning,
+.pc-toast {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.pc-note {
+  font-style: italic;
+  color: #8a6749;
+  font-size: 13px;
+}
+
+.pc-warning {
+  font-weight: 800;
+  color: #9c3730;
+  font-size: 15px;
+}
+
+.pc-warn {
+  font-style: normal;
+  font-weight: 800;
+  color: #b4690e;
+}
+
+.pc-toast {
+  background: #eaf3d9;
+  border: 2px solid #5f8f4e;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-weight: 800;
+  color: #3f6b34;
+  animation: pc-toast-in 220ms ease-out;
+}
+
+@keyframes pc-toast-in {
+  from { transform: translateY(-4px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.pc-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.pc-block + .pc-block {
+  border-top: 2px dashed #b08c5e;
+  padding-top: 10px;
+}
+
+.pc-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pc-label {
+  font-weight: 800;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.pc-count {
+  margin-left: auto;
+  font-weight: 800;
+  font-size: 14px;
+  color: #6b4a33;
+}
+
+.pc-count.is-full {
+  color: #b4690e;
+}
+
+.pc-meter {
+  flex: 1;
+  display: block;
+  height: 10px;
+  background: #e8d9bd;
+  border: 2px solid #b08c5e;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.pc-meter-fill {
+  display: block;
+  height: 100%;
+  background: #7aa65c;
+  border-radius: 999px;
+}
+
+.pc-goods-meter {
+  flex: none;
+}
+
+.pc-goods-meter .pc-meter-fill {
+  background: #c65a3a;
+}
+
+.pc-goods-meter.is-full .pc-meter-fill {
+  background: #e0a030;
+}
+
+.pc-species-list,
+.pc-goods-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pc-species-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pc-species {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.pc-species-name {
+  font-weight: 800;
+}
+
+.pc-goods-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pc-good {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f5ead2;
+  border: 2px solid #b08c5e;
+  border-radius: 10px;
+  padding: 2px 8px 2px 3px;
+  font-size: 13px;
+}
+
+.pc-good-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.pc-good-icon img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.pc-good-icon.is-glyph {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.pc-good-count {
+  font-weight: 800;
+}
+
+.pc-good-name {
+  color: #8a6749;
+}
+
+.pc-collect-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pc-worth {
+  font-weight: 800;
+  font-size: 13px;
+  color: #6b4a33;
+}
+
+.pc-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  background: #f5ead2;
+  border-top: 3px dashed #b08c5e;
+}
+
+.pc-button {
+  flex: 1;
+  border: 2px solid #6b4a33;
+  border-radius: 12px;
+  background: #e8d9bd;
+  color: #6b4a33;
+  font: 800 14px/1 "Trebuchet MS", Verdana, sans-serif;
+  padding: 10px 8px;
+  cursor: pointer;
+}
+
+.pc-button:hover {
+  filter: brightness(1.06);
+}
+
+.pc-button:focus-visible {
+  outline: 3px solid #c65a3a;
+  outline-offset: 2px;
+}
+
+.pc-wide {
+  flex: 2;
+}
+
+.pc-move {
+  background: #7aa65c;
+  border-color: #3f6b34;
+  color: #fff6e8;
+}
+
+.pc-store {
+  background: #f2cd72;
+  border-color: #8a6420;
+}
+
+.pc-sell {
+  background: #d95f43;
+  border-color: #6b2318;
+  color: #fff4d5;
+}
+
+.pc-collect {
+  flex: none;
+  background: #c65a3a;
+  border-color: #8d3d2a;
+  color: #fff6e8;
+  padding: 8px 14px;
+}
