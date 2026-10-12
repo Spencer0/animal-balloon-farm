@@ -101,9 +101,9 @@ const SHOTS: Readonly<Record<ChapterId, Shot>> = {
   garden: (r) => arc(r, { distance: 1.5, height: 0.95, from: 0.3, to: 1.0, fov: 40 }),
   // A low sweep across the lawn, from one side of the farm to the other.
   land: (r) => [
-    { t: 0, position: [-1.1 * r, 0.1 * r, 0.7 * r], target: [-0.4 * r, 0.06 * r, 0], fov: 36, ease: 'inOut' },
-    { t: 3.5, position: [0, 0.1 * r, 0.75 * r], target: [0, 0.06 * r, 0], fov: 36, ease: 'inOut' },
-    { t: CHAPTER_FILM_DURATION, position: [1.1 * r, 0.1 * r, 0.7 * r], target: [0.4 * r, 0.06 * r, 0], fov: 36, ease: 'inOut' },
+    { t: 0, position: [-1.1 * r, 0.5 * r, 0.9 * r], target: [-0.4 * r, 0, 0], fov: 36, ease: 'inOut' },
+    { t: 3.5, position: [0, 0.5 * r, 1 * r], target: [0, 0, 0], fov: 36, ease: 'inOut' },
+    { t: CHAPTER_FILM_DURATION, position: [1.1 * r, 0.5 * r, 0.9 * r], target: [0.4 * r, 0, 0], fov: 36, ease: 'inOut' },
   ],
   // A push-in toward the houses, the middle of the farm.
   care: (r) => [
@@ -112,15 +112,15 @@ const SHOTS: Readonly<Record<ChapterId, Shot>> = {
   ],
   // A dusk pull-back: start close to the animals, end wide on the whole farm.
   husbandry: (r) => [
-    { t: 0, position: [0.25 * r, 0.25 * r, 0.6 * r], target: [0, 0.05 * r, 0], fov: 44, ease: 'inOut' },
+    { t: 0, position: [0.35 * r, 0.5 * r, 0.8 * r], target: [0, 0.05 * r, 0], fov: 44, ease: 'inOut' },
     { t: CHAPTER_FILM_DURATION, position: [0.9 * r, 0.7 * r, 1.7 * r], target: [0, 0.05 * r, 0], fov: 44, ease: 'inOut' },
   ],
   // A wide, golden-hour circle round the whole farm.
   harmony: (r) => arc(r, { distance: 1.35, height: 0.55, from: 0, to: 2.2, fov: 42 }),
   // A night-sky tilt-up: low by the fence, the view rising to the stars.
   mythical: (r) => [
-    { t: 0, position: [0, 0.12 * r, 0.9 * r], target: [0, 0.3 * r, 0], fov: 52, ease: 'inOut' },
-    { t: CHAPTER_FILM_DURATION, position: [0, 0.12 * r, 0.9 * r], target: [0, 2.5 * r, 0], fov: 52, ease: 'inOut' },
+    { t: 0, position: [0, 0.5 * r, 1.1 * r], target: [0, 0.2 * r, 0], fov: 52, ease: 'inOut' },
+    { t: CHAPTER_FILM_DURATION, position: [0, 0.5 * r, 1.1 * r], target: [0, 1.6 * r, 0], fov: 52, ease: 'inOut' },
   ],
 }
 

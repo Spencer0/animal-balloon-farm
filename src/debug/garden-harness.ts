@@ -945,7 +945,14 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     setOwlHelium: (level) => owlHunt.setHelium(level),
     holdTime: (hold) => { deps.setClockHeld(hold) },
     scenarios: () => scenarioList,
-    runScenario: async (name) => (await loadScenarios()).runScenario(name, debugHarness),
+    runScenario: async (name) => {
+      // A scenario is a state to look at, not a farm to play from day one: every
+      // chapter is open, quietly (no letters or films), so goods and hunters work.
+      // A scenario about chapters closes them again itself.
+      chapters.openThrough('mythical')
+      applyChapterFlags()
+      return (await loadScenarios()).runScenario(name, debugHarness)
+    },
     stepHunt: (seconds) => {
       // Tick the sim directly, the way the frame loop does: animals walk, collide, then the
       // hunts decide. `secondsPerStep` no longer applies; the sim only runs at its own rate.

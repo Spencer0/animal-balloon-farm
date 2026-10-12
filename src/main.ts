@@ -1,3 +1,4 @@
+import { createChapterFilmPlayer, type ChapterFilmPlayer } from './scene/chapter-film-player'
 import './style.css'
 import * as THREE from 'three'
 import type { BalloonAnimal } from './animals/balloon-animal'
@@ -71,7 +72,7 @@ import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
 import { createLarderDom } from './ui/larder-dom'
 import { createChapterDom } from './ui/chapter-dom'
-import { createFarmChapters, type ChapterDef, type ChapterSignals } from './game/farm-chapters'
+import { CHAPTER_ORDER, createFarmChapters, type ChapterDef, type ChapterId, type ChapterSignals } from './game/farm-chapters'
 import { measureHarmony } from './game/harmony'
 import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from './game/animal-diet'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
@@ -535,7 +536,7 @@ function refreshChapterChip(signals: ChapterSignals = chapterSignals()): void {
 }
 
 function announceChapter(def: ChapterDef): void {
-  // TODO chapter film: start the chapter's cutscene here (CUTSCENE_PIPELINE.md) and hold the letter until it ends.
+  startChapterFilm(def.id)
   notificationPanel.notifyAccomplishment(`Chapter ${def.number}: ${def.title}`, def.letter)
   applyChapterFlags()
   // Show the new goal now, not up to a second later.
@@ -1409,6 +1410,15 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
   installGardenHarness({
     intro: controlIntro,
     toolFilm: controlToolFilm,
+    chapterFilm: (id: string, seconds?: number) => {
+      if (!(CHAPTER_ORDER as readonly string[]).includes(id)) return null
+      if (!chapterFilm) startChapterFilm(id as ChapterId)
+      if (chapterFilm && seconds !== undefined) {
+        chapterFilm.seek(seconds)
+        chapterFilm.update(0)
+      }
+      return chapterFilm?.describe() ?? null
+    },
     syncOwnedTools,
     canvas: gameCanvas,
     wallet,
@@ -1601,9 +1611,28 @@ function finishToolFilm(): void {
   previousTime = performance.now()
 }
 
-/** Whichever film is on screen: the intro, or a tool being handed over. */
+/** A chapter's opening film: a camera move over the player's own farm and a title card. */
+let chapterFilm: ChapterFilmPlayer | null = null
+
+function startChapterFilm(id: ChapterId): void {
+  // Another film already owns the screen; the letter still tells the player.
+  if (intro || toolFilm) return
+  chapterFilm?.dispose()
+  const bounds = currentGardenBounds
+  chapterFilm = createChapterFilmPlayer({ camera: farmCamera.camera, farmRadius: Math.max(bounds.halfWidth, bounds.halfDepth) })
+  chapterFilm.start(id)
+  document.body.classList.add('film-playing')
+}
+
+function finishChapterFilm(): void {
+  chapterFilm?.dispose()
+  chapterFilm = null
+  document.body.classList.remove('film-playing')
+}
+
+/** Whichever film is on screen: the intro, a tool being handed over, or a chapter opening. */
 function activeFilm(): CutscenePlayer | null {
-  return intro ?? toolFilm
+  return intro ?? toolFilm ?? chapterFilm
 }
 
 function interceptIntroInput(event: KeyboardEvent | PointerEvent): void {
@@ -1786,8 +1815,13 @@ function frame(now: number): void {
   }
   const expansionBoundsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
-  farmCamera.updateMenuDrift(delta, now / 1000)
-  updateCameraTour(delta)
+  // A chapter film drives the camera itself; the farm keeps living underneath it.
+  if (chapterFilm) {
+    if (!chapterFilm.update(delta)) finishChapterFilm()
+  } else {
+    farmCamera.updateMenuDrift(delta, now / 1000)
+    updateCameraTour(delta)
+  }
   const simSteps = simClock.advance(delta)
   // Hunts hold still while a full-screen panel is open, as they always have.
   const huntsActive = !menu.isOpen && !salePanel.isOpen
@@ -1872,9 +1906,11 @@ function frame(now: number): void {
   }
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
-  input.updateCameraPan(delta)
-  farmCamera.applyShake(delta, now / 1000)
-  input.followPointer()
+  if (!chapterFilm) {
+    input.updateCameraPan(delta)
+    farmCamera.applyShake(delta, now / 1000)
+    input.followPointer()
+  }
   const otherUpdateMs = timingEnabled ? performance.now() - stageStartedAt : 0
   // Redraw the sun's shadows only when a caster moved, the farm is expanding, the
   // carnival packed or unpacked, the shop is going up, a plant changed size, or
@@ -1895,7 +1931,8 @@ function frame(now: number): void {
   const sceneRenderMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   ui.update(delta)
-  ui.render(renderer)
+  // A chapter film is a full-screen moment: the HUD steps aside like it does for the other films.
+  if (!chapterFilm) ui.render(renderer)
   let overlayRenderMs = 0
   if (__GARDEN_DEBUG__ && performanceOverlay) {
     performanceOverlay.update(now, () => frameTimer?.summarize() ?? null)
