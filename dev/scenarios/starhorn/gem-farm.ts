@@ -13,11 +13,13 @@ export const gemFarm: Scenario = {
     d.grantGems(10)
     d.grantSeeds(8)
     d.expandFarm(1)
-    d.sowGrass(0, 0, 4, 'short')
-    d.plant('clover', -2, 2)
-    d.plant('dandelion', 1, 2.5)
-    d.plant('poppy', 3, 1)
-    d.growPlants(90, 1)
+    d.sowGrass(0, 2, 6, 'short')
+    // Six or more grown flowers: the starhorn's nectar, and its home requirement.
+    const beds: readonly (readonly [string, number, number])[] = [
+      ['clover', -3, 3], ['clover', -1, 4], ['dandelion', 1, 3], ['dandelion', 3, 4], ['dandelion', -2, 1], ['clover', 2, 5], ['clover', 4, 2], ['dandelion', 0, 0],
+    ]
+    for (const [species, x, z] of beds) d.plant(species, x, z)
+    d.growPlants(60, 2)
     d.spawnStarhorn()
     await pause(1500)
     d.focusPoint(-1, 2, 7)

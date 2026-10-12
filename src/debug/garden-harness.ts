@@ -1047,7 +1047,8 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       handleAnimalLifeEvents(progress.setStage(waiting.instanceId, rung))
       waiting.stage = rung
       waiting.placeAt(-3.5, 2.6)
-      refreshAnimalVisibility(performance.now() / 1000, true)
+      // Rebuild it the way a house door does, already in its own colours and on the lawn rather than walking in from the tents.
+      void debugHarness.emergeAnimal(waiting.instanceId)
       return waiting.instanceId
     },
     grantCoins: (amount) => {
