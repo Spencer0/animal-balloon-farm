@@ -280,3 +280,40 @@
     padding: 12px;
   }
 }
+
+/* Star gems: the second purse, shown beside the coins. */
+.sh-purse {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sh-purse .sh-coins {
+  margin-left: 0;
+}
+
+.gem-icon,
+.sh-card .gem-icon,
+.sh-preview .gem-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  vertical-align: -3px;
+  margin: 0 4px 0 0;
+  flex: none;
+}
+
+/* Drawn in place of the icon when the art file is missing. */
+.gem-fallback {
+  background: linear-gradient(135deg, #7fe7f2, #c28bf0);
+  clip-path: polygon(50% 0, 100% 38%, 50% 100%, 0 38%);
+}
+
+.sh-hint {
+  margin: 12px 4px 0;
+  font-size: 12.5px;
+  color: #8a6749;
+  font-style: italic;
+}

@@ -2,6 +2,7 @@ import "./journal-dom.css";
 import "./shed-dom.css";
 import { PLANT_CATALOG, type PlantId } from "../game/plants";
 import { PROP_CATALOG, PROP_ORDER, type PropId } from "../game/farm-props";
+import { armGemIcons, gemIconHtml } from "./gem-icon";
 
 export type ShedDomTab = "seeds" | "props";
 
@@ -12,6 +13,8 @@ export interface ShedDomCallbacks {
   seedsFor: (species: PlantId) => number;
   countsFor: (id: PropId) => number;
   balance: () => number;
+  /** Star gems in the purse; shown beside the coins once there are any. */
+  gems?: () => number;
 }
 
 export interface ShedDomPanel {
@@ -87,7 +90,7 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
   function signature(): string {
     const seeds = PLANT_CATALOG.map((p) => `${p.id}:${callbacks.seedsFor(p.id)}`).join("|");
     const props = PROP_ORDER.map((id) => `${id}:${callbacks.countsFor(id)}`).join("|");
-    return `${tab}|${selected}|${callbacks.balance()}|${seeds}|${props}|${[...favs].sort().join(",")}`;
+    return `${tab}|${selected}|${callbacks.balance()}|${callbacks.gems?.() ?? 0}|${seeds}|${props}|${[...favs].sort().join(",")}`;
   }
 
   /** Keys of what the shed actually holds on this tab: an empty slot is not shown at all. */
@@ -177,6 +180,7 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
     if (next === lastSignature && shed.isConnected) return;
     lastSignature = next;
     const coins = callbacks.balance();
+    const gems = callbacks.gems?.() ?? 0;
     shed.innerHTML =
       `<header class="fj-header">` +
       `<div class="fj-title">The Shed</div>` +
@@ -184,13 +188,15 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
       `<button type="button" class="fj-tab" data-tab="seeds" aria-selected="${tab === "seeds"}">Seeds</button>` +
       `<button type="button" class="fj-tab" data-tab="props" aria-selected="${tab === "props"}">Props</button>` +
       `</nav>` +
-      `<span class="sh-coins" aria-label="${coins} coins"><span class="sh-coin" aria-hidden="true"></span>${coins}</span>` +
+      `<span class="sh-purse"><span class="sh-coins" aria-label="${coins} coins"><span class="sh-coin" aria-hidden="true"></span>${coins}</span>` +
+      (gems > 0 ? `<span class="sh-coins" aria-label="${gems} star gems">${gemIconHtml()}${gems}</span>` : "") + `</span>` +
       `<button type="button" class="fj-close" data-action="close" aria-label="Close shed">&times;</button>` +
       `</header>` +
       `<div class="fj-body"><div class="sh-main">` +
       `<div class="sh-items"><div class="sh-grid">${cardsHtml()}</div></div>` +
       `<aside class="sh-preview" aria-live="polite">${previewHtml()}</aside>` +
       `</div></div>`;
+    armGemIcons(shed);
   }
 
   shed.addEventListener("click", (event) => {

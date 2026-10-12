@@ -28,6 +28,7 @@ import type { FarmState } from '../game/farm-state'
 import type { GardenToolId } from '../scene/garden-tool-art'
 import type { ShopBuildReport } from '../scene/shop-build'
 import type { createWallet } from '../game/sales'
+import { treasureEffects, type TreasureId, type TreasureLedger } from '../game/treasures'
 import type { createPredationLedger } from '../game/predator'
 import type { OwlSim, SnakeSim } from '../game/animal-hunt'
 import { SIM_HZ } from '../game/sim-clock'
@@ -225,6 +226,16 @@ interface GardenDebugHarness {
   resetCamera(): void
   /** Put coins in the wallet without farming for them, so the shop can be driven. */
   grantCoins(amount: number): number
+  /** Put star gems in the purse without waiting for a starhorn. */
+  grantGems(amount: number): number
+  /** Buy a treasure with gems through the shop's own rules. */
+  buyTreasure(id: string): { readonly ok: boolean; readonly text: string }
+  /** Gems, owned treasures and what they multiply. */
+  treasures(): { readonly gems: number; readonly owned: readonly string[]; readonly effects: ReturnType<typeof treasureEffects> }
+  /** Pin the farm's Harmony score for the sim (0..100), or null to measure it again. */
+  setHarmony(value: number | null): void
+  /** Spawn the starhorn as a resident (stage 4 by default) with Harmony pinned high and its residency held, for screenshots. */
+  spawnStarhorn(stage?: number): string | null
   /** Award progression points outright, e.g. 500 reaches farmer level 10. */
   grantPoints(points: number): { points: number; level: number }
   /** Put `count` seeds of every plant in the shed. */
@@ -310,6 +321,10 @@ export interface GardenHarnessDeps {
   readonly cameraTarget: THREE.Vector3
   readonly farmCamera: FarmCamera
   readonly wallet: ReturnType<typeof createWallet>
+  readonly gems: ReturnType<typeof createWallet>
+  readonly treasures: TreasureLedger
+  readonly buyTreasure: (id: TreasureId) => { readonly ok: boolean; readonly text: string }
+  readonly setHarmonyOverride: (value: number | null) => void
   readonly focusCamera: () => void
   readonly frameAt: (target: THREE.Vector3, height: number) => void
   readonly beginCameraTour: (seed?: number) => boolean
@@ -413,6 +428,10 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
   const {
     canvas: gameCanvas,
     wallet,
+    gems,
+    treasures,
+    buyTreasure,
+    setHarmonyOverride,
     renderer,
     scene,
     camera,
@@ -1006,6 +1025,22 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       for (const plant of PLANT_CATALOG) deps.gardenPlants()?.simulation.addSeeds(plant.id, count)
       shedDom.refresh()
       shop.refresh()
+    },
+    grantGems: (amount) => {
+      const balance = gems.credit(amount)
+      shedDom.refresh()
+      shop.refresh()
+      return balance
+    },
+    buyTreasure: (id) => buyTreasure(id as TreasureId),
+    treasures: () => ({ gems: gems.balance, owned: treasures.owned(), effects: treasureEffects(treasures.owned()) }),
+    setHarmony: (value) => {
+      setHarmonyOverride(value)
+    },
+    spawnStarhorn: (stage = 4) => {
+      setHarmonyOverride(100)
+      setResidencyOverride('starhorn', false)
+      return debugHarness.addAnimal('starhorn', stage)
     },
     grantCoins: (amount) => {
       const balance = wallet.credit(amount)

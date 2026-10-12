@@ -80,6 +80,10 @@ export interface SaveGameData {
   readonly playSeconds: number
   readonly clock: { readonly timeOfDay: number; readonly elapsedDays: number }
   readonly coins: number
+  /** Star gems in the purse. Optional: a save from before the starhorn has none and loads with 0. */
+  readonly gems?: number
+  /** Ids of the treasures bought with gems. Optional for the same reason. */
+  readonly treasures?: readonly string[]
   readonly progression: ProgressLedgerState
   readonly upgrades: Readonly<Record<string, number>>
   readonly accomplishments: readonly string[]
@@ -108,6 +112,8 @@ export interface SaveGameData {
 export interface SaveSummary {
   readonly farmerLevel: number
   readonly coins: number
+  /** Star gems, when the farm has any. */
+  readonly gems?: number
   /** Whole days since the farm began. */
   readonly day: number
   readonly residents: number
@@ -230,6 +236,8 @@ export function parseEnvelope(text: string | null): ParseResult {
     && typeof value.data === 'string' && isNumber(value.scale)
   const life = data.life
   const dataOk = isNumber(data.playSeconds) && isNumber(data.coins) && isNumber(data.expansionLevel)
+    && (data.gems === undefined || isNumber(data.gems))
+    && (data.treasures === undefined || Array.isArray(data.treasures))
     && isRecord(data.clock) && isNumber(data.clock.timeOfDay) && isNumber(data.clock.elapsedDays)
     && isRecord(data.progression) && Array.isArray(data.progression.awarded)
     && isRecord(data.upgrades) && Array.isArray(data.accomplishments)
