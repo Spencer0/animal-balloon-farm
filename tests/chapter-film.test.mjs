@@ -96,3 +96,44 @@ test('a bigger farm stands the camera further out, and the done flag ends the fi
   assert.equal(m.chapterFilmAt('garden', m.CHAPTER_FILM_DURATION, RADIUS).done, true)
   assert.deepEqual(m.chapterFilmAt('garden', 99, RADIUS).position, m.chapterFilmAt('garden', m.CHAPTER_FILM_DURATION, RADIUS).position)
 })
+
+// The frame's four corners, cast down onto the ground plane. A shot that sees
+// past the farm shows the slab's side or the void beyond it; one that lands on
+// the lawn and meadow never does.
+function groundCorners(frame, aspect = 16 / 9) {
+  const [px, py, pz] = frame.position
+  const dir = frame.target.map((v, i) => v - frame.position[i])
+  const length = Math.hypot(...dir)
+  const d = dir.map((v) => v / length)
+  const right = [d[2], 0, -d[0]]
+  const rightLength = Math.hypot(...right)
+  right.splice(0, 3, ...right.map((v) => v / rightLength))
+  const up = [right[1] * d[2] - right[2] * d[1], right[2] * d[0] - right[0] * d[2], right[0] * d[1] - right[1] * d[0]]
+  const halfHeight = length * Math.tan((frame.fov * Math.PI) / 360)
+  const hits = []
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      const origin = [0, 1, 2].map((i) => frame.position[i] + right[i] * sx * halfHeight * aspect + up[i] * sy * halfHeight)
+      const s = -origin[1] / d[1]
+      hits.push({ x: origin[0] + s * d[0], z: origin[2] + s * d[2], s, eyeAbove: py > 0 })
+    }
+  }
+  return hits
+}
+
+test('every shot looks down steeply and never sees past the farm', () => {
+  for (const id of IDS) {
+    for (let t = 0; t <= m.CHAPTER_FILM_DURATION; t += 0.25) {
+      const frame = m.chapterFilmAt(id, t, RADIUS)
+      const [x, y, z] = frame.position
+      const [tx, ty, tz] = frame.target
+      const pitch = Math.atan2(y - ty, Math.hypot(x - tx, z - tz)) * (180 / Math.PI)
+      assert.ok(pitch >= 38 && pitch <= 62, `${id} at ${t}: pitch ${pitch.toFixed(1)} is steep enough to show the plot`)
+      assert.ok(y > 0, `${id} at ${t} keeps the camera above the ground`)
+      for (const hit of groundCorners(frame)) {
+        assert.ok(hit.s > 0, `${id} at ${t}: every corner ray hits the ground ahead`)
+        assert.ok(Math.hypot(hit.x, hit.z) < RADIUS * 5, `${id} at ${t}: frame reaches ${Math.hypot(hit.x, hit.z).toFixed(1)} from the centre, past the farm`)
+      }
+    }
+  }
+})
