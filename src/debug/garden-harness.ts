@@ -1,3 +1,4 @@
+import type { GoodId } from '../game/animal-diet'
 import { frameRenderStats, type FarmRenderer } from '../render/backend'
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
@@ -15,7 +16,6 @@ import type { ShopDomPanel } from '../ui/shop-dom'
 import type { SellBurst } from '../ui/sell-burst'
 import type { FrameTimer, GardenFrameTiming } from './frame-timing'
 import type { createAnimalLife, AnimalRecord } from '../game/animal-life'
-import type { GoodId } from '../game/animal-diet'
 import type { Bed } from '../game/sleep'
 import type { createProgressLedger } from '../game/farm-progression'
 import type { createAccomplishmentTracker } from '../game/accomplishments'
@@ -176,8 +176,12 @@ interface GardenDebugHarness {
   setOwlHelium(level: number): void
   /** Set the helium, 0..1, of every animal of one species, to watch it deflate without a two-minute wait. */
   setHelium(species: string, level: number): number
-  /** Set the fullness, 0..1, of every animal of one species, to see the hunger ladder without waiting a day. */
+  /** Set the fullness, 0..1, of every adult resident of one species ('hungry' is under 0.4, 'starving' under 0.12). */
   setFullness(species: string, level: number): number
+  /** Put goods in every house of one prop kind (e.g. 'barn'), up to its capacity; returns the houses touched. */
+  addGoodsByProp(prop: string, good: string, count: number): number
+  /** Pin how overgrazed the lawn reads, 0..1, ignoring the grass larder; null hands it back. */
+  setGrazing(dryness: number | null): void
   /** Make a species lose helium when its home requirement stops being met (true), stop (false), or restore its catalog rule (null). */
   holdResidency(species: string, holds: boolean | null): void
   /** Play the tool-unlock film for a shop upgrade, optionally held at a moment, and report what it shows. */
@@ -363,6 +367,7 @@ export interface GardenHarnessDeps {
   readonly animalById: Map<string, BalloonAnimal>
   readonly animals: BalloonAnimal[]
   readonly predationLedger: ReturnType<typeof createPredationLedger>
+  readonly setGrazingOverride: (dryness: number | null) => void
   readonly owlHunt: Pick<OwlSim, 'huntedIds' | 'hurry' | 'setHelium' | 'reset' | 'report'>
   readonly snakeHunt: SnakeSim
   readonly popsInFlight: { readonly burst: PopBurst; readonly animal: BalloonAnimal }[]
@@ -580,20 +585,30 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     intro: (seconds) => deps.intro(seconds),
     toolFilm: (id, seconds) => deps.toolFilm(id, seconds),
     holdResidency: (species, holds) => { setResidencyOverride(species, holds) },
+    setFullness: (species, level) => {
+      let changed = 0
+      for (const record of deps.progress.all()) {
+        if (record.species !== species || record.stage < 3) continue
+        deps.progress.setFullness(record.id, level)
+        changed += 1
+      }
+      return changed
+    },
+    addGoodsByProp: (prop, good, count) => {
+      let touched = 0
+      for (const house of deps.houseSpots()) {
+        if (house.prop !== prop) continue
+        deps.progress.addGoods(house.id, good as GoodId, count)
+        touched += 1
+      }
+      return touched
+    },
+    setGrazing: (dryness) => deps.setGrazingOverride(dryness),
     setHelium: (species, level) => {
       let changed = 0
       for (const record of deps.progress.all()) {
         if (record.species !== species || record.stage < 3) continue
         deps.progress.setHelium(record.id, level)
-        changed += 1
-      }
-      return changed
-    },
-    setFullness: (species, level) => {
-      let changed = 0
-      for (const record of deps.progress.all()) {
-        if (record.species !== species) continue
-        deps.progress.setFullness(record.id, level)
         changed += 1
       }
       return changed

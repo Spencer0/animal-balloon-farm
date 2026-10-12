@@ -256,6 +256,8 @@ export interface AnimalLife {
   wantsToHunt(id: string): boolean
   /** A predator caught something: it fills up. */
   feedCatch(id: string): void
+  /** Put goods in a house outright, up to its capacity. The debug harness and the tests use it. */
+  addGoods(houseId: string, good: GoodId, count: number): void
   /** Goods waiting in one house. */
   goodsIn(houseId: string): Readonly<Partial<Record<GoodId, number>>>
   /** Debug only: put goods in a house, capped like real ones. The garden harness uses it. */
@@ -717,6 +719,12 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     feedCatch(id) {
       const animal = animals.get(id)
       if (animal) animal.fullness = Math.min(1, animal.fullness + catchMeal(animal.species))
+    },
+    addGoods(houseId, good, count) {
+      if (!GOODS[good] || !Number.isFinite(count) || count <= 0) return
+      const goods = goodsOf(houseId)
+      const room = Math.max(0, HOUSE_GOODS_CAPACITY - goodsCount(houseId))
+      goods.set(good, (goods.get(good) ?? 0) + Math.min(room, Math.floor(count)))
     },
     goodsIn(houseId) {
       return Object.fromEntries(houseGoods.get(houseId) ?? [])
