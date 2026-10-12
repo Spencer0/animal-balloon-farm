@@ -14,7 +14,7 @@ import type { GardenPlants } from '../scene/garden-plants'
 import type { GardenProps, PropSelection } from '../scene/garden-props'
 import type { GardenTools } from '../scene/garden-tools'
 import { createSellBurst, type SellBurst } from './sell-burst'
-import type { createAnimalCard } from './animal-card'
+import type { createAnimalCard } from './animal-card-dom'
 import type { createPropCard, PropResidents } from './prop-card'
 import type { createPlantCard } from './plant-card'
 import type { createSalePanel } from './sale-panel'
@@ -86,9 +86,10 @@ export function createFarmActions(deps: FarmActionsDeps) {
     const anchorWorld = animal.root.getWorldPosition(new THREE.Vector3())
     anchorWorld.y += 2.6
     const anchorNdc = anchorWorld.project(camera)
+    // The card is DOM: its anchor is the balloon's spot in window pixels.
     const anchor = {
-      x: anchorNdc.x * ui.viewport.width / 2,
-      y: anchorNdc.y * ui.viewport.height / 2,
+      x: (anchorNdc.x + 1) / 2 * window.innerWidth,
+      y: (1 - anchorNdc.y) / 2 * window.innerHeight,
     }
     animalCard.open({
       instanceId: animal.instanceId,
@@ -99,6 +100,8 @@ export function createFarmActions(deps: FarmActionsDeps) {
       price: animalSaleValue(animal.id, stage),
       sellable,
       helium: progress.animal(animal.instanceId)?.helium ?? 1,
+      fullness: progress.animal(animal.instanceId)?.fullness ?? 1,
+      hunting: progress.wantsToHunt(animal.instanceId),
     }, anchor)
     syncFarmChrome()
   }

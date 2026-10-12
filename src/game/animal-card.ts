@@ -1,12 +1,27 @@
 /**
  * Animal info card: the pure rules behind the click-an-animal popup.
  *
- * The card itself is Three.js (`src/ui/animal-card.ts`) and stays a renderer:
- * it draws whatever this module says is true. Stages, sell gating, the Helium
- * meter and the rename rules live here so they stay testable in
+ * The card itself is a DOM panel (`src/ui/animal-card-dom.ts`) and stays a
+ * renderer: it draws whatever this module says is true. Stages, sell gating,
+ * the Helium and Hunger meters and the rename rules live here so they stay
+ * testable in
  * `tests/animal-card.test.mjs` without a browser -- the same split the animal
  * condition ladder uses on purpose.
  */
+
+import {
+  dietOf,
+  FOOD_LABELS,
+  GOODS,
+  HUNGER_LABELS,
+  hungerLevel,
+  isPredatorDiet,
+  PRODUCE,
+  type FoodId,
+  type GoodSpec,
+  type HungerLevel,
+} from './animal-diet';
+import { houseFor } from './animal-housing';
 
 /** The first stage that counts as settled. Matches `canSellAnimal` in sales. */
 export const RESIDENT_STAGE = 3;
@@ -129,4 +144,77 @@ export function placeInfoCard(
   centerX = Math.min(view.right - halfWidth, Math.max(view.left + halfWidth, centerX));
   const centerY = Math.min(view.top - halfHeight, Math.max(view.bottom + halfHeight, anchor.y));
   return { x: centerX, y: centerY };
+}
+
+// ---------------------------------------------------------------- hunger --
+
+/** Meter colour family for each rung: green, olive, amber, red. */
+export type HungerTone = 'full' | 'fed' | 'hungry' | 'starving';
+
+export interface HungerView {
+  readonly level: HungerLevel;
+  /** The rung word beside the meter: Full / Fed / Hungry / Starving. */
+  readonly label: string;
+  /** The bar's fill, 0..1. */
+  readonly fill: number;
+  readonly tone: HungerTone;
+  /** One plain line for a hungry animal; null when there is nothing to warn about. */
+  readonly hint: string | null;
+}
+
+const HUNGER_HINTS: Readonly<Record<HungerLevel, string | null>> = {
+  full: null,
+  fed: null,
+  hungry: "Hungry animals don't breed or make goods.",
+  starving: 'Starving: it is losing helium. Feed it soon.',
+};
+
+/** Everything the Hunger meter shows for a fullness (1 = just ate, 0 = empty). */
+export function hungerView(fullness: number): HungerView {
+  const fill = Number.isFinite(fullness) ? Math.min(1, Math.max(0, fullness)) : 1;
+  const level = hungerLevel(fill);
+  return { level, label: HUNGER_LABELS[level], fill, tone: level, hint: HUNGER_HINTS[level] };
+}
+
+export interface EatsView {
+  /** Foods in the order it prefers them (empty when the species has no diet). */
+  readonly foods: readonly FoodId[];
+  /** Plain text, e.g. "Eats: Grass, then feed sacks". */
+  readonly text: string;
+  readonly predator: boolean;
+}
+
+/** "Grass, then feed sacks": the first food as named, later ones in lower case. */
+export function foodListLabel(foods: readonly FoodId[]): string {
+  return foods
+    .map((food, index) => (index === 0 ? FOOD_LABELS[food] : FOOD_LABELS[food].toLowerCase()))
+    .join(', then ');
+}
+
+export function eatsView(species: string): EatsView {
+  const diet = dietOf(species);
+  if (!diet) return { foods: [], text: 'Eats: whatever it finds', predator: false };
+  if (isPredatorDiet(species)) return { foods: ['prey'], text: 'Eats: what it catches', predator: true };
+  return { foods: diet.foods, text: `Eats: ${foodListLabel(diet.foods)}`, predator: false };
+}
+
+export interface MakesView {
+  readonly good: GoodSpec;
+  /** Plain text, e.g. "Makes: Milk in its barn, when fed". */
+  readonly text: string;
+}
+
+export function makesView(species: string): MakesView | null {
+  const recipe = PRODUCE[species];
+  if (!recipe) return null;
+  const good = GOODS[recipe.good];
+  const house = houseFor(species);
+  const where = house ? ` in its ${house.replace(/-/g, ' ')}` : '';
+  const needs = recipe.needsProp ? ` (needs ${/^[aeiou]/.test(recipe.needsProp) ? 'an' : 'a'} ${recipe.needsProp} on the farm)` : '';
+  return { good, text: `Makes: ${good.name}${where}, when fed${needs}` };
+}
+
+/** The predator line: a hungry (or visiting) one hunts, a fed one laze about. */
+export function huntingStatus(hunting: boolean): string {
+  return hunting ? 'Hunting' : 'Lazing (fed)';
 }

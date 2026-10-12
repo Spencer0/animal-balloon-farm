@@ -36,13 +36,19 @@ const {
   cancelSellConfirm,
   resetAnimalCardState,
   placeInfoCard,
+  hungerView,
+  eatsView,
+  makesView,
+  huntingStatus,
 } = card
 
-test('helium is always a full meter until a depletion mechanic exists', () => {
+test('a balloon that has lost nothing reads a full helium meter; a leaking one says so', () => {
   assert.equal(heliumLevel(), 1)
   assert.equal(HELIUM_LEVEL, 1)
   assert.equal(heliumStatus(), 'helium')
   assert.equal(HELIUM_STATUS, 'helium')
+  assert.equal(heliumLevel(0.4), 0.4)
+  assert.equal(heliumStatus(0.4), 'leaking')
 })
 
 test('residents start at stage 3; the chip names the group', () => {
@@ -93,4 +99,28 @@ test('the pinned card prefers the right of the balloon and stays on screen', () 
   assert.deepEqual(flipped, { x: 482, y: 100 })
   const clamped = placeInfoCard({ x: -790, y: 440 }, cardSize, view)
   assert.deepEqual(clamped, { x: -572, y: 285 })
+})
+
+test('the hunger meter names its rung, colours it, and warns when hungry', () => {
+  assert.deepEqual([hungerView(1).label, hungerView(0.5).label, hungerView(0.2).label, hungerView(0).label], ['Full', 'Fed', 'Hungry', 'Starving'])
+  assert.equal(hungerView(0.5).tone, 'fed')
+  assert.equal(hungerView(1).hint, null)
+  assert.equal(hungerView(0.5).hint, null)
+  assert.match(hungerView(0.2).hint, /don't breed or make goods/)
+  assert.ok(hungerView(0).hint)
+  assert.equal(hungerView(7).fill, 1)
+  assert.equal(hungerView(-1).fill, 0)
+  assert.equal(hungerView(Number.NaN).level, 'full')
+})
+
+test('the diet lines say what it eats and makes, and predators hunt or laze', () => {
+  assert.equal(eatsView('cow').text, 'Eats: Grass, then feed sacks')
+  assert.deepEqual([...eatsView('cow').foods], ['grass', 'feed'])
+  assert.equal(eatsView('owl').text, 'Eats: what it catches')
+  assert.equal(eatsView('owl').predator, true)
+  assert.equal(makesView('cow').text, 'Makes: Milk in its barn, when fed')
+  assert.match(makesView('pig').text, /needs an oak/)
+  assert.equal(makesView('mole'), null)
+  assert.equal(huntingStatus(true), 'Hunting')
+  assert.equal(huntingStatus(false), 'Lazing (fed)')
 })

@@ -37,7 +37,7 @@ import type { createJournalPanel } from '../ui/journal-panel'
 import type { createNotificationPanel } from '../ui/notification-panel'
 import type { createNotificationDomPanel } from '../ui/notification-dom'
 import type { createSalePanel } from '../ui/sale-panel'
-import type { createAnimalCard } from '../ui/animal-card'
+import type { createAnimalCard } from '../ui/animal-card-dom'
 import type { createShedPanel } from '../ui/shed-panel'
 import type { createPlantCard } from '../ui/plant-card'
 import type { createPlayerDomPanel } from '../ui/player-dom'
@@ -174,6 +174,8 @@ interface GardenDebugHarness {
   setOwlHelium(level: number): void
   /** Set the helium, 0..1, of every animal of one species, to watch it deflate without a two-minute wait. */
   setHelium(species: string, level: number): number
+  /** Set the fullness, 0..1, of every animal of one species, to see the hunger ladder without waiting a day. */
+  setFullness(species: string, level: number): number
   /** Make a species lose helium when its home requirement stops being met (true), stop (false), or restore its catalog rule (null). */
   holdResidency(species: string, holds: boolean | null): void
   /** Play the tool-unlock film for a shop upgrade, optionally held at a moment, and report what it shows. */
@@ -561,6 +563,15 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       for (const record of deps.progress.all()) {
         if (record.species !== species || record.stage < 3) continue
         deps.progress.setHelium(record.id, level)
+        changed += 1
+      }
+      return changed
+    },
+    setFullness: (species, level) => {
+      let changed = 0
+      for (const record of deps.progress.all()) {
+        if (record.species !== species) continue
+        deps.progress.setFullness(record.id, level)
         changed += 1
       }
       return changed

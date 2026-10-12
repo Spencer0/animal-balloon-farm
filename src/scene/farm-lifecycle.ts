@@ -9,7 +9,7 @@ import type { AnimalLifeEvent, AnimalLifeSnapshot, AnimalRecord, createAnimalLif
 import type { AccomplishmentDef, AccomplishmentStage, createAccomplishmentTracker } from '../game/accomplishments'
 import type { createProgressLedger } from '../game/farm-progression'
 import { isNightTime } from '../game/predator'
-import { DIETS } from '../game/animal-diet'
+import { DIETS, type HungerLevel } from '../game/animal-diet'
 import type { VisitorMotion } from './visitor-motion'
 
 export interface FarmLifecycleDeps {
@@ -40,7 +40,7 @@ export interface FarmLifecycleDeps {
   readonly animalDisplayName: (species: string) => string
   readonly animalNames: Map<string, string>
   readonly popAnimal: (animal: BalloonAnimal, style?: 'bang' | 'deflate') => void
-  readonly animalCard: { setHelium(helium: number): void }
+  readonly animalCard: { setVitals(vitals: { helium: number; fullness: number; hunger?: HungerLevel; hunting?: boolean }): void }
   readonly noteJournalStages: () => void
   /** A resident made a good (milk into the barn, a gem from the starhorn). */
   readonly onProduce?: (event: AnimalLifeEvent) => void
@@ -216,7 +216,11 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
     }
     visitorMotion.step()
     const focused = getFocusedAnimal()
-    if (focused) animalCard.setHelium(progress.animal(focused)?.helium ?? 1)
+    if (focused) {
+      // The card writes the DOM only when a number it shows actually moved.
+      const record = progress.animal(focused)
+      animalCard.setVitals({ helium: record?.helium ?? 1, fullness: record?.fullness ?? 1, hunger: record?.hunger, hunting: progress.wantsToHunt(focused) })
+    }
     updateHousing(performance.now() / 1000)
     // No appearance is applied from the event list here: `animal.stage = event.stage`
     // already routes the promotion through the model's residency gate, which keeps
