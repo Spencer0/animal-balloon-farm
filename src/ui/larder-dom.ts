@@ -113,7 +113,7 @@ export function createLarderDom(callbacks: LarderDomCallbacks): LarderDom {
     tip.hidden = false;
     const rect = chip.getBoundingClientRect();
     const width = 320;
-    const left = Math.min(window.innerWidth - width - 12, Math.max(12, rect.left + rect.width / 2 - width / 2));
+    const left = Math.min(window.innerWidth - width - 12, Math.max(12, rect.right - width));
     tip.style.left = `${Math.round(left)}px`;
     tip.style.top = `${Math.round(rect.bottom + CHIP_TOP_GAP)}px`;
     tip.dataset["shown"] = "true";
@@ -165,7 +165,8 @@ export function createLarderDom(callbacks: LarderDomCallbacks): LarderDom {
     const numbers = row.food === "feed"
       ? `<span class="ld-nums">Bought, never regrows &middot; eaten only when a field runs short</span>`
       : `<span class="ld-nums"><b>grows ${oneDecimal(row.supply)}</b> / day &middot; <b>eaten ${oneDecimal(row.demand)}</b> / day</span>`;
-    const stockText = `${Math.floor(row.stock)} / ${Math.floor(row.capacity)}`;
+    const meals = (value: number): string => (row.capacity < 10 ? oneDecimal(value) : String(Math.floor(value)));
+    const stockText = `${meals(row.stock)} / ${meals(row.capacity)}`;
     return (
       `<li class="ld-row" data-status="${row.status}" data-food="${row.food}">` +
       icon +
@@ -199,7 +200,7 @@ export function createLarderDom(callbacks: LarderDomCallbacks): LarderDom {
     const balance = source.balance();
     const hint = shortageHint(rows);
     const signature = JSON.stringify([
-      rows.map((row) => [row.food, Math.floor(row.stock), Math.floor(row.capacity), oneDecimal(row.supply), oneDecimal(row.demand), row.status, row.eaters.map((e) => e.species + e.count)]),
+      rows.map((row) => [row.food, row.capacity < 10 ? oneDecimal(row.stock) : Math.floor(row.stock), row.capacity < 10 ? oneDecimal(row.capacity) : Math.floor(row.capacity), oneDecimal(row.supply), oneDecimal(row.demand), row.status, row.eaters.map((e) => e.species + e.count)]),
       harmony.score, harmony.hunger, balance, hint, feedback,
     ]);
     if (signature === lastSignature && panelEl.isConnected) return;

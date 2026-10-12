@@ -159,7 +159,7 @@ export function harmonyParts(
   const links = report.activeLinks.length
   return [
     part('variety', 'Variety', report.variety, `${report.species} species live here`),
-    part('balance', 'Balance', report.balance, crowd ?? 'Species share the farm evenly'),
+    part('balance', 'Balance', report.balance, crowd ?? (report.species === 1 ? 'Only one kind of animal lives here' : report.species === 0 ? 'No residents yet' : 'Species share the farm evenly')),
     part('fed', 'Fed', report.fed, report.residents > 0 ? `${eating} of ${report.residents} residents are fed` : 'No residents yet'),
     part('links', 'Links', report.links, links > 0 ? `${links} predator and prey ${links === 1 ? 'link' : 'links'}` : 'No predator and prey pairs yet'),
   ]
