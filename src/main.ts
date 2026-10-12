@@ -57,7 +57,7 @@ import { createToolsHud } from './ui/tools-hud'
 import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
-import { createAnimalCard } from './ui/animal-card'
+import { createAnimalCard } from './ui/animal-card-dom'
 import { createPropCard } from './ui/prop-card'
 import { warmAnimalLooks } from './animals/animal-warmup'
 import { createSellBurst, warmSellBursts, type SellBurst } from './ui/sell-burst'
@@ -914,7 +914,7 @@ const plantCard = createPlantCard({
 
 
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, journal, salePanel, animalCard, plantCard, propCard, clockCalendarHud]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, journal, salePanel, plantCard, propCard, clockCalendarHud]
 
 /**
  * The furthest rung each species has reached this session. The journal is a

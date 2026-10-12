@@ -10,7 +10,7 @@ import { createSurface, fillRoundRect, grain, strokeRoundRect, UI_THEME, vertica
  * The prop info card: a small pinned note beside a placed prop the player
  * clicked, with Move, Store and Sell.
  *
- * Built like `animal-card.ts` -- a canvas-texture card in the shared Three.js
+ * Built like the retired canvas animal card -- a canvas-texture card in the shared Three.js
  * UI layer, pinned rather than modal, with the same two-press Sell confirm. The
  * rules it shows (sale value, chip copy) live in `src/game/farm-props.ts`; the
  * scene work (lifting, storing, selling) is done by the caller through

@@ -1,0 +1,321 @@
+/* Animal info card (DOM, Farm Journal look): cream paper, chocolate border,
+ * dashed tan dividers, terracotta accents. A pinned note beside the clicked
+ * balloon; it takes the pointer only where the card itself is, so the farm
+ * under the rest of the screen keeps working.
+ */
+
+.ac-card {
+  position: fixed;
+  z-index: 35;
+  width: 340px;
+  box-sizing: border-box;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(60, 35, 15, 0.35), inset 0 0 0 2px rgba(255, 253, 246, 0.6);
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  overflow: hidden;
+  cursor: default;
+  user-select: none;
+}
+
+.ac-card[hidden] {
+  display: none;
+}
+
+.ac-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 8px 14px;
+  background: rgba(245, 234, 210, 0.92);
+  border-bottom: 3px dashed #b08c5e;
+}
+
+.ac-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-name-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  font: 800 18px/1.2 "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  background: #fffdf6;
+  border: 2px solid #c65a3a;
+  border-radius: 8px;
+  outline: none;
+  user-select: text;
+}
+
+.ac-name-input[hidden] {
+  display: none;
+}
+
+.ac-icon-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font: 800 15px/1 "Trebuchet MS", Verdana, sans-serif;
+  color: #6b4a33;
+  background: #f3e6c9;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ac-icon-btn:hover {
+  background: #e8d9bd;
+}
+
+.ac-close {
+  color: #fffdf6;
+  background: #c65a3a;
+}
+
+.ac-close:hover {
+  background: #d96a49;
+}
+
+.ac-card[data-editing="true"] .ac-pencil {
+  background: #c65a3a;
+}
+
+.ac-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 0;
+}
+
+.ac-chip {
+  padding: 4px 11px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+}
+
+.ac-chip-species {
+  background: #e8d9bd;
+  color: #6b4a33;
+}
+
+.ac-chip-stage {
+  background: #c65a3a;
+  border-color: #9c3f27;
+  color: #fffdf6;
+}
+
+.ac-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 12px;
+}
+
+.ac-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.ac-meter-label {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ac-meter-word {
+  font-size: 12px;
+  font-weight: 800;
+  font-style: italic;
+  color: #8a6749;
+}
+
+.ac-helium .ac-meter-word[data-leaking="true"] {
+  color: #c65a3a;
+}
+
+.ac-bar {
+  height: 14px;
+  box-sizing: border-box;
+  background: #e8d9bd;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.ac-bar-fill {
+  height: 100%;
+  min-width: 6px;
+  border-radius: 999px;
+  background: #6fa05c;
+  transition: width 0.25s ease-out, background-color 0.25s ease-out;
+}
+
+.ac-bar-fill[data-low="true"] {
+  background: #c65a3a;
+}
+
+/* Hunger: the bar and the rung word share a colour that tracks the rung. */
+.ac-hunger[data-tone="full"] .ac-bar-fill { background: #5f9b4f; }
+.ac-hunger[data-tone="fed"] .ac-bar-fill { background: #9aa23c; }
+.ac-hunger[data-tone="hungry"] .ac-bar-fill { background: #d9962f; }
+.ac-hunger[data-tone="starving"] .ac-bar-fill { background: #c4452f; }
+.ac-hunger[data-tone="full"] .ac-meter-word { color: #3f6b39; }
+.ac-hunger[data-tone="fed"] .ac-meter-word { color: #6f7424; }
+.ac-hunger[data-tone="hungry"] .ac-meter-word { color: #a8661a; }
+.ac-hunger[data-tone="starving"] .ac-meter-word { color: #a93421; }
+
+.ac-diet {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 3px dashed #b08c5e;
+}
+
+.ac-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.ac-line-key {
+  font-weight: 800;
+}
+
+.ac-then {
+  font-size: 12px;
+  font-style: italic;
+  color: #8a6749;
+}
+
+.ac-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.ac-icon-text {
+  display: inline-grid;
+  place-items: center;
+  font-size: 15px;
+  line-height: 1;
+  background: #f5ead2;
+  border: 1.5px solid #b08c5e;
+  border-radius: 7px;
+  box-sizing: border-box;
+}
+
+.ac-hunt {
+  align-self: flex-start;
+  margin: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #6b4a33;
+  background: #f5ead2;
+  border: 2px solid #b08c5e;
+  border-radius: 999px;
+}
+
+.ac-hunt[data-hunting="true"] {
+  color: #fffdf6;
+  background: #c65a3a;
+  border-color: #9c3f27;
+}
+
+.ac-hint {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  background: #f5ead2;
+  border: 2px solid #b08c5e;
+  border-radius: 10px;
+}
+
+.ac-hint[hidden] {
+  display: none;
+}
+
+.ac-hint[data-tone="hungry"] { color: #8a5413; border-color: #d9962f; }
+.ac-hint[data-tone="starving"] { color: #a93421; border-color: #c4452f; }
+
+.ac-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 3px dashed #b08c5e;
+}
+
+.ac-note {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+  color: #8a6749;
+}
+
+.ac-btn-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ac-btn {
+  flex: 1;
+  padding: 9px 10px;
+  font: 800 15px/1.1 "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  background: #f3e6c9;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ac-btn:hover {
+  background: #e8d9bd;
+}
+
+.ac-btn-grow {
+  flex: 2;
+}
+
+.ac-btn-sell {
+  color: #fffdf6;
+  background: #c65a3a;
+  border-color: #8c3b24;
+}
+
+.ac-btn-sell:hover {
+  background: #d96a49;
+}
+
+.ac-btn-wide {
+  flex: none;
+  width: 100%;
+}
