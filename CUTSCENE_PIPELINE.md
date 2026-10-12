@@ -101,11 +101,16 @@ from Pip. There is no Blender work and no actors.
 - Every film is seven seconds. The title card holds on
   `CHAPTER_TITLE_AT`. Tests pin that each chapter has a card there, one line
   after it, finite poses, and determinism.
-- To change a chapter's shot, edit its entry in `SHOTS`. To change its words,
+- To change a chapter's shot, edit its entry in `SHOTS` (views are `lookKey`s
+  or `orbit`s, in farm radii; the test checks pitch and the frame's footprint). To change its words,
   edit `CHAPTER_LINES`. The title and tagline come from `farm-chapters.ts`.
-- The player saves the camera's pose (position, rotation, fov or zoom) on
-  `start` and restores it when the film ends or `skip()` is called. An
-  orthographic camera (the farm's) has no perspective, so a push-in is a zoom.
+- Every shot looks down at 40 to 60 degrees, from the gameplay camera's side,
+  so the frame stays on the farm's grass and never shows the ground's edge. A
+  shallow pitch is what showed the slab's side. Keep new shots in that band.
+- The player saves the camera's pose and frustum on `start` and restores them
+  when the film ends or `skip()` is called. For the farm's orthographic camera
+  the frame is set from each shot: its height is distance * tan(fov / 2), so a
+  push-in is a shorter distance with a narrower frame.
 - The player does not draw the farm. The caller renders as usual, and must
   not update the farm camera while `update()` is driving it. `render()` is a
   no-op.

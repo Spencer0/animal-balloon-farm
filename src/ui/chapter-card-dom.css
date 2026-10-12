@@ -34,11 +34,12 @@ body.film-playing > #chapter-card.chapter-card-root {
 .cc-title {
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(560px, calc(100vw - 32px));
+  /* The lower third, clear of the farm's middle and above the bottom letterbox bar. */
+  bottom: 16vh;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 32px));
   box-sizing: border-box;
-  padding: 22px 28px 20px;
+  padding: 26px 34px 24px;
   text-align: center;
   background: #faf3e2;
   border: 3px solid #6b4a33;
@@ -57,7 +58,7 @@ body.film-playing > #chapter-card.chapter-card-root {
 
 .cc-kicker {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -65,8 +66,8 @@ body.film-playing > #chapter-card.chapter-card-root {
 }
 
 .cc-name {
-  margin: 4px 0 6px;
-  font-size: clamp(26px, 4.2vw, 40px);
+  margin: 6px 0 8px;
+  font-size: 40px;
   font-weight: 800;
   line-height: 1.1;
   color: #5a3d2b;
@@ -74,7 +75,7 @@ body.film-playing > #chapter-card.chapter-card-root {
 
 .cc-tagline {
   margin: 0;
-  font-size: 16px;
+  font-size: 20px;
   font-style: italic;
   color: #7a5a40;
 }
@@ -118,10 +119,14 @@ body.film-playing > #chapter-card.chapter-card-root {
 
 @media (max-width: 600px) {
   .cc-title {
-    padding: 16px 18px 14px;
+    bottom: 15vh;
+    padding: 18px 18px 16px;
+  }
+  .cc-name {
+    font-size: 30px;
   }
   .cc-tagline {
-    font-size: 14px;
+    font-size: 16px;
   }
   .cc-line {
     font-size: 15px;

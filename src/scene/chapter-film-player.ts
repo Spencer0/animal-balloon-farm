@@ -15,7 +15,7 @@ import type { CutscenePlayer } from './cutscene-kit'
  * drawn by the game's normal render path, through `camera`. So `render()` is
  * a no-op, and the caller must skip its own camera updates while the film
  * plays (see CUTSCENE_PIPELINE.md, "Chapter films"). The camera's pose, fov
- * or zoom is saved on `start` and handed back exactly when the film ends or
+ * or frustum is saved on `start` and handed back exactly when the film ends or
  * is skipped.
  */
 
@@ -48,10 +48,9 @@ interface SavedPose {
   readonly position: THREE.Vector3
   readonly quaternion: THREE.Quaternion
   readonly fov: number | null
-  readonly zoom: number | null
+  /** An orthographic lens's frustum and zoom, so the farm's own framing comes back exactly. */
+  readonly frustum: { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number; readonly zoom: number } | null
 }
-
-const ZOOM_REFERENCE = 1.5
 
 export function createChapterFilmPlayer(options: ChapterFilmPlayerOptions): ChapterFilmPlayer {
   const { camera, farmRadius } = options
@@ -69,7 +68,9 @@ export function createChapterFilmPlayer(options: ChapterFilmPlayerOptions): Chap
       position: camera.position.clone(),
       quaternion: camera.quaternion.clone(),
       fov: camera instanceof THREE.PerspectiveCamera ? camera.fov : null,
-      zoom: camera instanceof THREE.OrthographicCamera ? camera.zoom : null,
+      frustum: camera instanceof THREE.OrthographicCamera
+        ? { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom, zoom: camera.zoom }
+        : null,
     }
   }
 
@@ -81,8 +82,9 @@ export function createChapterFilmPlayer(options: ChapterFilmPlayerOptions): Chap
       camera.fov = saved.fov
       camera.updateProjectionMatrix()
     }
-    if (camera instanceof THREE.OrthographicCamera && saved.zoom !== null) {
-      camera.zoom = saved.zoom
+    if (camera instanceof THREE.OrthographicCamera && saved.frustum) {
+      const { left, right, top, bottom, zoom } = saved.frustum
+      Object.assign(camera, { left, right, top, bottom, zoom })
       camera.updateProjectionMatrix()
     }
     camera.updateMatrixWorld()
@@ -99,14 +101,14 @@ export function createChapterFilmPlayer(options: ChapterFilmPlayerOptions): Chap
         camera.updateProjectionMatrix()
       }
     } else if (camera instanceof THREE.OrthographicCamera) {
-      // An orthographic lens has no perspective to dolly with, so a push-in or
-      // pull-back is a zoom: the distance to the subject sets the frame's scale.
+      // An orthographic lens has no perspective to dolly with, so the frame is
+      // set from the shot: its height is distance * tan(fov / 2), the same frame
+      // a perspective lens at this fov would show. A push-in shrinks it.
       const distance = camera.position.distanceTo(new THREE.Vector3(...frame.target))
-      const zoom = (farmRadius * ZOOM_REFERENCE) / Math.max(1e-3, distance)
-      if (camera.zoom !== zoom) {
-        camera.zoom = zoom
-        camera.updateProjectionMatrix()
-      }
+      const halfHeight = Math.max(1e-3, distance * Math.tan(THREE.MathUtils.degToRad(frame.fov) / 2))
+      const aspect = window.innerWidth / Math.max(1, window.innerHeight)
+      Object.assign(camera, { top: halfHeight, bottom: -halfHeight, left: -halfHeight * aspect, right: halfHeight * aspect, zoom: 1 })
+      camera.updateProjectionMatrix()
     }
     camera.updateMatrixWorld()
     card.setState(cardState(frame))
