@@ -15,7 +15,7 @@ import {
   type FoodId,
   type FoodReport,
 } from './animal-diet'
-import { HARMONY_WEIGHTS, type HarmonyReport } from './harmony'
+import { HARMONY_FULL_CARE, HARMONY_WEIGHTS, type HarmonyReport } from './harmony'
 
 /** A demand within this much of the supply still counts as keeping up. */
 export const SHORTAGE_SLACK = 0.05
@@ -157,10 +157,12 @@ export function harmonyParts(
   const crowd = report.crowding ? `${pluralName(report.crowding, nameOf(report.crowding))} are over half the farm` : null
   const eating = report.hunger.full + report.hunger.fed
   const links = report.activeLinks.length
+  // Balance and fed are scaled down until the farm has enough species to make them mean something.
+  const scaled = report.care < 1 ? ` (counts in full from ${HARMONY_FULL_CARE} species)` : ''
   return [
     part('variety', 'Variety', report.variety, `${report.species} species live here`),
-    part('balance', 'Balance', report.balance, crowd ?? (report.species === 1 ? 'Only one kind of animal lives here' : report.species === 0 ? 'No residents yet' : 'Species share the farm evenly')),
-    part('fed', 'Fed', report.fed, report.residents > 0 ? `${eating} of ${report.residents} residents are fed` : 'No residents yet'),
+    part('balance', 'Balance', report.balance * report.care, (crowd ?? (report.species === 1 ? 'Only one kind of animal lives here' : report.species === 0 ? 'No residents yet' : 'Species share the farm evenly')) + scaled),
+    part('fed', 'Fed', report.fed * report.care, (report.residents > 0 ? `${eating} of ${report.residents} residents are fed` : 'No residents yet') + scaled),
     part('links', 'Links', report.links, links > 0 ? `${links} predator and prey ${links === 1 ? 'link' : 'links'}` : 'No predator and prey pairs yet'),
   ]
 }

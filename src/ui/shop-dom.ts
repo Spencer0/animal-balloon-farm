@@ -5,6 +5,7 @@ import { PROP_CATALOG, PROP_ORDER, type PropId } from "../game/farm-props";
 import { seedThumb, propThumb } from "./shed-dom";
 import { TREASURE_CATALOG, TREASURE_ORDER, type TreasureId } from "../game/treasures";
 import { armGemIcons, gemIconHtml } from "./gem-icon";
+import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from "../game/animal-diet";
 import {
   propUnlockLevel,
   UPGRADE_CATALOG,
@@ -37,6 +38,9 @@ export interface ShopDomCallbacks {
   treasuresVisible: () => boolean;
   quoteTreasure: (id: TreasureId) => { readonly owned: boolean; readonly price: number };
   onBuyTreasure: (id: TreasureId) => ShopBuyResult;
+  /** Meals of bought feed in the pantry, and buying one more sack. */
+  feedInPantry: () => number;
+  onBuyFeed: () => ShopBuyResult;
 }
 
 export interface ShopDomPanel {
@@ -103,7 +107,7 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     }).join("|");
     const seeds = PLANT_CATALOG.map((plant) => `${plant.id}:${callbacks.seedsFor(plant.id)}`).join("|");
     const treasures = TREASURE_ORDER.map((id) => `${id}:${callbacks.quoteTreasure(id).owned}`).join("|");
-    return `${tab}|${selected}|${selectedUpgrade}|${selectedSeed}|${selectedTreasure}|${callbacks.gems()}|${callbacks.treasuresVisible()}|${treasures}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${seeds}|${feedback}`;
+    return `${tab}|${selected}|${selectedUpgrade}|${selectedSeed}|${selectedTreasure}|${callbacks.gems()}|${callbacks.treasuresVisible()}|${treasures}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${seeds}|${Math.floor(callbacks.feedInPantry())}|${feedback}`;
   }
 
   /** A drawn icon for the upgrades, so they need no baked art: a sack for seed, a scroll for land. */
@@ -227,7 +231,15 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
         );
       }).join("");
     }
-    return `<div class="sh-locked">The animal pen opens soon. Pip is still building the fence, and the balloons keep escaping.</div>`;
+    // The Feed tab: one product, bought feed for when the farm grows too little.
+    const afford = callbacks.balance() >= FEED_SACK_PRICE;
+    return (
+      `<button type="button" class="sh-card" aria-current="true">` +
+      `<span class="sh-count">${Math.floor(callbacks.feedInPantry())} meals</span>` +
+      `<img src="assets/goods/food-feed.png" alt="" draggable="false" />` +
+      `<span>Feed sack</span><br />` +
+      `<span class="sh-pill"${afford ? "" : ` style="opacity:.55"`}>${FEED_SACK_PRICE} coins</span></button>`
+    );
   }
 
   function upgradePreviewHtml(): string {
@@ -294,7 +306,19 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
           `<p class="sh-feedback">${escapeHtml(feedback)}</p>`
         );
       }
-      return `<h2>Animals</h2><p class="sh-blurb">No animals for sale yet. Befriend them at the circus instead.</p><p class="sh-feedback">${escapeHtml(feedback)}</p>`;
+      const afford = callbacks.balance() >= FEED_SACK_PRICE;
+      const pantry = Math.floor(callbacks.feedInPantry());
+      const full = pantry + FEED_SACK_MEALS > FEED_CAPACITY;
+      const label = full ? "Pantry is full" : afford ? `Buy (${FEED_SACK_PRICE} coins)` : `Need ${FEED_SACK_PRICE} coins`;
+      return (
+        `<img src="assets/goods/food-feed.png" alt="" draggable="false" />` +
+        `<h2>Feed sack</h2>` +
+        `<div class="sh-pills"><span class="sh-pill">${FEED_SACK_PRICE} coins</span><span class="sh-pill">${FEED_SACK_MEALS} meals</span><span class="sh-pill">${pantry} / ${FEED_CAPACITY} in the pantry</span></div>` +
+        `<p class="sh-blurb">Farm animals eat feed when their own food runs out. It costs more than their goods earn, so use it to get a herd through a lean spell. Pigs eat slop first (from a garbage can, or goods spoiling in a full house), then grass.</p>` +
+        `<button type="button" class="sh-btn sh-btn-warm" data-buy-feed="1"${afford && !full ? "" : " disabled"}>${label}</button>` +
+        `<button type="button" class="sh-btn sh-btn-quiet" data-action="close">Keep browsing</button>` +
+        `<p class="sh-feedback">${escapeHtml(feedback)}</p>`
+      );
     }
     const def = PROP_CATALOG[selected];
     if (!def) return `<div class="sh-locked">Nothing selected.</div>`;
@@ -328,7 +352,7 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       `<button type="button" class="fj-tab" data-tab="upgrades" aria-selected="${tab === "upgrades"}">Upgrades</button>` +
       `<button type="button" class="fj-tab" data-tab="props" aria-selected="${tab === "props"}">Props</button>` +
       `<button type="button" class="fj-tab" data-tab="seeds" aria-selected="${tab === "seeds"}">Seeds</button>` +
-      `<button type="button" class="fj-tab" data-tab="animals" aria-selected="${tab === "animals"}">Animals</button>` +
+      `<button type="button" class="fj-tab" data-tab="animals" aria-selected="${tab === "animals"}">Feed</button>` +
       (showTreasures ? `<button type="button" class="fj-tab" data-tab="treasures" aria-selected="${tab === "treasures"}">Treasures</button>` : "") +
       `</nav>` +
       `<span class="sh-purse"><span class="sh-coins" aria-label="${coins} coins"><span class="sh-coin" aria-hidden="true"></span>${coins}</span>` +
@@ -345,7 +369,7 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
 
   shop.addEventListener("click", (event) => {
     const target = event.target instanceof HTMLElement
-      ? event.target.closest("[data-tab],[data-select],[data-select-seed],[data-select-upgrade],[data-select-treasure],[data-action],[data-buy],[data-buy-seed],[data-buy-upgrade],[data-buy-treasure]")
+      ? event.target.closest("[data-tab],[data-select],[data-select-seed],[data-select-upgrade],[data-select-treasure],[data-action],[data-buy],[data-buy-seed],[data-buy-upgrade],[data-buy-treasure],[data-buy-feed]")
       : null;
     if (!(target instanceof HTMLElement)) return;
     if (target.dataset["action"] === "close") {
@@ -398,6 +422,12 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     const buySeed = target.dataset["buySeed"] as PlantId | undefined;
     if (buySeed) {
       feedback = callbacks.onBuySeed(buySeed).text;
+      lastSignature = "";
+      render();
+      return;
+    }
+    if (target.dataset["buyFeed"]) {
+      feedback = callbacks.onBuyFeed().text;
       lastSignature = "";
       render();
       return;

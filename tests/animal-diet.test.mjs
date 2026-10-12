@@ -216,6 +216,7 @@ test('harmony rewards a varied, even, fed farm over a big lopsided one', () => {
 test('a hungry farm loses harmony', () => {
   const fed = measureHarmony(residents({ cow: 4, sheep: 4, chicken: 4 }))
   const hungry = measureHarmony(residents({ cow: 4, sheep: 4, chicken: 4 }).map((entry) => ({ ...entry, fullness: 0.2 })))
-  assert.equal(fed.score - hungry.score, 30)
+  // Three species: fed counts at 3/5 of its 25 points.
+  assert.equal(fed.score - hungry.score, 15)
   assert.equal(measureHarmony([]).score, 0)
 })

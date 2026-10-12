@@ -514,11 +514,11 @@ const MOLE_CONDITIONS: SpeciesConditions = {
  * The starhorn is the end-game goal: one unique balloon pony that only comes to a
  * farm in harmony and makes star gems (see `harmony.ts`, `animal-diet.ts`).
  *
- *  - Appears (DISCOVERY): Harmony 60.
- *  - Visits the farm: Harmony 65.
- *  - Stays: Harmony 70 and six grown flowers to drink nectar from. It holds its
+ *  - Appears (DISCOVERY): Harmony 70.
+ *  - Visits the farm: Harmony 75.
+ *  - Stays: Harmony 80 and six grown flowers to drink nectar from. It holds its
  *    residency, so it loses helium and goes flat if the farm falls out of harmony.
- *  - Loves the farm: Harmony 85. There is only one and it has no house, so it
+ *  - Loves the farm: Harmony 90. There is only one and it has no house, so it
  *    never breeds; its star just glows.
  */
 const STARHORN_CONDITIONS: SpeciesConditions = {
@@ -526,26 +526,26 @@ const STARHORN_CONDITIONS: SpeciesConditions = {
   stages: withStageNumbers([
     COUNT_STAGE(
       'Appear at the carnival',
-      'Drifts in only when the farm is in tune: Harmony of 60.',
-      { kind: 'harmony', amount: 60 },
+      'Drifts in only when the farm is in tune: Harmony of 70.',
+      { kind: 'harmony', amount: 70 },
       'Turns up at the carnival in wild balloon red.',
     ),
     COUNT_STAGE(
       'Visit the farm',
-      'Wants a farm that is settling into balance: Harmony of 65.',
-      { kind: 'harmony', amount: 65 },
+      'Wants a farm that is settling into balance: Harmony of 75.',
+      { kind: 'harmony', amount: 75 },
       'Trots inside the fence, its horn tip glinting. Still wild, still deciding.',
     ),
     COUNT_STAGE(
       'Call the farm home',
-      'Wants Harmony of 70 and six grown flowers to sip nectar from. It deflates, and goes flat, if the farm falls out of harmony.',
-      { kind: 'harmony', amount: 70, and: [{ kind: 'flowerCount', amount: 6 }] },
+      'Wants Harmony of 80 and six grown flowers to sip nectar from. It deflates, and goes flat, if the farm falls out of harmony.',
+      { kind: 'harmony', amount: 80, and: [{ kind: 'flowerCount', amount: 6 }] },
       'Paints into its own colors. A resident of the farm, for as long as the farm stays in harmony.',
     ),
     COUNT_STAGE(
       'Love the farm',
-      'Glows when the farm is flourishing: Harmony of 85. There is only one starhorn, so there are no young.',
-      { kind: 'harmony', amount: 85 },
+      'Glows when the farm is flourishing: Harmony of 90. There is only one starhorn, so there are no young.',
+      { kind: 'harmony', amount: 90 },
       'Its star glows brightest and its eyes go to hearts. It makes star gems.',
     ),
   ]),
@@ -713,7 +713,7 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
   rat: { kind: 'residentCount', species: 'mouse', amount: 1, description: 'Where one mouse has settled, a rat is never far behind.' },
   snake: { kind: 'residentCount', species: 'mouse', amount: 2, description: 'Mice in the long grass draw something patient and green.' },
   mole: { kind: 'toolOwned', species: 'shovel', amount: 1, description: 'The sound of a shovel biting into soil carries a long way underground.' },
-  starhorn: { kind: 'harmony', amount: 60, description: 'A farm in tune hums, and something starry hears it.' },
+  starhorn: { kind: 'harmony', amount: 70, description: 'A farm in tune hums, and something starry hears it.' },
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {

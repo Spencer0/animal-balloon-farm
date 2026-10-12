@@ -32,7 +32,7 @@
 
 .pc-title {
   min-width: 0;
-  font-size: 20px;
+  font-size: 23px;
 }
 
 .pc-title span {
@@ -44,7 +44,7 @@
   width: 32px;
   height: 32px;
   border-width: 2px;
-  font-size: 20px;
+  font-size: 23px;
   flex: none;
 }
 
@@ -59,7 +59,7 @@
   align-self: flex-start;
   background: #5aa3a0;
   color: #fff6e8;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
   padding: 4px 12px;
   border-radius: 999px;
@@ -70,20 +70,20 @@
 .pc-warning,
 .pc-toast {
   margin: 0;
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1.35;
 }
 
 .pc-note {
   font-style: italic;
   color: #8a6749;
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .pc-warning {
   font-weight: 800;
   color: #9c3730;
-  font-size: 15px;
+  font-size: 19px;
 }
 
 .pc-warn {
@@ -126,14 +126,14 @@
 
 .pc-label {
   font-weight: 800;
-  font-size: 14px;
+  font-size: 18px;
   white-space: nowrap;
 }
 
 .pc-count {
   margin-left: auto;
   font-weight: 800;
-  font-size: 14px;
+  font-size: 18px;
   color: #6b4a33;
 }
 
@@ -186,7 +186,7 @@
 .pc-species {
   display: flex;
   justify-content: space-between;
-  font-size: 14px;
+  font-size: 18px;
 }
 
 .pc-species-name {
@@ -207,7 +207,7 @@
   border: 2px solid #b08c5e;
   border-radius: 10px;
   padding: 2px 8px 2px 3px;
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .pc-good-icon {
@@ -226,7 +226,7 @@
 }
 
 .pc-good-icon.is-glyph {
-  font-size: 20px;
+  font-size: 23px;
   line-height: 1;
 }
 
@@ -247,7 +247,7 @@
 
 .pc-worth {
   font-weight: 800;
-  font-size: 13px;
+  font-size: 16px;
   color: #6b4a33;
 }
 

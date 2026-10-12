@@ -7,7 +7,8 @@
 .ac-card {
   position: fixed;
   z-index: 35;
-  width: 340px;
+  width: 400px;
+  max-width: calc(100vw - 24px);
   box-sizing: border-box;
   background: #faf3e2;
   border: 3px solid #6b4a33;
@@ -15,7 +16,10 @@
   box-shadow: 0 10px 28px rgba(60, 35, 15, 0.35), inset 0 0 0 2px rgba(255, 253, 246, 0.6);
   font-family: "Trebuchet MS", Verdana, sans-serif;
   color: #5a3d2b;
-  overflow: hidden;
+  max-height: calc(100vh - 24px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   cursor: default;
   user-select: none;
 }
@@ -37,7 +41,7 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 20px;
+  font-size: 23px;
   font-weight: 800;
   line-height: 1.2;
   white-space: nowrap;
@@ -104,7 +108,7 @@
 
 .ac-chip {
   padding: 4px 11px;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
   white-space: nowrap;
   border: 2px solid #6b4a33;
@@ -137,12 +141,12 @@
 }
 
 .ac-meter-label {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 800;
 }
 
 .ac-meter-word {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
   font-style: italic;
   color: #8a6749;
@@ -197,7 +201,7 @@
   align-items: center;
   gap: 4px 6px;
   margin: 0;
-  font-size: 13px;
+  font-size: 16px;
   line-height: 1.3;
 }
 
@@ -206,22 +210,22 @@
 }
 
 .ac-then {
-  font-size: 12px;
+  font-size: 15px;
   font-style: italic;
   color: #8a6749;
 }
 
 .ac-icon {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   object-fit: contain;
 }
 
 .ac-icon-text {
   display: inline-grid;
   place-items: center;
-  font-size: 15px;
+  font-size: 19px;
   line-height: 1;
   background: #f5ead2;
   border: 1.5px solid #b08c5e;
@@ -233,7 +237,7 @@
   align-self: flex-start;
   margin: 0;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
   color: #6b4a33;
   background: #f5ead2;
@@ -250,7 +254,7 @@
 .ac-hint {
   margin: 0;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.35;
   background: #f5ead2;
@@ -275,7 +279,7 @@
 
 .ac-note {
   margin: 0;
-  font-size: 12px;
+  font-size: 15px;
   font-style: italic;
   text-align: center;
   color: #8a6749;

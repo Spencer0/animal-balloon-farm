@@ -94,7 +94,7 @@ export interface AnimalCardPanel {
   dispose(): void
 }
 
-const CARD_WIDTH = 340
+const CARD_WIDTH = 400
 const EDGE_MARGIN = 10
 
 /** Emoji stand-ins shown when a food or good icon has not been rendered yet. */

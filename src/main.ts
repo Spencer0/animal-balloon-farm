@@ -892,6 +892,8 @@ const shop: ShopDomPanel = createShopDomPanel({
   treasuresVisible: () => gems.balance > 0 || treasures.owned().length > 0 || progress.all().some((animal) => animal.species === 'starhorn' && animal.stage > 0),
   quoteTreasure: (id: TreasureId) => ({ owned: treasures.owns(id), price: TREASURE_CATALOG[id].price }),
   onBuyTreasure: (id: TreasureId) => buyTreasure(id),
+  feedInPantry: () => feedInPantry(),
+  onBuyFeed: () => buyFeedSack(),
   quoteUpgrade: (id: UpgradeId) => upgradeQuote(id, upgrades, progression.level),
   onBuyUpgrade: (id: UpgradeId) => buyUpgrade(id),
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
@@ -927,16 +929,23 @@ const larderDom = createLarderDom({
     syncFarmChrome()
     refreshCursor()
   },
-  onBuyFeed: () => {
-    const pantry = progress.foodReport().find((entry) => entry.food === 'feed')?.stock ?? 0
-    if (pantry + FEED_SACK_MEALS > FEED_CAPACITY) return { ok: false, text: `The pantry is full: it holds ${FEED_CAPACITY} meals.` }
-    if (wallet.debit(FEED_SACK_PRICE) === null) return { ok: false, text: `Not enough coins: a feed sack costs ${FEED_SACK_PRICE}.` }
-    progress.addFeed(FEED_SACK_MEALS)
-    salePanel.setWallet(wallet.balance)
-    saveSoon()
-    return { ok: true, text: `${FEED_SACK_MEALS} meals of feed stacked in the pantry.` }
-  },
+  onBuyFeed: () => buyFeedSack(),
 })
+
+/** Meals of bought feed in the pantry. */
+function feedInPantry(): number {
+  return progress.foodReport().find((entry) => entry.food === 'feed')?.stock ?? 0
+}
+
+/** One feed sack, from Pip's Feed tab or the Larder. */
+function buyFeedSack(): { readonly ok: boolean; readonly text: string } {
+  if (feedInPantry() + FEED_SACK_MEALS > FEED_CAPACITY) return { ok: false, text: `The pantry is full: it holds ${FEED_CAPACITY} meals.` }
+  if (wallet.debit(FEED_SACK_PRICE) === null) return { ok: false, text: `Not enough coins: a feed sack costs ${FEED_SACK_PRICE}.` }
+  progress.addFeed(FEED_SACK_MEALS)
+  salePanel.setWallet(wallet.balance)
+  saveSoon()
+  return { ok: true, text: `${FEED_SACK_MEALS} meals of feed stacked in the pantry.` }
+}
 
 const balloon = createBalloonPanel(window.innerWidth, window.innerHeight, (quadrant) => {
   if (quadrant === 'journal') {

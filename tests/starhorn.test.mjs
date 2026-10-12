@@ -39,26 +39,26 @@ test('the starhorn is in the catalog, priced, and has a harmony ladder', () => {
   const stages = m.getSpeciesConditions('starhorn')
   assert.equal(stages.length, 4)
   assert.deepEqual(stages.map((stage) => stage.requirement?.kind), ['harmony', 'harmony', 'harmony', 'harmony'])
-  assert.deepEqual(stages.map((stage) => stage.requirement?.amount), [60, 65, 70, 85])
+  assert.deepEqual(stages.map((stage) => stage.requirement?.amount), [70, 75, 80, 90])
   assert.deepEqual(stages[2].requirement.and, [{ kind: 'flowerCount', amount: 6 }])
 })
 
-test('discovery is harmony 60, and it is the same bar as the carnival rung', () => {
-  assert.deepEqual({ kind: m.DISCOVERY.starhorn.kind, amount: m.DISCOVERY.starhorn.amount }, { kind: 'harmony', amount: 60 })
-  assert.equal(m.requirementMet(m.DISCOVERY.starhorn, farm({ harmony: 59 })), false)
-  assert.equal(m.requirementMet(m.DISCOVERY.starhorn, farm({ harmony: 60 })), true)
+test('discovery is harmony 70, and it is the same bar as the carnival rung', () => {
+  assert.deepEqual({ kind: m.DISCOVERY.starhorn.kind, amount: m.DISCOVERY.starhorn.amount }, { kind: 'harmony', amount: 70 })
+  assert.equal(m.requirementMet(m.DISCOVERY.starhorn, farm({ harmony: 69 })), false)
+  assert.equal(m.requirementMet(m.DISCOVERY.starhorn, farm({ harmony: 70 })), true)
 })
 
-test('visit at harmony 65; home needs harmony 70 and six grown flowers of any kind; love is harmony 85', () => {
+test('visit at harmony 75; home needs harmony 80 and six grown flowers of any kind; love is harmony 90', () => {
   const [, visit, home, love] = m.getSpeciesConditions('starhorn')
-  assert.equal(m.requirementMet(visit.requirement, farm({ harmony: 64 })), false)
-  assert.equal(m.requirementMet(visit.requirement, farm({ harmony: 65 })), true)
+  assert.equal(m.requirementMet(visit.requirement, farm({ harmony: 74 })), false)
+  assert.equal(m.requirementMet(visit.requirement, farm({ harmony: 75 })), true)
   assert.equal(m.requirementMet(home.requirement, farm({ harmony: 90 })), false, 'no flowers')
-  assert.equal(m.requirementMet(home.requirement, farm({ harmony: 70, plantCounts: { dandelion: 3, poppy: 2 } })), false, 'five flowers')
-  assert.equal(m.requirementMet(home.requirement, farm({ harmony: 70, plantCounts: { dandelion: 3, poppy: 2, clover: 1 } })), true, 'six, mixed')
-  assert.equal(m.requirementMet(home.requirement, farm({ harmony: 69, plantCounts: { clover: 6 } })), false, 'harmony too low')
-  assert.equal(m.requirementMet(love.requirement, farm({ harmony: 84 })), false)
-  assert.equal(m.requirementMet(love.requirement, farm({ harmony: 85 })), true)
+  assert.equal(m.requirementMet(home.requirement, farm({ harmony: 80, plantCounts: { dandelion: 3, poppy: 2 } })), false, 'five flowers')
+  assert.equal(m.requirementMet(home.requirement, farm({ harmony: 80, plantCounts: { dandelion: 3, poppy: 2, clover: 1 } })), true, 'six, mixed')
+  assert.equal(m.requirementMet(home.requirement, farm({ harmony: 79, plantCounts: { clover: 6 } })), false, 'harmony too low')
+  assert.equal(m.requirementMet(love.requirement, farm({ harmony: 89 })), false)
+  assert.equal(m.requirementMet(love.requirement, farm({ harmony: 90 })), true)
 })
 
 test('a water lily is not a flower for the starhorn', () => {
@@ -89,9 +89,12 @@ test('the hint says it leaves if the farm falls out of harmony, and the love run
 test('harmony over real residents reaches the ladder: a varied, fed farm is in harmony', () => {
   const species = ['cow', 'sheep', 'chicken', 'duck', 'goose', 'pig', 'frog', 'owl']
   const residents = species.flatMap((name) => [{ species: name, fullness: 1 }, { species: name, fullness: 1 }])
-  assert.ok(m.measureHarmony(residents).score >= 70)
+  assert.ok(m.measureHarmony(residents).score >= 80)
   const lonely = Array.from({ length: 12 }, () => ({ species: 'cow', fullness: 1 }))
-  assert.ok(m.measureHarmony(lonely).score < 60, 'twelve cows are not a harmony')
+  assert.ok(m.measureHarmony(lonely).score < 70, 'twelve cows are not a harmony')
+  // A few well-fed, even species (the farm in Spencer's screenshot: cows and pigs) is not enough to call it.
+  const starter = ['cow', 'pig', 'duck'].flatMap((name) => Array.from({ length: 4 }, () => ({ species: name, fullness: 1 })))
+  assert.ok(m.measureHarmony(starter).score < 70, `three fed species: ${m.measureHarmony(starter).score}`)
 })
 
 // ---- no house, no young ----------------------------------------------------------

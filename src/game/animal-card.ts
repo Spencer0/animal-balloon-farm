@@ -165,8 +165,8 @@ export interface HungerView {
 const HUNGER_HINTS: Readonly<Record<HungerLevel, string | null>> = {
   full: null,
   fed: null,
-  hungry: "Hungry animals don't breed or make goods.",
-  starving: 'Starving: it is losing helium. Feed it soon.',
+  hungry: "Hungry animals don't breed or make goods. Grow more of what it eats, or buy feed sacks on Pip's Feed tab.",
+  starving: "Starving: it is losing helium. Buy feed sacks on Pip's Feed tab, or grow more of what it eats.",
 };
 
 /** Everything the Hunger meter shows for a fullness (1 = just ate, 0 = empty). */

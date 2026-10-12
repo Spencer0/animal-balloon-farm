@@ -61,9 +61,11 @@ shape of the late game: a good farm is a *balanced* one, and Harmony scores it.
 
 ## Harmony
 
-`src/game/harmony.ts`: 0 to 100, from variety (35), balance between species
-(25, Pielou evenness), the share of residents fed (30), and predator/prey
-links living on the farm (10). Forty cows on a lawn for ten scores worse than
+`src/game/harmony.ts`: 0 to 100, from variety (40), balance between species
+(20, Pielou evenness), the share of residents fed (25), and predator/prey
+links living on the farm (15). Balance and fed count in full only from five
+resident species (`HARMONY_FULL_CARE`), so a few well-fed species cannot
+reach the starhorn's bar. Forty cows on a lawn for ten scores worse than
 a dozen species that are all fed.
 
 ## The starhorn and star gems
@@ -75,12 +77,12 @@ farm's **Harmony** (a `harmony` condition, read from `FarmState.harmony`, which
 
 | Rung | Needs |
 | --- | --- |
-| Appears at the carnival (`DISCOVERY`) | Harmony 60 |
-| Visits the farm | Harmony 65 |
-| Calls the farm home | Harmony 70 and 6 grown flowers (`flowerCount`: dandelion, poppy, clover) |
-| Loves the farm | Harmony 85 |
+| Appears at the carnival (`DISCOVERY`) | Harmony 70 |
+| Visits the farm | Harmony 75 |
+| Calls the farm home | Harmony 80 and 6 grown flowers (`flowerCount`: dandelion, poppy, clover) |
+| Loves the farm | Harmony 90 |
 
-- It **holds its residency** (`holdsResidency`): if Harmony drops below 70 or the
+- It **holds its residency** (`holdsResidency`): if Harmony drops below 80 or the
   flowers go, it loses helium and deflates like the mole does.
 - It is **unique and has no house**. `houseFor('starhorn')` is `null`, so it never
   breeds, never goes indoors, and `isUniqueSpecies` keeps it out of the repeat-guest

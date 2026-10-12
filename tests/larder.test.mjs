@@ -74,7 +74,7 @@ test('harmony parts add up to the score and name a crowding species', () => {
   const parts = larder.harmonyParts(report, (id) => id[0].toUpperCase() + id.slice(1))
   assert.deepEqual(parts.map((part) => part.key), ['variety', 'balance', 'fed', 'links'])
   assert.ok(Math.abs(parts.reduce((sum, part) => sum + part.points, 0) - report.score) <= 2)
-  assert.equal(parts[1].note, 'Cows are over half the farm')
+  assert.ok(parts[1].note.startsWith('Cows are over half the farm'), parts[1].note)
 })
 
 test('plurals cover the irregular species', () => {

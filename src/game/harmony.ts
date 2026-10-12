@@ -5,13 +5,16 @@
  * one: forty cows on a lawn that feeds ten is a mess. Harmony rewards what the
  * food web is about:
  *
- *   variety   how many species live here                        (35 points)
- *   balance   how evenly they share the farm (Pielou evenness)   (25 points)
- *   fed       how many residents are fed or full                 (30 points)
- *   links     predators living off prey on the farm              (10 points)
+ *   variety   how many species live here                        (40 points)
+ *   balance   how evenly they share the farm (Pielou evenness)   (20 points)
+ *   fed       how many residents are fed or full                 (25 points)
+ *   links     predators living off prey on the farm              (15 points)
  *
- * Every part is a share, so the score means the same on a starter plot and on
- * a farm with fifteen deeds. The starhorn only comes to a farm in harmony.
+ * Balance and fed only count in full once the farm has `HARMONY_FULL_CARE`
+ * species: two well-fed, even species are easy, and should not score like a
+ * real food web. Every part is a share, so the score means the same on a
+ * starter plot and on a farm with fifteen deeds. The starhorn only comes to a
+ * farm in harmony.
  */
 
 import { hungerLevel, type HungerLevel } from './animal-diet'
@@ -29,6 +32,8 @@ export interface HarmonyReport {
   readonly balance: number
   readonly fed: number
   readonly links: number
+  /** How much balance and fed count, 0..1: in full from `HARMONY_FULL_CARE` species. */
+  readonly care: number
   /** Resident species, and how many of each. */
   readonly species: number
   readonly residents: number
@@ -40,10 +45,13 @@ export interface HarmonyReport {
   readonly hunger: Readonly<Record<HungerLevel, number>>
 }
 
-export const HARMONY_WEIGHTS = { variety: 35, balance: 25, fed: 30, links: 10 } as const
+export const HARMONY_WEIGHTS = { variety: 40, balance: 20, fed: 25, links: 15 } as const
 
 /** Species count that earns the whole variety share. */
 export const HARMONY_FULL_VARIETY = 8
+
+/** Species count at which balance and fed count in full; below it they are scaled down. */
+export const HARMONY_FULL_CARE = 5
 
 /** Predator and prey pairs that earn the whole links share. */
 export const HARMONY_FULL_LINKS = 2
@@ -86,11 +94,12 @@ export function measureHarmony(residents: readonly HarmonyResident[]): HarmonyRe
   const links = Math.min(1, activeLinks.length / HARMONY_FULL_LINKS)
   let crowding: string | null = null
   for (const [name, count] of counts) if (species > 1 && count / total > 0.5) crowding = name
+  const care = Math.min(1, species / HARMONY_FULL_CARE)
   const raw = total === 0 ? 0
-    : HARMONY_WEIGHTS.variety * variety + HARMONY_WEIGHTS.balance * balance + HARMONY_WEIGHTS.fed * fed + HARMONY_WEIGHTS.links * links
+    : HARMONY_WEIGHTS.variety * variety + care * (HARMONY_WEIGHTS.balance * balance + HARMONY_WEIGHTS.fed * fed) + HARMONY_WEIGHTS.links * links
   return {
     score: Math.round(Math.max(0, Math.min(100, raw))),
-    variety, balance, fed, links,
+    variety, balance, fed, links, care,
     species, residents: total, activeLinks, crowding, hunger,
   }
 }

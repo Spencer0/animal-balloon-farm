@@ -43,7 +43,7 @@ from them.
    | **A house** (`propCount` of a house prop) | has somewhere to live; **required** on the breeding rung | barn, coop, sty, goose house, frog house, owl box, dumpster, hollow log, rock pile | a house is a prop, plus a `HOUSE_SPECIES` entry: see *Adding a shop prop (and a house)* |
    | **Terrain** (`grassArea` / `waterArea` / `flatArea`) | needs land, not objects | all | nothing |
    | **Tall meadow** (`meadowArea`) | lives in long grass (the green seed pack), not on a lawn | all | nothing |
-   | **Farm harmony** (`harmony`, `flowerCount`) | only comes to a farm in balance (the starhorn: harmony 60 to discover, 65 to visit, 70 plus six flowers to settle, 85 to love it) | `harmony`, `flowerCount` | add the kind: see *The condition kinds* |
+   | **Farm harmony** (`harmony`, `flowerCount`) | only comes to a farm in balance (the starhorn: harmony 70 to discover, 75 to visit, 80 plus six flowers to settle, 90 to love it) | `harmony`, `flowerCount` | add the kind: see *The condition kinds* |
 | **Tool owned** (`toolOwned`) | is lured by the farmer's kit, not the land (the mole comes once the shovel is bought) | `shovel`, `water` (the seed bag is always owned) | add the upgrade to `TOOL_UPGRADES` in `tool-unlocks.ts` |
 | **Terrain share** (`terrainShare`) | needs the farm to *be* a kind of ground, by percent (a mole: 50% dirt to visit, 90% to settle) | `dirt` (bare soil; `snow` is reserved) | add the terrain to `TerrainKind` and measure it in `farm-state.ts` |
 | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl; mouse, for the snake | see *Predators and fliers* |
@@ -64,7 +64,7 @@ from them.
 
 > **Every animal must have a house. One exception: the starhorn.** It is the unique end-game animal
 > (`isUniqueSpecies`, `UNIQUE_SPECIES` in `animal-conditions.ts`): no house, so it never breeds, and its
-> "Love the farm" rung is a glow at Harmony 85. Anything new that is not the starhorn needs a house.
+> "Love the farm" rung is a glow at Harmony 90. Anything new that is not the starhorn needs a house.
 >
 > **Every animal must have a house.** A species without one can never breed (babies
 > are born indoors), has no space indoors, and keeps every member out on the farm, where it eats
