@@ -21,6 +21,7 @@ import type { createGardenWaterField } from './garden-water'
 import type { createGardenWaterMesh } from '../scene/garden-water-mesh'
 import type { createWallet } from './sales'
 import type { TreasureLedger } from './treasures'
+import type { ChapterState } from './farm-chapters'
 
 export interface FarmSaveDeps {
   readonly loadedSave: SaveGameData | null
@@ -62,10 +63,14 @@ export interface FarmSaveDeps {
   readonly notificationPanel: { notifyAccomplishment(title: string, detail: string): void }
   readonly menuOpen: () => boolean
   readonly syncFarmChrome: () => void
+  /** Chapters opened so far, saved beside the farm. */
+  readonly chapterState: () => ChapterState
+  /** Coins earned from collected goods, ever. */
+  readonly goodsCoins: () => number
 }
 
 export function createFarmSave(deps: FarmSaveDeps) {
-  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, gems, treasures, applyTreasureEffects, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncOwnedTools, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome } = deps
+  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, gems, treasures, applyTreasureEffects, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncOwnedTools, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome, chapterState, goodsCoins } = deps
   /** Seconds of play in this farm, across every session that has carried it. */
   let playSeconds = loadedSave?.playSeconds ?? 0
 
@@ -113,6 +118,8 @@ export function createFarmSave(deps: FarmSaveDeps) {
       coins: wallet.balance,
       gems: gems.balance,
       treasures: treasures.owned(),
+      chapters: chapterState(),
+      goodsCoins: goodsCoins(),
       progression: progression.exportState(),
       upgrades: Object.fromEntries(UPGRADE_ORDER.map((id) => [id, upgrades.count(id)])),
       accomplishments: accomplishments.exportState(),
