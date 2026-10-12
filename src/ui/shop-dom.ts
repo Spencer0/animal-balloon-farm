@@ -1,6 +1,6 @@
 import "./journal-dom.css";
 import "./shed-dom.css";
-import { PLANT_CATALOG, SEED_PRICES, type PlantId } from "../game/plants";
+import { PLANT_CATALOG, SEED_PRICES, type PlantCare, type PlantId } from "../game/plants";
 import { PROP_CATALOG, PROP_ORDER, type PropId } from "../game/farm-props";
 import { seedThumb, propThumb } from "./shed-dom";
 import {
@@ -18,6 +18,17 @@ export interface ShopBuyResult {
   readonly text: string;
 }
 
+/** One garden helper as the Seeds tab shows it for a species. */
+export interface ShopHelperRow {
+  readonly care: PlantCare;
+  readonly name: string;
+  readonly blurb: string;
+  /** What earns the ribbon, shown while it is missing. */
+  readonly needs: string;
+  readonly status: "needs-ribbon" | "available" | "hired";
+  readonly price: number;
+}
+
 export interface ShopDomCallbacks {
   onClose: () => void;
   onBuy: (id: PropId) => ShopBuyResult;
@@ -29,6 +40,9 @@ export interface ShopDomCallbacks {
   farmerLevel: () => number;
   quoteUpgrade: (id: UpgradeId) => UpgradeQuote;
   onBuyUpgrade: (id: UpgradeId) => ShopBuyResult;
+  /** The helpers a species can hire, or an empty list for tap-care plants. */
+  helpersFor: (species: PlantId) => readonly ShopHelperRow[];
+  onHireHelper: (species: PlantId, care: PlantCare) => ShopBuyResult;
 }
 
 export interface ShopDomPanel {
@@ -93,7 +107,8 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       return `${id}:${quote.status}:${quote.owned}:${quote.price}`;
     }).join("|");
     const seeds = PLANT_CATALOG.map((plant) => `${plant.id}:${callbacks.seedsFor(plant.id)}`).join("|");
-    return `${tab}|${selected}|${selectedUpgrade}|${selectedSeed}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${seeds}|${feedback}`;
+    const helpers = callbacks.helpersFor(selectedSeed).map((row) => `${row.care}:${row.status}`).join("|");
+    return `${tab}|${selected}|${selectedUpgrade}|${selectedSeed}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${seeds}|${helpers}|${feedback}`;
   }
 
   /** A drawn icon for the upgrades, so they need no baked art: a sack for seed, a scroll for land. */
@@ -121,6 +136,50 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
         `<path d="M19 25h26M19 32h26M19 39h14" stroke="#fff6dc" stroke-width="3" stroke-linecap="round" opacity=".9"/>` +
         `<circle cx="44" cy="42" r="6" fill="#b8503f"/>`;
     return `<svg class="sh-upgrade-icon" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"${locked ? ` style="opacity:.5;filter:grayscale(.6)"` : ""}>${body}</svg>`;
+  }
+
+  /** A drawn badge per helper: the raincloud, the ladybug, the hedgehog. */
+  function helperIcon(care: PlantCare): string {
+    const body = care === "water"
+      ? `<ellipse cx="20" cy="18" rx="15" ry="10" fill="#f4f7fb" stroke="#6b4a33" stroke-width="2"/><path d="M13 31v5M20 31v6M27 31v5" stroke="#6fb7c9" stroke-width="3" stroke-linecap="round"/>` +
+        `<path d="M14 17q2 2 4 0M22 17q2 2 4 0" fill="none" stroke="#6b4a33" stroke-width="1.6" stroke-linecap="round"/>`
+      : care === "pest"
+      ? `<ellipse cx="20" cy="22" rx="13" ry="12" fill="#e0432f" stroke="#6b4a33" stroke-width="2"/><path d="M20 10v24" stroke="#6b4a33" stroke-width="2"/>` +
+        `<circle cx="14" cy="19" r="2.6" fill="#24202a"/><circle cx="26" cy="19" r="2.6" fill="#24202a"/><circle cx="15" cy="28" r="2.2" fill="#24202a"/><circle cx="25" cy="28" r="2.2" fill="#24202a"/><circle cx="20" cy="9" r="5" fill="#24202a"/>`
+      : `<path d="M6 30c0-12 7-20 15-20s13 7 13 15l-5 5z" fill="#8a5a3a" stroke="#6b4a33" stroke-width="2"/><path d="M8 18l-3-4M13 13l-1-5M20 10l1-5M27 12l3-4" stroke="#6b4a33" stroke-width="2" stroke-linecap="round"/>` +
+        `<ellipse cx="29" cy="27" rx="7" ry="6" fill="#f1d7b0" stroke="#6b4a33" stroke-width="2"/><circle cx="35" cy="27" r="2" fill="#24202a"/><circle cx="28" cy="25" r="1.5" fill="#24202a"/>`;
+    return `<svg class="sh-helper-icon" viewBox="0 0 40 40" width="40" height="40" aria-hidden="true">${body}</svg>`;
+  }
+
+  /** How many of a species' chores have earned their Green Thumb ribbon. */
+  function ribbonPill(species: PlantId): string {
+    const rows = callbacks.helpersFor(species);
+    if (!rows.length) return "";
+    const earned = rows.filter((row) => row.status !== "needs-ribbon").length;
+    return `<span class="sh-pill sh-ribbons">Ribbons ${earned}/${rows.length}</span>`;
+  }
+
+  /** The Seeds tab's helpers for a species: earned by ribbon, then hired for coins. */
+  function helpersHtml(species: PlantId): string {
+    const rows = callbacks.helpersFor(species);
+    if (!rows.length) return "";
+    const coins = callbacks.balance();
+    return (
+      `<div class="sh-helpers"><h3>Garden helpers</h3>` +
+      rows.map((row) => {
+        const action = row.status === "hired"
+          ? `<span class="sh-pill sh-hired">Hired</span>`
+          : row.status === "available"
+          ? `<button type="button" class="sh-btn sh-btn-warm sh-hire" data-hire-helper="${row.care}"${coins >= row.price ? "" : " disabled"}>${coins >= row.price ? `Hire (${row.price})` : `Need ${row.price}`}</button>`
+          : `<span class="sh-pill sh-ribbonless">No ribbon yet</span>`;
+        return (
+          `<div class="sh-helper" data-status="${row.status}">${helperIcon(row.care)}` +
+          `<div class="sh-helper-text"><b>${escapeHtml(row.name)}</b><span>${escapeHtml(row.status === "needs-ribbon" ? row.needs : row.blurb)}</span></div>` +
+          `${action}</div>`
+        );
+      }).join("") +
+      `</div>`
+    );
   }
 
   function upgradePill(quote: UpgradeQuote, coins: number): string {
@@ -218,11 +277,12 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
         return (
           `<img src="${seedThumb(plant.id)}" alt="" draggable="false" />` +
           `<h2>${escapeHtml(plant.name)} seed</h2>` +
-          `<div class="sh-pills"><span class="sh-pill">${price} coins</span><span class="sh-pill">${owned} in shed</span></div>` +
+          `<div class="sh-pills"><span class="sh-pill">${price} coins</span><span class="sh-pill">${owned} in shed</span>${ribbonPill(plant.id)}</div>` +
           `<p class="sh-blurb">${escapeHtml(plant.description)}</p>` +
           `<button type="button" class="sh-btn sh-btn-warm" data-buy-seed="${plant.id}"${afford ? "" : " disabled"}>${afford ? `Buy (${price} coins)` : `Need ${price} coins`}</button>` +
           `<button type="button" class="sh-btn sh-btn-quiet" data-action="close">Keep browsing</button>` +
-          `<p class="sh-feedback">${escapeHtml(feedback)}</p>`
+          `<p class="sh-feedback">${escapeHtml(feedback)}</p>` +
+          helpersHtml(plant.id)
         );
       }
       return `<h2>Animals</h2><p class="sh-blurb">No animals for sale yet. Befriend them at the circus instead.</p><p class="sh-feedback">${escapeHtml(feedback)}</p>`;
@@ -271,7 +331,7 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
 
   shop.addEventListener("click", (event) => {
     const target = event.target instanceof HTMLElement
-      ? event.target.closest("[data-tab],[data-select],[data-select-seed],[data-select-upgrade],[data-action],[data-buy],[data-buy-seed],[data-buy-upgrade]")
+      ? event.target.closest("[data-tab],[data-select],[data-select-seed],[data-select-upgrade],[data-action],[data-buy],[data-buy-seed],[data-buy-upgrade],[data-hire-helper]")
       : null;
     if (!(target instanceof HTMLElement)) return;
     if (target.dataset["action"] === "close") {
@@ -310,6 +370,13 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     const buySeed = target.dataset["buySeed"] as PlantId | undefined;
     if (buySeed) {
       feedback = callbacks.onBuySeed(buySeed).text;
+      lastSignature = "";
+      render();
+      return;
+    }
+    const hireHelper = target.dataset["hireHelper"] as PlantCare | undefined;
+    if (hireHelper) {
+      feedback = callbacks.onHireHelper(selectedSeed, hireHelper).text;
       lastSignature = "";
       render();
       return;

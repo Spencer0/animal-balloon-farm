@@ -9,6 +9,10 @@ Run from the project root in PowerShell:
 
     blender --background --factory-startup --python art/blender/shed_icons.py
 
+Name species after `--` to render only those packets (for example
+`-- blueberry`); the review sheet and `seeds.blend` are always rebuilt from
+every packet PNG on disk.
+
 Regeneration command: overwrites `public/assets/seeds/seed-<id>.png`
 (256x256, transparent), the contact sheet `seeds-review.png`, and the editable
 source `seeds.blend`. Icons are modelled upright (Z up) and rendered from a
@@ -17,6 +21,7 @@ front orthographic camera with unlit emission materials.
 
 import math
 import os
+import sys
 
 import bpy
 
@@ -29,6 +34,7 @@ SPECIES = [
     ("dandelion", "Dandelion", (0.91, 0.77, 0.27, 1.0)),
     ("poppy", "Poppy", (0.91, 0.48, 0.38, 1.0)),
     ("water-lily", "Water lily", (0.85, 0.58, 0.79, 1.0)),
+    ("blueberry", "Blueberry", (0.36, 0.45, 0.78, 1.0)),
 ]
 
 CREAM = (0.96, 0.90, 0.76, 1.0)
@@ -119,6 +125,13 @@ def build_motif(plant_id, badge_rgba, y):
         for dx, dz in ((-0.15, -0.02), (0.15, -0.02), (-0.1, -0.2), (0.1, -0.2)):
             blob((dx, y, -0.02 + dz), (0.2, 0.04, 0.2), mid)
         blob((0, y - 0.03, -0.14), (0.09, 0.04, 0.09), mat_flat("poppy_eye", (0.22, 0.14, 0.14, 1.0)))
+    elif plant_id == "blueberry":
+        for dx, dz in ((-0.2, 0.1), (0.2, 0.08), (0.0, 0.24)):
+            blob((dx, y + 0.01, dz - 0.12), (0.16, 0.03, 0.08), leaf, rotation=(0, math.radians(dx * 120), 0))
+        for dx, dz in ((-0.13, -0.16), (0.13, -0.16), (0.0, -0.02)):
+            blob((dx, y - 0.02, dz - 0.04), (0.13, 0.05, 0.13), deep)
+            blob((dx - 0.04, y - 0.05, dz), (0.035, 0.03, 0.035), light)
+            blob((dx, y - 0.06, dz - 0.04 + 0.1), (0.03, 0.02, 0.02), mat_flat("berry_crown", (0.16, 0.17, 0.32, 1.0)))
     else:
         blob((0, y, -0.34), (0.42, 0.03, 0.1), leaf)
         petals(8, 0.2, (0.075, 0.03, 0.2), mid, y - 0.01, centre=(0, -0.02))
@@ -172,7 +185,8 @@ def clear_scene():
 
 def setup_render(path, width=SIZE, height=SIZE):
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    engines = [item.identifier for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
+    scene.render.engine = "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines else "BLENDER_EEVEE"
     scene.render.resolution_x = width
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
@@ -212,7 +226,10 @@ def ensure_camera(location, rotation, scale):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
+    wanted = set(sys.argv[sys.argv.index("--") + 1:]) if "--" in sys.argv else set()
     for plant_id, _name, badge in SPECIES:
+        if wanted and plant_id not in wanted:
+            continue
         clear_scene()
         ensure_camera((0, -6, 0.0), (math.radians(90), 0, 0), 2.35)
         build_packet(plant_id, badge)
@@ -222,7 +239,7 @@ def main():
         print("wrote " + path)
 
     clear_scene()
-    ensure_camera((0, 0, 6), (0, 0, 0), 5.0)
+    ensure_camera((0, 0, 6), (0, 0, 0), 1.4 * len(SPECIES) - 0.6)
     for i, (plant_id, _name, _badge) in enumerate(SPECIES):
         img_path = os.path.abspath(os.path.join(OUT_DIR, "seed-%s.png" % plant_id))
         img = bpy.data.images.load(img_path)
@@ -240,7 +257,7 @@ def main():
         bpy.ops.mesh.primitive_plane_add(size=1.0)
         tile = bpy.context.active_object
         put(tile, location=((i - (len(SPECIES) - 1) / 2.0) * 1.4, 0, 0), scale=(1.2, 1.2, 1.2), material=img_mat)
-    setup_render(os.path.abspath(os.path.join(OUT_DIR, "seeds-review.png")), 1024, 256)
+    setup_render(os.path.abspath(os.path.join(OUT_DIR, "seeds-review.png")), 256 * len(SPECIES), 256)
     bpy.ops.render.render(write_still=True)
     print("wrote review sheet")
     bpy.ops.wm.save_as_mainfile(

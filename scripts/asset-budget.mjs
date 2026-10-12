@@ -16,6 +16,9 @@ const BUDGETS = [
   { dir: 'public/assets/cursors', maxTris: 25_000, maxKb: 700, label: 'cursor' },
   { dir: 'public/assets/props', maxTris: 8000, maxKb: 400, label: 'prop' },
   { dir: 'public/assets/ui', maxTris: 8000, maxKb: 500, label: 'ui prop' },
+  // Garden plants and the cast of their care minigames. A bush is planted by the
+  // dozen, so it is held to a prop's triangle cap.
+  { dir: 'public/assets/plants', maxTris: 8000, maxKb: 400, label: 'plant' },
   // The intro film's cast and sets. Loaded only while the cutscene plays (never
   // during farming), so they are budgeted per scene rather than per crowd.
   { dir: 'public/assets/cutscenes', maxTris: 50_000, maxKb: 1000, label: 'cutscene' },

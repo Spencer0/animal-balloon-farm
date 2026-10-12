@@ -18,8 +18,8 @@ const stockedSimulation = () => {
 }
 const surface = (substrate, waterDepth = 0, inBounds = true) => ({ substrate, waterDepth, inBounds })
 
-test('catalog starts with four useful plants and an empty seed shed', () => {
-  assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily'])
+test('catalog lists every plant and the seed shed starts empty', () => {
+  assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily', 'blueberry'])
   const simulation = createPlantSimulation()
   for (const species of PLANT_CATALOG) {
     assert.equal(simulation.seedsFor(species.id), species.id === STARTING_SEED_GIFT.species ? 1 : STARTING_SEEDS_PER_PLANT)
@@ -143,4 +143,35 @@ test('poppy needs pruning during growth, then matures without further maintenanc
   simulation.tick(100)
   assert.equal(simulation.plants[0].growth, 1)
   assert.equal(simulation.plants[0].careNeeded, null)
+})
+
+test('a blueberry bush asks for a drink, a beetle swat and a snip, in that order', () => {
+  const simulation = stockedSimulation()
+  const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
+  assert.ok(bush)
+  assert.equal(PLANT_CATALOG.find(({ id }) => id === 'blueberry').minigames, true)
+  const answered = []
+  for (let step = 0; step < 400; step += 1) {
+    simulation.tick(1)
+    const state = simulation.plants[0]
+    if (state.careNeeded) {
+      answered.push(state.careNeeded)
+      assert.equal(simulation.resolveCare(bush.instanceId, state.careNeeded), true)
+    }
+  }
+  assert.deepEqual(answered, ['water', 'pest', 'prune'])
+  assert.equal(simulation.plants[0].mature, true)
+})
+
+test('a saved bush waiting on its beetles is still waiting after a reload', () => {
+  const simulation = stockedSimulation()
+  const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
+  while (simulation.plants[0].careNeeded !== 'pest') {
+    simulation.tick(1)
+    const state = simulation.plants[0]
+    if (state.careNeeded === 'water') simulation.resolveCare(bush.instanceId, 'water')
+  }
+  const restored = createPlantSimulation()
+  restored.importState(JSON.parse(JSON.stringify(simulation.exportState())))
+  assert.equal(restored.plants[0].careNeeded, 'pest')
 })

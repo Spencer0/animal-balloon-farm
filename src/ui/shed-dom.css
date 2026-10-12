@@ -280,3 +280,87 @@
     padding: 12px;
   }
 }
+
+/* Garden helpers (Seeds tab): earned with a Green Thumb ribbon, then hired. */
+.sh-helpers {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 3px dashed #b08c5e;
+  text-align: left;
+}
+
+.sh-helpers h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 900;
+  color: #5a3d2b;
+}
+
+.sh-helper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: #fffdf6;
+  border: 2px solid #b08c5e;
+  border-radius: 12px;
+}
+
+.sh-helper[data-status="needs-ribbon"] .sh-helper-icon {
+  opacity: 0.45;
+  filter: grayscale(0.8);
+}
+
+.sh-helper[data-status="hired"] {
+  border-color: #79ad58;
+}
+
+.sh-helper-icon {
+  flex: none;
+}
+
+.sh-helper-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 140px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #8a6749;
+}
+
+.sh-helper-text b {
+  font-size: 13px;
+  color: #5a3d2b;
+}
+
+.sh-helper .sh-hire {
+  width: auto;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sh-hired {
+  border-color: #79ad58;
+  color: #4f7a3a;
+}
+
+.sh-ribbonless {
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.sh-ribbons {
+  border-color: #79ad58;
+  color: #4f7a3a;
+}
+
+/* The hire button or status sits under the text, so the blurb gets the width. */
+.sh-helper > .sh-pill,
+.sh-helper > .sh-hire {
+  margin-left: 48px;
+}

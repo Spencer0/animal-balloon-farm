@@ -18,7 +18,9 @@ import type { createAnimalLife, AnimalRecord } from '../game/animal-life'
 import type { Bed } from '../game/sleep'
 import type { createProgressLedger } from '../game/farm-progression'
 import type { createAccomplishmentTracker } from '../game/accomplishments'
-import { PLANT_CATALOG, type PlantId, type PlantSurface } from '../game/plants'
+import { PLANT_CARE_KINDS, PLANT_CATALOG, type PlantCare, type PlantId, type PlantSurface } from '../game/plants'
+import type { CareController } from '../care-controller'
+import type { GreenThumb } from '../game/plant-helpers'
 import { PROP_CATALOG, purchaseProp, type PropId } from '../game/farm-props'
 import { UPGRADE_CATALOG, upgradeQuote, propUnlockLevel, type UpgradeId, type createUpgradeLedger } from '../game/tool-unlocks'
 import { OUTDOOR_LIMITS } from '../game/animal-housing'
@@ -120,6 +122,21 @@ interface GardenDebugHarness {
    * pauses for a drink and a pinch, so time alone will not mature it.
    */
   growPlants(steps?: number, secondsPerStep?: number): PlantHarnessResult
+  /**
+   * Grow until the first plant of `species` asks for `care` (water, pest or
+   * prune), answering every other need on the way. Null if it never asks.
+   */
+  growUntilCare(care: string, species?: string, maxSteps?: number): { instanceId: number; growth: number } | null
+  /** Press a plant's care marker (default: the first plant that needs care), opening its minigame. */
+  startCare(instanceId?: number): unknown
+  /** Where the open care minigame is: its phase and round. */
+  careState(): unknown
+  /** Settle the open care minigame now, won or lost. */
+  settleCare(won: boolean): unknown
+  /** Ribbons and hired helpers. `hire` grants a species' chore ribbon and hires its helper for free. */
+  greenThumb(hire?: { species: string; care: string }): unknown
+  /** Hold a seed as if picked from the shed, so the placement preview follows the pointer. */
+  armSeed(species: string): boolean
   /** Run the progression tick `steps` times, optionally with a time jump. */
   advance(steps?: number, secondsPerStep?: number): AnimalConditionReport
   /** Tick every animal model without drawing, so a capture flourish finishes in a slow headless browser. */
@@ -328,6 +345,8 @@ export interface GardenHarnessDeps {
   readonly houseSpots: () => readonly { readonly id: string; readonly prop: string; readonly x: number; readonly z: number; readonly doorX: number; readonly doorZ: number }[]
   readonly gardenBounds: () => GardenBounds
   readonly setGardenBounds: (bounds: GardenBounds) => void
+  readonly careController: CareController
+  readonly greenThumb: GreenThumb
   readonly setClockHeld: (held: boolean) => void
   readonly setFocusedAnimal: (id: string | null) => void
   readonly resetRoster: () => void
@@ -677,6 +696,51 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       }
       return { ok: true, failure: null, mature: maturePlantCounts() }
     },
+    growUntilCare: (care, species = 'blueberry', maxSteps = 600) => {
+      const simulation = deps.gardenPlants()?.simulation
+      if (!simulation) return null
+      for (let step = 0; step < maxSteps; step += 1) {
+        const target = simulation.plants.find((plant) => plant.species === species)
+        if (!target) return null
+        if (target.careNeeded === care) return { instanceId: target.instanceId, growth: target.growth }
+        for (const plant of simulation.plants) {
+          if (plant.careNeeded) simulation.resolveCare(plant.instanceId, plant.careNeeded)
+        }
+        simulation.tick(0.5)
+      }
+      return null
+    },
+    startCare: (instanceId) => {
+      const plant = deps.gardenPlants()?.simulation.plants.find((entry) => (instanceId === undefined ? entry.careNeeded !== null : entry.instanceId === instanceId))
+      if (!plant?.careNeeded) return { ok: false, failure: 'no-care-needed' }
+      deps.careController.startGame(plant, plant.careNeeded)
+      return { ok: true, care: plant.careNeeded, playing: deps.careController.playing, rain: deps.careController.rain.active }
+    },
+    careState: () => ({
+      playing: deps.careController.playing,
+      rain: deps.careController.rain.active,
+      game: deps.careController.player?.describe() ?? null,
+      greenThumb: deps.greenThumb.exportState(),
+    }),
+    settleCare: (won) => {
+      if (deps.careController.player) deps.careController.player.settle(won)
+      else deps.careController.rain.settle(won)
+      return { playing: deps.careController.playing, rain: deps.careController.rain.active }
+    },
+    armSeed: (species) => {
+      const garden = deps.gardenPlants()
+      if (!garden || !PLANT_CATALOG.some((entry) => entry.id === species)) return false
+      gardenTools?.setPlantingMode(true)
+      garden.selectSpecies(species as PlantId)
+      return garden.selectedSpecies === species
+    },
+    greenThumb: (hire) => {
+      if (hire && PLANT_CARE_KINDS.includes(hire.care as PlantCare)) {
+        deps.greenThumb.earnRibbon(hire.species as PlantId, hire.care as PlantCare)
+        deps.greenThumb.hire(hire.species as PlantId, hire.care as PlantCare, 0, () => true)
+      }
+      return deps.greenThumb.exportState()
+    },
     advance: (steps = 1, secondsPerStep = 1 / 30) => {
       for (let step = 0; step < steps; step += 1) {
         const events = progress.tick(animalLifeSnapshot(), secondsPerStep)
@@ -830,6 +894,8 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'upgrades / buyUpgrade / awardPoints / swapPack / stepTools': 'Farmer level, shop upgrades (tall grass pack, land deeds), and the E pack swap.',
       'sowGrass / digPond / digAt / pourAt / clearGarden': 'Terrain + water fixtures in garden meters.',
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
+      'growUntilCare / startCare / settleCare': "growUntilCare('pest') then startCare() opens the swat game; settleCare(true) wins it.",
+      greenThumb: "greenThumb({ species: 'blueberry', care: 'water' }) hires the Pet Raincloud for free.",
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
       expandFarm: 'expandFarm(level) — reveal parcels without earning them.',
       expandOnce: 'expandOnce() — watch one real-time carnival pack-up and land reveal.',

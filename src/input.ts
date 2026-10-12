@@ -43,6 +43,10 @@ export interface FarmInputDeps {
   readonly endCameraTour: (restore: boolean) => void
   readonly hoverGlow: ReturnType<typeof createHoverGlow>
   readonly toolIsOwned: (id: import('./scene/garden-tool-art').GardenToolId) => boolean
+  /** The rain cloud on the farm, while a watering minigame is up: it owns the left click. */
+  readonly rainChallenge: () => { readonly active: boolean; pointerDown(clientX: number, clientY: number): boolean; isOverCloud(clientX: number, clientY: number): boolean } | null
+  /** A close-up care minigame owns the screen: the farm takes no input at all. */
+  readonly careGameActive: () => boolean
 }
 
 export interface FarmInput {
@@ -150,6 +154,11 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
         setCursor(kind, gameCanvas)
         return
       }
+    }
+    const rain = deps.rainChallenge()
+    if (overFarm && rain?.active) {
+      setCursor(rain.isOverCloud(lastPointerClient.x, lastPointerClient.y) ? 'water' : 'point', gameCanvas)
+      return
     }
     if (overFarm) {
       const markerKind = pointerActive() ? gardenPlants()?.markerKindAt(lastPointerClient.x, lastPointerClient.y) : null
@@ -347,8 +356,15 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
   }
 
   function orbitPointerDown(event: PointerEvent): void {
+    if (deps.careGameActive()) return
     if (uiPointerDown(event)) return
     if (menu.isOpen) return
+    const rain = deps.rainChallenge()
+    if (rain?.active && event.button === 0 && !isOverGameHUD(event.clientX, event.clientY)) {
+      event.preventDefault()
+      rain.pointerDown(event.clientX, event.clientY)
+      return
+    }
     // A press on a farm object goes to the object, whatever tool is armed.
     const onObject = !isOverGameHUD(event.clientX, event.clientY) && pointerActive() && hoverInteractable(event.clientX, event.clientY)
     if (event.button === 0 && (pointerActive() || onObject) && !isOverGameHUD(event.clientX, event.clientY)) {
@@ -527,6 +543,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
   const PAN_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright']
 
   function handleKeyDown(event: KeyboardEvent): void {
+    if (deps.careGameActive()) return
     if (event.key === 'Shift') setShiftHeld(true)
     if (gardenPlants()?.selectedSpecies && !menu.isOpen && !journal.isOpen && !shed.isOpen && !shop.isOpen && !event.altKey && !event.ctrlKey && !event.metaKey && !isTextInputTarget(event.target)) {
       const tool = GARDEN_TOOLS.find((entry) => entry.hotkey === toolHotkey(event) && deps.toolIsOwned(entry.id))

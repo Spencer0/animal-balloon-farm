@@ -195,3 +195,16 @@ blender --background --factory-startup --python art/blender/animal_houses.py -- 
 ```
 
 With no names it rebuilds all four. Each house shares the coop's palette (cream boards, teal trim, terracotta roofs) and faces its door toward -Y (glTF +Z): the game walks animals to that side of the footprint to go in and out. The coop and barn keep their own scripts. After a rebuild, refresh the shop icons with `prop_thumbs.py -- <id>`.
+
+## Blueberry bush and the garden critters
+
+- Authoring script: [`blueberry_bush.py`](blueberry_bush.py)
+- Outputs in `../../public/assets/plants/`: `blueberry-bush.blend` (source for both models), `blueberry-review.png`, `blueberry-bush.glb`, `garden-critters.glb`
+
+```powershell
+blender --background --factory-startup --python art/blender/blueberry_bush.py
+```
+
+The bush is a balloon-leaf dome on a pine-mulched mound, split into node groups the game shows, hides and scales as it grows (`BB_canopy`, `BB_flowers`, `BB_berries`, `BB_shoots`, ...). Its berries share one material, `BB berry`, which the game re-tints green, pink and blue as they ripen. `garden-critters.glb` holds the cast of the care minigames and helpers: the beetle (flappable wing pivots), the ladybug, a two-half leaf for slicing, the rain cloud, the fly swatter and the hedgehog. The script's docstring lists every node name the game reads.
+
+The blueberry seed packet comes from `shed_icons.py`; render only it with `-- blueberry` so the approved packets are left alone.
