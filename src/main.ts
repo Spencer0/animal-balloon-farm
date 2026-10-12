@@ -66,6 +66,8 @@ import { createSellBurst, warmSellBursts, type SellBurst } from './ui/sell-burst
 import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
+import { createLarderDom } from './ui/larder-dom'
+import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from './game/animal-diet'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
 import { setCursor } from './ui/ui-cursor'
 import { createHoverGlow } from './scene/hover-glow'
@@ -903,6 +905,36 @@ const playerDom = createPlayerDomPanel({
   },
 })
 
+/** The Harmony chip on the farm HUD, and the Larder it opens: what the farm grows, what is eaten, and feed sacks. */
+const larderDom = createLarderDom({
+  source: {
+    report: () => progress.foodReport(),
+    // The same residents residentCounts() counts: grown, not a baby, not sold.
+    residents: () => progress.all().filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold),
+    balance: () => wallet.balance,
+  },
+  nameOf: animalDisplayName,
+  onOpen: () => {
+    larderDom.setOpen(true)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  onClose: () => {
+    larderDom.setOpen(false)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  onBuyFeed: () => {
+    const pantry = progress.foodReport().find((entry) => entry.food === 'feed')?.stock ?? 0
+    if (pantry + FEED_SACK_MEALS > FEED_CAPACITY) return { ok: false, text: `The pantry is full: it holds ${FEED_CAPACITY} meals.` }
+    if (wallet.debit(FEED_SACK_PRICE) === null) return { ok: false, text: `Not enough coins: a feed sack costs ${FEED_SACK_PRICE}.` }
+    progress.addFeed(FEED_SACK_MEALS)
+    salePanel.setWallet(wallet.balance)
+    saveSoon()
+    return { ok: true, text: `${FEED_SACK_MEALS} meals of feed stacked in the pantry.` }
+  },
+})
+
 const balloon = createBalloonPanel(window.innerWidth, window.innerHeight, (quadrant) => {
   if (quadrant === 'journal') {
     shed.close()
@@ -1214,6 +1246,7 @@ const { selectGardenTool, handleMenuChoice, syncFarmChrome } = createFarmModes({
   clockCalendarHud,
   notificationDom,
   playerDom,
+  larderDom,
   optionsDom,
   farmsPanel,
   markEntered,
@@ -1712,7 +1745,9 @@ function frame(now: number): void {
   gardenProps?.update(delta, progression.level)
   // Cheap and state-driven, so they stay per frame: the letter tray must hide the
   // frame a panel opens, not 250 ms later.
-  notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen)
+  notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen)
+  // The chip belongs to the bare farm view: any open panel or the main menu hides it.
+  larderDom.setChipVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen && !optionsDom.isOpen && !farmsPanel.isOpen && !notificationDom.isOpen)
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
   // Open panels rebuild their DOM, so they refresh at a fixed low rate. Closed
   // panels skip the work entirely; their stats are only gathered when open.
@@ -1726,6 +1761,7 @@ function frame(now: number): void {
     shedDom.refresh()
     // Goods accrue and animals come and go while a house's card is open.
     if (propCard.isOpen && selectedProp && isHouse(selectedProp.id)) propCard.setResidents(residentsOf(selectedProp))
+    larderDom.refresh()
   }
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
