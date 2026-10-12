@@ -1382,7 +1382,7 @@ syncFarmChrome()
 if (loadedSave) applySavedWorld(loadedSave)
 else if (startup.notice) farmsPanel.open(startup.notice)
 // Chapters load after the farm, so a legacy save can catch up from its real farm.
-if (loadedSave) chapters.importState(loadedSave.chapters, loadedSave.chapters ? undefined : chapterSignals())
+if (loadedSave) chapters.importState(loadedSave.chapters)
 else chapters.reset()
 applyChapterFlags()
 refreshChapterChip()

@@ -3,8 +3,7 @@
  *
  * Pure, like the rest of `src/game/`. The farm is measured into a handful of
  * `ChapterSignals`; each chapter ends when its signal says the player has got
- * the hang of it (or by a calendar day, so nobody is stuck), and the next one
- * opens. Systems never ask "which chapter is it?": they ask `flags()`, so a
+ * the hang of it, and the next one opens. Systems never ask "which chapter is it?": they ask `flags()`, so a
  * chapter can be reordered or split without touching them.
  */
 
@@ -61,15 +60,28 @@ export interface ChapterDef {
   readonly goal: string
   /** True once the player has done what this chapter asks; the next one opens. */
   readonly endsWhen: (signals: ChapterSignals) => boolean
-  /** Progress toward `endsWhen`, 0..1, for the HUD and journal. */
+  /** Progress toward `endsWhen`, 0..1, for the journal. */
   readonly progress: (signals: ChapterSignals) => number
-  /** The next chapter opens by this day regardless, so nobody is stuck. Absent: never by time. */
-  readonly fallbackDay?: number
+  /** The goal broken into its checkable parts, for the journal's Stages page. */
+  readonly parts: (signals: ChapterSignals) => readonly ChapterGoalPart[]
+  /** What opening this chapter puts in the farmer's hands, one short line each. */
+  readonly unlocks: readonly string[]
+}
+
+export interface ChapterGoalPart {
+  readonly label: string
+  /** "7 / 10", "yes", "not yet". */
+  readonly value: string
+  readonly done: boolean
 }
 
 const GRAZERS = ['cow', 'sheep']
 const PREDATORS = ['owl', 'snake']
 const share = (value: number, target: number): number => Math.max(0, Math.min(1, value / target))
+const count = (label: string, value: number, target: number): ChapterGoalPart =>
+  ({ label, value: `${Math.min(Math.floor(value), target)} / ${target}`, done: value >= target })
+const has = (label: string, yes: boolean): ChapterGoalPart => ({ label, value: yes ? 'yes' : 'not yet', done: yes })
+const anyOf = (signals: ChapterSignals, species: readonly string[]): boolean => species.some((name) => signals.residentSpecies.has(name))
 
 /** Chapter 1 ends at this many grown plants. */
 export const GARDEN_PLANTS_GOAL = 10
@@ -88,7 +100,8 @@ export const CHAPTERS: Readonly<Record<ChapterId, ChapterDef>> = {
     goal: `Grow ${GARDEN_PLANTS_GOAL} plants`,
     endsWhen: (s) => s.grownPlants >= GARDEN_PLANTS_GOAL,
     progress: (s) => share(s.grownPlants, GARDEN_PLANTS_GOAL),
-    fallbackDay: 4,
+    parts: (s) => [count('Grown plants', s.grownPlants, GARDEN_PLANTS_GOAL)],
+    unlocks: ['Seeds that grow in bare dirt', 'Watering and selling plants'],
   },
   land: {
     id: 'land', number: 2, title: 'The Lay of the Land', tagline: 'Grass, ponds and hills, by your hand.',
@@ -96,7 +109,8 @@ export const CHAPTERS: Readonly<Record<ChapterId, ChapterDef>> = {
     goal: `Sow ${LAND_LAWN_GOAL} m² of lawn and welcome a grazer`,
     endsWhen: (s) => s.lawnArea >= LAND_LAWN_GOAL && GRAZERS.some((species) => s.residentSpecies.has(species)),
     progress: (s) => (share(s.lawnArea, LAND_LAWN_GOAL) + (GRAZERS.some((species) => s.residentSpecies.has(species)) ? 1 : 0)) / 2,
-    fallbackDay: 9,
+    parts: (s) => [count('Lawn (m²)', s.lawnArea, LAND_LAWN_GOAL), has('A cow or sheep lives here', anyOf(s, GRAZERS))],
+    unlocks: ['The grass seeder', 'The shovel and water bucket at Pip\'s shop', 'Lawn seeds: clover and dandelion'],
   },
   care: {
     id: 'care', number: 3, title: 'Animal Care', tagline: 'Full bellies, full barns.',
@@ -104,7 +118,8 @@ export const CHAPTERS: Readonly<Record<ChapterId, ChapterDef>> = {
     goal: `Earn ${CARE_COINS_GOAL} coins from goods`,
     endsWhen: (s) => s.goodsCoins >= CARE_COINS_GOAL,
     progress: (s) => share(s.goodsCoins, CARE_COINS_GOAL),
-    fallbackDay: 15,
+    parts: (s) => [count('Coins from goods', s.goodsCoins, CARE_COINS_GOAL)],
+    unlocks: ['Hunger on animal cards', 'Pip\'s Feed tab', 'Goods in houses, and Collect', 'Diet & goods pages in the journal'],
   },
   husbandry: {
     id: 'husbandry', number: 4, title: 'Husbandry', tagline: 'Families grow, and something is watching.',
@@ -112,7 +127,8 @@ export const CHAPTERS: Readonly<Record<ChapterId, ChapterDef>> = {
     goal: 'Make a predator a resident',
     endsWhen: (s) => PREDATORS.some((species) => s.residentSpecies.has(species)),
     progress: (s) => (PREDATORS.some((species) => s.residentSpecies.has(species)) ? 1 : 0),
-    fallbackDay: 24,
+    parts: (s) => [has('An owl or snake lives here', anyOf(s, PREDATORS))],
+    unlocks: ['Starvation: hungry balloons lose helium', 'The Larder', 'Owls and snakes'],
   },
   harmony: {
     id: 'harmony', number: 5, title: 'Ecological Harmony', tagline: 'Everyone in their place.',
@@ -120,6 +136,8 @@ export const CHAPTERS: Readonly<Record<ChapterId, ChapterDef>> = {
     goal: `Reach Harmony ${HARMONY_GOAL} with ${HARMONY_LINKS_GOAL} predator and prey pairs`,
     endsWhen: (s) => s.harmony >= HARMONY_GOAL && s.predatorLinks >= HARMONY_LINKS_GOAL,
     progress: (s) => (share(s.harmony, HARMONY_GOAL) + share(s.predatorLinks, HARMONY_LINKS_GOAL)) / 2,
+    parts: (s) => [count('Harmony', s.harmony, HARMONY_GOAL), count('Predator and prey pairs', s.predatorLinks, HARMONY_LINKS_GOAL)],
+    unlocks: ['The Harmony score', 'The Food web in the journal'],
   },
   mythical: {
     id: 'mythical', number: 6, title: 'Mythical', tagline: 'Some guests only come to a farm in tune.',
@@ -127,6 +145,8 @@ export const CHAPTERS: Readonly<Record<ChapterId, ChapterDef>> = {
     goal: 'Befriend a mythical creature',
     endsWhen: () => false,
     progress: (s) => (s.residentSpecies.has('starhorn') ? 1 : 0),
+    parts: (s) => [has('A starhorn lives here', s.residentSpecies.has('starhorn'))],
+    unlocks: ['The starhorn', 'Star gems and Treasures'],
   },
 }
 
@@ -158,8 +178,8 @@ export interface FarmChapters {
   /** Open a chapter (and every one before it) outright. Debug and migration. */
   openThrough(id: ChapterId): readonly ChapterDef[]
   exportState(): ChapterState
-  /** Load a save. A save from before chapters is caught up from its signals (see `catchUp`). */
-  importState(state: ChapterState | null | undefined, legacySignals?: ChapterSignals): void
+  /** Load a save. A missing or damaged state starts back at the garden. */
+  importState(state: ChapterState | null | undefined): void
   reset(): void
 }
 
@@ -178,18 +198,6 @@ export function createFarmChapters(): FarmChapters {
     return opened
   }
 
-  /**
-   * Open every chapter whose goal the farm has already met. An old save with
-   * cows, an owl and a full barn should not lose its barn's goods to a chapter
-   * gate, so it is walked forward as far as its own farm justifies.
-   */
-  function catchUp(signals: ChapterSignals): void {
-    for (const id of CHAPTER_ORDER) {
-      const next = CHAPTER_ORDER[CHAPTER_ORDER.indexOf(id) + 1]
-      if (!next || !open.has(id)) break
-      if (CHAPTERS[id].endsWhen(signals)) open.add(next)
-    }
-  }
 
   return {
     isOpen: (id) => open.has(id),
@@ -199,14 +207,12 @@ export function createFarmChapters(): FarmChapters {
       const id = currentId()
       const next = CHAPTER_ORDER[CHAPTER_ORDER.indexOf(id) + 1]
       if (!next) return []
-      const chapter = CHAPTERS[id]
-      const late = chapter.fallbackDay !== undefined && signals.day >= chapter.fallbackDay
-      if (!chapter.endsWhen(signals) && !late) return []
+      if (!CHAPTERS[id].endsWhen(signals)) return []
       return openThrough(next)
     },
     openThrough,
     exportState: () => ({ open: CHAPTER_ORDER.filter((id) => open.has(id)) }),
-    importState(state, legacySignals) {
+    importState(state) {
       open.clear()
       open.add('garden')
       if (state && Array.isArray(state.open)) {
@@ -215,13 +221,34 @@ export function createFarmChapters(): FarmChapters {
           if (!state.open.includes(id)) break
           open.add(id)
         }
-        return
       }
-      if (legacySignals) catchUp(legacySignals)
     },
     reset() {
       open.clear()
       open.add('garden')
     },
   }
+}
+
+export type ChapterStatus = 'done' | 'current' | 'locked'
+
+/** One chapter as the journal's Stages tab shows it. */
+export interface ChapterPage {
+  readonly def: ChapterDef
+  readonly status: ChapterStatus
+  /** 0..1; 1 for a done chapter, 0 for a locked one. */
+  readonly progress: number
+  /** Empty for a locked chapter: its goal is still a surprise. */
+  readonly parts: readonly ChapterGoalPart[]
+}
+
+/** Every chapter, in order, with its status and live progress. Pure, for the journal. */
+export function chapterPages(chapters: FarmChapters, signals: ChapterSignals): readonly ChapterPage[] {
+  const current = chapters.current().id
+  return CHAPTER_ORDER.map((id) => {
+    const def = CHAPTERS[id]
+    if (id === current) return { def, status: 'current', progress: def.progress(signals), parts: def.parts(signals) }
+    if (chapters.isOpen(id)) return { def, status: 'done', progress: 1, parts: [] }
+    return { def, status: 'locked', progress: 0, parts: [] }
+  })
 }
