@@ -81,9 +81,11 @@ const run = (life, world, seconds, events = []) => {
 }
 const createLife = () => m.createAnimalLife(['cow'], { config: quick })
 
-test('by default a settled resident stays for good, however bare the farm gets', () => {
+test('by default a settled resident that is fed stays for good, however bare the farm gets', () => {
   const life = createLife()
   const cow = life.add('cow', 3)
+  // A bare farm grows no grass: bought feed is what keeps the cow fed (see animal-diet.ts).
+  life.addFeed(200)
   run(life, farmWith(0), 600)
   assert.ok(life.animal(cow.id), 'the cow is still here')
   assert.equal(life.animal(cow.id).helium, 1)

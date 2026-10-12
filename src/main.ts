@@ -1079,6 +1079,7 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   visitorMotion,
   animalDisplayName,
   noteJournalStages,
+  speciesPluralName: (species) => speciesPluralName(species),
 })
 const { openAnimalCardFor, completeAnimalSale, openPropCardFor, refreshShopUi, buyUpgrade, playerDomStats, balloonInboxAnchor, openPlantCardFor, syncPlantCard } = createFarmActions({
   syncOwnedTools,
