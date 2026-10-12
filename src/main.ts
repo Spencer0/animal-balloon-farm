@@ -21,6 +21,9 @@ import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
+import { createHungerBubbles } from './scene/hunger-bubbles'
+import { createHouseGoodsBadges } from './scene/house-goods-badges'
+import { grazedness } from './game/food-cues'
 import { createVisitorMotion } from './scene/visitor-motion'
 import { createFarmModes } from './ui/farm-modes'
 import { tourSubjectsOf } from './scene/tour-subjects'
@@ -1049,6 +1052,9 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
 window.addEventListener('pagehide', autosave)
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave() })
 const visitorMotion = createVisitorMotion({ animalById, activeGardenBounds, carnivalSpawnFor })
+// The food web made visible: hunger bubbles over hungry animals, goods badges over houses.
+const hungerBubbles = createHungerBubbles({ scene, animals, recordOf: (id) => progress.animal(id) })
+const houseBadges = createHouseGoodsBadges({ scene, houses: () => houses(), goodsIn: (id) => progress.goodsIn(id) })
 const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateAnimalProgress, ownedSeedSpecies, unlockAccomplishment } = createFarmLifecycle({
   animalNames,
   popAnimal,
@@ -1080,6 +1086,7 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   animalDisplayName,
   noteJournalStages,
   speciesPluralName: (species) => speciesPluralName(species),
+  onProduce: (event) => houseBadges.notifyProduce(event.houseId),
 })
 const { openAnimalCardFor, completeAnimalSale, openPropCardFor, refreshShopUi, buyUpgrade, playerDomStats, balloonInboxAnchor, openPlantCardFor, syncPlantCard } = createFarmActions({
   syncOwnedTools,
@@ -1240,6 +1247,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     gardenBounds: () => currentGardenBounds,
     setGardenBounds: (bounds) => { currentGardenBounds = bounds },
     setClockHeld: (held) => { clockHeld = held },
+    setGrazingOverride: (dryness) => {
+      grazingOverride = dryness
+      // Debug: jump the slow ease so a screenshot does not wait a minute.
+      gardenTools?.setGrazing(dryness ?? 0)
+      gardenTools?.update(300)
+    },
     setFocusedAnimal: (id) => { focusedAnimalId = id },
     resetRoster: () => {
       resetRoster()
@@ -1524,6 +1537,8 @@ function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolea
  */
 const DOM_REFRESH_INTERVAL_MS = 250
 let lastDomRefreshAt = Number.NEGATIVE_INFINITY
+/** Debug only: pins the lawn's overgrazing regardless of the grass larder. */
+let grazingOverride: number | null = null
 
 function frame(now: number): void {
   fpsCounter.frame(now)
@@ -1581,6 +1596,8 @@ function frame(now: number): void {
   animals.forEach((animal) => animal.update(delta, simAlpha))
   crowdFixtures.forEach((fixture) => fixture.update(delta, simAlpha))
   refreshAnimalShadows()
+  hungerBubbles.update(delta, now / 1000)
+  houseBadges.update(delta, now / 1000)
   if (huntsActive) presentHunts(delta, simAlpha)
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
@@ -1631,6 +1648,9 @@ function frame(now: number): void {
   // panels skip the work entirely; their stats are only gathered when open.
   if (now - lastDomRefreshAt >= DOM_REFRESH_INTERVAL_MS) {
     lastDomRefreshAt = now
+    // The lawn reads as overgrazed when the grass larder runs low (eased inside the tools).
+    const grassLarder = progress.foodReport().find((entry) => entry.food === 'grass')
+    gardenTools?.setGrazing(grazingOverride ?? (grassLarder ? grazedness(grassLarder.stock, grassLarder.capacity) : 0))
     if (playerDom.isOpen) playerDom.refresh(playerDomStats())
     if (notificationDom.isOpen) notificationDom.refresh(notificationPanel.getLetters(), notificationPanel.nowSeconds())
     const unread = notificationPanel.getUnreadCount()
