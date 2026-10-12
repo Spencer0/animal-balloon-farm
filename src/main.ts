@@ -58,7 +58,8 @@ import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
 import { createAnimalCard } from './ui/animal-card-dom'
-import { createPropCard } from './ui/prop-card'
+import { createPropCardDom } from './ui/prop-card-dom'
+import { formatCollected, goodsValue } from './game/house-goods'
 import { warmAnimalLooks } from './animals/animal-warmup'
 import { createSellBurst, warmSellBursts, type SellBurst } from './ui/sell-burst'
 import { createPredation } from './scene/predation'
@@ -698,7 +699,7 @@ const animalCard = createAnimalCard({
  * button press closes the card first and then runs its action.
  */
 let selectedProp: PropSelection | null = null
-const propCard = createPropCard({
+const propCard = createPropCardDom({
   onMove: () => {
     if (!selectedProp || !gardenProps?.beginMove(selectedProp)) return
     gardenPlants?.cancelPlacement()
@@ -724,6 +725,21 @@ const propCard = createPropCard({
     shedDom.refresh()
     syncFarmChrome()
     return true
+  },
+  onCollect: () => {
+    const house = selectedProp
+    if (!house || !isHouse(house.id)) return null
+    const collected = progress.collectGoods(house.siteId)
+    if (collected.length === 0) return null
+    const coins = goodsValue(collected)
+    if (coins > 0) {
+      salePanel.setWallet(wallet.credit(coins))
+      const burst = createSellBurst(new THREE.Vector3(house.anchor.x, house.anchor.y, house.anchor.z), coins)
+      scene.add(burst.root)
+      sellBursts.push(burst)
+    }
+    saveSoon()
+    return formatCollected(collected, coins)
   },
   onToggle: (isOpen) => {
     if (!isOpen) gardenProps?.select(null)
@@ -914,7 +930,7 @@ const plantCard = createPlantCard({
 
 
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, journal, salePanel, plantCard, propCard, clockCalendarHud]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, journal, salePanel, plantCard, clockCalendarHud]
 
 /**
  * The furthest rung each species has reached this session. The journal is a
@@ -1003,8 +1019,6 @@ const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAn
   animalCreations,
   refreshAnimalVisibility,
   dayNightClock,
-  getSelectedProp: () => selectedProp,
-  propCard,
   creditCoins: (amount) => { salePanel.setWallet(wallet.credit(amount)) },
   animalDisplayName,
   crowdFixtures,
@@ -1637,6 +1651,8 @@ function frame(now: number): void {
     balloon.setPostBadge(unread > 9 ? '9+' : unread > 0 ? String(unread) : '')
     if (!menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
     shedDom.refresh()
+    // Goods accrue and animals come and go while a house's card is open.
+    if (propCard.isOpen && selectedProp && isHouse(selectedProp.id)) propCard.setResidents(residentsOf(selectedProp))
   }
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0

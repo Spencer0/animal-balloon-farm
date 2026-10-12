@@ -15,7 +15,7 @@ import type { GardenProps, PropSelection } from '../scene/garden-props'
 import type { GardenTools } from '../scene/garden-tools'
 import { createSellBurst, type SellBurst } from './sell-burst'
 import type { createAnimalCard } from './animal-card-dom'
-import type { createPropCard, PropResidents } from './prop-card'
+import type { createPropCardDom, PropResidents } from './prop-card-dom'
 import type { createPlantCard } from './plant-card'
 import type { createSalePanel } from './sale-panel'
 import type { createShedPanel } from './shed-panel'
@@ -29,7 +29,7 @@ export interface FarmActionsDeps {
   readonly ui: UILayer
   readonly scene: THREE.Scene
   readonly animalCard: ReturnType<typeof createAnimalCard>
-  readonly propCard: ReturnType<typeof createPropCard>
+  readonly propCard: ReturnType<typeof createPropCardDom>
   readonly plantCard: ReturnType<typeof createPlantCard>
   readonly salePanel: ReturnType<typeof createSalePanel>
   readonly shed: ReturnType<typeof createShedPanel>
@@ -153,7 +153,7 @@ export function createFarmActions(deps: FarmActionsDeps) {
       movable: selection.movable,
       rotatable: selection.rotatable,
       residents: residentsOf(selection),
-    }, { x: ndc.x * ui.viewport.width / 2, y: ndc.y * ui.viewport.height / 2 })
+    }, { x: (ndc.x + 1) / 2 * window.innerWidth, y: (1 - ndc.y) / 2 * window.innerHeight })
     syncFarmChrome()
   }
 
