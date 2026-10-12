@@ -32,14 +32,20 @@ its sharp edges only show up when its chapter opens.
 ## The chapters
 
 Chapter state lives in `src/game/farm-chapters.ts` (pure and tested). Each
-chapter has an *opens when* rule. The rule is a mastery or saturation signal
-the farm already measures, with a calendar day as a fallback so nobody gets
-stuck. When a chapter opens, the game plays its cutscene and Pip's letter and
-flips its flags.
+chapter has an *ends when* rule: a mastery or saturation signal the farm
+already measures. There is no calendar fallback; a chapter opens only when the
+one before it is done. When a chapter opens, the game plays its cutscene and
+Pip's letter and flips its flags. Chapter 1's film plays straight after the
+intro. The journal's **Stages** tab shows every chapter: done, current (goal,
+live progress, Pip's letter) and locked ("???").
+
+Anything a chapter has not introduced yet is hidden outright, not shown
+locked: tools, shop tabs and seeds, meters and chips.
 
 ### 1. The Garden: plants
-- **Start:** bare dirt, the seed box and a few starter seeds. No grass seeder
-  yet.
+- **Start:** bare dirt, the seed box and one free poppy seed. **No tools at
+  all**, and Pip only sells seeds that grow in dirt. (A blueberry bush
+  tutorial plant is planned separately.)
 - **Visitors:** dirt and plant lovers only, like the mole (who wants bare
   earth) and later flower-seekers.
 - **Systems on:** planting, watering, growing, selling plants, the plant
@@ -47,8 +53,9 @@ flips its flags.
 - **Ends when:** the garden has **10 grown plants**.
 
 ### 2. The Lay of the Land: terrain
-- **Unlocks:** the grass seeder (short lawn) with its cutscene, then the
-  shovel and water bucket as terraforming tools. More terrain tools come
+- **Unlocks:** the grass seeder (short lawn): after the chapter film, Pip
+  hands it over in its own tool film. Pip's shop then sells the shovel and
+  water bucket, and lawn and pond seeds. More terrain tools come
   later: meadow pack, snower, and others to come.
 - **Visitors:** grazers and the creatures of each terrain: cows and sheep on
   lawn, ducks on ponds, mice in meadow.
@@ -128,5 +135,6 @@ flips its flags.
 
 Every system checks its chapter flag (`chapters.flags()`) rather than a
 chapter number, so chapters can be reordered or split without touching the
-systems. A save from before chapters existed opens every chapter whose
-system it already uses, so nothing disappears on load.
+systems. The game is not shipped, so saves are versioned (`SAVE_VERSION` in
+`src/game/save-game.ts`) and a save from an older version is erased when the
+game starts rather than migrated.
