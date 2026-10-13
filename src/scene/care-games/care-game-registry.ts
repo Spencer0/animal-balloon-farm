@@ -1,4 +1,5 @@
 import type { CareGameKind } from '../../game/care-minigames'
+import { createChopGame } from './chop-game'
 import { createSnipGame } from './snip-game'
 import { createSwatGame } from './swat-game'
 import type { CareGameContext, CareGameScene } from './care-game-types'
@@ -36,8 +37,8 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   buzz: { create: null, input: 'tap' },
   // hop: built in hop-game.ts
   hop: { create: null, input: 'tap' },
-  // chop: built in chop-game.ts
-  chop: { create: null, input: 'tap' },
+  // Takes the pointer like snip (the overlay is live) but keeps the cursor; 'tap' leaves the overlay click-through.
+  chop: { create: createChopGame, input: 'capture' },
   // skim: built in skim-game.ts
   skim: { create: null, input: 'tap' },
   // paddle: built in paddle-game.ts
