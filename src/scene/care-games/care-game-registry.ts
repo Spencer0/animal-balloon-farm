@@ -44,8 +44,7 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   // paddle: built in paddle-game.ts
   paddle: { create: null, input: 'tap' },
   // rope: built in rope-game.ts
-  // capture, not tap: only aim and capture let the overlay take the pointer; the cursor stays.
-  rope: { create: createRopeGame, input: 'capture' },
+  rope: { create: createRopeGame, input: 'tap' },
 }
 
 /** Whether a kind has a close-up scene yet. */
