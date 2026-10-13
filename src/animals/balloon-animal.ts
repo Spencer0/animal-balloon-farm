@@ -215,6 +215,7 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   rat: new THREE.MeshStandardMaterial({ color: '#7b7480', roughness: 0.3, metalness: 0.01 }),
   snake: new THREE.MeshStandardMaterial({ color: '#3f9e6e', roughness: 0.26, metalness: 0.01 }),
   mole: new THREE.MeshStandardMaterial({ color: '#5b5663', roughness: 0.3, metalness: 0.01 }),
+  starhorn: new THREE.MeshStandardMaterial({ color: '#bf9fe6', roughness: 0.28, metalness: 0.03 }),
 }
 /** An animal's collision footprint radius as a share of its catalog size (its longest side). */
 const BODY_RADIUS_SHARE = 0.24

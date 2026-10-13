@@ -46,6 +46,10 @@ export type ConditionKind =
   | 'terrainShare'
   /** Whether the farmer owns a garden tool bought at the shop (`species`: 'shovel' | 'water'). */
   | 'toolOwned'
+  /** The farm's Harmony score, 0 to 100 (see `harmony.ts`). A score, not an area. */
+  | 'harmony'
+  /** Grown flowers of every kind together: dandelions, poppies and clover. */
+  | 'flowerCount'
 
 export interface ConditionRequirement {
   readonly kind: ConditionKind
@@ -95,6 +99,8 @@ export function conditionMetricLabel(requirement: ConditionRequirement | null): 
     case 'preyEaten': return requirement.species ? `${capitalise(speciesPlural(requirement.species))} eaten` : null
     case 'propCount': return requirement.species ? `${capitalise(propPlural(requirement.species))} on the farm` : null
     case 'toolOwned': return requirement.species ? `${capitalise(toolName(requirement.species))} bought` : null
+    case 'harmony': return 'Farm harmony'
+    case 'flowerCount': return 'Grown flowers'
     case 'terrainShare': return requirement.species ? `${capitalise(terrainName(requirement.species))} share of the farm` : null
     case 'residentSpecies': return null
   }
@@ -144,7 +150,7 @@ function propPlural(prop: string): string {
 
 /** True for the kinds that are a whole number of things rather than square meters. */
 export function isCountKind(kind: ConditionKind | undefined): boolean {
-  return kind === 'plantCount' || kind === 'residentCount' || kind === 'preyEaten' || kind === 'propCount' || kind === 'toolOwned'
+  return kind === 'plantCount' || kind === 'residentCount' || kind === 'preyEaten' || kind === 'propCount' || kind === 'toolOwned' || kind === 'harmony' || kind === 'flowerCount'
 }
 
 /**
@@ -479,8 +485,8 @@ const MOLE_CONDITIONS: SpeciesConditions = {
   stages: withStageNumbers([
     COUNT_STAGE(
       'Appear at the carnival',
-      'Hears a shovel somewhere and comes over to see: buy the shovel at the shop.',
-      { kind: 'toolOwned', species: 'shovel', amount: 1 },
+      'Smells a plot of bare, freshly turned earth: most of the farm is still dirt.',
+      { kind: 'terrainShare', species: 'dirt', amount: 80 },
       'Turns up at the carnival in wild balloon red.',
     ),
     COUNT_STAGE(
@@ -500,6 +506,47 @@ const MOLE_CONDITIONS: SpeciesConditions = {
       'Wants a molehill to raise pups in, with the farm kept nearly all dirt.',
       { kind: 'propCount', species: 'molehill', amount: 1, and: [{ kind: 'terrainShare', species: 'dirt', amount: 90 }] },
       'Eyes go to hearts. Ready to raise young in its house.',
+    ),
+  ]),
+}
+
+/**
+ * The starhorn is the end-game goal: one unique balloon pony that only comes to a
+ * farm in harmony and makes star gems (see `harmony.ts`, `animal-diet.ts`).
+ *
+ *  - Appears (DISCOVERY): Harmony 70.
+ *  - Visits the farm: Harmony 75.
+ *  - Stays: Harmony 80 and six grown flowers to drink nectar from. It holds its
+ *    residency, so it loses helium and goes flat if the farm falls out of harmony.
+ *  - Loves the farm: Harmony 90. There is only one and it has no house, so it
+ *    never breeds; its star just glows.
+ */
+const STARHORN_CONDITIONS: SpeciesConditions = {
+  holdsResidency: true,
+  stages: withStageNumbers([
+    COUNT_STAGE(
+      'Appear at the carnival',
+      'Drifts in only when the farm is in tune: Harmony of 70.',
+      { kind: 'harmony', amount: 70 },
+      'Turns up at the carnival in wild balloon red.',
+    ),
+    COUNT_STAGE(
+      'Visit the farm',
+      'Wants a farm that is settling into balance: Harmony of 75.',
+      { kind: 'harmony', amount: 75 },
+      'Trots inside the fence, its horn tip glinting. Still wild, still deciding.',
+    ),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Wants Harmony of 80 and six grown flowers to sip nectar from. It deflates, and goes flat, if the farm falls out of harmony.',
+      { kind: 'harmony', amount: 80, and: [{ kind: 'flowerCount', amount: 6 }] },
+      'Paints into its own colors. A resident of the farm, for as long as the farm stays in harmony.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Glows when the farm is flourishing: Harmony of 90. There is only one starhorn, so there are no young.',
+      { kind: 'harmony', amount: 90 },
+      'Its star glows brightest and its eyes go to hearts. It makes star gems.',
     ),
   ]),
 }
@@ -593,6 +640,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
   rat: RAT_CONDITIONS,
   snake: SNAKE_CONDITIONS,
   mole: MOLE_CONDITIONS,
+  starhorn: STARHORN_CONDITIONS,
   frog: {
     stages: withStageNumbers([
       CARNIVAL,
@@ -617,6 +665,16 @@ export function setResidencyOverride(species: string, holds: boolean | null): vo
 /** Whether a resident of this species leaves when its home requirement stops being met. */
 export function holdsResidency(species: string): boolean {
   return residencyOverrides.get(species) ?? SPECIES_CONDITIONS[species]?.holdsResidency === true
+}
+
+/**
+ * Species of which only one ever comes. A unique species is not summoned as a repeat guest, has no
+ * house and so never breeds (see `HOUSE_SPECIES` in animal-housing.ts).
+ */
+export const UNIQUE_SPECIES: readonly string[] = ['starhorn']
+
+export function isUniqueSpecies(species: string): boolean {
+  return UNIQUE_SPECIES.includes(species)
 }
 
 /** Species that only come out after dark. They arrive, visit and hunt at night. */
@@ -654,7 +712,8 @@ export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonl
   mouse: { kind: 'meadowArea', amount: 4, description: 'Long grass rustling at the fence line is all a field mouse needs to hear.' },
   rat: { kind: 'residentCount', species: 'mouse', amount: 1, description: 'Where one mouse has settled, a rat is never far behind.' },
   snake: { kind: 'residentCount', species: 'mouse', amount: 2, description: 'Mice in the long grass draw something patient and green.' },
-  mole: { kind: 'toolOwned', species: 'shovel', amount: 1, description: 'The sound of a shovel biting into soil carries a long way underground.' },
+  mole: { kind: 'terrainShare', species: 'dirt', amount: 80, description: 'A plot of bare, turned earth is an open invitation to anything that tunnels.' },
+  starhorn: { kind: 'harmony', amount: 70, description: 'A farm in tune hums, and something starry hears it.' },
 }
 
 export function getSpeciesConditions(species: string): readonly StageDefinition[] {

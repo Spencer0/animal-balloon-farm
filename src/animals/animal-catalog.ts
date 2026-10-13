@@ -109,6 +109,12 @@ export const ANIMAL_CATALOG = [
     note: 'It comes to see what the shovel has been up to. Plant too much lawn and it quietly goes flat.', color: '#5b5663', gesture: 'Sniffs the soil',
     assetUrl: 'assets/animals/balloon-mole.glb', spawn: [1, -2], carnivalSpawn: [19, 14], seed: 10211, size: 1.7, speed: 0.9, bounds: { x: 10.5, z: 6.1 },
   },
+  {
+    id: 'starhorn', name: 'Starhorn', label: 'starhorn', spriteUrl: 'assets/animals/balloon-starhorn-review.png',
+    subtitle: 'The harmony pony', description: 'A pearly lilac balloon pony with a twisted star-tipped horn, a pastel-rainbow cloud mane and a little gold star on its flank.',
+    note: 'There is only one. It trots in when the farm is in tune, sips nectar from the flowers, and leaves a star gem behind. It has no house and no young.', color: '#bf9fe6', gesture: 'Tosses its mane',
+    assetUrl: 'assets/animals/balloon-starhorn.glb', spawn: [4, -5], carnivalSpawn: [-22, -15], seed: 11003, size: 2.7, speed: 1.0, bounds: { x: 10.5, z: 6.1 },
+  },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 
 export type BalloonAnimalId = typeof ANIMAL_CATALOG[number]['id']

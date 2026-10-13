@@ -1,3 +1,5 @@
+import { isUniqueSpecies } from './animal-conditions';
+
 export type AccomplishmentStage = 'appear' | 'visit' | 'live' | 'breed';
 
 export interface AccomplishmentDef {
@@ -65,14 +67,16 @@ export function buildAccomplishmentCatalog(
   }
   for (const animal of animals) {
     for (const stage of ANIMAL_STAGES) {
+      // A unique species has no house and no young: its last rung is a glow, not a litter.
+      const glow = stage === 'breed' && isUniqueSpecies(animal.id);
       add({
         id: `animal.${animal.id}.${stage}`,
         kind: 'animal',
         species: animal.id,
         stage,
-        title: `${animal.name} · ${STAGE_LABELS[stage]}`,
-        detail: `First ${animal.name} ${STAGE_DETAILS[stage]}.`,
-        hint: STAGE_HINTS[stage],
+        title: `${animal.name} · ${glow ? 'Glow' : STAGE_LABELS[stage]}`,
+        detail: `First ${animal.name} ${glow ? 'seen glowing in a flourishing farm' : STAGE_DETAILS[stage]}.`,
+        hint: glow ? 'Keep the farm flourishing.' : STAGE_HINTS[stage],
         points: pointsFor(stage),
       });
     }

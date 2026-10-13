@@ -215,6 +215,8 @@ export interface OwlInput {
   /** A resident with no oak to roost on: it stays aloft and slowly loses helium. */
   readonly stranded: boolean
   readonly sold: boolean
+  /** False for a fed resident: it patrols but leaves the flock be (see `animal-diet.ts`). Absent reads hungry. */
+  readonly hungry?: boolean
 }
 
 export interface OwlStepInput {
@@ -323,7 +325,7 @@ export function createOwlSim(): OwlSim {
           roost: owl.stage >= 3 && owl.roost ? { x: owl.roost.x, y: owl.roost.y, z: owl.roost.z } : null,
           center,
           radius,
-          huntAllowed: owl.stage >= 2,
+          huntAllowed: owl.stage >= 2 && owl.hungry !== false,
           prey: preyViews,
           present: owl.stage > 0 && !owl.sold,
           stranded: owl.stranded,

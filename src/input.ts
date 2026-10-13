@@ -26,7 +26,7 @@ export interface FarmInputDeps {
   readonly shedDom: { refresh(): void }
   readonly shop: { readonly isOpen: boolean; setOpen(open: boolean): void; refresh(): void }
   readonly salePanel: { readonly isOpen: boolean; close(): void; hitTest?(point: DesignPoint): boolean }
-  readonly animalCard: { readonly isOpen: boolean; close(): void; hitTest?(point: DesignPoint): boolean }
+  readonly animalCard: { readonly isOpen: boolean; close(): void; hitTestClient(clientX: number, clientY: number): boolean }
   readonly propCard: { readonly isOpen: boolean; close(): void; hitTest?(point: DesignPoint): boolean }
   readonly plantCard: { readonly isOpen: boolean; close(): void; hitTest?(point: DesignPoint): boolean }
   readonly toolsHud: { readonly selectedTool: import('./scene/garden-tool-art').GardenToolId | null; readonly isVisible: boolean; hitTest?(point: DesignPoint): boolean }
@@ -288,12 +288,13 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
    */
   function isOverGameHUD(clientX: number, clientY: number): boolean {
     if (menu.isOpen || journal.isOpen || shed.isOpen || shop.isOpen) return true
+    // The animal card is DOM, so it is measured in client pixels, not design units.
+    if (animalCard.hitTestClient(clientX, clientY)) return true
     const point = ui.viewport.toDesign(clientX, clientY, gameCanvas.getBoundingClientRect())
     return Boolean(point && (
       (toolsHud.isVisible && toolsHud.hitTest?.(point))
       || shed.contains(point)
       || salePanel.hitTest?.(point)
-      || animalCard.hitTest?.(point)
       || propCard.hitTest?.(point)
       || plantCard.hitTest?.(point)
     ))

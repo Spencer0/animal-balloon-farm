@@ -1,3 +1,4 @@
+import type { GoodId } from '../game/animal-diet'
 import { frameRenderStats, type FarmRenderer } from '../render/backend'
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
@@ -28,6 +29,8 @@ import type { FarmState } from '../game/farm-state'
 import type { GardenToolId } from '../scene/garden-tool-art'
 import type { ShopBuildReport } from '../scene/shop-build'
 import type { createWallet } from '../game/sales'
+import { treasureEffects, type TreasureId, type TreasureLedger } from '../game/treasures'
+import type { ChapterDef, ChapterFlags, ChapterId, ChapterSignals, FarmChapters } from '../game/farm-chapters'
 import type { createPredationLedger } from '../game/predator'
 import type { OwlSim, SnakeSim } from '../game/animal-hunt'
 import { SIM_HZ } from '../game/sim-clock'
@@ -37,7 +40,7 @@ import type { createJournalPanel } from '../ui/journal-panel'
 import type { createNotificationPanel } from '../ui/notification-panel'
 import type { createNotificationDomPanel } from '../ui/notification-dom'
 import type { createSalePanel } from '../ui/sale-panel'
-import type { createAnimalCard } from '../ui/animal-card'
+import type { createAnimalCard } from '../ui/animal-card-dom'
 import type { createShedPanel } from '../ui/shed-panel'
 import type { createPlantCard } from '../ui/plant-card'
 import type { createPlayerDomPanel } from '../ui/player-dom'
@@ -174,16 +177,26 @@ interface GardenDebugHarness {
   setOwlHelium(level: number): void
   /** Set the helium, 0..1, of every animal of one species, to watch it deflate without a two-minute wait. */
   setHelium(species: string, level: number): number
+  /** Set the fullness, 0..1, of every adult resident of one species ('hungry' is under 0.4, 'starving' under 0.12). */
+  setFullness(species: string, level: number): number
+  /** Put goods in every house of one prop kind (e.g. 'barn'), up to its capacity; returns the houses touched. */
+  addGoodsByProp(prop: string, good: string, count: number): number
+  /** Pin how overgrazed the lawn reads, 0..1, ignoring the grass larder; null hands it back. */
+  setGrazing(dryness: number | null): void
   /** Make a species lose helium when its home requirement stops being met (true), stop (false), or restore its catalog rule (null). */
   holdResidency(species: string, holds: boolean | null): void
   /** Play the tool-unlock film for a shop upgrade, optionally held at a moment, and report what it shows. */
   toolFilm(id: string, seconds?: number): unknown
+  /** Play a chapter's opening film (e.g. 'care'), optionally held at a moment. Inert until main wires `chapterFilm`. */
+  chapterFilm(id: string, seconds?: number): unknown
   /** Make the owls and snakes hunt as soon as they can, instead of waiting out the cooldown. */
   hurryHunt(): void
   /** Step the owl and snake hunts and any pops forward without waiting on rendered frames. */
   stepHunt(seconds: number, secondsPerStep?: number): ReturnType<OwlSim['report']>['owls']
   /** Add a tracked animal at a rung of the ladder, standing at its farm spawn; returns its id. */
   addAnimal(species: string, stage?: number): string | null
+  /** Put goods in a house by its site id (see `houses()`), e.g. `addGoods('barn-1', 'milk', 5)`. */
+  addGoods(houseId: string, good: string, count: number): Readonly<Record<string, number>>
   /**
    * Retire an animal's model and rebuild it the way a house door does
    * (`emerging`), so a settled resident that arrives with no flourish to play
@@ -225,6 +238,20 @@ interface GardenDebugHarness {
   resetCamera(): void
   /** Put coins in the wallet without farming for them, so the shop can be driven. */
   grantCoins(amount: number): number
+  /** Put star gems in the purse without waiting for a starhorn. */
+  grantGems(amount: number): number
+  /** Buy a treasure with gems through the shop's own rules. */
+  buyTreasure(id: string): { readonly ok: boolean; readonly text: string }
+  /** Gems, owned treasures and what they multiply. */
+  treasures(): { readonly gems: number; readonly owned: readonly string[]; readonly effects: ReturnType<typeof treasureEffects> }
+  /** Pin the farm's Harmony score for the sim (0..100), or null to measure it again. */
+  setHarmony(value: number | null): void
+  /** Open chapters up to and including `id`, announce each and apply its flags. */
+  openChapter(id: ChapterId): readonly string[]
+  /** Open chapters, the current one, its flags and the signals the chapter check reads. */
+  chapters(): { readonly open: readonly ChapterId[]; readonly current: string; readonly flags: ChapterFlags; readonly signals: ChapterSignals }
+  /** Spawn the starhorn as a resident (stage 4 by default) with Harmony pinned high and its residency held, for screenshots. */
+  spawnStarhorn(stage?: number): string | null
   /** Award progression points outright, e.g. 500 reaches farmer level 10. */
   grantPoints(points: number): { points: number; level: number }
   /** Put `count` seeds of every plant in the shed. */
@@ -310,6 +337,15 @@ export interface GardenHarnessDeps {
   readonly cameraTarget: THREE.Vector3
   readonly farmCamera: FarmCamera
   readonly wallet: ReturnType<typeof createWallet>
+  readonly gems: ReturnType<typeof createWallet>
+  readonly treasures: TreasureLedger
+  readonly buyTreasure: (id: TreasureId) => { readonly ok: boolean; readonly text: string }
+  readonly setHarmonyOverride: (value: number | null) => void
+  /** Chapter state, and the same signals the frame loop reads. */
+  readonly chapters: FarmChapters
+  readonly chapterSignals: () => ChapterSignals
+  readonly announceChapter: (def: ChapterDef) => void
+  readonly applyChapterFlags: () => void
   readonly focusCamera: () => void
   readonly frameAt: (target: THREE.Vector3, height: number) => void
   readonly beginCameraTour: (seed?: number) => boolean
@@ -343,6 +379,7 @@ export interface GardenHarnessDeps {
   readonly animalById: Map<string, BalloonAnimal>
   readonly animals: BalloonAnimal[]
   readonly predationLedger: ReturnType<typeof createPredationLedger>
+  readonly setGrazingOverride: (dryness: number | null) => void
   readonly owlHunt: Pick<OwlSim, 'huntedIds' | 'hurry' | 'setHelium' | 'reset' | 'report'>
   readonly snakeHunt: SnakeSim
   readonly popsInFlight: { readonly burst: PopBurst; readonly animal: BalloonAnimal }[]
@@ -366,7 +403,7 @@ export interface GardenHarnessDeps {
   readonly newbornUntil: Map<string, number>
   readonly lastHouseOf: Map<string, string>
   readonly updateHousing: (nowSeconds: number) => void
-  readonly residentsOf: (selection: { readonly id: PropId; readonly siteId: string }) => import('../ui/prop-card').PropResidents | null
+  readonly residentsOf: (selection: { readonly id: PropId; readonly siteId: string }) => import('../ui/prop-card-dom').PropResidents | null
   readonly ui: UILayer
   readonly frameTimer: FrameTimer | null
   readonly journal: ReturnType<typeof createJournalPanel>
@@ -376,6 +413,8 @@ export interface GardenHarnessDeps {
   readonly syncGrassPack: () => void
   readonly syncOwnedTools: () => void
   readonly toolFilm: (id: string, seconds?: number) => unknown
+  /** Optional until main.ts passes it: a chapter film player's start/seek, reported as the harness reads it. */
+  readonly chapterFilm?: (id: string, seconds?: number) => unknown
   readonly swapGrassPack: () => boolean
   readonly menu: { readonly isOpen: boolean; open(): void; close(): void }
   readonly openAnimalCardFor: (animal: BalloonAnimal, preview?: { stage?: number; sellable?: boolean }) => void
@@ -413,6 +452,14 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
   const {
     canvas: gameCanvas,
     wallet,
+    gems,
+    treasures,
+    buyTreasure,
+    setHarmonyOverride,
+    chapters,
+    chapterSignals,
+    announceChapter,
+    applyChapterFlags,
     renderer,
     scene,
     camera,
@@ -555,7 +602,27 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     enabled: true,
     intro: (seconds) => deps.intro(seconds),
     toolFilm: (id, seconds) => deps.toolFilm(id, seconds),
+    chapterFilm: (id, seconds) => deps.chapterFilm?.(id, seconds) ?? null,
     holdResidency: (species, holds) => { setResidencyOverride(species, holds) },
+    setFullness: (species, level) => {
+      let changed = 0
+      for (const record of deps.progress.all()) {
+        if (record.species !== species || record.stage < 3) continue
+        deps.progress.setFullness(record.id, level)
+        changed += 1
+      }
+      return changed
+    },
+    addGoodsByProp: (prop, good, count) => {
+      let touched = 0
+      for (const house of deps.houseSpots()) {
+        if (house.prop !== prop) continue
+        deps.progress.addGoods(house.id, good as GoodId, count)
+        touched += 1
+      }
+      return touched
+    },
+    setGrazing: (dryness) => deps.setGrazingOverride(dryness),
     setHelium: (species, level) => {
       let changed = 0
       for (const record of deps.progress.all()) {
@@ -878,7 +945,14 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     setOwlHelium: (level) => owlHunt.setHelium(level),
     holdTime: (hold) => { deps.setClockHeld(hold) },
     scenarios: () => scenarioList,
-    runScenario: async (name) => (await loadScenarios()).runScenario(name, debugHarness),
+    runScenario: async (name) => {
+      // A scenario is a state to look at, not a farm to play from day one: every
+      // chapter is open, quietly (no letters or films), so goods and hunters work.
+      // A scenario about chapters closes them again itself.
+      chapters.openThrough('mythical')
+      applyChapterFlags()
+      return (await loadScenarios()).runScenario(name, debugHarness)
+    },
     stepHunt: (seconds) => {
       // Tick the sim directly, the way the frame loop does: animals walk, collide, then the
       // hunts decide. `secondsPerStep` no longer applies; the sim only runs at its own rate.
@@ -892,6 +966,10 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
         presentHunts(stepSeconds, 1)
       }
       return owlHunt.report().owls
+    },
+    addGoods: (houseId, good, count) => {
+      progress.debugAddGoods(houseId, good as GoodId, count)
+      return progress.goodsIn(houseId) as Readonly<Record<string, number>>
     },
     addAnimal: (species, stage = 3) => {
       const record = progress.add(species, Math.max(0, Math.min(4, Math.floor(stage))) as AnimalStage)
@@ -1006,6 +1084,43 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       for (const plant of PLANT_CATALOG) deps.gardenPlants()?.simulation.addSeeds(plant.id, count)
       shedDom.refresh()
       shop.refresh()
+    },
+    grantGems: (amount) => {
+      const balance = gems.credit(amount)
+      shedDom.refresh()
+      shop.refresh()
+      return balance
+    },
+    buyTreasure: (id) => buyTreasure(id as TreasureId),
+    treasures: () => ({ gems: gems.balance, owned: treasures.owned(), effects: treasureEffects(treasures.owned()) }),
+    setHarmony: (value) => {
+      setHarmonyOverride(value)
+    },
+    openChapter: (id) => {
+      const opened = chapters.openThrough(id)
+      for (const def of opened) announceChapter(def)
+      applyChapterFlags()
+      return opened.map((def) => def.id)
+    },
+    chapters: () => ({
+      open: chapters.exportState().open,
+      current: chapters.current().id,
+      flags: chapters.flags(),
+      signals: chapterSignals(),
+    }),
+    spawnStarhorn: (stage = 4) => {
+      setHarmonyOverride(100)
+      setResidencyOverride('starhorn', false)
+      // There is only one starhorn: promote the one waiting at the carnival and walk it in, rather than adding a twin.
+      const waiting = animals.find((entry) => entry.id === 'starhorn' && !entry.isSold)
+      if (!waiting) return debugHarness.addAnimal('starhorn', stage)
+      const rung = Math.max(0, Math.min(4, Math.floor(stage))) as AnimalStage
+      handleAnimalLifeEvents(progress.setStage(waiting.instanceId, rung))
+      waiting.stage = rung
+      waiting.placeAt(-3.5, 2.6)
+      // Rebuild it the way a house door does, already in its own colours and on the lawn rather than walking in from the tents.
+      void debugHarness.emergeAnimal(waiting.instanceId)
+      return waiting.instanceId
     },
     grantCoins: (amount) => {
       const balance = wallet.credit(amount)

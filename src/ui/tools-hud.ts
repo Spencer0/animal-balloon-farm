@@ -336,8 +336,8 @@ export function createToolsHud(
       return true
     },
     setOwnedTools(ids: readonly GardenToolId[]): void {
+      // Exactly the tools given: even the seeder waits for its chapter (main.ts toolIsOwned).
       owned.clear()
-      for (const tool of GARDEN_TOOLS) if (!BOUGHT_TOOLS.includes(tool.id)) owned.add(tool.id)
       for (const id of ids) owned.add(id)
       layout()
     },

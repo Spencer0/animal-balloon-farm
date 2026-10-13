@@ -41,11 +41,14 @@ import type { GrassPack, UpgradeId } from './tool-unlocks'
 /** Shop upgrades that are not tools, and so get no film. */
 export type NonToolUpgrade = 'land-deed'
 
+/** Tools handed over by a chapter rather than sold: Chapter 2 gives the grass seeder. */
+export type ChapterToolGift = 'grass-seeder'
+
 /**
  * Every tool upgrade must have a film: adding an id to `UpgradeId` without an
  * entry here (or in `NonToolUpgrade`) is a compile error.
  */
-export type ToolUnlockId = Exclude<UpgradeId, NonToolUpgrade>
+export type ToolUnlockId = Exclude<UpgradeId, NonToolUpgrade> | ChapterToolGift
 
 /**
  * How the tool sits in a fist. Applied in the hand's frame, where -Y runs
@@ -73,6 +76,16 @@ export interface ToolUnlockFilm {
 }
 
 export const TOOL_UNLOCK_FILMS: Readonly<Record<ToolUnlockId, ToolUnlockFilm>> = {
+  'grass-seeder': {
+    id: 'grass-seeder',
+    tool: 'grass',
+    pack: 'short',
+    title: 'The Grass Seeder',
+    titleSpoken: 'Le Semoir à gazon',
+    cheer: 'A lawn of my very own!',
+    cheerSpoken: 'Une pelouse rien qu’à moi !',
+    grip: { offset: [0, -0.09, 0], rotation: [Math.PI, 0, 0], scale: 0.44 },
+  },
   shovel: {
     id: 'shovel',
     tool: 'shovel',
@@ -112,8 +125,8 @@ export const TOOL_UNLOCK_FILMS: Readonly<Record<ToolUnlockId, ToolUnlockFilm>> =
   },
 }
 
-/** The film for a shop purchase, or null when the upgrade is not a tool. */
-export function toolUnlockFilmFor(id: UpgradeId): ToolUnlockFilm | null {
+/** The film for a shop purchase or a chapter's gift, or null when the upgrade is not a tool. */
+export function toolUnlockFilmFor(id: UpgradeId | ChapterToolGift): ToolUnlockFilm | null {
   return id in TOOL_UNLOCK_FILMS ? TOOL_UNLOCK_FILMS[id as ToolUnlockId] : null
 }
 

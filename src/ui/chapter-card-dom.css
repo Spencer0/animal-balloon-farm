@@ -1,0 +1,140 @@
+/* Chapter opening cards: the Farm Journal look (cream paper, brown rules, terracotta kicker). */
+
+/* The film hides every body child except #game; the card is part of the film, so it stays. */
+body.film-playing > #chapter-card.chapter-card-root {
+  visibility: visible !important;
+}
+
+.chapter-card-root {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  overflow: hidden;
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+}
+
+.cc-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  background: #1f150d;
+}
+
+.cc-bar-top {
+  top: 0;
+}
+
+.cc-bar-bottom {
+  bottom: 0;
+}
+
+.cc-title {
+  position: absolute;
+  left: 50%;
+  /* The lower third, clear of the farm's middle and above the bottom letterbox bar. */
+  bottom: 16vh;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 26px 34px 24px;
+  text-align: center;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(60, 35, 15, 0.35);
+}
+
+.cc-title::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed #b08c5e;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+.cc-kicker {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #c65a3a;
+}
+
+.cc-name {
+  margin: 6px 0 8px;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: #5a3d2b;
+}
+
+.cc-tagline {
+  margin: 0;
+  font-size: 20px;
+  font-style: italic;
+  color: #7a5a40;
+}
+
+.cc-line {
+  position: absolute;
+  left: 50%;
+  /* Clear of the bottom letterbox bar (11vh at full frame). */
+  bottom: 13vh;
+  transform: translateX(-50%);
+  width: min(640px, calc(100vw - 32px));
+  margin: 0;
+  padding: 10px 18px;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 18px;
+  font-style: italic;
+  color: #faf3e2;
+  background: rgba(31, 21, 13, 0.55);
+  border-radius: 999px;
+}
+
+.cc-hint {
+  position: absolute;
+  right: 28px;
+  bottom: 20px;
+  margin: 0;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(251, 240, 214, 0.14);
+  color: rgba(251, 240, 214, 0.9);
+  font-size: 14px;
+  font-style: italic;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.cc-hint.is-shown {
+  opacity: 1;
+}
+
+@media (max-width: 600px) {
+  .cc-title {
+    bottom: 15vh;
+    padding: 18px 18px 16px;
+  }
+  .cc-name {
+    font-size: 30px;
+  }
+  .cc-tagline {
+    font-size: 16px;
+  }
+  .cc-line {
+    font-size: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-hint {
+    transition: none;
+  }
+}

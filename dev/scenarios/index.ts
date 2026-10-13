@@ -14,6 +14,8 @@ import { aboutToGoFlat, goingFlat } from './mole/going-flat'
 import { readyToSettle as moleReadyToSettle } from './mole/ready-to-settle'
 import { emptyMeadow, snakeHunt, tallGrassGarden, tallGrassNight } from './meadow/tall-grass-garden'
 import { ratsAndRaccoons } from './sleep/rats-and-raccoons'
+import { balancedFarm, crowdedPasture } from './foodweb/crowded-pasture'
+import { gemFarm } from './starhorn/gem-farm'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
@@ -21,6 +23,8 @@ export const SCENARIOS: readonly Scenario[] = [
   raccoonFirstNight, sleepingByCan, sleepingByDumpster, raccoonBreedReady,
   tallGrassGarden, tallGrassNight, emptyMeadow, snakeHunt, ratsAndRaccoons,
   moleReadyToSettle, goingFlat, aboutToGoFlat,
+  crowdedPasture, balancedFarm,
+  gemFarm,
 ]
 
 /** Accepts `owl/hunt-now` or the bare `hunt-now`, as long as the bare name is unambiguous. */

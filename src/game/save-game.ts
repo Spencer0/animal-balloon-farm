@@ -16,10 +16,16 @@
 import type { AnimalLifeState } from './animal-life'
 import type { PlantSimulationState } from './plants'
 import type { ProgressLedgerState } from './farm-progression'
+import type { ChapterState } from './farm-chapters'
 
 export const SAVE_APP_ID = 'animal-balloon-farm'
-/** Bumped when the shape of `SaveGameData` changes in a way old code cannot read. */
-export const SAVE_VERSION = 1
+/**
+ * Bumped when the shape of `SaveGameData` changes in a way the game cannot
+ * read. The game is not shipped yet, so older saves are not migrated: they are
+ * erased when the store opens (`createSaveStore`) and the farmer starts fresh.
+ *   2: chapters (the farm starts in Chapter 1 with no tools).
+ */
+export const SAVE_VERSION = 2
 export const SAVE_SLOT_COUNT = 3
 
 /** A sparse numeric field (terrain, water) packed as little-endian Int16s. */
@@ -80,6 +86,14 @@ export interface SaveGameData {
   readonly playSeconds: number
   readonly clock: { readonly timeOfDay: number; readonly elapsedDays: number }
   readonly coins: number
+  /** Star gems in the purse. Optional: a save from before the starhorn has none and loads with 0. */
+  readonly gems?: number
+  /** Ids of the treasures bought with gems. Optional for the same reason. */
+  readonly treasures?: readonly string[]
+  /** Chapters opened so far. Optional: a save from before chapters is caught up from its farm on load. */
+  readonly chapters?: ChapterState
+  /** Coins earned from collected goods, ever (the chapter that teaches goods reads it). Optional: old saves start at 0. */
+  readonly goodsCoins?: number
   readonly progression: ProgressLedgerState
   readonly upgrades: Readonly<Record<string, number>>
   readonly accomplishments: readonly string[]
@@ -108,6 +122,8 @@ export interface SaveGameData {
 export interface SaveSummary {
   readonly farmerLevel: number
   readonly coins: number
+  /** Star gems, when the farm has any. */
+  readonly gems?: number
   /** Whole days since the farm began. */
   readonly day: number
   readonly residents: number
@@ -196,7 +212,7 @@ export function makeEnvelope(data: SaveGameData, summary: SaveSummary, savedAt: 
   return { app: SAVE_APP_ID, version: SAVE_VERSION, savedAt, summary, data }
 }
 
-export type ParseFailure = 'unreadable' | 'wrong-app' | 'too-new' | 'malformed'
+export type ParseFailure = 'unreadable' | 'wrong-app' | 'too-new' | 'outdated' | 'malformed'
 
 export type ParseResult =
   | { readonly ok: true; readonly envelope: SaveEnvelope }
@@ -210,7 +226,7 @@ const isNumber = (value: unknown): value is number => typeof value === 'number' 
 /**
  * Read a stored string back into an envelope. This checks the *shape* of every
  * section the loader indexes into; each system's own `importState` then
- * sanitises its own numbers. Older versions would be migrated here.
+ * sanitises its own numbers. An older version is `outdated`, never migrated.
  */
 export function parseEnvelope(text: string | null): ParseResult {
   if (text === null) return { ok: false, failure: 'unreadable' }
@@ -223,6 +239,7 @@ export function parseEnvelope(text: string | null): ParseResult {
   if (!isRecord(raw) || raw.app !== SAVE_APP_ID) return { ok: false, failure: 'wrong-app' }
   if (!isNumber(raw.version) || raw.version < 1) return { ok: false, failure: 'malformed' }
   if (raw.version > SAVE_VERSION) return { ok: false, failure: 'too-new' }
+  if (raw.version < SAVE_VERSION) return { ok: false, failure: 'outdated' }
   const { summary, data } = raw
   if (!isNumber(raw.savedAt) || !isRecord(summary) || !isRecord(data)) return { ok: false, failure: 'malformed' }
   const summaryOk = ['farmerLevel', 'coins', 'day', 'residents', 'playSeconds'].every((key) => isNumber(summary[key]))
@@ -230,6 +247,10 @@ export function parseEnvelope(text: string | null): ParseResult {
     && typeof value.data === 'string' && isNumber(value.scale)
   const life = data.life
   const dataOk = isNumber(data.playSeconds) && isNumber(data.coins) && isNumber(data.expansionLevel)
+    && (data.gems === undefined || isNumber(data.gems))
+    && (data.treasures === undefined || Array.isArray(data.treasures))
+    && (data.chapters === undefined || (isRecord(data.chapters) && Array.isArray(data.chapters.open)))
+    && (data.goodsCoins === undefined || isNumber(data.goodsCoins))
     && isRecord(data.clock) && isNumber(data.clock.timeOfDay) && isNumber(data.clock.elapsedDays)
     && isRecord(data.progression) && Array.isArray(data.progression.awarded)
     && isRecord(data.upgrades) && Array.isArray(data.accomplishments)
@@ -326,6 +347,14 @@ export function createSaveStore(storage: SaveStorage | null): SaveStore {
   }
 
   const slotNumbers = Array.from({ length: SAVE_SLOT_COUNT }, (_, index) => index + 1)
+
+  // Saves from an older version cannot be loaded, so they are cleared out
+  // rather than left as damaged slots. A save from a *newer* game is kept.
+  for (const slot of slotNumbers) {
+    const parsed = read(slot)
+    if (parsed.ok || parsed.failure !== 'outdated') continue
+    try { storage?.removeItem(slotKey(slot)) } catch { /* a slot that cannot be erased stays damaged */ }
+  }
 
   return {
     available: storage !== null,
@@ -424,6 +453,7 @@ const FAILURE_TEXT: Record<ParseFailure, string> = {
   unreadable: 'is unreadable',
   'wrong-app': 'is not a farm save',
   'too-new': 'was saved by a newer version of the game',
+  outdated: 'was saved by an older version of the game',
   malformed: 'is damaged',
 }
 

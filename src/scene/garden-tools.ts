@@ -5,6 +5,7 @@ import { createGardenToolModel, GARDEN_TOOLS, tintSeedPack, type GardenToolId } 
 import { GRASS_PACKS, SHORT_GRASS_CEILING, SHORT_GRASS_MAX_HEIGHT, TALL_GRASS_MAX_HEIGHT, type GrassPack } from '../game/tool-unlocks'
 import { TERRAIN_MAX_H, TERRAIN_MIN_H, type GardenTerrain } from './garden-terrain'
 import { pickHeightField } from './terrain-pick'
+import { easeToward, grazingMultiplier } from '../game/food-cues'
 import { measureMeadow, type MeadowBlade } from '../game/farm-state'
 import type { GardenWaterField } from '../game/garden-water'
 import {
@@ -164,6 +165,12 @@ export interface GardenTools {
   placeSnowFeature(kind: 'ice' | 'ball', x: number, z: number): boolean
   /** Dig a flat-bottomed basin, which is what a water condition needs. */
   digBasin(x: number, z: number, radius: number, depth: number): void
+  /**
+   * How overgrazed the lawn should read, 0 (lush) to 1 (straw). Eased slowly in `update`
+   * and applied as a colour multiplier on the blade and lawn materials, so it needs no
+   * shader in either renderer and leaves each blade's own green and the snow frost alone.
+   */
+  setGrazing(dryness: number): void
   update(deltaSeconds: number): void
   dispose(): void
 }
@@ -848,6 +855,24 @@ export function createGardenTools(
       }
     }
     return weight > 0 ? sum / weight : 0
+  }
+
+  // Overgrazing: a straw multiplier on the shared blade and lawn materials (see food-cues.ts).
+  let grazingTarget = 0
+  let grazing = 0
+  let grazingShown = -1
+  let grazingSnow = -1
+  const GRAZING_RATE = 1 / 25
+  function easeGrazing(deltaSeconds: number): void {
+    grazing = easeToward(grazing, grazingTarget, deltaSeconds, GRAZING_RATE)
+    // Snow washes the straw out, so frosted lawn stays white instead of turning yellow.
+    const snowShare = snowVertexCount <= 0 ? 0 : Math.min(1, snowVertexCount / Math.max(1, greenGroundVertices))
+    if (Math.abs(grazing - grazingShown) < 0.002 && Math.abs(snowShare - grazingSnow) < 0.02) return
+    grazingShown = grazing
+    grazingSnow = snowShare
+    const [r, g, b] = grazingMultiplier(grazing, snowShare)
+    grassMaterial.color.setRGB(r, g, b)
+    ;(lawn.material as THREE.MeshLambertMaterial).color.setRGB(r, g, b)
   }
 
   const frostColor = new THREE.Color()
@@ -2169,7 +2194,11 @@ export function createGardenTools(
       }
       demolishGrass(x, z, radius * 1.2)
     },
+    setGrazing(dryness): void {
+      grazingTarget = Number.isFinite(dryness) ? Math.max(0, Math.min(1, dryness)) : 0
+    },
     update(deltaSeconds): void {
+      easeGrazing(deltaSeconds)
       if (isPointerDown && cursorVisible && activeAction && lastSeedPoint) {
         // The brush chases the pointer at its capped speed before the effect
         // below runs, so each tick lands where the tool actually is.
