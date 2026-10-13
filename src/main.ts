@@ -37,7 +37,9 @@ import { createGardenWaterField, WATER_MIN_RENDER_DEPTH } from './game/garden-wa
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
 import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
-import { PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
+import { PLANT_CARE_KINDS, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
+import { createGreenThumb } from './game/plant-helpers'
+import { createCareController, helperSeedPrice, helperShopCopy } from './care-controller'
 import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
 import { createTreasureLedger, purchaseTreasure, treasureEffects, TREASURE_CATALOG, type TreasureId } from './game/treasures'
 import type { GardenToolId } from './scene/garden-tool-art'
@@ -467,6 +469,8 @@ function applyTreasureEffects(): void {
 applyTreasureEffects()
 /** Tools and land the shop has sold. Farmer level decides what it will sell next. */
 const upgrades = createUpgradeLedger()
+/** Green Thumb ribbons won in the care minigames, and the helpers they let you hire. */
+const greenThumb = createGreenThumb()
 
 // Individual residents and visitors are spawned from the pure animal-life records below.
 
@@ -965,6 +969,23 @@ const shop: ShopDomPanel = createShopDomPanel({
   onBuyFeed: () => buyFeedSack(),
   quoteUpgrade: (id: UpgradeId) => upgradeQuote(id, upgrades, progression.level),
   onBuyUpgrade: (id: UpgradeId) => buyUpgrade(id),
+  helpersFor: (species) => plantSpecies(species).minigames
+    ? PLANT_CARE_KINDS.map((care) => {
+      const quote = greenThumb.quote(species, care, helperSeedPrice(species))
+      return { care, ...helperShopCopy(species, care), status: quote.status, price: quote.price }
+    })
+    : [],
+  onHireHelper: (species, care) => {
+    const copy = helperShopCopy(species, care)
+    const quote = greenThumb.hire(species, care, helperSeedPrice(species), (price) => wallet.debit(price) !== null)
+    if (quote.status !== 'hired') {
+      return { ok: false, text: quote.status === 'needs-ribbon' ? copy.needs : `Not enough coins for the ${copy.name} -- it costs ${quote.price}.` }
+    }
+    salePanel.setWallet(wallet.balance)
+    saveSoon()
+    shop.refresh()
+    return { ok: true, text: `The ${copy.name} is on the job. Pip waves it off with a hanky.` }
+  },
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
   seedsFor: (species) => gardenPlants?.simulation.seedsFor(species) ?? 0,
   balance: () => wallet.balance,
@@ -1220,6 +1241,7 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
   fairground,
   gardenTools,
   gardenPlants: () => gardenPlants,
+  greenThumb,
   gardenProps: () => gardenProps,
   gardenTerrain,
   gardenWater,
@@ -1349,6 +1371,38 @@ const { selectGardenTool, handleMenuChoice, syncFarmChrome } = createFarmModes({
   endCameraTour,
   refreshCursor: () => refreshCursor(),
 })
+/**
+ * Earned plant care: a blueberry's markers open the rain cloud, the swatter and
+ * the snips; wins hand out Green Thumb ribbons; hired helpers take over.
+ */
+const careController = createCareController({
+  renderer,
+  scene,
+  camera,
+  canvas: gameCanvas,
+  gardenPlants: () => gardenPlants,
+  greenThumb,
+  notify: (title, detail) => notificationPanel.notifyAccomplishment(title, detail),
+  saveSoon: () => saveSoon(),
+  clearFarmFocus: () => {
+    plantCard.close()
+    animalCard.close()
+    propCard.close()
+    salePanel.close()
+    gardenPlants?.cancelPlacement()
+    gardenTools?.setPlantingMode(false)
+  },
+  refreshChrome: () => {
+    syncFarmChrome()
+    refreshCursor()
+  },
+})
+gardenPlants?.setCareHandlers({
+  startGame: (plant, care) => careController.startGame(plant, care),
+  helperHired: (species, care) => careController.helperHired(species, care),
+})
+window.addEventListener('resize', () => careController.resize(window.innerWidth, window.innerHeight))
+
 const hoverGlow = createHoverGlow()
 scene.add(hoverGlow.root)
 const input = createFarmInput({
@@ -1383,6 +1437,8 @@ const input = createFarmInput({
   endCameraTour,
   hoverGlow,
   toolIsOwned,
+  rainChallenge: () => careController.rain,
+  careGameActive: () => careController.playing,
 })
 // Used by the UI and the harness; the input module owns the actual cursor logic.
 const refreshCursor = (): void => input.refreshCursor()
@@ -1417,6 +1473,8 @@ window.addEventListener('resize', () => {
 
 if (__GARDEN_DEBUG__ && gardenDebugMode) {
   installGardenHarness({
+    careController,
+    greenThumb,
     intro: controlIntro,
     toolFilm: controlToolFilm,
     chapterFilm: (id: string, seconds?: number) => {
@@ -1810,6 +1868,13 @@ function frame(now: number): void {
     requestAnimationFrame(frame)
     return
   }
+  // A close-up care minigame plays like a film: the farm holds still underneath.
+  if (careController.playing) {
+    careController.update(delta)
+    careController.render()
+    requestAnimationFrame(frame)
+    return
+  }
   let stageStartedAt = workStartedAt
   farmCamera.removeShake()
   if (!clockHeld) advanceClock(dayNightClock, delta)
@@ -1889,6 +1954,7 @@ function frame(now: number): void {
     }
   }
   gardenPlants?.update(delta)
+  careController.updateFarm(delta)
   syncPlantCard(delta)
   gardenProps?.update(delta, progression.level)
   // Cheap and state-driven, so they stay per frame: the letter tray must hide the

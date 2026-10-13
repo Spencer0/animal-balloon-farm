@@ -8,7 +8,7 @@
  * shared with the animal card (`armSellConfirm` and friends).
  */
 
-export type PlantCareNeed = 'water' | 'prune' | null
+export type PlantCareNeed = 'water' | 'prune' | 'pest' | null
 
 export type PlantGrowthStage = 'Seedling' | 'Growing' | 'Mature'
 
@@ -41,5 +41,6 @@ export function plantGrowthStatus(growth: number): string {
 export function plantCareLine(growth: number, care: PlantCareNeed): string {
   if (care === 'water') return 'Thirsty: tap its water drop to give it a drink.'
   if (care === 'prune') return 'A stray shoot needs pinching back.'
+  if (care === 'pest') return 'Beetles are after the berries: tap the bug to swat them.'
   return plantGrowthStage(growth) === 'Mature' ? 'Fully grown and thriving.' : 'Growing happily; nothing needed right now.'
 }

@@ -1,5 +1,8 @@
-export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily'
-export type PlantCare = 'water' | 'prune'
+export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily' | 'blueberry'
+export type PlantCare = 'water' | 'prune' | 'pest'
+
+/** Every care kind, in the order a care marker or a shop list shows them. */
+export const PLANT_CARE_KINDS: readonly PlantCare[] = ['water', 'pest', 'prune']
 export type PlantSubstrate = 'grass' | 'soil' | 'water' | 'unknown'
 export type PlantPlacementFailure = 'out-of-bounds' | 'wrong-substrate' | 'needs-visible-water' | 'too-close' | 'out-of-seeds' | 'tall-grass'
 
@@ -23,6 +26,12 @@ export interface PlantSpecies {
    * turf under it (this much grass coverage, 0..1) and is drawn as a round patch.
    */
   readonly groundCover?: { readonly minCoverage: number }
+  /**
+   * Care is earned, not tapped: each marker opens a minigame (rain cloud,
+   * swatter, snips) that can be lost and retried. Winning one once earns the
+   * species a Green Thumb ribbon for that chore (see `plant-helpers.ts`).
+   */
+  readonly minigames?: boolean
 }
 
 export interface PlantCareStop {
@@ -61,13 +70,28 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
     growthSeconds: 100,
     care: [{ at: 0.3, kind: 'water' }, { at: 0.48, kind: 'prune' }, { at: 0.75, kind: 'water' }],
   },
+  {
+    id: 'blueberry', name: 'Blueberry bush', subtitle: 'A sour-soil berry bush',
+    description: 'Plant in bare soil. Call a rain cloud, swat the berry beetles, and snip its wild shoots, and it fruits for good.',
+    color: '#5b73c7', substrate: 'soil', spacingRadius: 0.62,
+    growthSeconds: 150,
+    care: [{ at: 0.22, kind: 'water' }, { at: 0.5, kind: 'pest' }, { at: 0.76, kind: 'prune' }],
+    minigames: true,
+  },
 ] as const
 
 /** The shed starts empty: seeds are bought at the shop, never handed out. */
 export const STARTING_SEEDS_PER_PLANT = 0
 
-/** The one exception: a single poppy seed, so the first plant is free. It grows in bare dirt, as Chapter 1 has no lawn. */
-export const STARTING_SEED_GIFT: { readonly species: PlantId; readonly count: number } = { species: 'poppy', count: 1 }
+/**
+ * The exceptions: one poppy seed, so the first plant is free, and one blueberry
+ * seed, so the care minigames can be tried straight away. The poppy grows in bare
+ * dirt, as Chapter 1 has no lawn.
+ */
+export const STARTING_SEED_GIFTS: readonly { readonly species: PlantId; readonly count: number }[] = [
+  { species: 'poppy', count: 1 },
+  { species: 'blueberry', count: 1 },
+]
 
 /** Coins for one seed. Each is a little under what its plant sells for grown. */
 export const SEED_PRICES: Readonly<Record<PlantId, number>> = {
@@ -75,6 +99,7 @@ export const SEED_PRICES: Readonly<Record<PlantId, number>> = {
   dandelion: 3,
   poppy: 5,
   'water-lily': 7,
+  blueberry: 12,
 }
 export const PLANT_WATER_MIN_DEPTH = 0.04
 const PLANT_SPACING_GAP = 0.12
@@ -171,7 +196,7 @@ export function plantSpecies(species: PlantId): PlantSpecies {
 
 export function createPlantSimulation(): PlantSimulation {
   const plants: MutablePlant[] = []
-  const seedCounts = new Map<PlantId, number>(PLANT_CATALOG.map(({ id }) => [id, id === STARTING_SEED_GIFT.species ? STARTING_SEED_GIFT.count : STARTING_SEEDS_PER_PLANT]))
+  const seedCounts = new Map<PlantId, number>(PLANT_CATALOG.map(({ id }) => [id, STARTING_SEED_GIFTS.find((gift) => gift.species === id)?.count ?? STARTING_SEEDS_PER_PLANT]))
   let nextInstanceId = 1
 
   function snapshot(plant: MutablePlant): GardenPlant {
@@ -275,7 +300,7 @@ export function createPlantSimulation(): PlantSimulation {
           x: finite(saved.x),
           z: finite(saved.z),
           growth,
-          careNeeded: growth < 1 && (saved.careNeeded === 'water' || saved.careNeeded === 'prune') ? saved.careNeeded : null,
+          careNeeded: growth < 1 && PLANT_CARE_KINDS.includes(saved.careNeeded as PlantCare) ? saved.careNeeded : null,
           stopsDone: Math.max(0, Math.min(definition.care.length, Math.floor(finite(saved.stopsDone)))),
         })
         highest = Math.max(highest, saved.instanceId)
