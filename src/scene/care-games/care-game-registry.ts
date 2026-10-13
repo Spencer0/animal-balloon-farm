@@ -1,4 +1,5 @@
 import type { CareGameKind } from '../../game/care-minigames'
+import { createPaddleGame } from './paddle-game'
 import { createSnipGame } from './snip-game'
 import { createSwatGame } from './swat-game'
 import type { CareGameContext, CareGameScene } from './care-game-types'
@@ -40,8 +41,7 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   chop: { create: null, input: 'tap' },
   // skim: built in skim-game.ts
   skim: { create: null, input: 'tap' },
-  // paddle: built in paddle-game.ts
-  paddle: { create: null, input: 'tap' },
+  paddle: { create: createPaddleGame, input: 'tap' },
   // rope: built in rope-game.ts
   rope: { create: null, input: 'tap' },
 }

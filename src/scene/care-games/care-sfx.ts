@@ -7,6 +7,8 @@
 export type CareSound =
   | 'sting' | 'swat' | 'whiff' | 'chomp' | 'harm' | 'snip' | 'squish'
   | 'tap' | 'downpour' | 'win' | 'lose' | 'pop'
+  // paddle
+  | 'swish' | 'slurp' | 'splash' | 'thunk'
 
 export interface CareSfx {
   play(sound: CareSound, pitch?: number): void
@@ -142,6 +144,22 @@ export function createCareSfx(): CareSfx {
         case 'lose':
           tone('triangle', NOTE(67), NOTE(62), now, 0.3, 0.25)
           tone('triangle', NOTE(62), NOTE(55), now + 0.32, 0.5, 0.25)
+          break
+        // paddle
+        case 'swish':
+          hiss(now, 0.12, 0.2, 'bandpass', 500, 1800, 1.2)
+          break
+        case 'slurp':
+          tone('sine', 900 * pitch, 260 * pitch, now, 0.14, 0.28)
+          hiss(now, 0.12, 0.16, 'bandpass', 2200, 600, 1.5)
+          break
+        case 'splash':
+          hiss(now, 0.22, 0.32, 'bandpass', 2500, 800, 0.9)
+          tone('sine', 420 * pitch, 200 * pitch, now, 0.18, 0.12)
+          break
+        case 'thunk':
+          tone('triangle', 160, 60, now, 0.22, 0.5)
+          hiss(now, 0.08, 0.3, 'lowpass', 800, 200, 1)
           break
       }
     },
