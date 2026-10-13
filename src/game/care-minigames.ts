@@ -2,23 +2,40 @@
  * The rules of the plant-care minigames: what each one asks, how long it
  * lasts, and when a round is won or lost.
  *
- *   rain  (water)  a rain cloud bobs over the plant; tap it before it drifts off
- *   swat  (pest)   beetles fly at the berries; swat them, spare the ladybugs
- *   snip  (prune)  wild leaves fly up out of the bush; slice them, not the berries
+ * Every plant type has its own three games, one per chore (`CARE_GAMES`):
+ *
+ *   bush   rain  (water)  a rain cloud bobs over the plant; tap it before it drifts off
+ *          swat  (pest)   beetles fly at the berries; swat them, spare the ladybugs
+ *          snip  (prune)  wild leaves fly up out of the bush; slice them, not the berries
+ *   flower buzz (water)   a bee carries a dewdrop through the stem gaps; flap, don't bonk
+ *          hop   (pest)   a ladybug auto-runs past the aphids; jump the thorns
+ *          chop  (prune)  a spent stalk falls past the shears; cut it on the dashed line
+ *   water  skim (water)   a dragonfly climbs and sinks over the pond; catch the dew
+ *          paddle (pest) a frog swims up the stream in lanes; snap the mosquitoes
+ *          rope  (prune)  the lily's runner whips round the pad; hop each pass
  *
  * The scenes (`src/scene/care-games/`) only report what happened (a hit, a
  * miss, a harm, a beetle that left); this module decides the outcome, so the
  * win and loss rules are tested in `tests/care-minigames.test.mjs` without a
  * browser. Pure: no Three.js and no DOM.
  */
-import type { PlantCare } from './plants'
+import { plantSpecies, type PlantCare, type PlantId, type PlantType } from './plants'
 
-export type CareGameKind = 'rain' | 'swat' | 'snip'
+/** Every close-up or farm-side care game. */
+export type CareGameKind = 'rain' | 'swat' | 'snip' | 'buzz' | 'hop' | 'chop' | 'skim' | 'paddle' | 'rope'
 
-export const CARE_GAME_FOR: Readonly<Record<PlantCare, CareGameKind>> = {
-  water: 'rain',
-  pest: 'swat',
-  prune: 'snip',
+export const CARE_GAME_KINDS: readonly CareGameKind[] = ['rain', 'swat', 'snip', 'buzz', 'hop', 'chop', 'skim', 'paddle', 'rope']
+
+/** Which game answers each chore, for each plant type. */
+export const CARE_GAMES: Readonly<Record<PlantType, Readonly<Record<PlantCare, CareGameKind>>>> = {
+  bush: { water: 'rain', pest: 'swat', prune: 'snip' },
+  flower: { water: 'buzz', pest: 'hop', prune: 'chop' },
+  water: { water: 'skim', pest: 'paddle', prune: 'rope' },
+}
+
+/** The game a species plays for one of its chores. */
+export function careGameFor(species: PlantId, care: PlantCare): CareGameKind {
+  return CARE_GAMES[plantSpecies(species).careType][care]
 }
 
 export interface CareGameRules {
@@ -39,6 +56,18 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   swat: { goal: 8, hearts: 3, misses: 0, seconds: 18 },
   // Twelve leaves; three dropped, or two berries cut, and it is over.
   snip: { goal: 12, hearts: 2, misses: 3, seconds: 22 },
+  // Eight gaps; two bonks and the bee is done.
+  buzz: { goal: 8, hearts: 2, misses: 0, seconds: 24 },
+  // Twelve aphids eaten on the run; two thorns and it is over.
+  hop: { goal: 12, hearts: 2, misses: 0, seconds: 22 },
+  // Six clean cuts; two stalks missed and it is over. No hearts.
+  chop: { goal: 6, hearts: 0, misses: 2, seconds: 22 },
+  // Eighteen dewdrops; three knocks and the dragonfly is out.
+  skim: { goal: 18, hearts: 3, misses: 0, seconds: 22 },
+  // Twelve mosquitoes; three snags or logs and the frog is out.
+  paddle: { goal: 12, hearts: 3, misses: 0, seconds: 22 },
+  // Ten passes skipped; two caught and the frog is out.
+  rope: { goal: 10, hearts: 2, misses: 0, seconds: 22 },
 }
 
 export interface CareGameCopy {
@@ -46,12 +75,20 @@ export interface CareGameCopy {
   readonly command: string
   readonly goalLine: string
   readonly winLine: string
+  /** What the game is for, in the middle of a sentence: "Pip now stocks ... does the bee run". */
+  readonly chore: string
 }
 
 export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
-  rain: { command: 'TAP!', goalLine: 'Tap the cloud six times before it drifts off.', winLine: 'What a downpour!' },
-  swat: { command: 'SWAT!', goalLine: 'Swat the beetles before they eat three berries. Spare the ladybugs!', winLine: 'Not a beetle left!' },
-  snip: { command: 'SNIP!', goalLine: 'Slice twelve wild leaves. Leave the berries alone!', winLine: 'Neat as a pin!' },
+  rain: { command: 'TAP!', goalLine: 'Tap the cloud six times before it drifts off.', winLine: 'What a downpour!', chore: 'the rain cloud' },
+  swat: { command: 'SWAT!', goalLine: 'Swat the beetles before they eat three berries. Spare the ladybugs!', winLine: 'Not a beetle left!', chore: 'the beetle swat' },
+  snip: { command: 'SNIP!', goalLine: 'Slice twelve wild leaves. Leave the berries alone!', winLine: 'Neat as a pin!', chore: 'the snipping' },
+  buzz: { command: 'FLAP!', goalLine: 'Flap the bee through eight gaps. Bonk a stem and you lose a heart.', winLine: 'Dewdrop delivered!', chore: 'the bee run' },
+  hop: { command: 'JUMP!', goalLine: 'Eat twelve aphids on the run. Jump the thorns and burrs!', winLine: 'Every aphid gobbled!', chore: 'the ladybug run' },
+  chop: { command: 'CUT!', goalLine: 'Tap when the dashed line meets the blades. Six clean cuts, two misses and it is over.', winLine: 'Clean as a whistle!', chore: 'the stalk chop' },
+  skim: { command: 'HOLD!', goalLine: 'Hold to climb through the dewdrops. Dodge the cattails, fish and fluff!', winLine: 'The lily drinks it all!', chore: 'the dragonfly skim' },
+  paddle: { command: 'SWIPE!', goalLine: 'Swipe or tap a side to change lanes, up to hop a log. Snap twelve mosquitoes!', winLine: 'Tongue-tastic!', chore: 'the frog paddle' },
+  rope: { command: 'JUMP!', goalLine: 'Hop each sweep of the runner. Ten passes, and do not get caught!', winLine: 'Nothing tripped the frog!', chore: 'the lily skip' },
 }
 
 /** How long the command card shows before play starts, in seconds. */
@@ -169,11 +206,22 @@ export function createCareRound(kind: CareGameKind, rules: CareGameRules = CARE_
   }
 }
 
+/** Why each game can be lost, one line per reason. Anything not listed reads "So close!". */
+const LOSS_LINES: Readonly<Record<CareGameKind, Readonly<Partial<Record<CareLossReason, string>>>>> = {
+  rain: { time: 'The cloud drifted off.' },
+  swat: { time: 'Out of time!', hearts: 'The beetles got the berries.' },
+  snip: { time: 'Out of time!', misses: 'Too many leaves got away.', hearts: 'Too many berries got sliced.' },
+  buzz: { time: 'The bee ran out of puff.', hearts: 'The bee bonked too often.' },
+  hop: { time: 'Out of time!', hearts: 'Too many thorns caught the ladybug.' },
+  chop: { time: 'Out of time!', misses: 'Too many stalks missed the cut.' },
+  skim: { time: 'Out of time!', hearts: 'The dragonfly got knocked out of the air.' },
+  paddle: { time: 'Out of time!', hearts: 'The frog got snagged too often.' },
+  rope: { time: 'Out of time!', hearts: 'The runner caught the frog.' },
+}
+
 /** One line on why a round was lost, for the result card. */
 export function lossLine(kind: CareGameKind, reason: CareLossReason | null): string {
   if (reason === 'forfeit') return 'Maybe later.'
-  if (reason === 'time') return kind === 'rain' ? 'The cloud drifted off.' : 'Out of time!'
-  if (reason === 'misses') return 'Too many leaves got away.'
-  if (reason === 'hearts') return kind === 'swat' ? 'The beetles got the berries.' : 'Too many berries got sliced.'
-  return 'So close!'
+  if (reason === null) return 'So close!'
+  return LOSS_LINES[kind][reason] ?? 'So close!'
 }

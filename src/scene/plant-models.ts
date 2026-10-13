@@ -16,6 +16,23 @@ import { mergeStaticMeshes } from './merge-static-meshes'
 export const BLUEBERRY_BUSH_URL = 'assets/plants/blueberry-bush.glb'
 export const GARDEN_CRITTERS_URL = 'assets/plants/garden-critters.glb'
 
+/**
+ * The care casts: the critters of the flower and water minigames, authored in
+ * Blender (art/blender/flower_care_cast.py, water_care_cast.py). Loaded lazily,
+ * the first time a game of that type opens, never at boot.
+ */
+export const CARE_CAST_URLS = {
+  flower: 'assets/plants/flower-care-cast.glb',
+  water: 'assets/plants/water-care-cast.glb',
+} as const
+export const CARE_CAST_CRITTERS = {
+  flower: ['bee', 'dewdrop', 'aphid', 'burr', 'thorn', 'shears', 'stalk'],
+  water: ['dragonfly', 'frog', 'fish', 'cattail', 'mosquito', 'log', 'snag', 'runner_leaf'],
+} as const
+export type CareCastType = keyof typeof CARE_CAST_URLS
+/** A critter name in one cast; the GLB root is `CRITTER_<name>`. */
+export type CareCritterName<T extends CareCastType> = (typeof CARE_CAST_CRITTERS)[T][number]
+
 export type CritterName = 'beetle' | 'ladybug' | 'leaf' | 'cloud' | 'swatter' | 'hedgehog'
 
 /** The bush's groups, as GLTFLoader names them. */
@@ -35,6 +52,8 @@ interface GardenModels {
 
 let models: GardenModels | null = null
 let pending: Promise<GardenModels> | null = null
+const castModels = new Map<CareCastType, ReadonlyMap<string, THREE.Object3D>>()
+const castPending = new Map<CareCastType, Promise<void>>()
 
 function prepareBush(root: THREE.Object3D): THREE.Object3D {
   const bush = root.getObjectByName('BB_root') ?? root
@@ -68,6 +87,58 @@ function prepareCritters(root: THREE.Object3D): Map<CritterName, THREE.Object3D>
     critters.set(name, node)
   }
   return critters
+}
+
+/** Nodes that move on their own inside a care critter: wings, shears' blades, a frog's tongue. */
+const CAST_PIVOTS = /^(wing_[LR]|blade_[AB]|tongue)$/
+
+function prepareCastCritter(node: THREE.Object3D): void {
+  node.removeFromParent()
+  node.position.set(0, 0, 0)
+  mergeStaticMeshes(node, { isPivot: (object) => CAST_PIVOTS.test(object.name) })
+  node.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return
+    object.castShadow = true
+    const material = object.material as THREE.Material
+    if (material.transparent) {
+      object.renderOrder = 2
+      material.depthWrite = false
+    }
+  })
+}
+
+/**
+ * Load one care cast (once). A missing or broken file logs a single warning and
+ * resolves: its games then open without their critters rather than failing.
+ */
+export function loadCareCast(type: CareCastType): Promise<void> {
+  if (castModels.has(type)) return Promise.resolve()
+  const existing = castPending.get(type)
+  if (existing) return existing
+  const pendingCast = new GLTFLoader().loadAsync(CARE_CAST_URLS[type]).then(
+    (gltf) => {
+      const critters = new Map<string, THREE.Object3D>()
+      for (const name of CARE_CAST_CRITTERS[type]) {
+        const node = gltf.scene.getObjectByName(`CRITTER_${name}`)
+        if (!node) continue
+        prepareCastCritter(node)
+        critters.set(name, node)
+      }
+      castModels.set(type, critters)
+    },
+    (error: unknown) => {
+      console.warn(`[plants] could not load the ${type} care cast`, error)
+      castModels.set(type, new Map())
+    },
+  )
+  castPending.set(type, pendingCast)
+  return pendingCast
+}
+
+/** A fresh clone of one cast critter, or null if the cast is not loaded or has no such critter. */
+export function cloneCastCritter<T extends CareCastType>(type: T, name: CareCritterName<T>): THREE.Object3D | null {
+  const source = castModels.get(type)?.get(name)
+  return source ? source.clone(true) : null
 }
 
 /** Start loading (once) and resolve when both models are ready. */

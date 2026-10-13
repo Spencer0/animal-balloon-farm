@@ -4,10 +4,75 @@ import test from 'node:test'
 
 const { outputFiles } = await build({ entryPoints: ['src/game/care-minigames.ts'], bundle: true, format: 'esm', platform: 'node', write: false })
 const games = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
-const { createCareRound, CARE_GAME_RULES, CARE_GAME_FOR, lossLine } = games
+const { createCareRound, CARE_GAME_RULES, CARE_GAME_COPY, CARE_GAME_KINDS, CARE_GAMES, careGameFor, lossLine } = games
+const { outputFiles: catalogFiles } = await build({ entryPoints: ['src/game/plants.ts'], bundle: true, format: 'esm', platform: 'node', write: false })
+const { PLANT_CATALOG, PLANT_CARE_KINDS } = await import(`data:text/javascript;base64,${Buffer.from(catalogFiles[0].text).toString('base64')}`)
 
-test('each chore opens its own game', () => {
-  assert.deepEqual(CARE_GAME_FOR, { water: 'rain', pest: 'swat', prune: 'snip' })
+test('each plant type plays its own three games, one per chore', () => {
+  assert.deepEqual(CARE_GAMES, {
+    bush: { water: 'rain', pest: 'swat', prune: 'snip' },
+    flower: { water: 'buzz', pest: 'hop', prune: 'chop' },
+    water: { water: 'skim', pest: 'paddle', prune: 'rope' },
+  })
+  for (const type of Object.keys(CARE_GAMES)) {
+    assert.deepEqual(Object.keys(CARE_GAMES[type]).sort(), [...PLANT_CARE_KINDS].sort(), type)
+    assert.equal(new Set(Object.values(CARE_GAMES[type])).size, 3, `${type} has three different games`)
+  }
+})
+
+test('every type and chore has a game, and each game is a kind with rules and copy', () => {
+  const played = new Set()
+  for (const type of Object.keys(CARE_GAMES)) for (const care of PLANT_CARE_KINDS) played.add(CARE_GAMES[type][care])
+  assert.deepEqual([...played].sort(), [...CARE_GAME_KINDS].sort())
+  for (const kind of CARE_GAME_KINDS) {
+    assert.ok(CARE_GAME_RULES[kind].goal > 0 && CARE_GAME_RULES[kind].seconds > 0, kind)
+    assert.ok(CARE_GAME_COPY[kind].command && CARE_GAME_COPY[kind].goalLine && CARE_GAME_COPY[kind].winLine && CARE_GAME_COPY[kind].chore, kind)
+    assert.ok(lossLine(kind, 'time').length > 0, kind)
+    assert.ok(lossLine(kind, 'forfeit').length > 0, kind)
+  }
+})
+
+test('every species with minigames has a game for each chore its care list asks for', () => {
+  for (const species of PLANT_CATALOG.filter((entry) => entry.minigames)) {
+    for (const stop of species.care) {
+      assert.ok(CARE_GAME_KINDS.includes(careGameFor(species.id, stop.kind)), `${species.id} ${stop.kind}`)
+    }
+  }
+})
+
+test('blueberry keeps the bush games exactly as before', () => {
+  assert.equal(careGameFor('blueberry', 'water'), 'rain')
+  assert.equal(careGameFor('blueberry', 'pest'), 'swat')
+  assert.equal(careGameFor('blueberry', 'prune'), 'snip')
+  assert.equal(CARE_GAME_COPY.swat.command, 'SWAT!')
+  assert.equal(CARE_GAME_COPY.snip.command, 'SNIP!')
+  assert.equal(CARE_GAME_COPY.rain.command, 'TAP!')
+})
+
+test('flower and water species play their own games', () => {
+  assert.equal(careGameFor('poppy', 'water'), 'buzz')
+  assert.equal(careGameFor('clover', 'pest'), 'hop')
+  assert.equal(careGameFor('dandelion', 'prune'), 'chop')
+  assert.equal(careGameFor('water-lily', 'water'), 'skim')
+  assert.equal(careGameFor('water-lily', 'pest'), 'paddle')
+  assert.equal(careGameFor('water-lily', 'prune'), 'rope')
+  assert.equal(PLANT_CATALOG.find(({ id }) => id === 'poppy').careType, 'flower')
+})
+
+test('new games: the chop has no hearts, its misses lose; the flapping bee loses on bonks', () => {
+  const chop = createCareRound('chop')
+  for (let stalk = 0; stalk < CARE_GAME_RULES.chop.goal; stalk += 1) chop.hit()
+  assert.equal(chop.snapshot.state, 'won')
+  const missed = createCareRound('chop')
+  missed.miss()
+  missed.miss()
+  assert.equal(missed.snapshot.lossReason, 'misses')
+  assert.match(lossLine('chop', 'misses'), /missed/)
+  const bee = createCareRound('buzz')
+  bee.harm()
+  bee.harm()
+  assert.equal(bee.snapshot.lossReason, 'hearts')
+  assert.match(lossLine('buzz', 'hearts'), /bonked/)
 })
 
 test('rain: enough taps in time wins, the clock running out loses', () => {
