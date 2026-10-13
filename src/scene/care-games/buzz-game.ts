@@ -26,11 +26,16 @@ import type { CareGameContext, CareGameScene } from './care-game-types'
 const BEE_Z = 0.45
 const FLOWER_Z_FAR = -0.5
 const FLOWER_Z_NEAR = 0.1
-const FLOWER_GROWTH_FAR = 0.55
+const FLOWER_GROWTH_FAR = 0.8
 /** The flower's place on the course: this share of the view from its left edge. */
 const FLOWER_AT = 0.84
 /** The bee's drawn length, in world units (its model is about 0.18 m). */
-const BEE_LENGTH = 0.25
+const BEE_LENGTH = 0.27
+/** The view height the course is designed for (world units at 1280x720); other aspects zoom to match it. */
+const REFERENCE_VIEW_HEIGHT = 1.88
+const FOREGROUND_PERIOD = 5.4
+const FOREGROUND_SPACING = 0.3
+const FOREGROUND_ROWS = Math.round(FOREGROUND_PERIOD / FOREGROUND_SPACING)
 /** The dewdrop hangs this far under the bee's centre (in model units, before the bee's scale). */
 const BEE_DROP_HANG = 0.11
 /** Stem pairs drawn at once: the course holds at most about four on screen. */
@@ -97,12 +102,12 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
   const owned: Array<{ dispose(): void }> = []
 
   // ---- stems: a pool of pairs. A poppy stalk stands up from the lawn, a grass blade hangs down from the top.
-  const stemMaterial = new THREE.MeshLambertMaterial({ color: '#5d9b48' })
-  const bladeMaterial = new THREE.MeshLambertMaterial({ color: '#86c063' })
+  const stemMaterial = new THREE.MeshLambertMaterial({ color: '#2d5a2a' })
+  const bladeMaterial = new THREE.MeshLambertMaterial({ color: '#4f8a3a' })
   const poppyMaterial = new THREE.MeshLambertMaterial({ color: '#e4572e' })
   // Unit-height cylinders: lower ones grow up from y = 0, upper ones hang down from their pivot.
-  const lowStemGeometry = new THREE.CylinderGeometry(0.058, 0.072, 1, 10).translate(0, 0.5, 0)
-  const highStemGeometry = new THREE.CylinderGeometry(0.06, 0.05, 1, 10).translate(0, -0.5, 0)
+  const lowStemGeometry = new THREE.CylinderGeometry(0.075, 0.09, 1, 10).translate(0, 0.5, 0)
+  const highStemGeometry = new THREE.CylinderGeometry(0.075, 0.065, 1, 10).translate(0, -0.5, 0)
   const poppyGeometry = new THREE.SphereGeometry(0.095, 14, 10)
   const bladeGeometry = new THREE.SphereGeometry(0.07, 12, 9)
   owned.push(stemMaterial, bladeMaterial, poppyMaterial, lowStemGeometry, highStemGeometry, poppyGeometry, bladeGeometry)
@@ -138,6 +143,20 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
     tufts.push({ mesh, row })
   }
   let meadowScroll = 0
+  // Foreground grass in front of the stems: it fills the lawn band below the course and moves faster than the stems.
+  const grassGeometry = new THREE.SphereGeometry(1, 10, 6)
+  const grassMaterial = new THREE.MeshLambertMaterial({ color: '#3f7a35' })
+  owned.push(grassGeometry, grassMaterial)
+  const grass: Array<{ mesh: THREE.Mesh; row: number }> = []
+  for (let row = 0; row < FOREGROUND_ROWS; row += 1) {
+    const mesh = new THREE.Mesh(grassGeometry, grassMaterial)
+    mesh.name = 'Buzz foreground grass'
+    mesh.scale.set(0.22 + (row % 2) * 0.06, 0.3 + (row % 3) * 0.08, 0.12)
+    mesh.position.set(0, -0.4, 0.9)
+    root.add(mesh)
+    grass.push({ mesh, row })
+  }
+  let grassScroll = 0
 
   // ---- the bee: a rig for its place, a tilt-and-loop group, and a spin group for the bonk roll.
   const rig = new THREE.Group()
@@ -200,6 +219,8 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
   let modeTime = 0
   let started = false
   let view: BuzzView = { left: -1, width: 2, top: 1 }
+  // The course is drawn at this zoom (its physics stay in fixed units): tall phones zoom in to the same playfield.
+  let zoom = 1
   let spinTime = -1
   let wingPhase = 0
   let wingBoost = 0
@@ -220,18 +241,27 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
     const left = stage.screenToPlane(0, height / 2, 0).x
     const right = stage.screenToPlane(width, height / 2, 0).x
     const top = stage.screenToPlane(width / 2, 0, 0).y
-    view = { left, width: right - left, top }
-    flowerX = left + (right - left) * FLOWER_AT
+    const bottom = stage.screenToPlane(width / 2, height, 0).y
+    zoom = Math.min(2.4, Math.max(0.6, (top - bottom) / REFERENCE_VIEW_HEIGHT))
+    // Physics view in fixed units: the screen divided by the zoom.
+    view = { left: left / zoom, width: (right - left) / zoom, top: top / zoom }
+    flowerX = view.left + view.width * FLOWER_AT
     flowerTop = stage.plantHeight * growth
+    root.scale.setScalar(zoom)
+  }
+
+  /** A physics point as a world point (for text, and anything outside the zoomed root). */
+  function toWorld(x: number, y: number, z: number): THREE.Vector3 {
+    return new THREE.Vector3(x * zoom, y * zoom, z * zoom)
   }
 
   /** The flower's place and size: it stands at the right edge and steps nearer as it grows. */
   function placeFlower(): void {
     if (!plant) return
     const progress = Math.min(1, Math.max(0, (growth - FLOWER_GROWTH_FAR) / (1 - FLOWER_GROWTH_FAR)))
-    plant.position.x = flowerX
-    plant.position.z = FLOWER_Z_FAR + (FLOWER_Z_NEAR - FLOWER_Z_FAR) * progress
-    if (plantModel) plantModel.scale.setScalar(plantBase.scale * growth)
+    plant.position.x = flowerX * zoom
+    plant.position.z = (FLOWER_Z_FAR + (FLOWER_Z_NEAR - FLOWER_Z_FAR) * progress) * zoom
+    if (plantModel) plantModel.scale.setScalar(plantBase.scale * growth * zoom)
   }
 
   function dropCentre(): THREE.Vector3 {
@@ -262,7 +292,7 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
     sfx.play('bonk')
     stage.shake(0.22)
     context.hitStop(0.07)
-    context.popAt(rig.position.clone().add(new THREE.Vector3(0, 0.2, 0)), kind === 'floor' ? 'OUCH!' : 'BONK!', 'bad', true)
+    context.popAt(toWorld(rig.position.x, rig.position.y + 0.2, rig.position.z), kind === 'floor' ? 'OUCH!' : 'BONK!', 'bad', true)
     spinTime = 0
     wingBoost = 0
     const heart = hearts[Math.min(heartIndex, hearts.length - 1)]
@@ -276,7 +306,7 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
 
   function cleared(stemX: number, gapCentre: number, streak: number): void {
     sfx.play('chime', chimePitch(streak))
-    context.popAt(new THREE.Vector3(stemX, gapCentre, 0.25), '+1', 'good', streak >= 3)
+    context.popAt(toWorld(stemX, gapCentre, 0.25), '+1', 'good', streak >= 3)
     burst(new THREE.Vector3(stemX, gapCentre, 0.2), ['#fff3b0', '#ffd166', '#ffffff'], 10, 0.5, 'star')
     context.hitStop(0.03)
     stage.bounce(0.25)
@@ -371,7 +401,7 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
         sfx.play('splash')
         stage.bounce(1)
         stage.sparkle()
-        context.popAt(landing.clone().add(new THREE.Vector3(0, 0.1, 0)), 'SPLASH!', 'good', true)
+        context.popAt(toWorld(landing.x, landing.y + 0.1, landing.z), 'SPLASH!', 'good', true)
         splashTime = modeTime
       }
     }
@@ -424,6 +454,7 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
     // The climb is set at once, so the tap is not held for a frame.
     run.bee = flapBee(run.bee)
     wingBoost = 0.3
+    burst(new THREE.Vector3(rig.position.x, rig.position.y - 0.05, BEE_Z), ['#ffffff', '#fff3c4'], 6, 0.35, 'blob')
     sfx.play('flap')
     return true
   }
@@ -461,6 +492,12 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
         const offset = tuft.row * FAR_SPACING - meadowScroll
         const wrapped = ((offset % FAR_PERIOD) + FAR_PERIOD) % FAR_PERIOD
         tuft.mesh.position.x = view.left - FAR_SPACING + wrapped
+      }
+      grassScroll += dt * (view.width / BUZZ.crossSeconds) * 1.3
+      for (const blade of grass) {
+        const offset = blade.row * FOREGROUND_SPACING - grassScroll
+        const wrapped = ((offset % FOREGROUND_PERIOD) + FOREGROUND_PERIOD) % FOREGROUND_PERIOD
+        blade.mesh.position.x = view.left - FOREGROUND_SPACING + wrapped
       }
 
       if (mode === 'play') {
