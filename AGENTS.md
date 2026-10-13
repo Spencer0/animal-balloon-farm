@@ -19,16 +19,20 @@
    `.github/workflows/performance.yml`). Run `npm run check` locally, then
    read the PR's Performance check before merging. If it fails, fix the change
    or measure and justify a new budget. Never loosen a check to get green.
-4. **Hand Spencer a playable GitHub link, not localhost.** Work runs in cloud
-   agents, so a local dev server is irrelevant to Spencer. For UAT, every
-   change needs both of these:
+4. **Share work through GitHub Pages previews, not localhost.** Work runs in
+   cloud agents, so a local dev server is irrelevant to Spencer. Every branch
+   is shareable as a live URL; that is how Spencer tests and how he sends a
+   build to a friend. For UAT, every change needs both of these:
    1. **A playable link.** Push the work to a `feature/<name>` (or
       `debug/<name>`) branch. `pages.yml` publishes only branches with those
       prefixes, to
       `https://spencer0.github.io/animal-balloon-farm/previews/feature-<name>/`
       (the `/` in the branch name becomes `-`). Preview builds have the debug
-      harness on. Give Spencer that URL and the branch name. If the session's
-      assigned branch has another prefix, ask before pushing a `feature/` one.
+      harness on. Give Spencer that URL and the branch name. If the session is
+      assigned a differently named branch (for example `claude/...`), also
+      push the same commit to a `feature/<name>` branch: this rule is
+      standing permission for that push, with no need to ask. Wait for the
+      Deploy to GitHub Pages run to finish (a few minutes) before sharing.
    2. **A debug scenario that warps to what changed.** Add one in
       `dev/scenarios/<area>/<name>.ts`, register it in `dev/scenarios/index.ts`
       (copy `sandbox/farmer-10.ts`) and reach it with
