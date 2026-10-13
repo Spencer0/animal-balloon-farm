@@ -30,6 +30,7 @@ test('chip and status words follow the stage', () => {
 test('the care line names what a plant wants, then settles', () => {
   assert.match(plantCareLine(0.3, 'water'), /drink/)
   assert.match(plantCareLine(0.5, 'prune'), /pinching/)
+  assert.match(plantCareLine(0.5, 'pest'), /swat/)
   assert.match(plantCareLine(0.5, null), /Growing happily/)
   assert.match(plantCareLine(1, null), /thriving/)
 })

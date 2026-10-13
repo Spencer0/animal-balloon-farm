@@ -64,8 +64,39 @@ growing at `SHORT_GRASS_MAX_HEIGHT`; a green sack sows tall grass up to
   blades under a planted patch.
 - A blade taller than `SHORT_GRASS_CEILING` counts as meadow.
 
+## Earned plant care: minigames, ribbons and helpers
+
+A species with `minigames: true` in `PLANT_CATALOG` (the blueberry bush, so far)
+does not answer care with a tap. Each care marker opens a short game that can be
+lost and retried; the plant just keeps waiting.
+
+| Care | Game | Where it plays | Win / lose (`CARE_GAME_RULES`) |
+| --- | --- | --- | --- |
+| water | Rain cloud: tap it as it hops | On the farm, over the plant | 6 taps in 4.6 s |
+| pest | Swat: first-person fly swatter | Close-up stage | Swat 8 beetles; 3 berries eaten or ladybugs hit loses |
+| prune | Snip: slice thrown leaves | Close-up stage | Cut 12 leaves; 3 dropped or 2 berry clusters cut loses |
+
+The first win of a chore on a species earns that species a **Green Thumb ribbon**
+for it. A ribbon puts the chore's helper in the Seeds tab at Pip's (under the
+species' seed), and a hired helper does that chore on every plant of the species
+from then on, with its own little animation:
+
+| Care | Helper | Base price |
+| --- | --- | --- |
+| water | Pet Raincloud | 18 coins |
+| pest | Ladybug Lodge | 28 coins |
+| prune | Hedgehog Snipper | 36 coins |
+
+Prices scale with the species' seed price (`helperPrice`). The rules are pure and
+tested: `src/game/care-minigames.ts` (`tests/care-minigames.test.mjs`) and
+`src/game/plant-helpers.ts` (`tests/plant-helpers.test.mjs`). To give another
+species the games, set `minigames: true`; the close-up stage currently stars the
+blueberry model, so a new species also wants its own stage art.
+
 ## Debug harness
 
+With `?gardenDebug=1`: `growUntilCare(care)`, `startCare()`, `settleCare(won)`,
+`greenThumb({ species, care })` and `armSeed(species)` drive the care games.
 With `?gardenDebug=1`: `upgrades()`, `buyUpgrade(id)`, `awardPoints(n)`,
 `swapPack()` and `stepTools(seconds)`. For gems: `grantGems(n)`, `buyTreasure(id)`,
 `treasures()`, `setHarmony(n)` and `spawnStarhorn()`. `buy(id)` and `grantCoins(n)` deliberately

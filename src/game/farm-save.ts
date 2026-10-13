@@ -5,6 +5,7 @@ import { GARDEN_BOUNDS } from '../scene/fairground'
 import type { GardenTerrain } from '../scene/garden-terrain'
 import type { GardenTools } from '../scene/garden-tools'
 import type { GardenPlants } from '../scene/garden-plants'
+import type { GreenThumb } from './plant-helpers'
 import type { GardenProps } from '../scene/garden-props'
 import { PROP_ORDER } from './farm-props'
 import { shopUnlocked } from './shop-construction'
@@ -43,6 +44,7 @@ export interface FarmSaveDeps {
   readonly fairground: Fairground
   readonly gardenTools: GardenTools | null
   readonly gardenPlants: () => GardenPlants | null
+  readonly greenThumb: GreenThumb
   readonly gardenProps: () => GardenProps | null
   readonly gardenTerrain: GardenTerrain | null
   readonly gardenWater: ReturnType<typeof createGardenWaterField> | null
@@ -70,7 +72,7 @@ export interface FarmSaveDeps {
 }
 
 export function createFarmSave(deps: FarmSaveDeps) {
-  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, gems, treasures, applyTreasureEffects, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncOwnedTools, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome, chapterState, goodsCoins } = deps
+  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, gems, treasures, applyTreasureEffects, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, greenThumb, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncOwnedTools, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome, chapterState, goodsCoins } = deps
   /** Seconds of play in this farm, across every session that has carried it. */
   let playSeconds = loadedSave?.playSeconds ?? 0
 
@@ -128,6 +130,7 @@ export function createFarmSave(deps: FarmSaveDeps) {
       animalPlaces,
       preyEaten: predationLedger.totals,
       plants: gardenPlants()?.simulation.exportState() ?? { seeds: {}, plants: [], nextInstanceId: 1 },
+      greenThumb: greenThumb.exportState(),
       props: {
         inventory: gardenProps()?.inventory.counts ?? {},
         placed: placed.props.map((prop) => ({ ...prop })),
@@ -289,6 +292,7 @@ export function createFarmSave(deps: FarmSaveDeps) {
     })
     section('garden', () => {
       gardenPlants()?.simulation.importState(data.plants)
+      greenThumb.importState(data.greenThumb ?? null)
       for (const plant of gardenPlants()?.simulation.plants ?? []) if (plant.mature) knownMaturePlants.add(plant.instanceId)
       for (const id of PROP_ORDER) gardenProps()?.inventory.set(id, data.props.inventory[id] ?? 0)
       gardenProps()?.importPlaced({ props: data.props.placed, fenceRuns: data.props.fenceRuns })

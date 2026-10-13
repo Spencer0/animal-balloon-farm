@@ -1,0 +1,549 @@
+/* Plant-care minigames (care-game-dom.ts).
+ *
+ * Farm Journal paper and ink (cream #faf3e2, chocolate #6b4a33 borders, dashed
+ * #b08c5e dividers, Trebuchet MS, terracotta #c65a3a), turned up loud for a
+ * few seconds: a WarioWare-style command card, a burning fuse for a timer, and
+ * a rubber stamp for the result.
+ */
+
+.cg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  font-family: "Trebuchet MS", Verdana, sans-serif;
+  color: #5a3d2b;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.cg-overlay[hidden] {
+  display: none;
+}
+
+.cg-overlay.cg-aiming {
+  cursor: none;
+  pointer-events: auto;
+}
+
+.cg-overlay.cg-capturing {
+  pointer-events: auto;
+}
+
+/* A minigame owns the screen: every other DOM panel steps aside. */
+body.care-game-playing > :not(#game):not(.cg-overlay) {
+  visibility: hidden !important;
+}
+
+/* ------------------------------------------------------------ command card */
+
+.cg-intro {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cg-intro.cg-show {
+  opacity: 1;
+  animation: cg-intro-in 0.12s ease-out;
+}
+
+/* The game says when the card goes, so it never leaves before the round starts. */
+.cg-intro.cg-leave {
+  opacity: 0;
+  transform: scale(1.12);
+  transition: opacity 0.18s ease-in, transform 0.18s ease-in;
+}
+
+.cg-burst {
+  position: absolute;
+  width: 220vmax;
+  height: 220vmax;
+  left: 50%;
+  top: 50%;
+  margin: -110vmax 0 0 -110vmax;
+  background: repeating-conic-gradient(from 0deg, #f7d27a 0deg 9deg, #fbe7b3 9deg 18deg);
+  animation: cg-spin 5s linear infinite;
+}
+
+.cg-intro::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 48%, rgba(255, 248, 230, 0) 30%, rgba(107, 74, 51, 0.38) 100%);
+}
+
+.cg-command {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  transform: rotate(-6deg);
+}
+
+.cg-word {
+  font: italic 900 clamp(84px, 16vw, 190px)/0.9 "Trebuchet MS", Verdana, sans-serif;
+  letter-spacing: 0.02em;
+  color: #c65a3a;
+  -webkit-text-stroke: 6px #6b4a33;
+  paint-order: stroke fill;
+  text-shadow: 0 10px 0 #6b4a33, 0 18px 30px rgba(60, 30, 10, 0.35);
+}
+
+.cg-intro.cg-show .cg-word {
+  animation: cg-slam 0.42s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+.cg-goal {
+  max-width: min(560px, 86vw);
+  padding: 10px 22px;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 999px;
+  box-shadow: 0 6px 0 #6b4a33;
+  font-weight: 800;
+  font-size: clamp(15px, 2vw, 20px);
+  text-align: center;
+  animation: cg-rise 0.5s 0.18s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.cg-subject {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8a6749;
+}
+
+/* ----------------------------------------------------------------- top bar */
+
+.cg-top {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: min(720px, 92vw);
+  padding: 8px 16px;
+  transform: translate(-50%, -160%);
+  visibility: hidden;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 16px;
+  box-shadow: 0 6px 0 #6b4a33, 0 14px 30px rgba(40, 20, 8, 0.25);
+  transition: transform 0.35s cubic-bezier(0.2, 1.4, 0.4, 1), visibility 0s 0.35s;
+}
+
+.cg-top.cg-show {
+  transform: translate(-50%, 0);
+  visibility: visible;
+  transition: transform 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.cg-label {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.cg-label b {
+  font-size: 18px;
+  font-weight: 900;
+  color: #c65a3a;
+  letter-spacing: 0.04em;
+}
+
+.cg-label span {
+  font-size: 12px;
+  color: #8a6749;
+}
+
+.cg-fuse {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  background: repeating-linear-gradient(-45deg, #efe1c6 0 8px, #e8d9bd 8px 16px);
+  overflow: visible;
+}
+
+.cg-fuse-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(#f2a04c, #c65a3a);
+}
+
+.cg-fuse-spark {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff6c9 0 22%, #ffd25a 40%, rgba(255, 140, 60, 0) 70%);
+  animation: cg-flicker 0.12s steps(2) infinite;
+}
+
+.cg-fuse.cg-hurry .cg-fuse-fill {
+  background: linear-gradient(#ff7a5c, #b23b25);
+}
+
+.cg-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cg-pip {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #6b4a33;
+  background: #efe1c6;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.cg-pip.cg-on {
+  background: #79ad58;
+  transform: scale(1.15);
+}
+
+.cg-hearts {
+  display: flex;
+  gap: 4px;
+  padding-left: 12px;
+  border-left: 3px dashed #b08c5e;
+}
+
+.cg-heart {
+  width: 22px;
+  height: 22px;
+  transition: transform 0.2s, opacity 0.2s, filter 0.2s;
+}
+
+.cg-heart.cg-lost {
+  opacity: 0.35;
+  filter: grayscale(1);
+  transform: scale(0.8) rotate(-20deg);
+}
+
+.cg-heart.cg-hit {
+  animation: cg-heart-hit 0.4s ease-out;
+}
+
+/* ------------------------------------------------------------ pop-up words */
+
+.cg-pop {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font: italic 900 30px/1 "Trebuchet MS", Verdana, sans-serif;
+  color: #fff6e8;
+  -webkit-text-stroke: 4px #6b4a33;
+  paint-order: stroke fill;
+  white-space: nowrap;
+  animation: cg-pop 0.7s ease-out forwards;
+}
+
+.cg-pop.cg-good {
+  color: #f7d27a;
+}
+
+.cg-pop.cg-bad {
+  color: #ff8a6b;
+}
+
+.cg-pop.cg-big {
+  font-size: 44px;
+}
+
+/* ------------------------------------------------------------------ reticle */
+
+.cg-reticle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 64px;
+  height: 64px;
+  margin: -32px 0 0 -32px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.cg-reticle.cg-show {
+  opacity: 1;
+}
+
+.cg-reticle.cg-fire svg {
+  animation: cg-recoil 0.18s ease-out;
+}
+
+.cg-trail {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- result */
+
+.cg-result {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(24, 62, 59, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+
+.cg-result.cg-show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cg-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(440px, 88vw);
+  padding: 26px 24px 20px;
+  background: #faf3e2;
+  border: 3px solid #6b4a33;
+  border-radius: 20px;
+  box-shadow: 0 10px 0 #6b4a33, 0 24px 60px rgba(20, 12, 6, 0.45);
+  text-align: center;
+  transform: scale(0.6);
+}
+
+.cg-result.cg-show .cg-card {
+  animation: cg-card-in 0.45s cubic-bezier(0.2, 1.5, 0.4, 1) forwards;
+}
+
+.cg-stamp {
+  padding: 6px 22px;
+  border: 5px solid currentColor;
+  border-radius: 12px;
+  font: italic 900 46px/1 "Trebuchet MS", Verdana, sans-serif;
+  letter-spacing: 0.04em;
+  transform: rotate(-8deg);
+}
+
+.cg-result.cg-show .cg-stamp {
+  animation: cg-stamp 0.5s 0.1s cubic-bezier(0.3, 1.8, 0.5, 1) both;
+}
+
+.cg-stamp.cg-won {
+  color: #5e8f45;
+}
+
+.cg-stamp.cg-lost {
+  color: #c65a3a;
+}
+
+.cg-line {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.cg-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px dashed #b08c5e;
+  border-radius: 12px;
+  background: #fffdf6;
+  text-align: left;
+  animation: cg-rise 0.5s 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+.cg-ribbon svg {
+  flex: none;
+  width: 52px;
+  height: 64px;
+  animation: cg-wiggle 1.6s 0.9s ease-in-out infinite;
+}
+
+.cg-ribbon b {
+  display: block;
+  font-size: 15px;
+  color: #c65a3a;
+}
+
+.cg-ribbon span {
+  font-size: 13px;
+  color: #8a6749;
+}
+
+.cg-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cg-btn {
+  border: 3px solid #6b4a33;
+  border-radius: 999px;
+  padding: 10px 20px;
+  font: 800 16px/1 "Trebuchet MS", Verdana, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #6b4a33;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+
+.cg-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #6b4a33;
+}
+
+.cg-btn-warm {
+  background: #c65a3a;
+  border-color: #8d3d2a;
+  color: #fff6e8;
+  box-shadow: 0 4px 0 #8d3d2a;
+}
+
+.cg-btn-quiet {
+  background: #efe1c6;
+  color: #6b4a33;
+}
+
+.cg-btn:focus-visible {
+  outline: 3px solid #f7d27a;
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------- rain cloud tap ring */
+
+.cg-tap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 112px;
+  height: 112px;
+  margin: -56px 0 0 -56px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.cg-tap.cg-show {
+  opacity: 1;
+}
+
+.cg-tap-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(#6fb7c9 var(--cg-left, 360deg), rgba(250, 243, 226, 0.25) 0);
+  -webkit-mask: radial-gradient(circle, transparent 0 46px, #000 47px 53px, transparent 54px);
+  mask: radial-gradient(circle, transparent 0 46px, #000 47px 53px, transparent 54px);
+}
+
+.cg-tap.cg-hurry .cg-tap-ring {
+  background: conic-gradient(#e0603f var(--cg-left, 360deg), rgba(250, 243, 226, 0.25) 0);
+}
+
+.cg-tap-word {
+  position: absolute;
+  left: 50%;
+  top: -18px;
+  transform: translateX(-50%);
+  font: italic 900 28px/1 "Trebuchet MS", Verdana, sans-serif;
+  color: #fff6e8;
+  -webkit-text-stroke: 4px #6b4a33;
+  paint-order: stroke fill;
+  animation: cg-bob 0.5s ease-in-out infinite alternate;
+}
+
+.cg-tap-pips {
+  position: absolute;
+  left: 50%;
+  bottom: -20px;
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  transform: translateX(-50%);
+  background: #faf3e2;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+}
+
+.cg-tap-pips .cg-pip.cg-on {
+  background: #6fb7c9;
+}
+
+/* ------------------------------------------------------------- animations */
+
+@keyframes cg-intro-in {
+  from { opacity: 0; }
+}
+
+@keyframes cg-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cg-slam {
+  0% { transform: scale(2.6) rotate(8deg); opacity: 0; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+
+@keyframes cg-rise {
+  0% { transform: translateY(18px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes cg-flicker {
+  50% { transform: scale(1.3); }
+}
+
+@keyframes cg-pop {
+  0% { transform: translate(-50%, -50%) scale(0.4) rotate(-8deg); opacity: 0; }
+  18% { transform: translate(-50%, -70%) scale(1.15) rotate(-4deg); opacity: 1; }
+  100% { transform: translate(-50%, -150%) scale(1) rotate(0); opacity: 0; }
+}
+
+@keyframes cg-heart-hit {
+  0% { transform: scale(1.6); }
+  100% { transform: scale(0.8) rotate(-20deg); }
+}
+
+@keyframes cg-recoil {
+  0% { transform: scale(0.7) rotate(-12deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+@keyframes cg-card-in {
+  to { transform: scale(1); }
+}
+
+@keyframes cg-stamp {
+  0% { transform: scale(3) rotate(-20deg); opacity: 0; }
+  100% { transform: scale(1) rotate(-8deg); opacity: 1; }
+}
+
+@keyframes cg-wiggle {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
+
+@keyframes cg-bob {
+  to { transform: translateX(-50%) translateY(-6px) scale(1.06); }
+}

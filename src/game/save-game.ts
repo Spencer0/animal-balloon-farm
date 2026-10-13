@@ -15,6 +15,7 @@
 
 import type { AnimalLifeState } from './animal-life'
 import type { PlantSimulationState } from './plants'
+import type { GreenThumbState } from './plant-helpers'
 import type { ProgressLedgerState } from './farm-progression'
 import type { ChapterState } from './farm-chapters'
 
@@ -103,6 +104,8 @@ export interface SaveGameData {
   /** Prey eaten per species, which `preyEaten` conditions count. */
   readonly preyEaten: Readonly<Record<string, number>>
   readonly plants: PlantSimulationState
+  /** Green Thumb ribbons and hired helpers. Older saves have none. */
+  readonly greenThumb?: GreenThumbState
   readonly props: {
     readonly inventory: Readonly<Record<string, number>>
     readonly placed: readonly SavedProp[]

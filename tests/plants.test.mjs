@@ -10,7 +10,7 @@ const { outputFiles } = await build({
   write: false,
 })
 const plants = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
-const { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, STARTING_SEEDS_PER_PLANT, STARTING_SEED_GIFT, SEED_PRICES } = plants
+const { createPlantSimulation, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, STARTING_SEEDS_PER_PLANT, STARTING_SEED_GIFTS, SEED_PRICES } = plants
 const stockedSimulation = () => {
   const simulation = createPlantSimulation()
   for (const species of PLANT_CATALOG) simulation.addSeeds(species.id, 5)
@@ -18,14 +18,16 @@ const stockedSimulation = () => {
 }
 const surface = (substrate, waterDepth = 0, inBounds = true) => ({ substrate, waterDepth, inBounds })
 
-test('catalog starts with four useful plants and an empty seed shed', () => {
-  assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily'])
+test('catalog lists every plant and the seed shed starts empty', () => {
+  assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily', 'blueberry'])
   const simulation = createPlantSimulation()
   for (const species of PLANT_CATALOG) {
-    assert.equal(simulation.seedsFor(species.id), species.id === STARTING_SEED_GIFT.species ? 1 : STARTING_SEEDS_PER_PLANT)
+    const gift = STARTING_SEED_GIFTS.find((entry) => entry.species === species.id)
+    assert.equal(simulation.seedsFor(species.id), gift ? gift.count : STARTING_SEEDS_PER_PLANT)
   }
   assert.equal(STARTING_SEEDS_PER_PLANT, 0)
-  assert.equal(STARTING_SEED_GIFT.species, 'poppy')
+  assert.deepEqual(STARTING_SEED_GIFTS.map(({ species }) => species), ['poppy', 'blueberry'])
+  assert.equal(simulation.seedsFor('blueberry'), 1)
   assert.equal(simulation.placementResult('clover', 0, 0, surface('grass')).failure, 'out-of-seeds')
 })
 
@@ -145,4 +147,52 @@ test('poppy needs pruning during growth, then matures without further maintenanc
   simulation.tick(100)
   assert.equal(simulation.plants[0].growth, 1)
   assert.equal(simulation.plants[0].careNeeded, null)
+})
+
+test('a blueberry bush asks for a drink, a beetle swat and a snip, in that order', () => {
+  const simulation = stockedSimulation()
+  const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
+  assert.ok(bush)
+  assert.equal(PLANT_CATALOG.find(({ id }) => id === 'blueberry').minigames, true)
+  const answered = []
+  for (let step = 0; step < 400; step += 1) {
+    simulation.tick(1)
+    const state = simulation.plants[0]
+    if (state.careNeeded) {
+      answered.push(state.careNeeded)
+      assert.equal(simulation.resolveCare(bush.instanceId, state.careNeeded), true)
+    }
+  }
+  assert.deepEqual(answered, ['water', 'pest', 'prune'])
+  assert.equal(simulation.plants[0].mature, true)
+})
+
+test('a save from before the blueberry gift gets one blueberry seed, and a used-up one stays at zero', () => {
+  const legacy = createPlantSimulation()
+  const saved = JSON.parse(JSON.stringify(legacy.exportState()))
+  delete saved.seeds.blueberry
+  saved.seeds.poppy = 0
+  const restored = createPlantSimulation()
+  restored.importState(saved)
+  assert.equal(restored.seedsFor('blueberry'), 1)
+  assert.equal(restored.seedsFor('poppy'), 0)
+
+  const usedUp = createPlantSimulation()
+  const state = JSON.parse(JSON.stringify(usedUp.exportState()))
+  state.seeds.blueberry = 0
+  usedUp.importState(state)
+  assert.equal(usedUp.seedsFor('blueberry'), 0)
+})
+
+test('a saved bush waiting on its beetles is still waiting after a reload', () => {
+  const simulation = stockedSimulation()
+  const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
+  while (simulation.plants[0].careNeeded !== 'pest') {
+    simulation.tick(1)
+    const state = simulation.plants[0]
+    if (state.careNeeded === 'water') simulation.resolveCare(bush.instanceId, 'water')
+  }
+  const restored = createPlantSimulation()
+  restored.importState(JSON.parse(JSON.stringify(simulation.exportState())))
+  assert.equal(restored.plants[0].careNeeded, 'pest')
 })
