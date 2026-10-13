@@ -1,5 +1,6 @@
 import type { CareGameKind } from '../../game/care-minigames'
 import { createBuzzGame } from './buzz-game'
+import { createHopGame } from './hop-game'
 import { createSnipGame } from './snip-game'
 import { createSwatGame } from './swat-game'
 import type { CareGameContext, CareGameScene } from './care-game-types'
@@ -34,8 +35,7 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   swat: { create: createSwatGame, input: 'aim' },
   snip: { create: createSnipGame, input: 'capture' },
   buzz: { create: createBuzzGame, input: 'tap' },
-  // hop: built in hop-game.ts
-  hop: { create: null, input: 'tap' },
+  hop: { create: createHopGame, input: 'tap' },
   // chop: built in chop-game.ts
   chop: { create: null, input: 'tap' },
   // skim: built in skim-game.ts

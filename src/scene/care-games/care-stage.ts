@@ -47,6 +47,8 @@ export interface CareStage {
   screenToPlane(clientX: number, clientY: number, planeZ: number, target?: THREE.Vector3): THREE.Vector3
   /** Lean the camera toward a screen point (-1..1 each way), like looking along your aim. */
   setLook(nx: number, ny: number): void
+  /** Frame the stage from another spot (a side view, say); it holds until the stage is disposed. */
+  setFraming(position: THREE.Vector3, lookAt: THREE.Vector3): void
   shake(amount: number): void
   update(deltaSeconds: number): void
   resize(cssWidth: number, cssHeight: number): void
@@ -266,6 +268,8 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
 
   const look = new THREE.Vector2()
   const lookTarget = new THREE.Vector2()
+  const home = CAMERA_HOME.clone()
+  const target = LOOK_AT.clone()
   let shakeAmount = 0
   let time = 0
   const projector = new THREE.Vector3()
@@ -320,6 +324,10 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
     setLook(nx, ny): void {
       lookTarget.set(THREE.MathUtils.clamp(nx, -1, 1), THREE.MathUtils.clamp(ny, -1, 1))
     },
+    setFraming(position, lookAt): void {
+      home.copy(position)
+      target.copy(lookAt)
+    },
     shake(amount): void {
       shakeAmount = Math.max(shakeAmount, amount)
     },
@@ -329,11 +337,11 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
       shakeAmount = Math.max(0, shakeAmount - deltaSeconds * 0.5)
       const jitter = shakeAmount * shakeAmount
       camera.position.set(
-        CAMERA_HOME.x + look.x * 0.14 + (Math.random() - 0.5) * jitter,
-        CAMERA_HOME.y + look.y * 0.07 + Math.sin(time * 0.9) * 0.01 + (Math.random() - 0.5) * jitter,
-        CAMERA_HOME.z,
+        home.x + look.x * 0.14 + (Math.random() - 0.5) * jitter,
+        home.y + look.y * 0.07 + Math.sin(time * 0.9) * 0.01 + (Math.random() - 0.5) * jitter,
+        home.z,
       )
-      camera.lookAt(LOOK_AT.x + look.x * 0.22, LOOK_AT.y + look.y * 0.12, LOOK_AT.z)
+      camera.lookAt(target.x + look.x * 0.22, target.y + look.y * 0.12, target.z)
       for (const [index, cloud] of clouds.entries()) {
         cloud.position.x += deltaSeconds * (0.08 + index * 0.03)
         if (cloud.position.x > 6) cloud.position.x = -6
