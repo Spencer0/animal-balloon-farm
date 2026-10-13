@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { CARE_GAME_COPY, CARE_GAMES, careGameFor, type CareGameKind } from './game/care-minigames'
-import { CARE_HELPERS, type GreenThumb } from './game/plant-helpers'
+import { CARE_HELPERS, earnsRibbon, type CareAnswer, type GreenThumb } from './game/plant-helpers'
 import { PLANT_CATALOG, plantSpecies, SEED_PRICES, type GardenPlant, type PlantCare, type PlantId, type PlantType } from './game/plants'
 import type { FarmRenderer } from './render/backend'
 import type { GardenPlants } from './scene/garden-plants'
@@ -69,10 +69,11 @@ export function createCareController(deps: CareControllerDeps): CareController {
   const closedListeners = new Set<() => void>()
 
   /** Answer the care and record the ribbon; returns the ribbon copy on a first win. */
-  function answer(plant: GardenPlant, care: PlantCare): CareGameResultView['ribbon'] {
+  function answer(plant: GardenPlant, care: PlantCare, how: CareAnswer = 'game-won'): CareGameResultView['ribbon'] {
     deps.gardenPlants()?.simulation.resolveCare(plant.instanceId, care)
-    const fresh = deps.greenThumb.earnRibbon(plant.species, care)
     deps.saveSoon()
+    if (!earnsRibbon(how)) return null
+    const fresh = deps.greenThumb.earnRibbon(plant.species, care)
     if (!fresh) return null
     const helper = CARE_HELPERS[care]
     const species = plantSpecies(plant.species).name
@@ -142,9 +143,8 @@ export function createCareController(deps: CareControllerDeps): CareController {
       if (!isCloseUpBuilt(kind)) {
         // Not built yet: a plain tap answers the care, so the chore stays playable.
         garden.setAnswering(null)
-        const ribbon = answer(plant, care)
+        answer(plant, care, 'plain-tap')
         garden.celebrateCare(plant.instanceId, care)
-        if (ribbon) deps.notify(ribbon.title, ribbon.detail)
         deps.refreshChrome()
         return
       }

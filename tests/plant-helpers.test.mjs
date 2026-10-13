@@ -56,3 +56,9 @@ test('ribbons and helpers survive a save, and a save cannot hire without the rib
   forged.importState(null)
   assert.equal(forged.ribbonCount('blueberry'), 0)
 })
+
+test('only winning a real minigame earns a ribbon; a plain tap on an unbuilt game does not', () => {
+  const { earnsRibbon } = helpers
+  assert.equal(earnsRibbon('game-won'), true)
+  assert.equal(earnsRibbon('plain-tap'), false)
+})

@@ -1,4 +1,4 @@
-/* Debug picker for the care minigames (?gardenDebug=1&careGames=1). Farm Journal look. */
+/* Debug picker for the care minigames (?gardenDebug=1&careGames=1). Farm Journal look, phone first. */
 .cp-overlay {
   position: fixed;
   inset: 0;
@@ -6,74 +6,99 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 16px;
+  padding: 12px;
   box-sizing: border-box;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: rgba(58, 42, 28, 0.55);
   font-family: "Trebuchet MS", Tahoma, sans-serif;
+  font-size: 16px;
   color: #3d2b1d;
 }
 .cp-overlay[hidden] { display: none; }
 .cp-panel {
-  width: min(560px, 100%);
+  width: 100%;
+  max-width: 560px;
   box-sizing: border-box;
   background: #faf3e2;
   border: 3px solid #6b4a33;
   border-radius: 14px;
-  padding: 16px 16px 12px;
+  padding: 12px 14px 14px;
   box-shadow: 0 6px 0 #6b4a33;
 }
+.cp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .cp-title {
-  margin: 0 0 2px;
+  margin: 0;
+  flex: 1 1 auto;
   font-size: 22px;
   color: #c65a3a;
 }
+.cp-x {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 2px solid #6b4a33;
+  border-radius: 10px;
+  background: #fffaf0;
+  color: #6b4a33;
+  font: inherit;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
 .cp-hint {
-  margin: 0 0 10px;
-  font-size: 14px;
+  margin: 6px 0 4px;
+  font-size: 16px;
   color: #6b4a33;
 }
 .cp-group {
   border-top: 2px dashed #b08c5e;
-  padding: 10px 0 4px;
+  padding: 10px 0 2px;
 }
 .cp-group h2 {
   margin: 0 0 6px;
-  font-size: 17px;
+  font-size: 19px;
   color: #6b4a33;
 }
 .cp-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 8px;
+  margin: 0 0 12px;
 }
 .cp-game {
-  flex: 1 1 100%;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: bold;
+  margin: 0 0 6px;
 }
 .cp-game small {
   font-weight: normal;
+  font-size: 14px;
   color: #8a6a4a;
 }
+.cp-plants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .cp-btn {
+  flex: 1 1 110px;
   min-height: 44px;
-  min-width: 44px;
-  padding: 8px 12px;
+  padding: 8px 10px;
   border: 2px solid #6b4a33;
   border-radius: 10px;
   background: #fffaf0;
   color: #3d2b1d;
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   cursor: pointer;
   touch-action: manipulation;
 }
-.cp-btn:hover:not(:disabled) { background: #f4e3c0; }
+.cp-btn:active:not(:disabled) { background: #f4e3c0; }
 .cp-btn:disabled {
-  color: #a89780;
+  color: #9c8a72;
   border-color: #c9b89a;
   background: #efe6d2;
   cursor: not-allowed;
@@ -81,5 +106,17 @@
 .cp-close {
   display: block;
   width: 100%;
-  margin-top: 10px;
+  margin-top: 6px;
+}
+/* A compact desktop size: smaller type and buttons, two columns of games. */
+@media (min-width: 720px) {
+  .cp-overlay { padding: 24px; font-size: 14px; }
+  .cp-panel { padding: 12px 16px 14px; }
+  .cp-title { font-size: 20px; }
+  .cp-x { width: 36px; height: 36px; font-size: 22px; }
+  .cp-group h2 { font-size: 16px; }
+  .cp-game { font-size: 14px; }
+  .cp-game small { font-size: 12px; }
+  .cp-btn { min-height: 36px; font-size: 14px; flex: 0 1 auto; padding: 6px 12px; }
+  .cp-close { min-height: 36px; font-size: 14px; }
 }

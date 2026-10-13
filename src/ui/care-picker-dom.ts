@@ -43,20 +43,21 @@ export function createCarePicker(
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", "Care minigames");
   panel.innerHTML =
-    `<h1 class="cp-title">Care minigames</h1>` +
+    `<div class="cp-head"><h1 class="cp-title">Care minigames</h1><button type="button" class="cp-x" aria-label="Close">&times;</button></div>` +
     `<p class="cp-hint">Tap a plant to play its game on the stage. Greyed games are not built yet.</p>` +
     groups.map((group) =>
       `<section class="cp-group"><h2>${escapeHtml(group.type)}</h2>` +
       group.games.map((game) =>
         `<div class="cp-row"><div class="cp-game">${escapeHtml(game.chore)} <small>(${escapeHtml(game.kind)})</small></div>` +
-        game.species.map((plant) =>
+        `<div class="cp-plants">` + game.species.map((plant) =>
           `<button type="button" class="cp-btn" data-kind="${game.kind}" data-species="${plant.id}"${game.built ? "" : " disabled"}>${escapeHtml(plant.name)}</button>`,
         ).join("") +
-        `</div>`,
+        `</div></div>`,
       ).join("") +
       `</section>`,
     ).join("") +
     `<button type="button" class="cp-btn cp-close">Back to the farm</button>`;
+  const closeFarm = (): void => { overlay.hidden = true; };
   overlay.append(panel);
   document.body.append(overlay);
 
@@ -67,7 +68,7 @@ export function createCarePicker(
       onPick(button.dataset.kind as CareGameKind, button.dataset.species as PlantId);
       return;
     }
-    if (target?.closest(".cp-close")) overlay.hidden = true;
+    if (target?.closest(".cp-close, .cp-x")) closeFarm();
   };
   overlay.addEventListener("click", onClick);
 
