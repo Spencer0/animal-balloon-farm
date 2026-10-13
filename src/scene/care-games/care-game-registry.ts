@@ -1,4 +1,5 @@
 import type { CareGameKind } from '../../game/care-minigames'
+import { createRopeGame } from './rope-game'
 import { createSnipGame } from './snip-game'
 import { createSwatGame } from './swat-game'
 import type { CareGameContext, CareGameScene } from './care-game-types'
@@ -43,7 +44,8 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   // paddle: built in paddle-game.ts
   paddle: { create: null, input: 'tap' },
   // rope: built in rope-game.ts
-  rope: { create: null, input: 'tap' },
+  // capture, not tap: only aim and capture let the overlay take the pointer; the cursor stays.
+  rope: { create: createRopeGame, input: 'capture' },
 }
 
 /** Whether a kind has a close-up scene yet. */
