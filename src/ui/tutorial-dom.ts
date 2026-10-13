@@ -3,9 +3,9 @@ import { nudgeVisible, TUTORIAL_TEXT, tutorialStep, type TutorialSignals, type T
 
 /**
  * The tutorial's text bubble. The glows themselves live where they point (the
- * balloon pulses its shed quadrant, the shed marks its own tab and seed), so
- * this only owns the small speech bubble beside the balloon and the clock that
- * brings it back every ten seconds. It never takes the pointer.
+ * balloon glows behind its shed icon, the shed marks its own tab and seed), so
+ * this only owns the small speech bubble floating above the balloon and the
+ * clock that brings it back every ten seconds. It never takes the pointer.
  */
 
 export interface TutorialDom {
@@ -40,8 +40,20 @@ export function createTutorialDom(): TutorialDom {
       const show = step === "open-shed" && nudgeVisible(seconds);
       if (step === "open-shed") {
         bubble.textContent = TUTORIAL_TEXT["open-shed"];
+        // The bubble hangs above the anchor with its tail pointing down at it.
+        // Keep the whole bubble on screen, then slide the tail back onto the anchor.
         bubble.style.left = `${anchor.x}px`;
         bubble.style.top = `${anchor.y}px`;
+        const width = bubble.offsetWidth || 0;
+        if (width > 0) {
+          const left = Math.min(
+            Math.max(anchor.x - width / 2, 8),
+            Math.max(8, window.innerWidth - width - 8),
+          );
+          bubble.style.left = `${left + width / 2}px`;
+          const tailX = Math.min(Math.max(anchor.x - left, 18), Math.max(18, width - 18));
+          bubble.style.setProperty("--tu-tail-x", `${tailX}px`);
+        }
       }
       bubble.dataset["show"] = String(show);
     },

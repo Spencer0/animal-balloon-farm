@@ -78,6 +78,7 @@
   border-radius: 14px;
   cursor: pointer;
   color: #5a3d2b;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
 }
 
 /* The accent is a hand-cut strip, not a ruled border: wider than before, with
@@ -97,7 +98,14 @@
 
 .mn-sign:hover,
 .mn-sign:focus-visible {
-  background: #fffdf6;
+  background: linear-gradient(#fffdf6, #fdf0d2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(122, 79, 40, 0.35), 0 0 0 3px rgba(242, 193, 78, 0.65), 0 0 26px 5px rgba(242, 193, 78, 0.5);
+}
+
+.mn-sign:active {
+  transform: translateY(0) scale(0.99);
+  box-shadow: 0 3px 10px rgba(122, 79, 40, 0.3), 0 0 0 3px rgba(242, 193, 78, 0.5);
 }
 
 .mn-sign:focus-visible {
@@ -117,6 +125,23 @@
   background: #fffdf6;
   font: 800 14px/1 "Trebuchet MS", Verdana, sans-serif;
   color: #6b4a33;
+  transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.mn-sign:hover .mn-key,
+.mn-sign:focus-visible .mn-key {
+  background: #f2c14e;
+  border-color: #8a5f36;
+  transform: rotate(-8deg) scale(1.1);
+}
+
+.mn-sign:hover::before {
+  filter: brightness(1.08) saturate(1.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mn-sign, .mn-key { transition: none; }
+  .mn-sign:hover, .mn-sign:focus-visible, .mn-sign:active { transform: none; }
 }
 
 .mn-text {
