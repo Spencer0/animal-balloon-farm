@@ -57,7 +57,7 @@ export interface CareGamePlayer {
   render(): void
   resize(cssWidth: number, cssHeight: number): void
   /** Debug harness: where the round is. The snapshot is null on a still stage. */
-  describe(): { phase: string; snapshot: CareRoundSnapshot | null }
+  describe(): { phase: string; snapshot: CareRoundSnapshot | null; debug: unknown }
   /** Debug harness: settle the round now, won or lost. */
   settle(won: boolean): void
   /** End the game (or the still stage) now; the owner then disposes it. */
@@ -243,7 +243,7 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
       stage.resize(cssWidth, cssHeight)
     },
     describe() {
-      return { phase, snapshot: still ? null : round.snapshot }
+      return { phase, snapshot: still ? null : round.snapshot, debug: game?.debug?.() ?? null }
     },
     close,
     settle(win): void {

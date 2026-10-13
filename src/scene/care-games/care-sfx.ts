@@ -13,6 +13,8 @@ export type CareSound =
   | 'hopBeat' | 'hopKick' | 'hopJump' | 'hopLand' | 'hopCrunch'
   // chop
   | 'chopSnap' | 'chopPerfect' | 'chopGood' | 'chopMiss' | 'chopThud'
+  // skim
+  | 'dew' | 'bonus' | 'splash'
 
 export interface CareSfx {
   play(sound: CareSound, pitch?: number): void
@@ -204,6 +206,18 @@ export function createCareSfx(): CareSfx {
         case 'chopThud':
           tone('sine', 140, 60, now, 0.25, 0.35)
           hiss(now, 0.2, 0.3, 'lowpass', 600, 120, 1.5)
+          break
+        // skim
+        case 'dew':
+          tone('sine', 1047 * pitch, 1568 * pitch, now, 0.18, 0.22)
+          tone('triangle', 2093 * pitch, 2093 * pitch, now + 0.03, 0.12, 0.06)
+          break
+        case 'bonus':
+          [79, 83, 86, 91].forEach((note, index) => tone('triangle', NOTE(note), NOTE(note), now + index * 0.07, 0.14, 0.2))
+          break
+        case 'splash':
+          hiss(now, 0.35, 0.45, 'bandpass', 2200 * pitch, 400, 0.9)
+          tone('sine', 420 * pitch, 140, now, 0.18, 0.18)
           break
       }
     },
