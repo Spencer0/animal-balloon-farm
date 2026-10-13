@@ -63,7 +63,7 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   // Six clean cuts; two stalks missed and it is over. No hearts.
   chop: { goal: 6, hearts: 0, misses: 2, seconds: 22 },
   // Eighteen dewdrops; three knocks and the dragonfly is out.
-  skim: { goal: 18, hearts: 3, misses: 0, seconds: 22 },
+  skim: { goal: 18, hearts: 3, misses: 0, seconds: 24 },
   // Twelve mosquitoes; three snags or logs and the frog is out.
   paddle: { goal: 12, hearts: 3, misses: 0, seconds: 22 },
   // Ten passes skipped; two caught and the frog is out.

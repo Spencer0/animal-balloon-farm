@@ -24,14 +24,14 @@ export const SKIM_TUNING = {
   /** Hit radii: the dragonfly, a dewdrop (a pickup reach), a fluff clump. */
   dragonRadius: 0.11,
   dewRadius: 0.06,
-  pickupReach: 0.22,
+  pickupReach: 0.26,
   fluffRadius: 0.15,
   fishRadius: 0.1,
   /** A cattail is a thin reed: half its width, and its top when fully risen. */
   cattailHalfWidth: 0.05,
   cattailTop: 0.6,
   /** Fish leap this high, and stay in the air this long. */
-  fishPeak: 0.85,
+  fishPeak: 0.78,
   fishLeapSeconds: 1.25,
   /** New things enter at this x, just off the right of the frame. */
   spawnX: 2.2,
@@ -42,8 +42,8 @@ export const SKIM_TUNING = {
   /** No hazards before this many seconds of play. */
   hazardGrace: 3,
   /** Seconds between hazards: from `hazardGapStart` down to `hazardGapEnd`. */
-  hazardGapStart: 2.8,
-  hazardGapEnd: 1.5,
+  hazardGapStart: 3.2,
+  hazardGapEnd: 1.9,
   /** After a bonk the dragonfly blinks, unhurt, for this long. */
   bonkSeconds: 1.0,
 } as const

@@ -42,16 +42,18 @@ const PLAY_Z = 0
 const DESKTOP_HALF_WIDTH = 1.67
 const WATER_Y = 0.02
 const LILY_AT = { x: 0.62, z: 0.4 }
-const LILY_SCALE = 0.7
-const DRAGON_SCALE = 1.3
+const LILY_SCALE = 1.0
+const DRAGON_SCALE = 1.75
 const CATTAIL_SCALE = 0.85
+/** Foreground reeds: decoration in the water below the lane, scrolling faster for parallax. */
+const FOREGROUND_REEDS: ReadonlyArray<readonly [number, number]> = [[-1.5, 0.5], [-0.6, 0.62], [0.2, 0.45], [1.1, 0.7]]
 /** Hazards show their splash this far ahead of the dragonfly (in desktop frame widths) ... */
 const SPLASH_AHEAD = 1.9
 /** ... and a cattail rises, or a fish leaps, once it is this close. */
 const CATTAIL_RISE_AHEAD = 1.1
-const LEAP_AHEAD = 0.6
+const LEAP_AHEAD = 0.9
 const CATTAIL_SPLASH_SECONDS = 0.6
-const FISH_SPLASH_SECONDS = 0.5
+const FISH_SPLASH_SECONDS = 0.6
 const SPLASH_EVERY = 0.35
 const SPLASH_LIFE = 0.9
 const GLINT_EVERY = 0.04
@@ -152,6 +154,16 @@ export function createSkimGame(context: CareGameContext): CareGameScene {
   root.add(lilyHome)
   const lily = stage.plant
   if (lily) lilyHome.add(lily)
+  // Foreground reeds: they sit in the water in front of the lane and drift past faster than the hazards.
+  const reeds: Array<{ object: THREE.Object3D; x: number }> = []
+  for (const [x, z] of FOREGROUND_REEDS) {
+    const object = cloneCastCritter('water', 'cattail')
+    if (!object) break
+    object.scale.setScalar(1.3)
+    object.position.set(x, WATER_Y, z)
+    root.add(object)
+    reeds.push({ object, x })
+  }
   /** The lily's top, in world units, for the dew to land on. */
   const lilyTop = WATER_Y + stage.plantHeight * LILY_SCALE
 
@@ -522,6 +534,11 @@ export function createSkimGame(context: CareGameContext): CareGameScene {
 
   /** Glints, ripples and sparks: their own clocks, carried by the scroll. */
   function updateEffects(dt: number, scroll: number): void {
+    for (const reed of reeds) {
+      reed.x -= scroll * 1.5 * dt
+      if (reed.x < -2.6) reed.x += 5.2
+      reed.object.position.x = reed.x
+    }
     for (const item of glints) {
       if (!item.active) continue
       item.age += dt

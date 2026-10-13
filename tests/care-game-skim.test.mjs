@@ -91,7 +91,7 @@ test('hits: a dew drop within reach, a bonk inside a fluff clump, and a cattail 
   assert.ok(!touchesCattail(0, 0.2, SKIM_TUNING.dragonRadius, 0.0, 0), 'a reed still under the water cannot be hit')
 })
 
-test('the skim rules are the ones the card advertises: eighteen dew, three hearts, twenty-two seconds', () => {
-  assert.deepEqual(CARE_GAME_RULES.skim, { goal: 18, hearts: 3, misses: 0, seconds: 22 })
+test('the skim rules are the ones the card advertises: eighteen dew, three hearts, twenty-four seconds', () => {
+  assert.deepEqual(CARE_GAME_RULES.skim, { goal: 18, hearts: 3, misses: 0, seconds: 24 })
 })
 

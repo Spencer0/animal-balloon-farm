@@ -40,8 +40,7 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   // chop: built in chop-game.ts
   chop: { create: null, input: 'tap' },
   // skim: built in skim-game.ts
-  // 'capture' rather than 'tap': the overlay only takes the pointer for aim and capture (see care-game-dom.css).
-  skim: { create: createSkimGame, input: 'capture' },
+  skim: { create: createSkimGame, input: 'tap' },
   // paddle: built in paddle-game.ts
   paddle: { create: null, input: 'tap' },
   // rope: built in rope-game.ts
