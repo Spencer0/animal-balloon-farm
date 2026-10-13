@@ -234,7 +234,7 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
         game?.update(dt)
       }
       bursts.update(dt)
-      if (phase === 'outro' && phaseTime >= OUTRO_SECONDS) showResult()
+      if (phase === 'outro' && phaseTime >= (game?.outroSeconds ?? OUTRO_SECONDS)) showResult()
     },
     render(): void {
       if (!disposed) renderer.render(stage.scene, stage.camera)

@@ -20,31 +20,47 @@ import type { CareGameContext, CareGameScene } from './care-game-types'
 /**
  * RUNNER! The frog sits on the lily pad while the lily's overgrown runner whips
  * round the pad like a skipping rope. Tap (or Space) to hop; the runner sweeps
- * low across the frog's spot once per turn, and a hop that is still in the air
- * as it passes clears it. A clear snips a segment off the runner's tip, which
- * flies off spinning. Caught on the pad, the frog tumbles into the pond.
+ * across the frog's knee height once per turn, and a hop still in the air as it
+ * passes clears it. A clear snips a segment off the runner's tip. Caught on the
+ * pad, the frog tumbles into the pond.
  *
- * Every pass is telegraphed: a shadow sector sweeps across the pad ahead of the
- * runner, and a whoosh climbs as the runner nears. The timing (angles, speeds,
- * the double passes, the fake slow-down) is in `src/game/care-rope.ts`.
+ * The camera is set close on the pad, so the arena fills the screen. Each pass
+ * is telegraphed on the pad: a light sweep line just ahead of the vine, a smear
+ * trail behind it, and a ring under the frog that flashes as the vine nears.
+ * The timing (angles, speeds, double passes, the fake slow-down) lives in
+ * `src/game/care-rope.ts`.
  */
 
 /** The pad's top, the pond's surface, and the runner's pivot at the stem. */
 const PAD_Y = 0.04
+const PAD_RADIUS = 0.45
 const WATER_Y = 0.012
 const PIVOT_Y = PAD_Y + 0.05
-const RUNNER_RADIUS = 0.032
-const RUNNER_ARCH = 0.018
-const LEAF_SCALE = 2.2
-const FROG_SCALE = 1.5
-/** A critter is centred on its origin, so its feet sit this far below it (in model units). */
-const FROG_LIFT = 0.075
+/** A thick vine: about twice the first version's thickness, so it reads at a glance. */
+const RUNNER_RADIUS = 0.06
+const RUNNER_ARCH = 0.01
+const LEAF_SCALE = 3
 const KNOCK_SPOT = 0.8
 const KNOCK_OUT_PART = 0.25
 const KNOCK_CLIMB_PART = 0.7
 const PIECE_SECONDS = 1.5
-const FAN_SEGMENTS = 20
+/** The camera: a high 3/4 view, the pad filling this share of the width (desktop) or all of it (phone). */
+const CAMERA_PITCH = 0.75
+const DESKTOP_FILL = 0.65
+const PHONE_FILL = 0.94
+const PHONE_ASPECT = 1.2
+/** The frog's share of the screen height. */
+const FROG_SCREEN_SHARE = 0.13
+const SMEAR_SAMPLES = 14
+const SMEAR_SPAN = 1.1
+const TELEGRAPH_AHEAD = 0.4
 const BLOOM_SCALE_Y = 0.055
+/** The outro slow-motion the player applies to a scene's update, and the hold after the beat. */
+const OUTRO_TIME_SCALE = 0.35
+const OUTRO_HOLD = 0.6
+/** How long the win and lose beats play, in scene seconds (before the slow-motion). */
+const WIN_BEAT = 2
+const LOSE_BEAT = 1.6
 
 interface Piece {
   readonly object: THREE.Mesh
@@ -59,7 +75,7 @@ interface Bloom {
   readonly scale: THREE.Vector3
 }
 
-/** A snapshot for the debug harness (`window.__ropeGame()`), read by the browser tests. */
+/** A snapshot for the debug harness (`window.__ropeGame()`), read by the browser checks. */
 export interface RopeDebugState {
   readonly clock: number
   readonly angle: number
@@ -73,6 +89,8 @@ export interface RopeDebugState {
   readonly onPad: boolean
   readonly hopStart: number
   readonly finished: boolean
+  /** Scene seconds since the round ended (the beat), or null while it plays. */
+  readonly beat: number | null
 }
 
 interface RopeDebugWindow {
@@ -94,8 +112,10 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
   let harms = 0
   let visualTime = 0
   let winAt = 0
+  let knockVisualAt = Number.NEGATIVE_INFINITY
   let landedFor = Number.NEGATIVE_INFINITY
   let dropAt = -1
+  let frogScale = 1
 
   // ---- the runner: a pivot at the stem, an arm that turns, and the vine on it.
   const pivot = new THREE.Group()
@@ -105,48 +125,74 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
   const arm = new THREE.Group()
   arm.name = 'Runner arm'
   pivot.add(arm)
-  // A deep green, so the vine reads against the lily pad.
-  const runnerMaterial = new THREE.MeshStandardMaterial({ color: '#2c6a2f', roughness: 0.5, metalness: 0 })
+  // A bright, saturated green, so the vine reads against the pad and the pond.
+  const runnerMaterial = new THREE.MeshStandardMaterial({ color: '#38c24a', emissive: '#0f3d14', emissiveIntensity: 0.6, roughness: 0.45, metalness: 0 })
   owned.push(runnerMaterial)
   const runner = new THREE.Mesh(new THREE.BufferGeometry(), runnerMaterial)
   runner.name = 'Runner vine'
   runner.castShadow = true
   arm.add(runner)
+  // The leading end: a bud, and a little curl over it, so the tip is obvious.
+  const budGeometry = new THREE.SphereGeometry(0.085, 14, 10)
+  const curlGeometry = new THREE.TorusGeometry(0.06, 0.022, 8, 18, Math.PI * 1.5)
+  owned.push(budGeometry, curlGeometry)
+  const bud = new THREE.Mesh(budGeometry, runnerMaterial)
+  bud.name = 'Runner bud'
+  const curl = new THREE.Mesh(curlGeometry, runnerMaterial)
+  curl.name = 'Runner curl'
+  curl.rotation.z = -0.6
+  arm.add(bud, curl)
   let runnerLength = ROPE_MAX_LENGTH
   let leaves: THREE.Object3D[] = []
   const pieces: Piece[] = []
-  setRunnerLength(ROPE_MAX_LENGTH)
 
-  // ---- the telegraph: a shadow sector on the pad, from the runner's edge out to ahead of it.
-  const fanPositions: number[] = [0, 0, 0]
-  for (let index = 0; index <= FAN_SEGMENTS; index += 1) {
-    const angle = (index / FAN_SEGMENTS) * ROPE_TELEGRAPH_RADIANS
-    fanPositions.push(Math.cos(angle) * ROPE_MAX_LENGTH * 1.05, 0, Math.sin(angle) * ROPE_MAX_LENGTH * 1.05)
+  // ---- the smear: a fading ribbon of where the vine has just been.
+  const smearPositions = new Float32Array((SMEAR_SAMPLES + 1) * 2 * 3)
+  const smearColors = new Float32Array((SMEAR_SAMPLES + 1) * 2 * 4)
+  const smearIndices: number[] = []
+  for (let index = 0; index < SMEAR_SAMPLES; index += 1) {
+    const a = index * 2
+    smearIndices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2)
   }
-  const fanIndices: number[] = []
-  for (let index = 1; index <= FAN_SEGMENTS; index += 1) fanIndices.push(0, index, index + 1)
-  const fanGeometry = new THREE.BufferGeometry()
-  fanGeometry.setAttribute('position', new THREE.Float32BufferAttribute(fanPositions, 3))
-  fanGeometry.setIndex(fanIndices)
-  const fanMaterial = new THREE.MeshBasicMaterial({ color: '#0f2e1d', transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide })
-  owned.push(fanGeometry, fanMaterial)
-  const fan = new THREE.Mesh(fanGeometry, fanMaterial)
-  fan.name = 'Runner shadow'
-  fan.position.set(0, PAD_Y + 0.006, 0)
-  fan.renderOrder = 1
-  root.add(fan)
+  const smearGeometry = new THREE.BufferGeometry()
+  smearGeometry.setAttribute('position', new THREE.BufferAttribute(smearPositions, 3))
+  smearGeometry.setAttribute('color', new THREE.BufferAttribute(smearColors, 4))
+  smearGeometry.setIndex(smearIndices)
+  const smearMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide })
+  owned.push(smearGeometry, smearMaterial)
+  const smear = new THREE.Mesh(smearGeometry, smearMaterial)
+  smear.name = 'Runner smear'
+  smear.renderOrder = 1
+  root.add(smear)
 
-  // ---- the frog, on its spot of the pad.
+  // ---- the telegraph: a light sweep line just ahead of the vine, and a ring under the frog.
+  const lineGeometry = new THREE.BoxGeometry(0.5, 0.004, 0.034)
+  const lineMaterial = new THREE.MeshBasicMaterial({ color: '#d8ffb0', transparent: true, opacity: 0, depthWrite: false })
+  owned.push(lineGeometry, lineMaterial)
+  const line = new THREE.Mesh(lineGeometry, lineMaterial)
+  line.name = 'Runner sweep line'
+  line.renderOrder = 1
+  root.add(line)
+
   const frogSpot = new THREE.Vector3(Math.cos(ROPE_FROG_ANGLE) * ROPE_FROG_RADIUS, PAD_Y, Math.sin(ROPE_FROG_ANGLE) * ROPE_FROG_RADIUS)
   const knockSpot = new THREE.Vector3(Math.cos(ROPE_FROG_ANGLE) * KNOCK_SPOT, WATER_Y, Math.sin(ROPE_FROG_ANGLE) * KNOCK_SPOT)
+  const ringGeometry = new THREE.RingGeometry(0.1, 0.135, 36)
+  const ringMaterial = new THREE.MeshBasicMaterial({ color: '#fff0a0', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })
+  owned.push(ringGeometry, ringMaterial)
+  const ring = new THREE.Mesh(ringGeometry, ringMaterial)
+  ring.name = 'Frog ring'
+  ring.rotation.x = -Math.PI / 2
+  ring.position.set(frogSpot.x, PAD_Y + 0.005, frogSpot.z)
+  ring.renderOrder = 2
+  root.add(ring)
+
+  // ---- the frog, on its spot of the pad. Its size is set by the camera each frame.
   const frogRoot = new THREE.Group()
   frogRoot.name = 'Runner frog'
   frogRoot.position.copy(frogSpot)
   root.add(frogRoot)
   const frogModel = new THREE.Group()
   frogModel.name = 'Runner frog model'
-  frogModel.scale.setScalar(FROG_SCALE)
-  frogModel.position.y = FROG_LIFT * FROG_SCALE
   frogRoot.add(frogModel)
   const frogCritter = cloneCastCritter('water', 'frog')
   if (frogCritter) {
@@ -158,6 +204,10 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
     owned.push(body, bodyMaterial)
     frogModel.add(new THREE.Mesh(body, bodyMaterial))
   }
+  // Measured unscaled, so the frog can be fitted to the screen and its feet kept on the pad.
+  const frogBox = new THREE.Box3().setFromObject(frogModel)
+  const frogRawHeight = Math.max(1e-3, frogBox.getSize(new THREE.Vector3()).y)
+  const frogRawMinY = frogBox.min.y
 
   // The lily's flower buds, to open on the win.
   const blooms: Bloom[] = []
@@ -169,11 +219,15 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
 
   // ---- helpers
 
+  function runnerY(s: number): number {
+    return RUNNER_ARCH * Math.sin(Math.PI * s / ROPE_MAX_LENGTH)
+  }
+
   function runnerCurve(length: number): THREE.CatmullRomCurve3 {
     const points: THREE.Vector3[] = []
     for (let index = 0; index <= 4; index += 1) {
       const s = (index / 4) * length
-      points.push(new THREE.Vector3(s, RUNNER_ARCH * Math.sin(Math.PI * s / ROPE_MAX_LENGTH), 0))
+      points.push(new THREE.Vector3(s, runnerY(s), 0))
     }
     return new THREE.CatmullRomCurve3(points)
   }
@@ -184,7 +238,7 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
     const points: THREE.Vector3[] = []
     for (let index = 0; index <= 3; index += 1) {
       const s = from + (index / 3) * length
-      points.push(new THREE.Vector3(s, RUNNER_ARCH * Math.sin(Math.PI * s / ROPE_MAX_LENGTH), 0))
+      points.push(new THREE.Vector3(s, runnerY(s), 0))
     }
     return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 10, RUNNER_RADIUS, 8, false)
   }
@@ -193,17 +247,20 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
     runnerLength = length
     runner.geometry.dispose()
     runner.geometry = new THREE.TubeGeometry(runnerCurve(length), 24, RUNNER_RADIUS, 8, false)
+    const tipY = runnerY(length)
+    bud.position.set(length, tipY, 0)
+    curl.position.set(length + 0.03, tipY + 0.07, 0)
     for (const leaf of leaves) leaf.removeFromParent()
     leaves = []
     // Leaves along the vine; the cast's leaf is shared with the template, so it is never disposed here.
-    const count = length > 0.5 ? 3 : 2
+    const count = length > 0.5 ? 4 : 2
     for (let index = 0; index < count; index += 1) {
       const leaf = cloneCastCritter('water', 'runner_leaf')
       if (!leaf) continue
       const s = length * (index + 0.6) / (count + 0.4)
-      leaf.position.set(s, RUNNER_ARCH * Math.sin(Math.PI * s / ROPE_MAX_LENGTH) + RUNNER_RADIUS, 0)
+      leaf.position.set(s, runnerY(s) + RUNNER_RADIUS * 0.6, 0)
       leaf.scale.setScalar(LEAF_SCALE)
-      leaf.rotation.set(0, index * 1.7, index % 2 ? 0.25 : -0.25)
+      leaf.rotation.set(0, index * 1.7, index % 2 ? 0.3 : -0.3)
       arm.add(leaf)
       leaves.push(leaf)
     }
@@ -235,9 +292,20 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
     return frogRoot.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.22 + lift, 0))
   }
 
+  /** Water spray where the vine skims the pad along the frog's ray. */
+  function spray(): void {
+    for (const radius of [0.14, 0.28, 0.4]) {
+      bursts.add(createBurst(new THREE.Vector3(Math.cos(ROPE_FROG_ANGLE) * radius, PAD_Y + 0.02, Math.sin(ROPE_FROG_ANGLE) * radius), {
+        count: 8, colors: ['#ffffff', '#bfe9f5', '#7ec8e3'], size: 0.014, speed: [0.5, 1.1], lift: 0.7, gravity: 3.5, seconds: 0.6, shape: 'blob', onTop: true,
+      }), root)
+    }
+  }
+
   function onPass(crossing: RopeCrossing): void {
     if (!frog.onPad(crossing.time)) return
     const height = frog.heightAt(crossing.time)
+    sfx.play('swish', crossing.returning ? 1.3 : 1)
+    spray()
     if (height >= ROPE_CLEAR_HEIGHT) {
       const before = runnerLength
       const streak = round.hit()
@@ -258,6 +326,7 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
     harms += 1
     round.harm()
     frog.knock(crossing.time)
+    knockVisualAt = visualTime
     sfx.play('splash')
     sfx.play('harm')
     stage.shake(0.08)
@@ -270,15 +339,37 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
     context.popAt(frogWorld(), 'CAUGHT!', 'bad')
   }
 
-  /** Where the frog is, how it is squashed and blinking, on the clock the runner keeps. */
+  /** Frame the pad: a high 3/4 view that fits the arena, and a frog sized to its share of the screen. */
+  function frameCamera(): void {
+    const camera = stage.camera
+    const aspect = camera.aspect
+    const fill = aspect >= PHONE_ASPECT ? DESKTOP_FILL : PHONE_FILL
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))
+    const distance = PAD_RADIUS / fill / (tanHalf * aspect)
+    // Aim a little above the pad, so the lily's flower clears the HUD bar.
+    const target = new THREE.Vector3(0, PAD_Y + 0.1, 0)
+    camera.position.set(0, PAD_Y + Math.sin(CAMERA_PITCH) * distance, Math.cos(CAMERA_PITCH) * distance)
+    camera.position.add(target)
+    camera.lookAt(target)
+    const visibleHeight = 2 * distance * tanHalf
+    frogScale = (visibleHeight * FROG_SCREEN_SHARE) / frogRawHeight
+  }
+
+  function setFrog(sx: number, sy: number, sz: number): void {
+    frogModel.scale.set(frogScale * sx, frogScale * sy, frogScale * sz)
+    // Keep the feet on the pad however the frog is squashed.
+    frogModel.position.y = -frogRawMinY * frogScale * sy
+  }
+
+  /** Where the frog is, how it is squashed and blinking. */
   function placeFrog(): void {
     const clock = sweep.clock
     frogRoot.visible = true
     frogRoot.rotation.set(0, 0, 0)
-    frogModel.scale.setScalar(FROG_SCALE)
-    if (!frog.onPad(clock)) {
-      const p = (clock - frog.knockedAt) / ROPE_KNOCK_SECONDS
-      frogRoot.visible = Math.floor(clock * 12) % 2 === 0
+    const sinceKnock = visualTime - knockVisualAt
+    if (sinceKnock < ROPE_KNOCK_SECONDS) {
+      const p = sinceKnock / ROPE_KNOCK_SECONDS
+      frogRoot.visible = Math.floor(visualTime * 12) % 2 === 0
       if (p < KNOCK_OUT_PART) {
         const q = p / KNOCK_OUT_PART
         frogRoot.position.lerpVectors(frogSpot, knockSpot, q)
@@ -296,21 +387,13 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
         frogRoot.position.y = THREE.MathUtils.lerp(WATER_Y, PAD_Y, q) + Math.sin(Math.PI * q) * 0.2
         frogRoot.rotation.z = (1 - q) * 0.5
       }
-      frogModel.scale.set(FROG_SCALE, FROG_SCALE * 0.95, FROG_SCALE)
+      setFrog(1, 0.95, 1)
       return
     }
     frogRoot.position.copy(frogSpot)
-    const since = clock - frog.hopStart
-    if (Number.isFinite(since) && since >= 0 && since < ROPE_HOP_SECONDS) {
-      frogRoot.position.y = PAD_Y + hopHeight(since, frog.peak)
-      // Stretch in the air, squash on the take-off and on the landing.
-      frogModel.scale.set(FROG_SCALE * 0.93, FROG_SCALE * 1.1, FROG_SCALE * 0.93)
-      if (since < 0.08) frogModel.scale.set(FROG_SCALE * 1.14, FROG_SCALE * 0.82, FROG_SCALE * 1.14)
-    } else if (Number.isFinite(since) && since >= ROPE_HOP_SECONDS && since < ROPE_HOP_SECONDS + 0.1) {
-      frogModel.scale.set(FROG_SCALE * 1.16, FROG_SCALE * 0.8, FROG_SCALE * 1.16)
-    }
+    setFrog(1, 1, 1)
     if (finished && won) {
-      // The victory: two big hops, and the frog spins a little on the second.
+      // The victory: two big hops with a squash on each landing, and a spin on the second.
       const t = visualTime - winAt
       if (t < 1.2) {
         const hop = t < 0.6 ? t : t - 0.6
@@ -318,15 +401,75 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
         const u = hop / 0.6
         frogRoot.position.y = PAD_Y + 4 * height * u * (1 - u)
         if (t >= 0.6) frogRoot.rotation.y = (t - 0.6) / 0.6 * Math.PI * 2
+        if (u < 0.1 || (hop >= 0.5 && hop < 0.6)) setFrog(1.2, 0.8, 1.2)
+        else setFrog(0.94, 1.1, 0.94)
+      }
+      return
+    }
+    const since = clock - frog.hopStart
+    if (Number.isFinite(since) && since >= 0 && since < ROPE_HOP_SECONDS) {
+      frogRoot.position.y = PAD_Y + hopHeight(since, frog.peak)
+      if (since < 0.1) setFrog(1.25, 0.72, 1.25)
+      else setFrog(0.9, 1.16, 0.9)
+    } else if (Number.isFinite(since) && since >= ROPE_HOP_SECONDS && since < ROPE_HOP_SECONDS + 0.12) {
+      setFrog(1.3, 0.7, 1.3)
+    }
+  }
+
+  /** The smear: the arc the vine has swept over lately, fading out behind it. */
+  function updateSmear(): void {
+    smear.visible = !finished
+    if (finished) return
+    for (let index = 0; index <= SMEAR_SAMPLES; index += 1) {
+      const t = index / SMEAR_SAMPLES
+      const angle = sweep.angle - sweep.direction * SMEAR_SPAN * t
+      const alpha = 0.7 * Math.pow(1 - t, 1.6)
+      const outer = runnerLength + 0.03
+      const inner = Math.max(0.05, runnerLength - 0.12)
+      for (let side = 0; side < 2; side += 1) {
+        const radius = side === 0 ? inner : outer
+        const v = index * 2 + side
+        smearPositions[v * 3] = Math.cos(angle) * radius
+        smearPositions[v * 3 + 1] = PIVOT_Y + 0.01
+        smearPositions[v * 3 + 2] = Math.sin(angle) * radius
+        smearColors[v * 4] = 0.85
+        smearColors[v * 4 + 1] = 1
+        smearColors[v * 4 + 2] = 0.7
+        smearColors[v * 4 + 3] = alpha
       }
     }
+    smearGeometry.attributes.position.needsUpdate = true
+    smearGeometry.attributes.color.needsUpdate = true
+  }
+
+  /** The telegraph: a line just ahead of the vine that brightens as the frog nears, and the frog's ring. */
+  function updateTelegraph(): void {
+    const ahead = sweep.ahead
+    const prox = finished || ahead <= 0 ? 0 : Math.min(1, Math.max(0, 1 - ahead / ROPE_TELEGRAPH_RADIANS))
+    const lineAngle = sweep.angle + sweep.direction * TELEGRAPH_AHEAD
+    line.visible = !finished
+    line.position.set(Math.cos(lineAngle) * 0.25, PAD_Y + 0.006, Math.sin(lineAngle) * 0.25)
+    line.rotation.y = -lineAngle
+    lineMaterial.opacity = 0.14 + 0.4 * prox
+    // The ring flashes as the vine nears the frog: the "jump now" cue.
+    const arriving = !finished && (sweep.flicking || (ahead > 0 && ahead < ROPE_TELEGRAPH_RADIANS))
+    if (arriving) {
+      const intensity = sweep.flicking ? 1 : 1 - ahead / ROPE_TELEGRAPH_RADIANS
+      const pulse = 0.5 + 0.5 * Math.sin(visualTime * (10 + 22 * intensity))
+      ringMaterial.opacity = (0.2 + 0.8 * intensity) * pulse
+      ring.scale.setScalar(1 + 0.25 * intensity * pulse)
+    } else {
+      ringMaterial.opacity = 0
+      ring.scale.setScalar(1)
+    }
+    ring.visible = !finished
   }
 
   function updateBlooms(): void {
     if (!finished || !won) return
     const eased = 1 - Math.pow(1 - Math.min(1, (visualTime - winAt) / 0.7), 3)
     for (const bloom of blooms) {
-      bloom.object.scale.set(bloom.scale.x * (1 + 0.9 * eased), bloom.scale.y * (1 + 1.4 * eased), bloom.scale.z * (1 + 0.9 * eased))
+      bloom.object.scale.set(bloom.scale.x * (1 + 0.5 * eased), bloom.scale.y * (1 + 0.6 * eased), bloom.scale.z * (1 + 0.5 * eased))
     }
   }
 
@@ -350,6 +493,7 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
       onPad: frog.onPad(sweep.clock),
       hopStart: frog.hopStart,
       finished,
+      beat: finished ? visualTime - winAt : null,
     }
   }
 
@@ -364,21 +508,21 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
   const debugHook = new URLSearchParams(window.location.search).has('gardenDebug')
   if (debugHook) (window as RopeDebugWindow).__ropeGame = () => debugState()
 
+  setRunnerLength(ROPE_MAX_LENGTH)
+
   return {
     update(dt): void {
       visualTime += dt
       if (!finished) {
         for (const crossing of sweep.step(dt, round.snapshot.goal - round.snapshot.hits, goal)) onPass(crossing)
       }
-      // The arm sits on the sweep; the shadow sector and the whoosh show what is coming.
+      // The camera is set after the stage's own update each frame, so the pad stays framed.
+      frameCamera()
+      // The arm sits on the sweep; the telegraph shows what is coming.
       arm.rotation.y = -sweep.angle
-      fan.rotation.y = -sweep.angle
-      fan.scale.z = sweep.direction
-      const ahead = sweep.ahead
-      const prox = finished || ahead <= 0 ? 0 : Math.min(1, Math.max(0, 1 - ahead / ROPE_TELEGRAPH_RADIANS))
-      fan.visible = !finished
-      fanMaterial.opacity = 0.1 + 0.36 * prox
-      sfx.whoosh(finished ? 0 : sweep.flicking ? 0.55 : Math.pow(prox, 1.5))
+      updateSmear()
+      updateTelegraph()
+      sfx.whoosh(finished ? 0 : sweep.flicking ? 0.55 : Math.pow(Math.min(1, Math.max(0, 1 - sweep.ahead / ROPE_TELEGRAPH_RADIANS)), 1.5))
       for (const piece of pieces) {
         piece.age += dt
         piece.velocity.y -= 5 * dt
@@ -413,6 +557,10 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
     },
     pointerMove(): void {},
     pointerUp(): void {},
+    /** The beat before the stamp: the scene's own slow-motion beat, then a hold. */
+    get outroSeconds(): number {
+      return (won ? WIN_BEAT : LOSE_BEAT) / OUTRO_TIME_SCALE + OUTRO_HOLD
+    },
     finish(didWin): void {
       finished = true
       won = didWin
@@ -424,13 +572,17 @@ export function createRopeGame(context: CareGameContext): CareGameScene {
         const last = runnerLength
         snipPiece(0, last)
         runner.visible = false
+        bud.visible = false
+        curl.visible = false
         for (const leaf of leaves) leaf.visible = false
         stage.bounce(1)
         stage.sparkle()
       } else {
         dropAt = visualTime
       }
-      fan.visible = false
+      line.visible = false
+      ring.visible = false
+      smear.visible = false
     },
     dispose(): void {
       sfx.whoosh(0)

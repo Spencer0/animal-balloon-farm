@@ -39,5 +39,10 @@ export interface CareGameScene {
   pointerUp(): void
   /** The round just ended: play the scene's own beat (beetles flee, shoots fall). */
   finish(won: boolean): void
+  /**
+   * How long the outro (the scene's beat, in slow motion) runs before the stamp.
+   * Omit it for the default; a scene with a longer beat sets its own.
+   */
+  readonly outroSeconds?: number
   dispose(): void
 }
