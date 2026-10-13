@@ -120,7 +120,8 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     dom.showHud(request.kind, request.subject, round.snapshot)
     const input = CLOSE_UP_GAMES[request.kind].input
     dom.setAiming(input === 'aim')
-    dom.setCapturing(input === 'capture')
+    // Tap games take the pointer the same way the snip trail does.
+    dom.setCapturing(input === 'capture' || input === 'tap')
   }
 
   function decide(): void {
