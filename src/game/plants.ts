@@ -83,8 +83,14 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
 /** The shed starts empty: seeds are bought at the shop, never handed out. */
 export const STARTING_SEEDS_PER_PLANT = 0
 
-/** The one exception: a single dandelion seed, so the first plant is free. */
-export const STARTING_SEED_GIFT: { readonly species: PlantId; readonly count: number } = { species: 'dandelion', count: 1 }
+/**
+ * The exceptions: one dandelion seed, so the first plant is free, and one
+ * blueberry seed, so the care minigames can be tried straight away.
+ */
+export const STARTING_SEED_GIFTS: readonly { readonly species: PlantId; readonly count: number }[] = [
+  { species: 'dandelion', count: 1 },
+  { species: 'blueberry', count: 1 },
+]
 
 /** Coins for one seed. Each is a little under what its plant sells for grown. */
 export const SEED_PRICES: Readonly<Record<PlantId, number>> = {
@@ -189,7 +195,7 @@ export function plantSpecies(species: PlantId): PlantSpecies {
 
 export function createPlantSimulation(): PlantSimulation {
   const plants: MutablePlant[] = []
-  const seedCounts = new Map<PlantId, number>(PLANT_CATALOG.map(({ id }) => [id, id === STARTING_SEED_GIFT.species ? STARTING_SEED_GIFT.count : STARTING_SEEDS_PER_PLANT]))
+  const seedCounts = new Map<PlantId, number>(PLANT_CATALOG.map(({ id }) => [id, STARTING_SEED_GIFTS.find((gift) => gift.species === id)?.count ?? STARTING_SEEDS_PER_PLANT]))
   let nextInstanceId = 1
 
   function snapshot(plant: MutablePlant): GardenPlant {
