@@ -18,7 +18,20 @@ export interface CareGameContext {
   popAt(world: THREE.Vector3, text: string, tone?: 'good' | 'bad' | 'plain', big?: boolean): void
 }
 
-/** One close-up minigame (swat, snip). The player runs the clock and the result. */
+/**
+ * One close-up minigame. The player runs the clock and the result.
+ *
+ * A scene is built by its factory (see `care-game-registry.ts`) and may move the
+ * stage's camera and the plant in its constructor, e.g. to frame a pond or to
+ * lift the plant into a swing. The stage restores nothing on its own, so a
+ * scene that moves the camera should not expect it back. Its `dispose()` must
+ * free every geometry, material and texture it created, but not the stage's.
+ *
+ * Plant reactions go through the stage: `stage.plant` is the player's plant
+ * (null if its model failed to load), `stage.plantHeight` its height, and
+ * `stage.bounce(amount)` / `stage.sparkle()` make it react the same way in
+ * every game.
+ */
 export interface CareGameScene {
   update(deltaSeconds: number): void
   pointerDown(x: number, y: number): void
@@ -26,5 +39,12 @@ export interface CareGameScene {
   pointerUp(): void
   /** The round just ended: play the scene's own beat (beetles flee, shoots fall). */
   finish(won: boolean): void
+  /** Debug harness: a snapshot of the scene's own state, for scripted play. Optional. */
+  debug?(): unknown
+  /**
+   * How long the outro (the scene's beat, in slow motion) runs before the stamp.
+   * Omit it for the default; a scene with a longer beat sets its own.
+   */
+  readonly outroSeconds?: number
   dispose(): void
 }

@@ -7,11 +7,25 @@
 export type CareSound =
   | 'sting' | 'swat' | 'whiff' | 'chomp' | 'harm' | 'snip' | 'squish'
   | 'tap' | 'downpour' | 'win' | 'lose' | 'pop'
+  // buzz
+  | 'flap' | 'bonk' | 'chime' | 'splash'
+  // hop
+  | 'hopBeat' | 'hopKick' | 'hopJump' | 'hopLand' | 'hopCrunch'
+  // chop
+  | 'chopSnap' | 'chopPerfect' | 'chopGood' | 'chopMiss' | 'chopThud'
+  // skim
+  | 'dew' | 'bonus' | 'splash'
+  // paddle
+  | 'swish' | 'slurp' | 'splash' | 'thunk'
+  // rope
+  | 'hop' | 'splash' | 'swish'
 
 export interface CareSfx {
   play(sound: CareSound, pitch?: number): void
   /** A held beetle buzz, 0 (silent) to 1. */
   buzz(level: number): void
+  // rope: the runner's whoosh, 0 (silent) to 1, climbing as it nears the frog.
+  whoosh(level: number): void
   stopAll(): void
 }
 
@@ -88,6 +102,10 @@ const NOTE = (midi: number): number => 440 * 2 ** ((midi - 69) / 12)
 
 let buzzOsc: OscillatorNode | null = null
 let buzzGain: GainNode | null = null
+// rope
+let whooshSource: AudioBufferSourceNode | null = null
+let whooshFilter: BiquadFilterNode | null = null
+let whooshGain: GainNode | null = null
 
 export function createCareSfx(): CareSfx {
   return {
@@ -143,6 +161,86 @@ export function createCareSfx(): CareSfx {
           tone('triangle', NOTE(67), NOTE(62), now, 0.3, 0.25)
           tone('triangle', NOTE(62), NOTE(55), now + 0.32, 0.5, 0.25)
           break
+        // buzz
+        case 'flap':
+          hiss(now, 0.09, 0.14, 'highpass', 2500, 5000, 1.2)
+          tone('triangle', 520, 780, now, 0.08, 0.16)
+          break
+        case 'bonk':
+          tone('sine', 150, 55, now, 0.22, 0.6)
+          hiss(now, 0.12, 0.25, 'lowpass', 900, 300, 1)
+          break
+        case 'chime':
+          tone('sine', 1174 * pitch, 1174 * pitch, now, 0.32, 0.22)
+          tone('triangle', 1568 * pitch, 1568 * pitch, now + 0.05, 0.36, 0.14)
+          break
+        case 'splash':
+          hiss(now, 0.35, 0.3, 'bandpass', 2400, 600, 0.9)
+          tone('sine', 880, 330, now, 0.25, 0.14)
+          break
+        // hop
+        case 'hopBeat':
+          tone('triangle', 1400 * pitch, 1100 * pitch, now, 0.04, 0.05)
+          break
+        case 'hopKick':
+          tone('sine', 150, 42, now, 0.18, 0.36)
+          hiss(now, 0.03, 0.1, 'highpass', 3000, 2000)
+          break
+        case 'hopJump':
+          tone('sine', 320, 760, now, 0.16, 0.18)
+          break
+        case 'hopLand':
+          tone('sine', 160, 70, now, 0.09, 0.22)
+          hiss(now, 0.06, 0.12, 'lowpass', 900, 300, 1)
+          break
+        case 'hopCrunch':
+          hiss(now, 0.09, 0.4, 'bandpass', 2600, 1200, 1.5)
+          tone('square', 520, 300, now, 0.05, 0.1)
+          break
+        // chop
+        case 'chopSnap':
+          hiss(now, 0.06, 0.5, 'highpass', 3000, 6000)
+          tone('square', 1500 * pitch, 900 * pitch, now, 0.04, 0.06)
+          break
+        case 'chopPerfect':
+          tone('sine', NOTE(90), NOTE(96), now, 0.12, 0.2)
+          tone('sine', NOTE(102), NOTE(102), now + 0.05, 0.2, 0.16)
+          break
+        case 'chopGood':
+          tone('triangle', 880 * pitch, 660 * pitch, now, 0.1, 0.2)
+          break
+        case 'chopMiss':
+          tone('triangle', 180, 90, now, 0.25, 0.3)
+          hiss(now, 0.15, 0.25, 'lowpass', 900, 200, 1)
+          break
+        case 'chopThud':
+          tone('sine', 140, 60, now, 0.25, 0.35)
+          hiss(now, 0.2, 0.3, 'lowpass', 600, 120, 1.5)
+          break
+        // skim
+        case 'dew':
+          tone('sine', 1047 * pitch, 1568 * pitch, now, 0.18, 0.22)
+          tone('triangle', 2093 * pitch, 2093 * pitch, now + 0.03, 0.12, 0.06)
+          break
+        case 'bonus':
+          [79, 83, 86, 91].forEach((note, index) => tone('triangle', NOTE(note), NOTE(note), now + index * 0.07, 0.14, 0.2))
+          break
+        // paddle
+        case 'swish':
+          hiss(now, 0.12, 0.2, 'bandpass', 500, 1800, 1.2)
+          break
+        case 'slurp':
+          tone('sine', 900 * pitch, 260 * pitch, now, 0.14, 0.28)
+          hiss(now, 0.12, 0.16, 'bandpass', 2200, 600, 1.5)
+          break
+        case 'thunk':
+          tone('triangle', 160, 60, now, 0.22, 0.5)
+          hiss(now, 0.08, 0.3, 'lowpass', 800, 200, 1)
+          break
+        // rope
+        case 'hop':
+          tone('sine', 360, 760, now, 0.13, 0.22)
+          break
       }
     },
     buzz(level): void {
@@ -172,8 +270,32 @@ export function createCareSfx(): CareSfx {
       }
       buzzGain?.gain.setTargetAtTime(target, kit.context.currentTime, 0.05)
     },
+    // rope
+    whoosh(level): void {
+      const kit = audio()
+      if (!kit) return
+      const amount = Math.max(0, Math.min(1, level))
+      const target = amount * 0.16
+      if (!whooshSource && target > 0) {
+        whooshSource = kit.context.createBufferSource()
+        whooshSource.buffer = kit.noise
+        whooshSource.loop = true
+        whooshFilter = kit.context.createBiquadFilter()
+        whooshFilter.type = 'bandpass'
+        whooshFilter.Q.value = 1.2
+        whooshGain = kit.context.createGain()
+        whooshGain.gain.value = 0
+        whooshSource.connect(whooshFilter)
+        whooshFilter.connect(whooshGain)
+        whooshGain.connect(kit.master)
+        whooshSource.start()
+      }
+      whooshFilter?.frequency.setTargetAtTime(300 + 2200 * amount, kit.context.currentTime, 0.05)
+      whooshGain?.gain.setTargetAtTime(target, kit.context.currentTime, 0.05)
+    },
     stopAll(): void {
       if (buzzGain && context) buzzGain.gain.setTargetAtTime(0, context.currentTime, 0.03)
+      if (whooshGain && context) whooshGain.gain.setTargetAtTime(0, context.currentTime, 0.03)
     },
   }
 }

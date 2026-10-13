@@ -48,9 +48,17 @@ test('ribbons and helpers survive a save, and a save cannot hire without the rib
   assert.equal(restored.isHired('blueberry', 'water'), true)
   assert.equal(restored.ribbonCount('blueberry'), 1)
   const forged = createGreenThumb()
-  forged.importState({ ribbons: ['poppy:water', 'blueberry:nonsense'], helpers: ['blueberry:pest'] })
+  forged.importState({ ribbons: ['poppy:water', 'weed:water', 'poppy:wash', 'blueberry:nonsense'], helpers: ['blueberry:pest'] })
   assert.equal(forged.isHired('blueberry', 'pest'), false)
-  assert.equal(forged.hasRibbon('poppy', 'water'), false, 'tap-care plants earn no ribbons')
+  assert.equal(forged.hasRibbon('poppy', 'water'), true, 'a real chore on a real plant is kept')
+  assert.equal(forged.hasRibbon('weed', 'water'), false, 'unknown plants earn no ribbons')
+  assert.equal(forged.ribbonCount('poppy'), 1, 'unknown chores are dropped')
   forged.importState(null)
   assert.equal(forged.ribbonCount('blueberry'), 0)
+})
+
+test('only winning a real minigame earns a ribbon; a plain tap on an unbuilt game does not', () => {
+  const { earnsRibbon } = helpers
+  assert.equal(earnsRibbon('game-won'), true)
+  assert.equal(earnsRibbon('plain-tap'), false)
 })
