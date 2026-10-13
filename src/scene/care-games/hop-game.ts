@@ -138,7 +138,9 @@ export function createHopGame(context: CareGameContext): CareGameScene {
     const halfWidth = (VIEW_HEIGHT / 2) * camera.aspect
     return { halfWidth, runnerX: RUNNER_NDC * halfWidth, flowerX: FLOWER_NDC * halfWidth }
   }
-  stage.setFraming(new THREE.Vector3(0, CAMERA_Y, CAMERA_DISTANCE), new THREE.Vector3(0, CAMERA_Y, 0))
+  const hopFov = stage.camera.fov
+  const hopFrame = { position: new THREE.Vector3(0, CAMERA_Y, CAMERA_DISTANCE), look: new THREE.Vector3(0, CAMERA_Y, 0), fov: hopFov }
+  stage.setFraming(() => hopFrame)
 
   // ---- the flower: the player's own plant, scaled up and set behind the path.
   const flowerHolder = new THREE.Group()

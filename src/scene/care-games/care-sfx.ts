@@ -11,6 +11,8 @@ export type CareSound =
   | 'flap' | 'bonk' | 'chime' | 'splash'
   // hop
   | 'hopBeat' | 'hopKick' | 'hopJump' | 'hopLand' | 'hopCrunch'
+  // chop
+  | 'chopSnap' | 'chopPerfect' | 'chopGood' | 'chopMiss' | 'chopThud'
 
 export interface CareSfx {
   play(sound: CareSound, pitch?: number): void
@@ -182,6 +184,26 @@ export function createCareSfx(): CareSfx {
         case 'hopCrunch':
           hiss(now, 0.09, 0.4, 'bandpass', 2600, 1200, 1.5)
           tone('square', 520, 300, now, 0.05, 0.1)
+          break
+        // chop
+        case 'chopSnap':
+          hiss(now, 0.06, 0.5, 'highpass', 3000, 6000)
+          tone('square', 1500 * pitch, 900 * pitch, now, 0.04, 0.06)
+          break
+        case 'chopPerfect':
+          tone('sine', NOTE(90), NOTE(96), now, 0.12, 0.2)
+          tone('sine', NOTE(102), NOTE(102), now + 0.05, 0.2, 0.16)
+          break
+        case 'chopGood':
+          tone('triangle', 880 * pitch, 660 * pitch, now, 0.1, 0.2)
+          break
+        case 'chopMiss':
+          tone('triangle', 180, 90, now, 0.25, 0.3)
+          hiss(now, 0.15, 0.25, 'lowpass', 900, 200, 1)
+          break
+        case 'chopThud':
+          tone('sine', 140, 60, now, 0.25, 0.35)
+          hiss(now, 0.2, 0.3, 'lowpass', 600, 120, 1.5)
           break
       }
     },
