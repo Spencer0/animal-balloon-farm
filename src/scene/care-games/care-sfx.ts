@@ -225,10 +225,6 @@ export function createCareSfx(): CareSfx {
         case 'bonus':
           [79, 83, 86, 91].forEach((note, index) => tone('triangle', NOTE(note), NOTE(note), now + index * 0.07, 0.14, 0.2))
           break
-        case 'splash':
-          hiss(now, 0.35, 0.45, 'bandpass', 2200 * pitch, 400, 0.9)
-          tone('sine', 420 * pitch, 140, now, 0.18, 0.18)
-          break
         // paddle
         case 'swish':
           hiss(now, 0.12, 0.2, 'bandpass', 500, 1800, 1.2)
@@ -237,10 +233,6 @@ export function createCareSfx(): CareSfx {
           tone('sine', 900 * pitch, 260 * pitch, now, 0.14, 0.28)
           hiss(now, 0.12, 0.16, 'bandpass', 2200, 600, 1.5)
           break
-        case 'splash':
-          hiss(now, 0.22, 0.32, 'bandpass', 2500, 800, 0.9)
-          tone('sine', 420 * pitch, 200 * pitch, now, 0.18, 0.12)
-          break
         case 'thunk':
           tone('triangle', 160, 60, now, 0.22, 0.5)
           hiss(now, 0.08, 0.3, 'lowpass', 800, 200, 1)
@@ -248,13 +240,6 @@ export function createCareSfx(): CareSfx {
         // rope
         case 'hop':
           tone('sine', 360, 760, now, 0.13, 0.22)
-          break
-        case 'splash':
-          hiss(now, 0.45, 0.45, 'bandpass', 2400, 700, 0.9)
-          tone('sine', 520, 240, now, 0.2, 0.12)
-          break
-        case 'swish':
-          hiss(now, 0.3, 0.32 * pitch, 'bandpass', 600, 3000, 1.4)
           break
       }
     },
