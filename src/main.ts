@@ -848,7 +848,7 @@ const propCard = createPropCardDom({
 /** The first-plant trail (src/game/tutorial.ts): a glow, never a gate. Set each frame. */
 let tutorialNow: TutorialStep = 'done'
 /** Plants the trail should show off first, newest first; empty falls back to whichever seed is held. */
-const TUTORIAL_FEATURED_SEEDS: readonly PlantId[] = []
+const TUTORIAL_FEATURED_SEEDS: readonly PlantId[] = ['blueberry']
 const TUTORIAL_PLANTED_KEY = 'tutorial-planted-v1'
 const heldSeeds = (): PlantId[] => PLANT_CATALOG.filter((plant) => (gardenPlants?.simulation.seedsFor(plant.id) ?? 0) > 0).map((plant) => plant.id)
 
