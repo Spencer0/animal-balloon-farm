@@ -1,4 +1,5 @@
 import type { CareGameKind } from '../../game/care-minigames'
+import { createSkimGame } from './skim-game'
 import { createSnipGame } from './snip-game'
 import { createSwatGame } from './swat-game'
 import type { CareGameContext, CareGameScene } from './care-game-types'
@@ -39,7 +40,8 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   // chop: built in chop-game.ts
   chop: { create: null, input: 'tap' },
   // skim: built in skim-game.ts
-  skim: { create: null, input: 'tap' },
+  // 'capture' rather than 'tap': the overlay only takes the pointer for aim and capture (see care-game-dom.css).
+  skim: { create: createSkimGame, input: 'capture' },
   // paddle: built in paddle-game.ts
   paddle: { create: null, input: 'tap' },
   // rope: built in rope-game.ts

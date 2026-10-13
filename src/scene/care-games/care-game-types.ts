@@ -39,5 +39,7 @@ export interface CareGameScene {
   pointerUp(): void
   /** The round just ended: play the scene's own beat (beetles flee, shoots fall). */
   finish(won: boolean): void
+  /** Debug harness only: where things are, for a bot to steer by. */
+  debug?(): unknown
   dispose(): void
 }

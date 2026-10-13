@@ -140,7 +140,7 @@ interface GardenDebugHarness {
   /** Settle the open care minigame now, won or lost. */
   settleCare(won: boolean): unknown
   /** The open close-up care game: its kind, the plant on its stage, its phase and round. Null when none is open. */
-  careGame(): { kind: string | null; species: string; phase: string; snapshot: unknown } | null
+  careGame(): { kind: string | null; species: string; phase: string; snapshot: unknown; debug: unknown } | null
   /** Open a close-up game on the stage directly, no plant growing needed. Default species: the first of the kind's type. */
   playCareGame(kind: string, species?: string): { kind: string; species: string } | { error: string }
   /** The bare care stage with a species' plant on it, no game, for screenshots. */
@@ -798,7 +798,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       const player = deps.careController.player
       if (!player) return null
       const described = player.describe()
-      return { kind: player.kind, species: player.species, phase: described.phase, snapshot: described.snapshot }
+      return { kind: player.kind, species: player.species, phase: described.phase, snapshot: described.snapshot, debug: described.debug }
     },
     playCareGame: (kind, species) => {
       if (!CARE_GAME_KINDS.includes(kind as CareGameKind)) return { error: `unknown game ${kind}` }
