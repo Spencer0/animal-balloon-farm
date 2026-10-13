@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { CARE_GAME_RULES } from '../../game/care-minigames'
 import {
-  BUZZ, beeX as viewBeeX, chimePitch, createBuzzRun, flapTilt, stepBee, stepBuzz,
+  BUZZ, beeX as viewBeeX, chimePitch, createBuzzRun, flapBee, flapTilt, stepBee, stepBuzz,
   type BeeState, type BuzzRun, type BuzzView,
 } from '../../game/care-buzz'
 import { cloneCastCritter } from '../plant-models'
@@ -199,7 +199,6 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
   let mode: Mode = 'play'
   let modeTime = 0
   let started = false
-  let flapQueued = false
   let view: BuzzView = { left: -1, width: 2, top: 1 }
   let spinTime = -1
   let wingPhase = 0
@@ -331,13 +330,10 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
 
   function updatePlay(dt: number): void {
     let remaining = dt
-    let flap = flapQueued
-    flapQueued = false
     while (remaining > 1e-6 && mode === 'play') {
       const step = Math.min(remaining, SUBSTEP)
       remaining -= step
-      const result = stepBuzz(run, step, view, flap, Math.random, goal)
-      flap = false
+      const result = stepBuzz(run, step, view, false, Math.random, goal)
       if (result.bonk) bonk(result.bonk)
       for (const stem of result.cleared) cleared(stem.x, stem.gap.centre, round.hit())
       if (round.snapshot.state !== 'playing') break
@@ -425,7 +421,8 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
   /** A flap: the next step climbs the bee at once. Only while the bee is flying. */
   function flap(): boolean {
     if (!started || mode !== 'play') return false
-    flapQueued = true
+    // The climb is set at once, so the tap is not held for a frame.
+    run.bee = flapBee(run.bee)
     wingBoost = 0.3
     sfx.play('flap')
     return true
