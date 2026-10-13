@@ -11,9 +11,9 @@ export interface BalloonPanel extends UIPanel {
   contains(point: DesignPoint): boolean;
   refresh(): void;
   setPostBadge(text: string): void;
-  /** Pulse one quadrant to point the player at it (the tutorial); null stops. */
+  /** Glow behind one icon to point the player at it (the tutorial); null stops. */
   setHighlight(quadrant: BalloonQuadrant | null): void;
-  /** Where a callout for a quadrant points: the balloon's left rim at the icon's height, in CSS pixels from the top-left. */
+  /** Where a callout for a quadrant points: the icon's center, in CSS pixels from the top-left. */
   quadrantCallout(quadrant: BalloonQuadrant): { x: number; y: number };
 }
 
@@ -39,6 +39,8 @@ const QUADRANT_ICONS: Record<BalloonQuadrant, string> = {
 
 const QUADRANTS: readonly BalloonQuadrant[] = ["journal", "shed", "player", "post"];
 const BADGE_SIZE = 34;
+/** Warm gold the sectors breathe toward on hover. */
+const HIGHLIGHT_TINT = new THREE.Color("#ffe9a8");
 
 function drawPostBadge(text: string): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
@@ -58,6 +60,23 @@ function drawPostBadge(text: string): HTMLCanvasElement {
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(text, 32, 34);
+  return canvas;
+}
+
+/** A soft golden halo, drawn behind the tutorial's icon so the glow hugs the house itself. */
+function drawIconGlow(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext("2d");
+  if (!context) return canvas;
+  const gradient = context.createRadialGradient(64, 64, 6, 64, 64, 64);
+  gradient.addColorStop(0, "rgba(255, 210, 90, 0.9)");
+  gradient.addColorStop(0.35, "rgba(255, 190, 70, 0.5)");
+  gradient.addColorStop(0.7, "rgba(255, 180, 60, 0.12)");
+  gradient.addColorStop(1, "rgba(255, 180, 60, 0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 128);
   return canvas;
 }
 
@@ -92,25 +111,30 @@ export function createBalloonPanel(
   object.add(rim);
 
   const glow = new THREE.Mesh(
-    new THREE.RingGeometry(RADIUS + 3, RADIUS + 18, 48),
+    new THREE.RingGeometry(RADIUS + 3, RADIUS + 26, 48),
     new THREE.MeshBasicMaterial({
-      color: "#fff4d5", transparent: true, opacity: 0,
+      color: "#ffe9a8", transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
     }),
   );
   glow.name = "Balloon hover glow";
   object.add(glow);
 
-  const beacon = new THREE.Mesh(
-    new THREE.RingGeometry(RADIUS + 2, RADIUS + 22, 32, 1, 0, Math.PI / 2),
+  // The tutorial's glow: a golden halo that sits behind one icon, so the
+  // trail points at the house itself instead of ringing the whole quadrant.
+  const iconGlowTexture = new THREE.CanvasTexture(drawIconGlow());
+  iconGlowTexture.colorSpace = THREE.SRGBColorSpace;
+  const iconGlow = new THREE.Mesh(
+    new THREE.PlaneGeometry(ICON_SIZE * 1.6, ICON_SIZE * 1.6),
     new THREE.MeshBasicMaterial({
-      color: "#ffe9a8", transparent: true, opacity: 0,
-      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+      map: iconGlowTexture, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     }),
   );
-  beacon.name = "Balloon tutorial beacon";
-  beacon.position.z = 6;
-  object.add(beacon);
+  iconGlow.name = "Balloon tutorial icon glow";
+  iconGlow.position.z = 5.5;
+  iconGlow.visible = false;
+  object.add(iconGlow);
   let highlight: BalloonQuadrant | null = null;
   let cssWidthNow = cssWidth;
   let cssHeightNow = cssHeight;
@@ -261,11 +285,13 @@ export function createBalloonPanel(
     },
     setHighlight(quadrant: BalloonQuadrant | null): void {
       highlight = quadrant;
-      if (quadrant) beacon.rotation.z = starts[quadrant];
     },
     quadrantCallout(quadrant: BalloonQuadrant) {
-      const x = centerX - (RADIUS + RIM + 8);
-      const y = centerY + Math.sin(iconAngles[quadrant]) * RADIUS * 0.55;
+      // The tutorial glow sits behind the icon, so a callout tail lands on
+      // the icon itself.
+      const angle = iconAngles[quadrant];
+      const x = centerX + Math.cos(angle) * RADIUS * 0.55;
+      const y = centerY + Math.sin(angle) * RADIUS * 0.55;
       return {
         x: ((x - viewport.left) / viewport.width) * cssWidthNow,
         y: ((viewport.top - y) / viewport.height) * cssHeightNow,
@@ -307,23 +333,31 @@ export function createBalloonPanel(
       bobPhase += delta;
       const bob = Math.sin(bobPhase * 2.2) * 0.015 + 1;
       object.scale.setScalar(bob);
-      const beaconMaterial = beacon.material as THREE.MeshBasicMaterial;
-      const beaconTarget = highlight ? 0.55 + Math.sin(bobPhase * 4) * 0.35 : 0;
-      beaconMaterial.opacity += (beaconTarget - beaconMaterial.opacity) * Math.min(1, delta * 10);
-      const glowTarget = hovered ? 0.5 + Math.sin(bobPhase * 6) * 0.12 : 0;
+      const ease = Math.min(1, delta * 10);
+      const litIcon = highlight ? icons.get(highlight) : undefined;
+      const iconGlowMaterial = iconGlow.material as THREE.MeshBasicMaterial;
+      const iconGlowTarget = litIcon ? 0.6 + Math.sin(bobPhase * 4) * 0.25 : 0;
+      iconGlowMaterial.opacity += (iconGlowTarget - iconGlowMaterial.opacity) * ease;
+      iconGlow.visible = iconGlowMaterial.opacity > 0.01;
+      if (litIcon) {
+        iconGlow.position.x = litIcon.position.x;
+        iconGlow.position.y = litIcon.position.y;
+        iconGlow.scale.setScalar(1 + Math.sin(bobPhase * 4) * 0.08);
+      }
+      const glowTarget = hovered ? 0.65 + Math.sin(bobPhase * 6) * 0.15 : 0;
       const glowMaterial = glow.material as THREE.MeshBasicMaterial;
-      glowMaterial.opacity += (glowTarget - glowMaterial.opacity) * Math.min(1, delta * 10);
+      glowMaterial.opacity += (glowTarget - glowMaterial.opacity) * ease;
       for (const quadrant of QUADRANTS) {
         const sector = sectors.get(quadrant);
         const icon = icons.get(quadrant);
         const base = baseColors.get(quadrant);
         if (!sector || !icon || !base) continue;
         const active = hovered === quadrant;
-        const pulse = highlight === quadrant ? 0.22 + Math.sin(bobPhase * 4) * 0.14 : 0;
+        const lit = highlight === quadrant;
         const sectorMaterial = sector.material as THREE.MeshBasicMaterial;
-        sectorMaterial.color.copy(base).lerp(new THREE.Color("#ffffff"), active ? 0.38 : pulse);
-        const iconTarget = active ? 1.16 : 1;
-        icon.scale.setScalar(icon.scale.x + (iconTarget - icon.scale.x) * Math.min(1, delta * 10));
+        sectorMaterial.color.copy(base).lerp(HIGHLIGHT_TINT, active ? 0.42 : 0);
+        const iconTarget = active ? 1.2 : lit ? 1.12 + Math.sin(bobPhase * 4) * 0.05 : 1;
+        icon.scale.setScalar(icon.scale.x + (iconTarget - icon.scale.x) * ease);
       }
     },
     resize(width, height): void {
@@ -333,15 +367,16 @@ export function createBalloonPanel(
       layout();
     },
     describe() {
-      return { center: { x: centerX, y: centerY }, radius: RADIUS, hovered, visible, badge: badgeText, ready: loadedIcons >= QUADRANTS.length };
+      return { center: { x: centerX, y: centerY }, radius: RADIUS, hovered, highlight, iconGlow: (iconGlow.material as THREE.MeshBasicMaterial).opacity, visible, badge: badgeText, ready: loadedIcons >= QUADRANTS.length };
     },
     dispose(): void {
       rim.geometry.dispose();
       (rim.material as THREE.Material).dispose();
       glow.geometry.dispose();
       (glow.material as THREE.Material).dispose();
-      beacon.geometry.dispose();
-      (beacon.material as THREE.Material).dispose();
+      iconGlow.geometry.dispose();
+      (iconGlow.material as THREE.Material).dispose();
+      iconGlowTexture.dispose();
       for (const sector of sectors.values()) {
         sector.geometry.dispose();
         (sector.material as THREE.Material).dispose();
