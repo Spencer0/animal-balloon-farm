@@ -18,12 +18,12 @@ export const HOP_FAST_BPM = 128
 export const HOP_FAST_FROM_BEAT = 24
 /** A jump's flight, in seconds, and its apex height in world units. */
 export const HOP_JUMP_AIR_SECONDS = 1
-export const HOP_JUMP_APEX = 0.9
+export const HOP_JUMP_APEX = 1
 /** Half the ladybug's length: how far its middle reaches for contact. */
-export const HOP_RUNNER_HALF = 0.16
-export const HOP_THORN_HEIGHT = 0.42
+export const HOP_RUNNER_HALF = 0.22
+export const HOP_THORN_HEIGHT = 0.62
 export const HOP_THORN_HALF = 0.1
-export const HOP_BURR_HEIGHT = 0.34
+export const HOP_BURR_HEIGHT = 0.5
 export const HOP_BURR_HALF = 0.12
 /** Where a grounded aphid cluster can be touched, in height above the path. */
 const APHID_GROUND_TOP = 0.25
@@ -89,8 +89,8 @@ export interface HopObstacle {
 }
 
 const ARC_HALF_SPAN = 0.6
-const ARC_TOP = 0.9
-const ARC_ENDS = 0.5
+const ARC_TOP = 1
+const ARC_ENDS = 0.55
 
 /** The obstacles of a pattern, in run order, with stable ids. An arc becomes an arc plus a burr under it. */
 export function hopObstacles(pattern: readonly HopPatternEntry[] = HOP_PATTERN): HopObstacle[] {
@@ -134,8 +134,9 @@ export function hopLift(airSeconds: number): number {
  */
 export function hopContact(obstacle: HopObstacle, runnerX: number, lift: number): 'eat' | 'harm' | null {
   if (obstacle.kind === 'arc') {
+    // Aphids in the arc are eaten at the top of a jump only: the ladybug has to be near the peak.
     for (const point of obstacle.points) {
-      if (Math.abs(runnerX - (obstacle.x + point.dx)) < HOP_RUNNER_HALF + 0.14 && point.y > lift - 0.12 && point.y < lift + 0.3) return 'eat'
+      if (Math.abs(runnerX - (obstacle.x + point.dx)) < HOP_RUNNER_HALF + 0.1 && Math.abs(point.y - lift) < 0.14) return 'eat'
     }
     return null
   }
