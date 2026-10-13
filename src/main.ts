@@ -1,3 +1,4 @@
+import { createChapterFilmPlayer, type ChapterFilmPlayer } from './scene/chapter-film-player'
 import './style.css'
 import * as THREE from 'three'
 import type { BalloonAnimal } from './animals/balloon-animal'
@@ -7,7 +8,7 @@ import { createHousing } from './scene/housing'
 import type { Bed } from './game/sleep'
 import { SIM_HZ, SIM_MAX_STEPS_PER_FRAME, createSimClock } from './game/sim-clock'
 import { containsGardenPoint, createFairground, createSkyDome, GARDEN_BOUNDS, GARDEN_LAWN_Y } from './scene/fairground'
-import { ANIMAL_LIFE_CONFIG, createAnimalLife } from './game/animal-life'
+import { ANIMAL_LIFE_CONFIG, createAnimalLife, type AnimalLifeEvent } from './game/animal-life'
 import { createProgressLedger } from './game/farm-progression'
 import { buildAccomplishmentCatalog, createAccomplishmentTracker } from './game/accomplishments'
 import {
@@ -21,6 +22,9 @@ import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
+import { createHungerBubbles } from './scene/hunger-bubbles'
+import { createHouseGoodsBadges } from './scene/house-goods-badges'
+import { grazedness } from './game/food-cues'
 import { createVisitorMotion } from './scene/visitor-motion'
 import { createFarmModes } from './ui/farm-modes'
 import { tourSubjectsOf } from './scene/tour-subjects'
@@ -37,6 +41,7 @@ import { PLANT_CARE_KINDS, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, pl
 import { createGreenThumb } from './game/plant-helpers'
 import { createCareController, helperSeedPrice, helperShopCopy } from './care-controller'
 import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
+import { createTreasureLedger, purchaseTreasure, treasureEffects, TREASURE_CATALOG, type TreasureId } from './game/treasures'
 import type { GardenToolId } from './scene/garden-tool-art'
 import { createFarmCamera } from './scene/farm-camera'
 import { createUILayer, type UIPanel } from './ui/ui-layer'
@@ -59,13 +64,18 @@ import { createToolsHud } from './ui/tools-hud'
 import { createBalloonPanel } from './ui/balloon-panel'
 import { createPlayerDomPanel } from './ui/player-dom'
 import { createSalePanel } from './ui/sale-panel'
-import { createAnimalCard } from './ui/animal-card'
-import { createPropCard } from './ui/prop-card'
+import { createAnimalCard } from './ui/animal-card-dom'
+import { createPropCardDom } from './ui/prop-card-dom'
+import { formatCollected, goodsValue } from './game/house-goods'
 import { warmAnimalLooks } from './animals/animal-warmup'
 import { createSellBurst, warmSellBursts, type SellBurst } from './ui/sell-burst'
 import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
+import { createLarderDom } from './ui/larder-dom'
+import { CHAPTER_ORDER, chapterPages, createFarmChapters, type ChapterDef, type ChapterId, type ChapterSignals } from './game/farm-chapters'
+import { measureHarmony } from './game/harmony'
+import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from './game/animal-diet'
 import { createShopDomPanel, type ShopDomPanel } from './ui/shop-dom'
 import { setCursor } from './ui/ui-cursor'
 import { createHoverGlow } from './scene/hover-glow'
@@ -80,7 +90,7 @@ import { createNotificationPanel } from './ui/notification-panel'
 import { createNotificationDomPanel } from './ui/notification-dom'
 import { createIntroCutscene, type IntroCutscene } from './scene/intro-cutscene'
 import { createToolUnlockCutscene, type ToolUnlockCutscene } from './scene/tool-unlock-cutscene'
-import { toolUnlockFilmFor } from './game/tool-unlock-script'
+import { toolUnlockFilmFor, type ChapterToolGift } from './game/tool-unlock-script'
 import type { CutscenePlayer } from './scene/cutscene-kit'
 import { GARDEN_TOOLS } from './scene/garden-tool-art'
 import { createFrameTimer, createPerformanceOverlay } from './debug/frame-timing'
@@ -443,6 +453,20 @@ await Promise.all(progress.all()
   .filter((record) => !savedIndoors.has(record.id))
   .map((record) => createAnimalInstance(record, savedPlaces.get(record.id), true)))
   const wallet = createWallet(STARTING_COINS)
+/** Star gems: a second purse, filled only by the starhorn and spent on treasures at the shop. */
+const gems = createWallet(0)
+const treasures = createTreasureLedger()
+/**
+ * Push what the owned treasures give into the sim: food multipliers (Clover Charm,
+ * Rain Barrel) and the starving leak rate (Helium Pump). The Golden Pail's goods
+ * multiplier is read where goods are collected: `treasureEffects(treasures.owned()).goodsValueMultiplier`.
+ */
+function applyTreasureEffects(): void {
+  const effects = treasureEffects(treasures.owned())
+  progress.setFoodBoosts(effects.foodBoosts)
+  progress.setStarveLeakFactor(effects.starveLeakFactor)
+}
+applyTreasureEffects()
 /** Tools and land the shop has sold. Farmer level decides what it will sell next. */
 const upgrades = createUpgradeLedger()
 /** Green Thumb ribbons won in the care minigames, and the helpers they let you hire. */
@@ -458,14 +482,75 @@ const greenThumb = createGreenThumb()
 
 
 
+/** Adult residents: stage 3 up, not babies, not sold. What `residentCount` conditions and Harmony read. */
+function adultResidents() {
+  return progress.all().filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold)
+}
+
 /** Adult residents per species, which is what a `residentCount` condition reads. */
 function residentCounts(): Record<string, number> {
   const counts: Record<string, number> = {}
-  for (const entry of progress.all()) {
-    if (entry.stage < 3 || entry.baby || animalById.get(entry.id)?.isSold) continue
-    counts[entry.species] = (counts[entry.species] ?? 0) + 1
-  }
+  for (const entry of adultResidents()) counts[entry.species] = (counts[entry.species] ?? 0) + 1
   return counts
+}
+
+/** Who counts toward the farm's Harmony score, with how well fed they are. */
+function harmonyResidents(): readonly { readonly species: string; readonly fullness: number }[] {
+  return adultResidents().map((entry) => ({ species: entry.species, fullness: entry.fullness }))
+}
+
+// ------------------------------------------------------------- chapters --
+// Systems open one at a time (GAME_VISION.md). Until a chapter opens, its rules
+// stay quiet: no starvation, no goods, no predators, no mythic guests.
+const chapters = createFarmChapters()
+/** Coins earned from collected goods, ever. Chapter 3 ends on it. */
+let goodsCoinsTotal = loadedSave?.goodsCoins ?? 0
+/** Game seconds since the last chapter check. */
+let chapterClockSeconds = 0
+
+function chapterSignals(): ChapterSignals {
+  const farm = measureFarmForSim()
+  const plants = gardenPlants?.simulation.plants ?? []
+  return {
+    grownPlants: plants.filter((plant) => plant.mature).length,
+    lawnArea: farm.tallGrassArea,
+    residentSpecies: new Set(adultResidents().map((entry) => entry.species)),
+    goodsCoins: goodsCoinsTotal,
+    harmony: farm.harmony ?? 0,
+    predatorLinks: measureHarmony(harmonyResidents()).activeLinks.length,
+    day: Math.floor(dayNightClock.elapsedDays),
+  }
+}
+
+/**
+ * Push the open chapters' flags into the sim and the interface. Call at
+ * startup, after a load and after chapters open. A system that is not open yet
+ * is hidden outright, not shown locked: the player meets it with its chapter.
+ */
+function applyChapterFlags(): void {
+  const flags = chapters.flags()
+  progress.setRules({
+    starvation: flags.starvation,
+    goods: flags.goods,
+    discoverable: (species) => (species === 'owl' || species === 'snake' ? flags.predators : species === 'starhorn' ? flags.mythic : true),
+  })
+  // DOM panels built elsewhere read these classes (animal-card-dom.css, prop-card-dom.css).
+  document.body.classList.toggle('chapter-hunger', flags.hungerShown)
+  document.body.classList.toggle('chapter-goods', flags.goods)
+  hungerBubbles.setEnabled(flags.hungerShown)
+  syncOwnedTools()
+  shop.refresh()
+}
+
+function announceChapter(def: ChapterDef): void {
+  startChapterFilm(def.id)
+  notificationPanel.notifyAccomplishment(`Chapter ${def.number}: ${def.title}`, def.letter)
+  applyChapterFlags()
+}
+
+/** Once a second of game time: open any chapter whose goal the farm has met. */
+function tickChapters(): void {
+  for (const def of chapters.tick(chapterSignals())) announceChapter(def)
 }
 
 
@@ -545,6 +630,10 @@ const journal = createJournalPanel(window.innerWidth, window.innerHeight, (isJou
 })
 const journalDom: JournalDomPanel = createJournalDomPanel({
   onClose: () => journal.close(),
+  // Lazy: `chapters` and `chapterSignals` are only read when the Stages tab renders.
+  chapterPages: () => chapterPages(chapters, chapterSignals()),
+  dietShown: () => chapters.flags().hungerShown,
+  foodWebShown: () => chapters.flags().harmonyShown,
 })
 journal.setSpreadSuppressed(true)
 
@@ -585,8 +674,9 @@ const toolsHud = createToolsHud(
   window.innerHeight,
 )
 
+/** Chapter 1 is planting by hand: every tool waits for Chapter 2, which hands over the seeder. */
 function toolIsOwned(id: GardenToolId): boolean {
-  return ownsGardenTool(upgrades, id)
+  return chapters.flags().grassSeeder && ownsGardenTool(upgrades, id)
 }
 
 /**
@@ -702,7 +792,7 @@ const animalCard = createAnimalCard({
  * button press closes the card first and then runs its action.
  */
 let selectedProp: PropSelection | null = null
-const propCard = createPropCard({
+const propCard = createPropCardDom({
   onMove: () => {
     if (!selectedProp || !gardenProps?.beginMove(selectedProp)) return
     gardenPlants?.cancelPlacement()
@@ -728,6 +818,23 @@ const propCard = createPropCard({
     shedDom.refresh()
     syncFarmChrome()
     return true
+  },
+  onCollect: () => {
+    const house = selectedProp
+    if (!house || !isHouse(house.id)) return null
+    const collected = progress.collectGoods(house.siteId)
+    if (collected.length === 0) return null
+    // The Golden Pail treasure doubles what goods fetch.
+    const coins = goodsValue(collected) * treasureEffects(treasures.owned()).goodsValueMultiplier
+    if (coins > 0) {
+      goodsCoinsTotal += coins
+      salePanel.setWallet(wallet.credit(coins))
+      const burst = createSellBurst(new THREE.Vector3(house.anchor.x, house.anchor.y, house.anchor.z), coins)
+      scene.add(burst.root)
+      sellBursts.push(burst)
+    }
+    saveSoon()
+    return formatCollected(collected, coins)
   },
   onToggle: (isOpen) => {
     if (!isOpen) gardenProps?.select(null)
@@ -770,10 +877,44 @@ const shedDom: ShedDomPanel = createShedDomPanel({
   seedsFor: (species) => gardenPlants?.simulation.seedsFor(species) ?? 0,
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
   balance: () => wallet.balance,
+  gems: () => gems.balance,
 })
 
 /* Keep the shed and the shop showing the same counts the world does. */
 
+
+/** Spend gems on a treasure and apply what it gives straight away. */
+function buyTreasure(id: TreasureId): { ok: boolean; text: string } {
+  const definition = TREASURE_CATALOG[id]
+  const result = purchaseTreasure(gems, treasures, id)
+  if (!result.ok) {
+    if (result.failure === 'owned') return { ok: false, text: `You already own the ${definition.name}.` }
+    return { ok: false, text: `Not enough star gems for the ${definition.name} -- it costs ${definition.price}.` }
+  }
+  applyTreasureEffects()
+  saveSoon()
+  shedDom.refresh()
+  shop.refresh()
+  return { ok: true, text: `The ${definition.name} is yours.` }
+}
+
+/** A resident made a good. Only the starhorn's gem lands here: it has no house to keep it in, so it goes straight in the purse. */
+function onProduce(event: AnimalLifeEvent): void {
+  if (event.good !== 'gem') return
+  gems.credit(1)
+  const name = (event.animalId ? animalNames.get(event.animalId) : undefined) ?? animalDisplayName(event.species)
+  notificationPanel.notifyAccomplishment(`${name} found a star gem`, `${gems.balance} in the purse. Treasures at Pip's shop are bought with star gems.`)
+  const animal = event.animalId ? animalById.get(event.animalId) : undefined
+  if (animal && !animal.isSold) {
+    // The sell burst's ring and sparks, reused: a cheap twinkle where it stands.
+    const burst = createSellBurst(animal.root.getWorldPosition(new THREE.Vector3()), 1, 'star gem')
+    scene.add(burst.root)
+    sellBursts.push(burst)
+  }
+  saveSoon()
+  shedDom.refresh()
+  shop.refresh()
+}
 
 const shop: ShopDomPanel = createShopDomPanel({
   onClose: () => {
@@ -813,6 +954,19 @@ const shop: ShopDomPanel = createShopDomPanel({
     return { ok: true, text: `One ${name} seed tucked into the shed.` }
   },
   farmerLevel: () => progression.level,
+  gems: () => gems.balance,
+  // The Treasures tab is a secret until the first star gem: before then it would only be a puzzle.
+  treasuresVisible: () => chapters.flags().mythic && (gems.balance > 0 || treasures.owned().length > 0 || progress.all().some((animal) => animal.species === 'starhorn' && animal.stage > 0)),
+  // Pip stocks what the farm's chapter has introduced: no tools or lawn seeds in the garden chapter, no feed before animal care.
+  offers: {
+    upgrade: (id) => id === 'land-deed' || chapters.flags().grassSeeder,
+    seed: (id) => plantSpecies(id).substrate === 'soil' || chapters.flags().grassSeeder,
+    feed: () => chapters.flags().feedShop,
+  },
+  quoteTreasure: (id: TreasureId) => ({ owned: treasures.owns(id), price: TREASURE_CATALOG[id].price }),
+  onBuyTreasure: (id: TreasureId) => buyTreasure(id),
+  feedInPantry: () => feedInPantry(),
+  onBuyFeed: () => buyFeedSack(),
   quoteUpgrade: (id: UpgradeId) => upgradeQuote(id, upgrades, progression.level),
   onBuyUpgrade: (id: UpgradeId) => buyUpgrade(id),
   helpersFor: (species) => plantSpecies(species).minigames
@@ -845,6 +999,43 @@ const playerDom = createPlayerDomPanel({
     refreshCursor()
   },
 })
+
+/** The Harmony chip on the farm HUD, and the Larder it opens: what the farm grows, what is eaten, and feed sacks. */
+const larderDom = createLarderDom({
+  source: {
+    report: () => progress.foodReport(),
+    // The same residents residentCounts() counts: grown, not a baby, not sold.
+    residents: () => progress.all().filter((entry) => entry.stage >= 3 && !entry.baby && !animalById.get(entry.id)?.isSold),
+    balance: () => wallet.balance,
+  },
+  nameOf: animalDisplayName,
+  onOpen: () => {
+    larderDom.setOpen(true)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  onClose: () => {
+    larderDom.setOpen(false)
+    syncFarmChrome()
+    refreshCursor()
+  },
+  onBuyFeed: () => buyFeedSack(),
+})
+
+/** Meals of bought feed in the pantry. */
+function feedInPantry(): number {
+  return progress.foodReport().find((entry) => entry.food === 'feed')?.stock ?? 0
+}
+
+/** One feed sack, from Pip's Feed tab or the Larder. */
+function buyFeedSack(): { readonly ok: boolean; readonly text: string } {
+  if (feedInPantry() + FEED_SACK_MEALS > FEED_CAPACITY) return { ok: false, text: `The pantry is full: it holds ${FEED_CAPACITY} meals.` }
+  if (wallet.debit(FEED_SACK_PRICE) === null) return { ok: false, text: `Not enough coins: a feed sack costs ${FEED_SACK_PRICE}.` }
+  progress.addFeed(FEED_SACK_MEALS)
+  salePanel.setWallet(wallet.balance)
+  saveSoon()
+  return { ok: true, text: `${FEED_SACK_MEALS} meals of feed stacked in the pantry.` }
+}
 
 const balloon = createBalloonPanel(window.innerWidth, window.innerHeight, (quadrant) => {
   if (quadrant === 'journal') {
@@ -935,7 +1126,7 @@ const plantCard = createPlantCard({
 
 
 
-const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, journal, salePanel, animalCard, plantCard, propCard, clockCalendarHud]
+const panels: UIPanel[] = [balloon, notificationPanel, toolsHud, shed, journal, salePanel, plantCard, clockCalendarHud]
 
 /**
  * The furthest rung each species has reached this session. The journal is a
@@ -958,6 +1149,7 @@ const { journalConditionsSource } = createJournalConditions({
 })
 journal.setConditionsSource(journalConditionsSource)
 journalDom.setConditionsSource(journalConditionsSource)
+journalDom.setHerdSource(() => progress.all())
 
 for (const panel of panels) ui.add(panel)
 
@@ -992,7 +1184,7 @@ const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil,
   speciesPluralName: (species) => speciesPluralName(species),
   dayNightClock,
 })
-const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = createFarmMeasure({
+const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts, setHarmonyOverride } = createFarmMeasure({
   gardenSurface: () => fairground.gardenSurface,
   gardenTerrain,
   gardenWater,
@@ -1000,6 +1192,7 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = c
   gardenPlants: () => gardenPlants,
   gardenProps: () => gardenProps,
   residentCounts,
+  harmonyResidents,
   preyEaten: () => predationLedger.totals,
   frozenWaterCells,
   activeGardenBounds,
@@ -1007,6 +1200,7 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts } = c
 })
 const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimalsTick, updateSleepers } = createHousing({
   progress,
+  goodsMultiplier: () => treasureEffects(treasures.owned()).goodsValueMultiplier,
   animals,
   animalById,
   farmHomes,
@@ -1024,8 +1218,6 @@ const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAn
   animalCreations,
   refreshAnimalVisibility,
   dayNightClock,
-  getSelectedProp: () => selectedProp,
-  propCard,
   creditCoins: (amount) => { salePanel.setWallet(wallet.credit(amount)) },
   animalDisplayName,
   crowdFixtures,
@@ -1038,6 +1230,9 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
   saveEnabled,
   dayNightClock,
   wallet,
+  gems,
+  treasures,
+  applyTreasureEffects,
   progression,
   upgrades,
   accomplishments,
@@ -1067,12 +1262,18 @@ const { autosave, saveSoon, tickAutosave, markEntered, applySavedWorld, farmsPan
   notificationPanel,
   menuOpen: () => menu.isOpen,
   syncFarmChrome: () => syncFarmChrome(),
+  chapterState: () => chapters.exportState(),
+  goodsCoins: () => goodsCoinsTotal,
 })
 window.addEventListener('pagehide', autosave)
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave() })
 const visitorMotion = createVisitorMotion({ animalById, activeGardenBounds, carnivalSpawnFor })
+// The food web made visible: hunger bubbles over hungry animals, goods badges over houses.
+const hungerBubbles = createHungerBubbles({ scene, animals, recordOf: (id) => progress.animal(id) })
+const houseBadges = createHouseGoodsBadges({ scene, houses: () => houses(), goodsIn: (id) => progress.goodsIn(id) })
 const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateAnimalProgress, ownedSeedSpecies, unlockAccomplishment } = createFarmLifecycle({
   animalNames,
+  hungerShown: () => chapters.flags().hungerShown,
   popAnimal,
   animalCard,
   progress,
@@ -1101,6 +1302,11 @@ const { progressionHudState, handleAnimalLifeEvents, animalLifeSnapshot, updateA
   visitorMotion,
   animalDisplayName,
   noteJournalStages,
+  speciesPluralName: (species) => speciesPluralName(species),
+  onProduce: (event) => {
+    onProduce(event)
+    houseBadges.notifyProduce(event.houseId)
+  },
 })
 const { openAnimalCardFor, completeAnimalSale, openPropCardFor, refreshShopUi, buyUpgrade, playerDomStats, balloonInboxAnchor, openPlantCardFor, syncPlantCard } = createFarmActions({
   syncOwnedTools,
@@ -1152,6 +1358,7 @@ const { selectGardenTool, handleMenuChoice, syncFarmChrome } = createFarmModes({
   clockCalendarHud,
   notificationDom,
   playerDom,
+  larderDom,
   optionsDom,
   farmsPanel,
   markEntered,
@@ -1241,6 +1448,9 @@ menu.open()
 syncFarmChrome()
 if (loadedSave) applySavedWorld(loadedSave)
 else if (startup.notice) farmsPanel.open(startup.notice)
+if (loadedSave) chapters.importState(loadedSave.chapters)
+else chapters.reset()
+applyChapterFlags()
 // No pointer has entered the window yet, so nothing to place. Once it does,
 // the first move resolves the cursor.
 setCursor('idle', gameCanvas)
@@ -1267,9 +1477,22 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     greenThumb,
     intro: controlIntro,
     toolFilm: controlToolFilm,
+    chapterFilm: (id: string, seconds?: number) => {
+      if (!(CHAPTER_ORDER as readonly string[]).includes(id)) return null
+      if (!chapterFilm) startChapterFilm(id as ChapterId)
+      if (chapterFilm && seconds !== undefined) {
+        chapterFilm.seek(seconds)
+        chapterFilm.update(0)
+      }
+      return chapterFilm?.describe() ?? null
+    },
     syncOwnedTools,
     canvas: gameCanvas,
     wallet,
+    gems,
+    treasures,
+    buyTreasure,
+    setHarmonyOverride,
     pageParams,
     renderer,
     forceShadowRedraw: shadowRefresh.forceNext,
@@ -1297,6 +1520,12 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     gardenBounds: () => currentGardenBounds,
     setGardenBounds: (bounds) => { currentGardenBounds = bounds },
     setClockHeld: (held) => { clockHeld = held },
+    setGrazingOverride: (dryness) => {
+      grazingOverride = dryness
+      // Debug: jump the slow ease so a screenshot does not wait a minute.
+      gardenTools?.setGrazing(dryness ?? 0)
+      gardenTools?.update(300)
+    },
     setFocusedAnimal: (id) => { focusedAnimalId = id },
     resetRoster: () => {
       resetRoster()
@@ -1364,6 +1593,10 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     panels,
     selectGardenTool,
     syncFarmChrome: () => syncFarmChrome(),
+    chapters,
+    chapterSignals,
+    announceChapter,
+    applyChapterFlags,
   })
 }
 
@@ -1409,6 +1642,8 @@ function finishIntro(): void {
   cutscene.dispose()
   previousTime = performance.now()
   handleMenuChoice('enter')
+  // A new farm opens on Chapter 1's film, straight after the intro.
+  if (!loadedSave && chapters.current().id === 'garden') announceChapter(chapters.current())
 }
 
 // ------------------------------------------------------- tool-unlock film --
@@ -1419,10 +1654,13 @@ function finishIntro(): void {
 
 let toolFilm: ToolUnlockCutscene | null = null
 
-function startToolFilm(id: UpgradeId): void {
+function startToolFilm(id: UpgradeId | ChapterToolGift): void {
   const film = toolUnlockFilmFor(id)
   if (!film || intro) return
   toolFilm?.dispose()
+  // A tool film takes over from a chapter film still on screen (its title card included).
+  chapterFilm?.dispose()
+  chapterFilm = null
   const cutscene = createToolUnlockCutscene(renderer, film, window.innerWidth, window.innerHeight)
   toolFilm = cutscene
   // Every DOM panel (the shop included) hides while the film owns the screen.
@@ -1445,9 +1683,31 @@ function finishToolFilm(): void {
   previousTime = performance.now()
 }
 
-/** Whichever film is on screen: the intro, or a tool being handed over. */
+/** A chapter's opening film: a camera move over the player's own farm and a title card. */
+let chapterFilm: ChapterFilmPlayer | null = null
+
+function startChapterFilm(id: ChapterId): void {
+  // Another film already owns the screen; the letter still tells the player.
+  if (intro || toolFilm) return
+  chapterFilm?.dispose()
+  const bounds = currentGardenBounds
+  chapterFilm = createChapterFilmPlayer({ camera: farmCamera.camera, farmRadius: Math.max(bounds.halfWidth, bounds.halfDepth) })
+  chapterFilm.start(id)
+  document.body.classList.add('film-playing')
+}
+
+function finishChapterFilm(): void {
+  const id = chapterFilm?.id ?? null
+  chapterFilm?.dispose()
+  chapterFilm = null
+  document.body.classList.remove('film-playing')
+  // Chapter 2 is the grass seeder: Pip hands it over in its own film, after the chapter's.
+  if (id === 'land') startToolFilm('grass-seeder')
+}
+
+/** Whichever film is on screen: the intro, a tool being handed over, or a chapter opening. */
 function activeFilm(): CutscenePlayer | null {
-  return intro ?? toolFilm
+  return intro ?? toolFilm ?? chapterFilm
 }
 
 function interceptIntroInput(event: KeyboardEvent | PointerEvent): void {
@@ -1581,6 +1841,8 @@ function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolea
  */
 const DOM_REFRESH_INTERVAL_MS = 250
 let lastDomRefreshAt = Number.NEGATIVE_INFINITY
+/** Debug only: pins the lawn's overgrazing regardless of the grass larder. */
+let grazingOverride: number | null = null
 
 function frame(now: number): void {
   fpsCounter.frame(now)
@@ -1635,8 +1897,13 @@ function frame(now: number): void {
   }
   const expansionBoundsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
-  farmCamera.updateMenuDrift(delta, now / 1000)
-  updateCameraTour(delta)
+  // A chapter film drives the camera itself; the farm keeps living underneath it.
+  if (chapterFilm) {
+    if (!chapterFilm.update(delta)) finishChapterFilm()
+  } else {
+    farmCamera.updateMenuDrift(delta, now / 1000)
+    updateCameraTour(delta)
+  }
   const simSteps = simClock.advance(delta)
   // Hunts hold still while a full-screen panel is open, as they always have.
   const huntsActive = !menu.isOpen && !salePanel.isOpen
@@ -1645,6 +1912,8 @@ function frame(now: number): void {
   animals.forEach((animal) => animal.update(delta, simAlpha))
   crowdFixtures.forEach((fixture) => fixture.update(delta, simAlpha))
   refreshAnimalShadows()
+  hungerBubbles.update(delta, now / 1000)
+  houseBadges.update(delta, now / 1000)
   if (huntsActive) presentHunts(delta, simAlpha)
   // Farewell bursts are fire-and-forget: tick them with the herd and prune
   // the finished ones so a selling spree cannot leak scene nodes.
@@ -1690,24 +1959,40 @@ function frame(now: number): void {
   gardenProps?.update(delta, progression.level)
   // Cheap and state-driven, so they stay per frame: the letter tray must hide the
   // frame a panel opens, not 250 ms later.
-  notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen)
+  notificationPanel.setVisible(!menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen)
+  // The chip belongs to the bare farm view: any open panel or the main menu hides it.
+  const bareFarmView = !menu.isOpen && !journal.isOpen && !salePanel.isOpen && !shop.isOpen && !shed.isOpen && !playerDom.isOpen && !larderDom.isOpen && !optionsDom.isOpen && !farmsPanel.isOpen && !notificationDom.isOpen
+  larderDom.setChipVisible(bareFarmView && chapters.flags().harmonyShown)
+  chapterClockSeconds += delta
   if (!gardenPlants?.selectedSpecies && !shed.isOpen) gardenTools?.setPlantingMode(false)
   // Open panels rebuild their DOM, so they refresh at a fixed low rate. Closed
   // panels skip the work entirely; their stats are only gathered when open.
   if (now - lastDomRefreshAt >= DOM_REFRESH_INTERVAL_MS) {
     lastDomRefreshAt = now
+    // The lawn reads as overgrazed when the grass larder runs low (eased inside the tools).
+    const grassLarder = progress.foodReport().find((entry) => entry.food === 'grass')
+    gardenTools?.setGrazing(grazingOverride ?? (grassLarder ? grazedness(grassLarder.stock, grassLarder.capacity) : 0))
     if (playerDom.isOpen) playerDom.refresh(playerDomStats())
     if (notificationDom.isOpen) notificationDom.refresh(notificationPanel.getLetters(), notificationPanel.nowSeconds())
     const unread = notificationPanel.getUnreadCount()
     balloon.setPostBadge(unread > 9 ? '9+' : unread > 0 ? String(unread) : '')
     if (!menu.isOpen && !journal.isOpen && !shop.isOpen && !shed.isOpen) refreshShopUi()
     shedDom.refresh()
+    // Goods accrue and animals come and go while a house's card is open.
+    if (propCard.isOpen && selectedProp && isHouse(selectedProp.id)) propCard.setResidents(residentsOf(selectedProp))
+    larderDom.refresh()
+    if (chapterClockSeconds >= 1) {
+      chapterClockSeconds = 0
+      tickChapters()
+    }
   }
   const toolsMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
-  input.updateCameraPan(delta)
-  farmCamera.applyShake(delta, now / 1000)
-  input.followPointer()
+  if (!chapterFilm) {
+    input.updateCameraPan(delta)
+    farmCamera.applyShake(delta, now / 1000)
+    input.followPointer()
+  }
   const otherUpdateMs = timingEnabled ? performance.now() - stageStartedAt : 0
   // Redraw the sun's shadows only when a caster moved, the farm is expanding, the
   // carnival packed or unpacked, the shop is going up, a plant changed size, or
@@ -1728,7 +2013,8 @@ function frame(now: number): void {
   const sceneRenderMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   ui.update(delta)
-  ui.render(renderer)
+  // A chapter film is a full-screen moment: the HUD steps aside like it does for the other films.
+  if (!chapterFilm) ui.render(renderer)
   let overlayRenderMs = 0
   if (__GARDEN_DEBUG__ && performanceOverlay) {
     performanceOverlay.update(now, () => frameTimer?.summarize() ?? null)

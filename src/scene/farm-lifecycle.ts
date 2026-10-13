@@ -9,6 +9,7 @@ import type { AnimalLifeEvent, AnimalLifeSnapshot, AnimalRecord, createAnimalLif
 import type { AccomplishmentDef, AccomplishmentStage, createAccomplishmentTracker } from '../game/accomplishments'
 import type { createProgressLedger } from '../game/farm-progression'
 import { isNightTime } from '../game/predator'
+import { DIETS, type HungerLevel } from '../game/animal-diet'
 import type { VisitorMotion } from './visitor-motion'
 
 export interface FarmLifecycleDeps {
@@ -39,11 +40,35 @@ export interface FarmLifecycleDeps {
   readonly animalDisplayName: (species: string) => string
   readonly animalNames: Map<string, string>
   readonly popAnimal: (animal: BalloonAnimal, style?: 'bang' | 'deflate') => void
-  readonly animalCard: { setHelium(helium: number): void }
+  readonly animalCard: { setVitals(vitals: { helium: number; fullness: number; hunger?: HungerLevel; hunting?: boolean }): void }
   readonly noteJournalStages: () => void
+  /** A resident made a good (milk into the barn, a gem from the starhorn). */
+  readonly onProduce?: (event: AnimalLifeEvent) => void
+  /** False until Animal Care (Chapter 3) introduces hunger: before then it stays quiet. */
+  readonly hungerShown?: () => boolean
+  /** Plural display name, e.g. "Cows", for herd-wide notices. */
+  readonly speciesPluralName?: (species: string) => string
+}
+
+/** A herd-wide hunger notice is given at most this often per species (seconds, game time). */
+const HUNGER_NOTICE_SECONDS = 240
+
+/** What a hungry species can be given, in a notice. */
+const FOOD_HINTS: Readonly<Record<string, string>> = {
+  grass: 'Grow more lawn, thin the herd, or buy feed at the shop.',
+  pondweed: 'Dig a bigger pond, plant lilies, or thin the flock.',
+  seeds: 'Plant more dandelions and poppies, or buy feed.',
+  scraps: 'Put out a garbage can, or leave some goods to spoil into slop.',
+  meadow: 'Sow more tall meadow grass.',
+  worms: 'Leave more of the farm as bare dirt.',
+  prey: 'It needs prey on the farm to hunt.',
+  blooms: 'Plant more flowers.',
 }
 
 export function createFarmLifecycle(deps: FarmLifecycleDeps) {
+  const { onProduce, speciesPluralName, hungerShown } = deps
+  /** Game seconds left before each species' next hunger notice may show. */
+  const hungerNoticeCooldown = new Map<string, number>()
   const { progress, progression, accomplishments, notificationPanel, animals, animalById, animalNames, popAnimal, animalCard, farmHomes, newbornUntil, NEWBORN_SHOW_SECONDS, getFocusedAnimal, menuOpen, salePanelOpen, gardenProps, gardenPlants, expansionLevel, houses, setHouses, updateHousing, measureFarmForSim, dayNightClock, createAnimalInstance, visitorMotion, animalDisplayName, noteJournalStages, fairgroundRoot, refreshAnimalVisibility } = deps
   /**
    * Advance every animal one step and play whatever transition it earned.
@@ -142,10 +167,27 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
       const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
       notificationPanel.notifyAccomplishment(`${name} is topping up again`, 'The farm suits it once more.')
     }
+    if (event.kind === 'hunger' && (event.hunger === 'hungry' || event.hunger === 'starving') && (hungerShown?.() ?? true)) {
+      const key = `${event.species}:${event.hunger}`
+      if ((hungerNoticeCooldown.get(key) ?? 0) <= 0) {
+        hungerNoticeCooldown.set(key, HUNGER_NOTICE_SECONDS)
+        const herd = speciesPluralName?.(event.species) ?? animalDisplayName(event.species)
+        const food = DIETS[event.species]?.foods[0]
+        const hint = (food && FOOD_HINTS[food]) ?? 'The farm is not growing enough for them.'
+        if (event.hunger === 'hungry') notificationPanel.notifyAccomplishment(`${herd} are going hungry`, `Hungry animals stop breeding and making goods. ${hint}`)
+        else notificationPanel.notifyAccomplishment(`${herd} are starving`, `A starving balloon loses helium. ${hint}`)
+      }
+    }
+    if (event.kind === 'produce') onProduce?.(event)
     if (event.kind === 'deflate' && animal) {
       const name = animalNames.get(animal.instanceId) ?? animalDisplayName(event.species)
       popAnimal(animal, 'deflate')
-      notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'The farm stopped suiting it, and it slowly went flat.')
+      if (event.reason !== 'starved') notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'The farm stopped suiting it, and it slowly went flat.')
+      else if ((hungerNoticeCooldown.get(`${event.species}:flat`) ?? 0) <= 0) {
+        // An overgrown herd can lose several at once; one notice per species is enough.
+        hungerNoticeCooldown.set(`${event.species}:flat`, HUNGER_NOTICE_SECONDS)
+        notificationPanel.notifyAccomplishment(`${name} ran out of helium`, 'It went too long without enough to eat, and slowly went flat. The herd is bigger than the farm can feed.')
+      }
       console.info(`[Animal Balloon Farm] ${event.species} popped: the farm stopped suiting it`)
     }
     }
@@ -167,6 +209,7 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
 
   function updateAnimalProgress(deltaSeconds: number): void {
     if (menuOpen() || salePanelOpen()) return
+    for (const [key, left] of hungerNoticeCooldown) hungerNoticeCooldown.set(key, left - deltaSeconds)
     const events = progress.tick(animalLifeSnapshot(), deltaSeconds)
     handleAnimalLifeEvents(events)
     noteJournalStages()
@@ -179,7 +222,11 @@ export function createFarmLifecycle(deps: FarmLifecycleDeps) {
     }
     visitorMotion.step()
     const focused = getFocusedAnimal()
-    if (focused) animalCard.setHelium(progress.animal(focused)?.helium ?? 1)
+    if (focused) {
+      // The card writes the DOM only when a number it shows actually moved.
+      const record = progress.animal(focused)
+      animalCard.setVitals({ helium: record?.helium ?? 1, fullness: record?.fullness ?? 1, hunger: record?.hunger, hunting: progress.wantsToHunt(focused) })
+    }
     updateHousing(performance.now() / 1000)
     // No appearance is applied from the event list here: `animal.stage = event.stage`
     // already routes the promotion through the model's residency gate, which keeps

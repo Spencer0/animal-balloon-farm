@@ -33,12 +33,12 @@ test('the mole is in the catalog, with a house, a price and a journal ladder', (
   assert.equal(m.getSpeciesConditions('mole').length, 4)
 })
 
-test('a mole is lured by owning the shovel, and by nothing else', () => {
+test('a mole is lured by a farm that is mostly bare dirt: the first chapter resident', () => {
   const trigger = m.DISCOVERY.mole
-  assert.equal(trigger.kind, 'toolOwned')
-  assert.equal(m.requirementMet(trigger, farm()), false, 'a new farmer has no shovel')
-  assert.equal(m.requirementMet(trigger, farm({ toolsOwned: { shovel: false, water: true } })), false, 'the bucket does not count')
-  assert.equal(m.requirementMet(trigger, farm({ toolsOwned: { shovel: true } })), true)
+  assert.equal(trigger.kind, 'terrainShare')
+  assert.equal(m.requirementMet(trigger, farm(dirt(79))), false)
+  assert.equal(m.requirementMet(trigger, farm(dirt(80))), true)
+  assert.equal(m.requirementMet(trigger, farm({ toolsOwned: { shovel: true } })), false, 'a shovel alone no longer calls it')
 })
 
 test('it visits at half dirt, settles at ninety percent, and breeds with a molehill', () => {

@@ -4,8 +4,8 @@ How a new animal gets from "add an X" to a reviewed, playable species. The goal:
 **"Add a new animal X, use the animal pipeline"** and the agent can do the whole thing without
 hand-holding, including any plant, prop or house the animal needs.
 
-Current catalog: **13 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
-snake, mole).
+Current catalog: **14 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
+snake, mole, starhorn).
 
 **Reference animals.** Copy the closest one instead of starting cold.
 
@@ -43,7 +43,8 @@ from them.
    | **A house** (`propCount` of a house prop) | has somewhere to live; **required** on the breeding rung | barn, coop, sty, goose house, frog house, owl box, dumpster, hollow log, rock pile | a house is a prop, plus a `HOUSE_SPECIES` entry: see *Adding a shop prop (and a house)* |
    | **Terrain** (`grassArea` / `waterArea` / `flatArea`) | needs land, not objects | all | nothing |
    | **Tall meadow** (`meadowArea`) | lives in long grass (the green seed pack), not on a lawn | all | nothing |
-   | **Tool owned** (`toolOwned`) | is lured by the farmer's kit, not the land (the mole comes once the shovel is bought) | `shovel`, `water` (the seed bag is always owned) | add the upgrade to `TOOL_UPGRADES` in `tool-unlocks.ts` |
+   | **Farm harmony** (`harmony`, `flowerCount`) | only comes to a farm in balance (the starhorn: harmony 70 to discover, 75 to visit, 80 plus six flowers to settle, 90 to love it) | `harmony`, `flowerCount` | add the kind: see *The condition kinds* |
+| **Tool owned** (`toolOwned`) | is lured by the farmer's kit, not the land (the mole comes once the shovel is bought) | `shovel`, `water` (the seed bag is always owned) | add the upgrade to `TOOL_UPGRADES` in `tool-unlocks.ts` |
 | **Terrain share** (`terrainShare`) | needs the farm to *be* a kind of ground, by percent (a mole: 50% dirt to visit, 90% to settle) | `dirt` (bare soil; `snow` is reserved) | add the terrain to `TerrainKind` and measure it in `farm-state.ts` |
 | **Prey eaten** (`preyEaten`) | is a predator | chicken, for the owl; mouse, for the snake | see *Predators and fliers* |
 
@@ -61,7 +62,11 @@ from them.
 
 ## 1 · The whole job, in order
 
-> **Every animal must have a house. No exceptions.** A species without one can never breed (babies
+> **Every animal must have a house. One exception: the starhorn.** It is the unique end-game animal
+> (`isUniqueSpecies`, `UNIQUE_SPECIES` in `animal-conditions.ts`): no house, so it never breeds, and its
+> "Love the farm" rung is a glow at Harmony 90. Anything new that is not the starhorn needs a house.
+>
+> **Every animal must have a house.** A species without one can never breed (babies
 > are born indoors), has no space indoors, and keeps every member out on the farm, where it eats
 > into the 40-animal outdoor limit. Either share an existing house that fits (chickens and ducks
 > share the coop, cows and sheep the barn) or build a new one in Blender. Register it in
@@ -341,6 +346,8 @@ raccoon: {
 | `residentSpecies` | is any adult of this species a resident | an animal id |
 | `residentCount` | how many adult residents | an animal id |
 | `preyEaten` | tally of a prey species eaten | an animal id |
+| `harmony` | the farm's Harmony score, 0 to 100 (`harmony.ts`); a score, not an area | n/a |
+| `flowerCount` | **mature** dandelions, poppies and clover together (`FLOWER_PLANTS`) | n/a |
 | `propCount` | how many of a shop prop are **placed** (owned in the inventory does not count) | a prop id (the field name is historical) |
 
 Rules that are easy to get wrong:

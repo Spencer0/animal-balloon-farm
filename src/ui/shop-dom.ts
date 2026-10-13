@@ -3,6 +3,9 @@ import "./shed-dom.css";
 import { PLANT_CATALOG, SEED_PRICES, type PlantCare, type PlantId } from "../game/plants";
 import { PROP_CATALOG, PROP_ORDER, type PropId } from "../game/farm-props";
 import { seedThumb, propThumb } from "./shed-dom";
+import { TREASURE_CATALOG, TREASURE_ORDER, type TreasureId } from "../game/treasures";
+import { armGemIcons, gemIconHtml } from "./gem-icon";
+import { FEED_CAPACITY, FEED_SACK_MEALS, FEED_SACK_PRICE } from "../game/animal-diet";
 import {
   propUnlockLevel,
   UPGRADE_CATALOG,
@@ -11,7 +14,7 @@ import {
   type UpgradeQuote,
 } from "../game/tool-unlocks";
 
-export type ShopDomTab = "upgrades" | "props" | "seeds" | "animals";
+export type ShopDomTab = "upgrades" | "props" | "seeds" | "animals" | "treasures";
 
 export interface ShopBuyResult {
   readonly ok: boolean;
@@ -43,7 +46,27 @@ export interface ShopDomCallbacks {
   /** The helpers a species can hire, or an empty list for tap-care plants. */
   helpersFor: (species: PlantId) => readonly ShopHelperRow[];
   onHireHelper: (species: PlantId, care: PlantCare) => ShopBuyResult;
+  /** Star gems in the purse. */
+  gems: () => number;
+  /** Whether the Treasures tab is shown yet (it waits for the first star gem). */
+  treasuresVisible: () => boolean;
+  quoteTreasure: (id: TreasureId) => { readonly owned: boolean; readonly price: number };
+  onBuyTreasure: (id: TreasureId) => ShopBuyResult;
+  /** Meals of bought feed in the pantry, and buying one more sack. */
+  feedInPantry: () => number;
+  onBuyFeed: () => ShopBuyResult;
+  /** What Pip stocks in the farm's current chapter; anything else is not shown at all. */
+  offers?: ShopOffers;
 }
+
+export interface ShopOffers {
+  upgrade(id: UpgradeId): boolean;
+  seed(id: PlantId): boolean;
+  /** The Feed tab. */
+  feed(): boolean;
+}
+
+const OFFER_EVERYTHING: ShopOffers = { upgrade: () => true, seed: () => true, feed: () => true };
 
 export interface ShopDomPanel {
   readonly isOpen: boolean;
@@ -78,6 +101,18 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   let selected: PropId = "fence";
   let selectedUpgrade: UpgradeId = UPGRADE_ORDER[0] ?? "tall-grass";
   let selectedSeed: PlantId = PLANT_CATALOG[0]?.id ?? "clover";
+  let selectedTreasure: TreasureId = TREASURE_ORDER[0] ?? "helium-pump";
+  const offers = (): ShopOffers => callbacks.offers ?? OFFER_EVERYTHING;
+  const upgradesOffered = (): UpgradeId[] => UPGRADE_ORDER.filter((id) => offers().upgrade(id));
+  const seedsOffered = () => PLANT_CATALOG.filter((plant) => offers().seed(plant.id));
+  /** A selection the chapter no longer offers (or never did) falls back to the first one on the shelf. */
+  function settleSelection(): void {
+    const upgrades = upgradesOffered();
+    if (!upgrades.includes(selectedUpgrade) && upgrades[0]) selectedUpgrade = upgrades[0];
+    const seeds = seedsOffered();
+    if (!seeds.some((plant) => plant.id === selectedSeed) && seeds[0]) selectedSeed = seeds[0].id;
+    if (tab === "animals" && !offers().feed()) tab = "props";
+  }
   let lastSignature = "";
   let feedback = "";
   const quote = PIP_QUOTES[Math.floor(Math.random() * PIP_QUOTES.length)] ?? PIP_QUOTES[0];
@@ -102,13 +137,14 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
 
   function signature(): string {
     const props = PROP_ORDER.map((id) => `${id}:${callbacks.countsFor(id)}`).join("|");
-    const upgrades = UPGRADE_ORDER.map((id) => {
+    const upgrades = upgradesOffered().map((id) => {
       const quote = callbacks.quoteUpgrade(id);
       return `${id}:${quote.status}:${quote.owned}:${quote.price}`;
     }).join("|");
-    const seeds = PLANT_CATALOG.map((plant) => `${plant.id}:${callbacks.seedsFor(plant.id)}`).join("|");
+    const seeds = seedsOffered().map((plant) => `${plant.id}:${callbacks.seedsFor(plant.id)}`).join("|");
+    const treasures = TREASURE_ORDER.map((id) => `${id}:${callbacks.quoteTreasure(id).owned}`).join("|");
     const helpers = callbacks.helpersFor(selectedSeed).map((row) => `${row.care}:${row.status}`).join("|");
-    return `${tab}|${selected}|${selectedUpgrade}|${selectedSeed}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${seeds}|${helpers}|${feedback}`;
+    return `${tab}|${selected}|${selectedUpgrade}|${selectedSeed}|${selectedTreasure}|${callbacks.gems()}|${callbacks.treasuresVisible()}|${treasures}|${callbacks.balance()}|${callbacks.farmerLevel()}|${props}|${upgrades}|${seeds}|${Math.floor(callbacks.feedInPantry())}|${offers().feed()}|${helpers}|${feedback}`;
   }
 
   /** A drawn icon for the upgrades, so they need no baked art: a sack for seed, a scroll for land. */
@@ -182,6 +218,30 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     );
   }
 
+  /** A drawn icon for each treasure, in the same hand as the upgrades'. */
+  function treasureIcon(id: TreasureId, owned: boolean): string {
+    const color = TREASURE_CATALOG[id].color;
+    const body = id === "helium-pump"
+      ? `<rect x="22" y="30" width="20" height="26" rx="4" fill="${color}"/><rect x="18" y="52" width="28" height="6" rx="3" fill="#6b4a33"/>` +
+        `<path d="M32 30V12M24 12h16" stroke="#8a6f3f" stroke-width="5" stroke-linecap="round"/><path d="M42 40c10 0 12 8 12 14" fill="none" stroke="#d96f4a" stroke-width="3.5" stroke-linecap="round"/>` +
+        `<circle cx="54" cy="52" r="5" fill="#f2796b"/><path d="M27 38h10M27 45h10" stroke="#fff" stroke-width="2.4" stroke-linecap="round" opacity=".7"/>`
+      : id === "clover-charm"
+      ? `<g fill="${color}"><circle cx="24" cy="24" r="10"/><circle cx="40" cy="24" r="10"/><circle cx="24" cy="38" r="10"/><circle cx="40" cy="38" r="10"/></g>` +
+        `<path d="M32 31c-2 10-2 18 4 26" fill="none" stroke="#4d8a42" stroke-width="3.5" stroke-linecap="round"/><circle cx="32" cy="31" r="4" fill="#e4bd58"/>` +
+        `<path d="M24 24l6 5M40 24l-6 5M24 38l6-5M40 38l-6-5" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".6"/>`
+      : id === "rain-barrel"
+      ? `<path d="M16 16h32l3 40H13z" fill="#a8774b"/><ellipse cx="32" cy="16" rx="16" ry="5" fill="${color}"/><path d="M14 26h36M13 46h38" stroke="#6b4a33" stroke-width="3.2"/>` +
+        `<path d="M32 4c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z" fill="#9fe0f2"/>`
+      : `<path d="M14 22h36l-4 34H18z" fill="${color}"/><ellipse cx="32" cy="22" rx="18" ry="5.5" fill="#fff0b7"/>` +
+        `<path d="M16 22c0-14 32-14 32 0" fill="none" stroke="#8a6f3f" stroke-width="3.2" stroke-linecap="round"/>` +
+        `<path d="M32 30l3 7 7 .6-5.4 4.6 1.8 7-6.4-4-6.4 4 1.8-7L22 37.600l7-.6z" fill="#fff6dc"/>`;
+    return `<svg class="sh-upgrade-icon" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"${owned ? ` style="opacity:.55"` : ""}>${body}</svg>`;
+  }
+
+  function gemPill(price: number, gems: number): string {
+    return `<span class="sh-pill"${gems >= price ? "" : ` style="opacity:.55"`}>${gemIconHtml()}${price} ${price === 1 ? "gem" : "gems"}</span>`;
+  }
+
   function upgradePill(quote: UpgradeQuote, coins: number): string {
     if (quote.status === "maxed") return `<span class="sh-pill">all owned</span>`;
     if (quote.status === "locked") return `<span class="sh-pill" style="opacity:.55">Farmer Lv ${quote.requiredLevel + 1}</span>`;
@@ -189,9 +249,23 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   }
 
   function cardsHtml(): string {
+    if (tab === "treasures") {
+      const gems = callbacks.gems();
+      return TREASURE_ORDER.map((id) => {
+        const def = TREASURE_CATALOG[id];
+        const quote = callbacks.quoteTreasure(id);
+        return (
+          `<button type="button" class="sh-card" data-select-treasure="${id}" aria-current="${selectedTreasure === id}">` +
+          `<span class="sh-count">${quote.owned ? 1 : 0}/1</span>` +
+          treasureIcon(id, false) +
+          `<span>${escapeHtml(def.name)}</span><br />` +
+          (quote.owned ? `<span class="sh-pill">owned</span>` : gemPill(quote.price, gems)) + `</button>`
+        );
+      }).join("") + `<p class="sh-hint" style="grid-column:1/-1">Star gems come from the starhorn, a balloon pony that only visits a farm in harmony. Each treasure is one-of-a-kind and lasts for good.</p>`;
+    }
     if (tab === "upgrades") {
       const coins = callbacks.balance();
-      return UPGRADE_ORDER.map((id) => {
+      return upgradesOffered().map((id) => {
         const def = UPGRADE_CATALOG[id];
         const quote = callbacks.quoteUpgrade(id);
         const label = id === "land-deed" && quote.status !== "maxed" ? `${def.name} ${quote.owned + 1}` : def.name;
@@ -226,7 +300,7 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       }).join("");
     }
     if (tab === "seeds") {
-      return PLANT_CATALOG.map((plant) => {
+      return seedsOffered().map((plant) => {
         const count = Math.max(0, callbacks.seedsFor(plant.id));
         const afford = callbacks.balance() >= SEED_PRICES[plant.id];
         return (
@@ -238,7 +312,15 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
         );
       }).join("");
     }
-    return `<div class="sh-locked">The animal pen opens soon. Pip is still building the fence, and the balloons keep escaping.</div>`;
+    // The Feed tab: one product, bought feed for when the farm grows too little.
+    const afford = callbacks.balance() >= FEED_SACK_PRICE;
+    return (
+      `<button type="button" class="sh-card" aria-current="true">` +
+      `<span class="sh-count">${Math.floor(callbacks.feedInPantry())} meals</span>` +
+      `<img src="assets/goods/food-feed.png" alt="" draggable="false" />` +
+      `<span>Feed sack</span><br />` +
+      `<span class="sh-pill"${afford ? "" : ` style="opacity:.55"`}>${FEED_SACK_PRICE} coins</span></button>`
+    );
   }
 
   function upgradePreviewHtml(): string {
@@ -265,7 +347,28 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     );
   }
 
+  function treasurePreviewHtml(): string {
+    const def = TREASURE_CATALOG[selectedTreasure];
+    const quote = callbacks.quoteTreasure(selectedTreasure);
+    const gems = callbacks.gems();
+    const pills = quote.owned ? `<span class="sh-pill">owned</span>` : gemPill(quote.price, gems);
+    let button: string;
+    if (quote.owned) button = `<button type="button" class="sh-btn sh-btn-warm" disabled>Owned</button>`;
+    else if (gems < quote.price) button = `<button type="button" class="sh-btn sh-btn-warm" disabled>Need ${quote.price} star gems</button>`;
+    else button = `<button type="button" class="sh-btn sh-btn-warm" data-buy-treasure="${selectedTreasure}">Buy (${quote.price} star gems)</button>`;
+    return (
+      treasureIcon(selectedTreasure, false) +
+      `<h2>${escapeHtml(def.name)}</h2>` +
+      `<div class="sh-pills">${pills}</div>` +
+      `<p class="sh-blurb">${escapeHtml(def.blurb)}</p>` +
+      button +
+      `<button type="button" class="sh-btn sh-btn-quiet" data-action="close">Keep browsing</button>` +
+      `<p class="sh-feedback">${escapeHtml(feedback)}</p>`
+    );
+  }
+
   function previewHtml(): string {
+    if (tab === "treasures") return treasurePreviewHtml();
     if (tab === "upgrades") return upgradePreviewHtml();
     if (tab !== "props") {
       if (tab === "seeds") {
@@ -285,7 +388,19 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
           helpersHtml(plant.id)
         );
       }
-      return `<h2>Animals</h2><p class="sh-blurb">No animals for sale yet. Befriend them at the circus instead.</p><p class="sh-feedback">${escapeHtml(feedback)}</p>`;
+      const afford = callbacks.balance() >= FEED_SACK_PRICE;
+      const pantry = Math.floor(callbacks.feedInPantry());
+      const full = pantry + FEED_SACK_MEALS > FEED_CAPACITY;
+      const label = full ? "Pantry is full" : afford ? `Buy (${FEED_SACK_PRICE} coins)` : `Need ${FEED_SACK_PRICE} coins`;
+      return (
+        `<img src="assets/goods/food-feed.png" alt="" draggable="false" />` +
+        `<h2>Feed sack</h2>` +
+        `<div class="sh-pills"><span class="sh-pill">${FEED_SACK_PRICE} coins</span><span class="sh-pill">${FEED_SACK_MEALS} meals</span><span class="sh-pill">${pantry} / ${FEED_CAPACITY} in the pantry</span></div>` +
+        `<p class="sh-blurb">Farm animals eat feed when their own food runs out. It costs more than their goods earn, so use it to get a herd through a lean spell. Pigs eat slop first (from a garbage can, or goods spoiling in a full house), then grass.</p>` +
+        `<button type="button" class="sh-btn sh-btn-warm" data-buy-feed="1"${afford && !full ? "" : " disabled"}>${label}</button>` +
+        `<button type="button" class="sh-btn sh-btn-quiet" data-action="close">Keep browsing</button>` +
+        `<p class="sh-feedback">${escapeHtml(feedback)}</p>`
+      );
     }
     const def = PROP_CATALOG[selected];
     if (!def) return `<div class="sh-locked">Nothing selected.</div>`;
@@ -306,10 +421,13 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
   }
 
   function render(): void {
+    settleSelection();
     const next = signature();
     if (next === lastSignature && shop.isConnected) return;
     lastSignature = next;
     const coins = callbacks.balance();
+    const gems = callbacks.gems();
+    const showTreasures = callbacks.treasuresVisible() || tab === "treasures";
     shop.innerHTML =
       `<header class="fj-header">` +
       `<div class="fj-title">Pip's Pop-Up Shop</div>` +
@@ -317,9 +435,11 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       `<button type="button" class="fj-tab" data-tab="upgrades" aria-selected="${tab === "upgrades"}">Upgrades</button>` +
       `<button type="button" class="fj-tab" data-tab="props" aria-selected="${tab === "props"}">Props</button>` +
       `<button type="button" class="fj-tab" data-tab="seeds" aria-selected="${tab === "seeds"}">Seeds</button>` +
-      `<button type="button" class="fj-tab" data-tab="animals" aria-selected="${tab === "animals"}">Animals</button>` +
+      (offers().feed() ? `<button type="button" class="fj-tab" data-tab="animals" aria-selected="${tab === "animals"}">Feed</button>` : "") +
+      (showTreasures ? `<button type="button" class="fj-tab" data-tab="treasures" aria-selected="${tab === "treasures"}">Treasures</button>` : "") +
       `</nav>` +
-      `<span class="sh-coins" aria-label="${coins} coins"><span class="sh-coin" aria-hidden="true"></span>${coins}</span>` +
+      `<span class="sh-purse"><span class="sh-coins" aria-label="${coins} coins"><span class="sh-coin" aria-hidden="true"></span>${coins}</span>` +
+      `<span class="sh-coins" aria-label="${gems} star gems">${gemIconHtml()}${gems}</span></span>` +
       `<button type="button" class="fj-close" data-action="close" aria-label="Close shop">&times;</button>` +
       `</header>` +
       `<p class="sh-pip">${escapeHtml(quote)}</p>` +
@@ -327,11 +447,12 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       `<div class="sh-items"><div class="sh-grid">${cardsHtml()}</div></div>` +
       `<aside class="sh-preview" aria-live="polite">${previewHtml()}</aside>` +
       `</div></div>`;
+    armGemIcons(shop);
   }
 
   shop.addEventListener("click", (event) => {
     const target = event.target instanceof HTMLElement
-      ? event.target.closest("[data-tab],[data-select],[data-select-seed],[data-select-upgrade],[data-action],[data-buy],[data-buy-seed],[data-buy-upgrade],[data-hire-helper]")
+      ? event.target.closest("[data-tab],[data-select],[data-select-seed],[data-select-upgrade],[data-select-treasure],[data-action],[data-buy],[data-buy-seed],[data-buy-upgrade],[data-buy-treasure],[data-buy-feed],[data-hire-helper]")
       : null;
     if (!(target instanceof HTMLElement)) return;
     if (target.dataset["action"] === "close") {
@@ -367,6 +488,20 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       render();
       return;
     }
+    const selectTreasure = target.dataset["selectTreasure"] as TreasureId | undefined;
+    if (selectTreasure) {
+      selectedTreasure = selectTreasure;
+      lastSignature = "";
+      render();
+      return;
+    }
+    const buyTreasure = target.dataset["buyTreasure"] as TreasureId | undefined;
+    if (buyTreasure) {
+      feedback = callbacks.onBuyTreasure(buyTreasure).text;
+      lastSignature = "";
+      render();
+      return;
+    }
     const buySeed = target.dataset["buySeed"] as PlantId | undefined;
     if (buySeed) {
       feedback = callbacks.onBuySeed(buySeed).text;
@@ -377,6 +512,12 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     const hireHelper = target.dataset["hireHelper"] as PlantCare | undefined;
     if (hireHelper) {
       feedback = callbacks.onHireHelper(selectedSeed, hireHelper).text;
+      lastSignature = "";
+      render();
+      return;
+    }
+    if (target.dataset["buyFeed"]) {
+      feedback = callbacks.onBuyFeed().text;
       lastSignature = "";
       render();
       return;

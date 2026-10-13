@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { measureDirtShare, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from '../game/farm-state'
 import { WATER_MIN_RENDER_DEPTH } from '../game/garden-water'
+import { measureHarmony } from '../game/harmony'
 import { containsFarmPoint } from '../game/farm-footprint'
 import { ownsGardenTool, type createUpgradeLedger } from '../game/tool-unlocks'
 import { GARDEN_TOOLS } from './garden-tool-art'
@@ -16,6 +17,8 @@ export interface FarmMeasureDeps {
   readonly gardenPlants: () => { readonly simulation: { readonly plants: readonly { readonly mature: boolean; readonly species: string }[] } } | null
   readonly gardenProps: () => { propCounts(): Record<string, number> } | null
   readonly residentCounts: () => Record<string, number>
+  /** Adult residents (stage 3 up, not babies) and how full their bellies are, for Harmony. */
+  readonly harmonyResidents: () => readonly { readonly species: string; readonly fullness: number }[]
   readonly preyEaten: () => Record<string, number>
   /** Visible pond cells that are frozen solid: they are not water to drink or paddle in. */
   readonly frozenWaterCells: () => number
@@ -24,7 +27,7 @@ export interface FarmMeasureDeps {
 }
 
 export function createFarmMeasure(deps: FarmMeasureDeps) {
-  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, preyEaten, frozenWaterCells, activeGardenBounds, upgrades } = deps
+  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, harmonyResidents, preyEaten, frozenWaterCells, activeGardenBounds, upgrades } = deps
   // ------------------------------------------------------- farm measurement --
 
   /**
@@ -70,6 +73,9 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
     }
     return { heights, cols, rows, cellSize, originX, originZ }
   }
+
+  /** Debug: pin Harmony to a number, or null to measure it again. */
+  let harmonyOverride: number | null = null
 
   /** The last measured farm, kept so the journal and harness can read it. */
   let lastFarmState: FarmState = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {}, residentCounts: {}, preyEaten: {}, propCounts: {} }
@@ -126,6 +132,7 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
       ...measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts()),
       meadowArea: currentMeadowArea(),
       residentCounts: residentCounts(),
+      harmony: harmonyOverride ?? measureHarmony(harmonyResidents()).score,
       terrainShares: {
         dirt: measureDirtShare(
           lawn,
@@ -158,6 +165,10 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
   }
 
   return {
+    setHarmonyOverride(value: number | null): void {
+      harmonyOverride = value
+      lastMeasuredAt = Number.NEGATIVE_INFINITY
+    },
     measureFarm,
     measureFarmForSim,
     remeasureMeadow,

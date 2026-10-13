@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { createBalloonAnimal, type BalloonAnimal } from '../animals/balloon-animal'
 import { getAnimalSceneOptions, ANIMAL_CATALOG } from '../animals/animal-catalog'
 import { clearOfFarmBounds } from '../game/animal-travel'
+import { UNIQUE_ANIMAL_NAMES } from '../game/sales'
 import { nearestRayHit } from './skinned-pick'
 import type { GardenTerrain } from './garden-terrain'
 import type { AnimalRecord, createAnimalLife } from '../game/animal-life'
@@ -205,7 +206,7 @@ export function createHerd(deps: HerdDeps) {
       .find((entry) => entry.id === record.species)
     if (!options) throw new Error(`Missing scene options for animal ${record.species}`)
     const takenNames = new Set(animalNames.values())
-    const name = animalNames.get(record.id) ?? generatedAnimalNames.find((candidate) => !takenNames.has(candidate)) ?? `${options.name} ${animalNames.size + 1}`
+    const name = animalNames.get(record.id) ?? UNIQUE_ANIMAL_NAMES[record.species] ?? generatedAnimalNames.find((candidate) => !takenNames.has(candidate)) ?? `${options.name} ${animalNames.size + 1}`
     animalNames.set(record.id, name)
     const animal = await createBalloonAnimal(fairgroundRoot, {
       ...options,

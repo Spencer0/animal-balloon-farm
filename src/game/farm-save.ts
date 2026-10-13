@@ -21,6 +21,8 @@ import type { createDayNightClock } from './day-night'
 import type { createGardenWaterField } from './garden-water'
 import type { createGardenWaterMesh } from '../scene/garden-water-mesh'
 import type { createWallet } from './sales'
+import type { TreasureLedger } from './treasures'
+import type { ChapterState } from './farm-chapters'
 
 export interface FarmSaveDeps {
   readonly loadedSave: SaveGameData | null
@@ -29,6 +31,11 @@ export interface FarmSaveDeps {
   readonly saveEnabled: boolean
   readonly dayNightClock: ReturnType<typeof createDayNightClock>
   readonly wallet: ReturnType<typeof createWallet>
+  /** The star gem purse and the treasures it bought. */
+  readonly gems: ReturnType<typeof createWallet>
+  readonly treasures: TreasureLedger
+  /** Push the owned treasures' effects into the sim (called after a load and after a purchase). */
+  readonly applyTreasureEffects: () => void
   readonly progression: ReturnType<typeof createProgressLedger>
   readonly upgrades: ReturnType<typeof createUpgradeLedger>
   readonly accomplishments: ReturnType<typeof createAccomplishmentTracker>
@@ -58,10 +65,14 @@ export interface FarmSaveDeps {
   readonly notificationPanel: { notifyAccomplishment(title: string, detail: string): void }
   readonly menuOpen: () => boolean
   readonly syncFarmChrome: () => void
+  /** Chapters opened so far, saved beside the farm. */
+  readonly chapterState: () => ChapterState
+  /** Coins earned from collected goods, ever. */
+  readonly goodsCoins: () => number
 }
 
 export function createFarmSave(deps: FarmSaveDeps) {
-  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, greenThumb, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncOwnedTools, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome } = deps
+  const { loadedSave, startupSlot, saveStore, saveEnabled, dayNightClock, wallet, gems, treasures, applyTreasureEffects, progression, upgrades, accomplishments, progress, predationLedger, fairground, gardenTools, gardenPlants, greenThumb, gardenProps, gardenTerrain, gardenWater, gardenWaterMesh, animalNames, animalById, knownDoors, knownMaturePlants, journalBestStage, setGardenBounds, setLastExpansionLevel, remeasureMeadow, syncOwnedTools, syncGrassPack, refreshShopUi, noteJournalStages, salePanel, notificationPanel, menuOpen, syncFarmChrome, chapterState, goodsCoins } = deps
   /** Seconds of play in this farm, across every session that has carried it. */
   let playSeconds = loadedSave?.playSeconds ?? 0
 
@@ -107,6 +118,10 @@ export function createFarmSave(deps: FarmSaveDeps) {
       playSeconds,
       clock: { timeOfDay: dayNightClock.timeOfDay, elapsedDays: dayNightClock.elapsedDays },
       coins: wallet.balance,
+      gems: gems.balance,
+      treasures: treasures.owned(),
+      chapters: chapterState(),
+      goodsCoins: goodsCoins(),
       progression: progression.exportState(),
       upgrades: Object.fromEntries(UPGRADE_ORDER.map((id) => [id, upgrades.count(id)])),
       accomplishments: accomplishments.exportState(),
@@ -133,6 +148,7 @@ export function createFarmSave(deps: FarmSaveDeps) {
     return {
       farmerLevel: progression.level + 1,
       coins: data.coins,
+      ...(data.gems ? { gems: data.gems } : {}),
       day: Math.floor(data.clock.elapsedDays) + 1,
       residents: progress.all().filter((record) => record.stage >= 3 && !record.baby).length,
       playSeconds: Math.floor(data.playSeconds),
@@ -264,6 +280,9 @@ export function createFarmSave(deps: FarmSaveDeps) {
     })
     section('purse and progress', () => {
       wallet.restore(data.coins)
+      gems.restore(data.gems ?? 0)
+      treasures.restore(data.treasures ?? [])
+      applyTreasureEffects()
       progression.importState(data.progression)
       // A save from before the shop sold the shovel and the bucket has no entry for
       // them: that farmer had both, so they keep them. A new save names every upgrade.

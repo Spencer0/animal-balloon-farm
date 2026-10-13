@@ -14,8 +14,8 @@ import type { GardenPlants } from '../scene/garden-plants'
 import type { GardenProps, PropSelection } from '../scene/garden-props'
 import type { GardenTools } from '../scene/garden-tools'
 import { createSellBurst, type SellBurst } from './sell-burst'
-import type { createAnimalCard } from './animal-card'
-import type { createPropCard, PropResidents } from './prop-card'
+import type { createAnimalCard } from './animal-card-dom'
+import type { createPropCardDom, PropResidents } from './prop-card-dom'
 import type { createPlantCard } from './plant-card'
 import type { createSalePanel } from './sale-panel'
 import type { createShedPanel } from './shed-panel'
@@ -29,7 +29,7 @@ export interface FarmActionsDeps {
   readonly ui: UILayer
   readonly scene: THREE.Scene
   readonly animalCard: ReturnType<typeof createAnimalCard>
-  readonly propCard: ReturnType<typeof createPropCard>
+  readonly propCard: ReturnType<typeof createPropCardDom>
   readonly plantCard: ReturnType<typeof createPlantCard>
   readonly salePanel: ReturnType<typeof createSalePanel>
   readonly shed: ReturnType<typeof createShedPanel>
@@ -86,9 +86,10 @@ export function createFarmActions(deps: FarmActionsDeps) {
     const anchorWorld = animal.root.getWorldPosition(new THREE.Vector3())
     anchorWorld.y += 2.6
     const anchorNdc = anchorWorld.project(camera)
+    // The card is DOM: its anchor is the balloon's spot in window pixels.
     const anchor = {
-      x: anchorNdc.x * ui.viewport.width / 2,
-      y: anchorNdc.y * ui.viewport.height / 2,
+      x: (anchorNdc.x + 1) / 2 * window.innerWidth,
+      y: (1 - anchorNdc.y) / 2 * window.innerHeight,
     }
     animalCard.open({
       instanceId: animal.instanceId,
@@ -99,6 +100,8 @@ export function createFarmActions(deps: FarmActionsDeps) {
       price: animalSaleValue(animal.id, stage),
       sellable,
       helium: progress.animal(animal.instanceId)?.helium ?? 1,
+      fullness: progress.animal(animal.instanceId)?.fullness ?? 1,
+      hunting: progress.wantsToHunt(animal.instanceId),
     }, anchor)
     syncFarmChrome()
   }
@@ -150,7 +153,7 @@ export function createFarmActions(deps: FarmActionsDeps) {
       movable: selection.movable,
       rotatable: selection.rotatable,
       residents: residentsOf(selection),
-    }, { x: ndc.x * ui.viewport.width / 2, y: ndc.y * ui.viewport.height / 2 })
+    }, { x: (ndc.x + 1) / 2 * window.innerWidth, y: (1 - ndc.y) / 2 * window.innerHeight })
     syncFarmChrome()
   }
 

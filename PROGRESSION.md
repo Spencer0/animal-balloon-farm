@@ -32,6 +32,24 @@ To add a tool unlock: add an id to `UpgradeId`, an entry to `UPGRADE_CATALOG` an
 `upgradeIcon` in `src/ui/shop-dom.ts`. The Upgrades tab and the level cards in the
 Player panel pick it up from the catalog.
 
+## Star gems and treasures
+
+A second currency for the end game. **Star gems** are made only by the starhorn, a unique
+animal that comes to a farm in harmony (see `docs/FOOD_WEB.md`), a gem a day when it is well
+fed. They buy **treasures** on the shop's Treasures tab (it appears with the first gem):
+no farmer level gates them, and each is bought once.
+
+| Treasure | Gems | Effect |
+| --- | --- | --- |
+| Helium Pump | 3 | Starving balloons leak helium at half speed |
+| Clover Charm | 5 | Every grown food +25% |
+| Rain Barrel | 8 | Grass grows +50% |
+| Golden Pail | 6 | Goods are worth double when collected |
+
+The rules live in `src/game/treasures.ts`, not in the coin upgrade catalog, so the
+Farmer Level cards never list them. Gems and treasures are saved (`gems`, `treasures`
+in the save game; older saves load with none).
+
 ## Grass packs
 
 The grass seeder holds one of two packs. A blue sack sows short grass that stops
@@ -79,6 +97,7 @@ blueberry model, so a new species also wants its own stage art.
 
 With `?gardenDebug=1`: `growUntilCare(care)`, `startCare()`, `settleCare(won)`,
 `greenThumb({ species, care })` and `armSeed(species)` drive the care games.
-Also `upgrades()`, `buyUpgrade(id)`, `awardPoints(n)`,
-`swapPack()` and `stepTools(seconds)`. `buy(id)` and `grantCoins(n)` deliberately
+With `?gardenDebug=1`: `upgrades()`, `buyUpgrade(id)`, `awardPoints(n)`,
+`swapPack()` and `stepTools(seconds)`. For gems: `grantGems(n)`, `buyTreasure(id)`,
+`treasures()`, `setHarmony(n)` and `spawnStarhorn()`. `buy(id)` and `grantCoins(n)` deliberately
 skip the shop's gates.

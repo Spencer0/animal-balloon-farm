@@ -1,9 +1,11 @@
-import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, holdsResidency, isNightOnly, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
+import { CARNIVAL_STARTERS, DISCOVERY, NIGHT_ONLY_SPECIES, holdsResidency, isNightOnly, isUniqueSpecies, conditionMetricLabel, getSpeciesConditions, type AnimalStage, stageAppearance, stageHasHeartEyes } from './animal-conditions'
 import { requirementMet, type FarmSnapshot, type RequirementStatus } from './animal-progress'
 import { farmMetric } from './farm-state'
 import { stepHelium } from './predator'
 import { freeRoomFor, HOUSE_CAPACITY, houseAccepts, houseWithRoom, occupantsByHouse, OUTDOOR_LIMITS, type HouseSite } from './animal-housing'
 import type { ProgressAction } from './farm-progression'
+import { createFoodWeb, DIETS, GOODS, HOUSE_GOODS_CAPACITY, hungerLevel, isPredatorDiet, PREDATOR_HUNTS_BELOW, catchMeal, PRODUCE, produceRate, servingOrder, SPOILED_SCRAPS, type FoodBoosts, type FoodReport, type FoodWebState, type GoodId, type HungerLevel } from './animal-diet'
+import { DAY_LENGTH_SECONDS } from './day-night'
 
 export interface SpeciesAnimalTuning {
   readonly visitDelaySeconds?: number
@@ -125,10 +127,17 @@ export interface AnimalRecord {
   readonly departing: boolean
   /** Animals that arrived together share a pack id; null for one that came alone. */
   readonly packId: string | null
+  /** 1 = just ate, 0 = empty. Only residents eat, so a visitor reads full. */
+  readonly fullness: number
+  readonly hunger: HungerLevel
 }
 
 export interface AnimalLifeEvent {
   readonly kind: 'arriveCarnival' | 'departCarnival' | 'enterFarm' | 'settle' | 'fallInLove' | 'birth' | 'growUp' | 'unsettle' | 'resettle' | 'deflate'
+    /** A resident's belly crossed a rung of the hunger ladder (`hunger` says which). */
+    | 'hunger'
+    /** A resident made a good. `houseId` is where it was stored; a gem has none. */
+    | 'produce'
   readonly animalId?: string
   /** For an arrival in a pack: the animal it came with. The leader has none. */
   readonly leaderId?: string
@@ -139,6 +148,12 @@ export interface AnimalLifeEvent {
   readonly species: string
   readonly stage?: AnimalStage
   readonly action?: ProgressAction
+  /** For a hunger event: the rung it is on now. */
+  readonly hunger?: HungerLevel
+  /** For a deflate: it went flat because it starved, or because the farm stopped suiting it. */
+  readonly reason?: 'starved' | 'unsuited'
+  /** For a produce event. */
+  readonly good?: GoodId
 }
 
 export interface AnimalLifeSnapshot {
@@ -172,6 +187,16 @@ export interface SavedAnimal {
   readonly inside?: boolean
   /** Helium left, 0..1; absent in older saves, which read as full. */
   readonly helium?: number
+  /** Fullness, 0..1; absent in older saves, which read as full. */
+  readonly fullness?: number
+}
+
+/** Goods waiting in one house, saved by where the house stands (house ids are per session). */
+export interface SavedHouseGoods {
+  readonly prop: string
+  readonly x: number
+  readonly z: number
+  readonly goods: Readonly<Partial<Record<GoodId, number>>>
 }
 
 /**
@@ -184,6 +209,15 @@ export interface AnimalLifeState {
   readonly pendingVisitors: readonly string[]
   readonly nextAnimalId: number
   readonly arrivalElapsed: number
+  /** Larders. Absent in older saves, which start every larder full. */
+  readonly food?: FoodWebState
+  readonly goods?: readonly SavedHouseGoods[]
+}
+
+export interface LifeRules {
+  readonly starvation: boolean
+  readonly goods: boolean
+  readonly discoverable: (species: string) => boolean
 }
 
 export interface AnimalLifeOptions {
@@ -214,6 +248,35 @@ export interface AnimalLife {
   enterHouse(id: string, houseId: string): boolean
   /** Bring an animal back out onto the farm. */
   leaveHouse(id: string): void
+  /** Every larder: stock, size, and what is grown and eaten of it a day. */
+  foodReport(): readonly FoodReport[]
+  /** Put bought feed (meals) in the pantry. */
+  addFeed(meals: number): void
+  /**
+   * Which rules are switched on (the chapters in `farm-chapters.ts` decide).
+   * `starvation` off: a starving balloon keeps its helium, so hunger only
+   * stops breeding. `goods` off: residents make nothing. `discoverable` says
+   * whether a species may be discovered at all; a species it refuses waits.
+   */
+  setRules(rules: Partial<LifeRules>): void
+  /** Set what the farm's gem treasures multiply food by. */
+  setFoodBoosts(boosts: FoodBoosts): void
+  /** How fast a starving balloon leaks helium, as a share of the normal rate (1 = normal, 0.5 = the Helium Pump). A farm that stopped suiting it still leaks at full speed. */
+  setStarveLeakFactor(factor: number): void
+  /** Set an animal's fullness outright, 0..1. The debug harness and the tests use it. */
+  setFullness(id: string, level: number): void
+  /** True while a predator should be out hunting: any visitor still earning its home, or a hungry resident. */
+  wantsToHunt(id: string): boolean
+  /** A predator caught something: it fills up. */
+  feedCatch(id: string): void
+  /** Put goods in a house outright, up to its capacity. The debug harness and the tests use it. */
+  addGoods(houseId: string, good: GoodId, count: number): void
+  /** Goods waiting in one house. */
+  goodsIn(houseId: string): Readonly<Partial<Record<GoodId, number>>>
+  /** Debug only: put goods in a house, capped like real ones. The garden harness uses it. */
+  debugAddGoods(houseId: string, good: GoodId, count: number): void
+  /** Take every good out of a house. Returns what was in it. */
+  collectGoods(houseId: string): readonly { readonly good: GoodId; readonly count: number }[]
   reset(): void
   /** A plain-data copy of the whole simulation, for saving. */
   exportState(): AnimalLifeState
@@ -245,6 +308,11 @@ interface MutableAnimal {
   /** Seconds left of its walk off the grounds, or null while it is staying. */
   leaving: number | null
   packId: string | null
+  fullness: number
+  /** The rung of the hunger ladder last reported, so a change is told once. */
+  hunger: HungerLevel
+  /** Fraction of the next good made so far. */
+  making: number
 }
 
 export function createAnimalLife(speciesIds: readonly string[], options: AnimalLifeOptions = {}): AnimalLife {
@@ -261,6 +329,14 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
   let nextParent = 0
   let nextPackId = 1
   const random = options.random ?? Math.random
+  const foodWeb = createFoodWeb()
+  let foodBoosts: FoodBoosts = {}
+  let rules: LifeRules = { starvation: true, goods: true, discoverable: () => true }
+  let starveLeakFactor = 1
+  /** Goods waiting in each house, by house id. */
+  const houseGoods = new Map<string, Map<GoodId, number>>()
+  /** Goods from a save, waiting for this session's houses to be known. */
+  let pendingGoods: SavedHouseGoods[] = []
   /** Seconds left before a species may arrive again, after one of its animals left for good. */
   const cooldowns = new Map<string, number>()
   const between = (range: { readonly min: number; readonly max: number }): number => range.min + random() * (range.max - range.min)
@@ -295,6 +371,9 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       stayLimit: Number.POSITIVE_INFINITY,
       leaving: null,
       packId: null,
+      fullness: 1,
+      hunger: 'full',
+      making: 0,
     }
     rollWaits(animal)
     animals.set(id, animal)
@@ -321,6 +400,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       unsettled: animal.unsettled,
       departing: animal.leaving !== null,
       packId: animal.packId,
+      fullness: animal.fullness,
+      hunger: hungerLevel(animal.fullness),
     }
   }
 
@@ -403,13 +484,17 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
    */
   function breed(dt: number, events: AnimalLifeEvent[]): void {
     const adultsBySpecies = new Map<string, MutableAnimal[]>()
+    /** A species with anyone going hungry has no young: the herd is at its food. */
+    const shortOfFood = new Set<string>()
     for (const animal of animals.values()) {
-      if (animal.baby || animal.stage < 4) continue
+      if (animal.stage >= 3 && isHungry(animal)) shortOfFood.add(animal.species)
+      if (animal.baby || animal.stage < 4 || isHungry(animal)) continue
       const list = adultsBySpecies.get(animal.species) ?? []
       list.push(animal)
       adultsBySpecies.set(animal.species, list)
     }
     for (const species of speciesIds) {
+      if (shortOfFood.has(species)) continue
       const adults = adultsBySpecies.get(species) ?? []
       const pairs = Math.min(config.maxBreedingPairs, Math.floor(adults.length / 2))
       const house = pairs > 0 && hasPopulationSlot() ? houseWithRoom(species, houses, occupancy(), config.houseCapacity) : null
@@ -429,6 +514,116 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     }
   }
 
+  function isHungry(animal: MutableAnimal): boolean {
+    const level = hungerLevel(animal.fullness)
+    return level === 'hungry' || level === 'starving'
+  }
+
+  /** Residents eat: oldest first, so a shortage lands on the newest mouths. */
+  function feed(farm: AnimalLifeSnapshot['farm'], dt: number, events: AnimalLifeEvent[]): void {
+    const eaters = servingOrder([...animals.values()].filter((animal) => animal.stage >= 3 && animal.leaving === null && DIETS[animal.species]))
+    foodWeb.tick(eaters, farm.state, dt, foodBoosts)
+    for (const animal of eaters) {
+      const level = hungerLevel(animal.fullness)
+      if (level === animal.hunger) continue
+      animal.hunger = level
+      events.push({ kind: 'hunger', animalId: animal.id, species: animal.species, hunger: level })
+    }
+  }
+
+  function goodsOf(houseId: string): Map<GoodId, number> {
+    let goods = houseGoods.get(houseId)
+    if (!goods) {
+      goods = new Map()
+      houseGoods.set(houseId, goods)
+    }
+    return goods
+  }
+
+  function goodsCount(houseId: string): number {
+    let total = 0
+    for (const count of houseGoods.get(houseId)?.values() ?? []) total += count
+    return total
+  }
+
+  /** The house a good goes to: its maker's own if it has room, else the emptiest of its kind. */
+  function storeFor(animal: MutableAnimal): HouseSite | null {
+    const own = animal.insideId ? houses.find((house) => house.id === animal.insideId) : undefined
+    if (own && goodsCount(own.id) < HOUSE_GOODS_CAPACITY) return own
+    let best: HouseSite | null = null
+    let bestCount = HOUSE_GOODS_CAPACITY
+    for (const house of houses) {
+      if (!houseAccepts(house.prop, animal.species)) continue
+      const count = goodsCount(house.id)
+      if (count < bestCount) {
+        best = house
+        bestCount = count
+      }
+    }
+    return best
+  }
+
+  /** Well-fed adults make goods into their house. A full house lets the good spoil into scraps. */
+  function produce(farm: AnimalLifeSnapshot['farm'], dt: number, events: AnimalLifeEvent[]): void {
+    if (!rules.goods) return
+    for (const animal of animals.values()) {
+      if (animal.baby || animal.stage < 3 || animal.leaving !== null) continue
+      const recipe = PRODUCE[animal.species]
+      if (!recipe) continue
+      if (recipe.needsProp && (farm.state.propCounts?.[recipe.needsProp] ?? 0) <= 0) continue
+      animal.making += produceRate(animal.fullness) * recipe.perDay * dt / DAY_LENGTH_SECONDS
+      if (animal.making < 1) continue
+      animal.making -= 1
+      if (recipe.good === 'gem' || !GOODS[recipe.good]) {
+        events.push({ kind: 'produce', animalId: animal.id, species: animal.species, good: recipe.good })
+        continue
+      }
+      const house = storeFor(animal)
+      if (!house) {
+        foodWeb.add('scraps', SPOILED_SCRAPS)
+        continue
+      }
+      const goods = goodsOf(house.id)
+      goods.set(recipe.good, (goods.get(recipe.good) ?? 0) + 1)
+      events.push({ kind: 'produce', animalId: animal.id, species: animal.species, good: recipe.good, houseId: house.id })
+    }
+  }
+
+  /** Goods from a save find their house again by kind and place, once this session's houses are known. */
+  function placePendingGoods(): void {
+    if (pendingGoods.length === 0 || houses.length === 0) return
+    for (const saved of pendingGoods) {
+      let best: HouseSite | null = null
+      let bestDistance = Number.POSITIVE_INFINITY
+      for (const house of houses) {
+        if (house.prop !== saved.prop) continue
+        const distance = Math.hypot(house.x - saved.x, house.z - saved.z)
+        if (distance < bestDistance) {
+          best = house
+          bestDistance = distance
+        }
+      }
+      if (!best) continue
+      const goods = goodsOf(best.id)
+      for (const [good, count] of Object.entries(saved.goods) as [GoodId, number][]) {
+        if (!GOODS[good] || !Number.isFinite(count) || count <= 0) continue
+        goods.set(good, Math.min(HOUSE_GOODS_CAPACITY, (goods.get(good) ?? 0) + Math.floor(count)))
+      }
+    }
+    pendingGoods = []
+  }
+
+  /** A house that was sold or stored takes its goods with it: they spoil into scraps. */
+  function spoilGoodsOfMissingHouses(): void {
+    if (pendingGoods.length > 0) return
+    const standing = new Set(houses.map((house) => house.id))
+    for (const houseId of [...houseGoods.keys()]) {
+      if (standing.has(houseId)) continue
+      foodWeb.add('scraps', goodsCount(houseId) * SPOILED_SCRAPS)
+      houseGoods.delete(houseId)
+    }
+  }
+
   for (const species of speciesIds.slice(0, config.maximumPopulation)) newAnimal(species, 0)
   for (const species of CARNIVAL_STARTERS) {
     if (speciesIds.includes(species)) {
@@ -440,7 +635,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
   function queueEligibleGuests(farm: FarmSnapshot): void {
     for (const species of speciesIds) {
       const trigger = DISCOVERY[species]
-      if (!trigger || !requirementMet(trigger, farm) || discovered.has(species)) continue
+      if (!trigger || !requirementMet(trigger, farm) || discovered.has(species) || !rules.discoverable(species)) continue
       discovered.add(species)
       pendingVisitors.push(species)
     }
@@ -454,7 +649,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     const level = lastSnapshot?.expansionLevel ?? 0
     const candidates: { species: string; weight: number }[] = []
     for (const species of speciesIds) {
-      if ((cooldowns.get(species) ?? 0) > 0) continue
+      if ((cooldowns.get(species) ?? 0) > 0 || isUniqueSpecies(species)) continue
       const hasResident = [...animals.values()].some((animal) => animal.species === species && !animal.baby && animal.stage >= 3)
       const homeRequirement = getSpeciesConditions(species)[2]?.requirement
       if (!hasResident || !requirementMet(homeRequirement, farm) || !hasRoomFor(species)) continue
@@ -521,6 +716,45 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       const animal = animals.get(id)
       if (animal) animal.insideId = null
     },
+    foodReport: () => foodWeb.report(),
+    addFeed(meals) { foodWeb.add('feed', meals) },
+    setFoodBoosts(boosts) { foodBoosts = { ...boosts } },
+    setRules(next) { rules = { ...rules, ...next } },
+    setStarveLeakFactor(factor) { starveLeakFactor = Number.isFinite(factor) ? Math.max(0, Math.min(1, factor)) : 1 },
+    setFullness(id, level) {
+      const animal = animals.get(id)
+      if (animal && Number.isFinite(level)) animal.fullness = Math.max(0, Math.min(1, level))
+    },
+    wantsToHunt(id) {
+      const animal = animals.get(id)
+      if (!animal || !isPredatorDiet(animal.species)) return true
+      // A visitor has to eat here to call the farm home, so it always hunts.
+      if (animal.stage < 3) return true
+      return animal.fullness < PREDATOR_HUNTS_BELOW
+    },
+    feedCatch(id) {
+      const animal = animals.get(id)
+      if (animal) animal.fullness = Math.min(1, animal.fullness + catchMeal(animal.species))
+    },
+    addGoods(houseId, good, count) {
+      if (!GOODS[good] || !Number.isFinite(count) || count <= 0) return
+      const goods = goodsOf(houseId)
+      const room = Math.max(0, HOUSE_GOODS_CAPACITY - goodsCount(houseId))
+      goods.set(good, (goods.get(good) ?? 0) + Math.min(room, Math.floor(count)))
+    },
+    goodsIn(houseId) {
+      return Object.fromEntries(houseGoods.get(houseId) ?? [])
+    },
+    debugAddGoods(houseId, good, count) {
+      const goods = goodsOf(houseId)
+      goods.set(good, Math.min(HOUSE_GOODS_CAPACITY - goodsCount(houseId) + (goods.get(good) ?? 0), (goods.get(good) ?? 0) + Math.max(0, Math.floor(count))))
+    },
+    collectGoods(houseId) {
+      const goods = houseGoods.get(houseId)
+      if (!goods) return []
+      houseGoods.delete(houseId)
+      return [...goods].filter(([, count]) => count > 0).map(([good, count]) => ({ good, count }))
+    },
     discover(species) {
       if (!speciesIds.includes(species) || discovered.has(species)) return []
       discovered.add(species)
@@ -559,6 +793,9 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     },
     reset() {
       animals.clear()
+      foodWeb.reset()
+      houseGoods.clear()
+      pendingGoods = []
       breedElapsed.clear()
       houses = []
       nextParent = 0
@@ -591,11 +828,21 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           parentIds: [...animal.parentIds],
           inside: animal.insideId !== null,
           ...(animal.helium < 1 ? { helium: animal.helium } : {}),
+          ...(animal.fullness < 1 ? { fullness: Math.round(animal.fullness * 1000) / 1000 } : {}),
         })),
         discovered: [...discovered],
         pendingVisitors: [...pendingVisitors],
         nextAnimalId,
         arrivalElapsed,
+        food: foodWeb.exportState(),
+        goods: [
+          ...pendingGoods,
+          ...[...houseGoods].flatMap(([houseId, goods]) => {
+            const house = houses.find((entry) => entry.id === houseId)
+            if (!house || goods.size === 0) return []
+            return [{ prop: house.prop, x: house.x, z: house.z, goods: Object.fromEntries(goods) }]
+          }),
+        ],
       }
     },
     importState(state) {
@@ -629,6 +876,9 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           stayLimit: Number.POSITIVE_INFINITY,
           leaving: null,
           packId: null,
+          fullness: Math.max(0, Math.min(1, finite(saved.fullness, 1))),
+          hunger: hungerLevel(Math.max(0, Math.min(1, finite(saved.fullness, 1)))),
+          making: 0,
         })
         rollWaits(animals.get(saved.id)!)
         highestAnimal = Math.max(highestAnimal, Number(saved.id.replace(/^animal-/, '')) || 0)
@@ -637,6 +887,11 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       for (const species of state.pendingVisitors) if (known(species)) pendingVisitors.push(species)
       nextAnimalId = Math.max(highestAnimal + 1, Math.floor(finite(state.nextAnimalId, 1)))
       arrivalElapsed = Math.max(0, finite(state.arrivalElapsed))
+      foodWeb.importState(state.food)
+      houseGoods.clear()
+      pendingGoods = Array.isArray(state.goods)
+        ? state.goods.filter((entry) => entry && typeof entry.prop === 'string' && Number.isFinite(entry.x) && Number.isFinite(entry.z) && entry.goods && typeof entry.goods === 'object')
+        : []
       arrivalWait = rollArrivalWait()
       lastSnapshot = null
     },
@@ -644,6 +899,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       lastSnapshot = snapshot
       houses = snapshot.houses ?? []
       evictFromMissingHouses()
+      placePendingGoods()
+      spoilGoodsOfMissingHouses()
       const dt = Number.isFinite(deltaSeconds) ? Math.max(0, deltaSeconds) : 0
       const stageDt = Math.min(0.25, dt)
       const events: AnimalLifeEvent[] = []
@@ -746,15 +1003,27 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         }
       }
 
-      // Residents that hold their residency: the farm has to keep suiting them.
-      // Helium drains while it does not and refills (faster) once it does, and a
-      // flat balloon pops. Removing it here also lets its species be seen again.
-      const deflated: MutableAnimal[] = []
+      feed(snapshot.farm, dt, events)
+      produce(snapshot.farm, dt, events)
+
+      // Residents leak helium while they starve, and those that hold their
+      // residency also while the farm stops suiting them. Helium refills
+      // (faster) once both are put right, and a flat balloon pops. Removing it
+      // here also lets its species be seen again.
+      const deflated: { animal: MutableAnimal; reason: 'starved' | 'unsuited' }[] = []
       for (const animal of animals.values()) {
-        if (animal.baby || animal.stage < 3 || !holdsResidency(animal.species)) continue
+        if (animal.baby || animal.stage < 3) continue
+        const starving = rules.starvation && hungerLevel(animal.fullness) === 'starving'
+        const holds = holdsResidency(animal.species)
+        if (!holds && !starving && animal.helium >= 1) continue
         const home = getSpeciesConditions(animal.species)[2]?.requirement ?? null
-        const suited = requirementMet(home, snapshot.farm)
-        animal.helium = stepHelium(animal.helium, !suited, Math.min(dt, 1))
+        const suited = !holds || requirementMet(home, snapshot.farm)
+        const leaking = !suited || starving
+        // Starving alone leaks at the treasure-adjusted rate; an unsuited farm always leaks at full speed.
+        const leakScale = leaking && suited ? starveLeakFactor : 1
+        animal.helium = stepHelium(animal.helium, leaking, Math.min(dt, 1) * (leaking ? leakScale : 1))
+        if (animal.helium <= 0) deflated.push({ animal, reason: starving ? 'starved' : 'unsuited' })
+        if (!holds) continue
         if (!suited && !animal.unsettled) {
           animal.unsettled = true
           events.push({ kind: 'unsettle', animalId: animal.id, species: animal.species })
@@ -762,10 +1031,9 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           animal.unsettled = false
           events.push({ kind: 'resettle', animalId: animal.id, species: animal.species })
         }
-        if (animal.helium <= 0) deflated.push(animal)
       }
-      for (const animal of deflated) {
-        events.push({ kind: 'deflate', animalId: animal.id, species: animal.species })
+      for (const { animal, reason } of deflated) {
+        events.push({ kind: 'deflate', animalId: animal.id, species: animal.species, reason })
         api.remove(animal.id)
       }
 

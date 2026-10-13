@@ -1,12 +1,15 @@
 /**
  * Animal info card: the pure rules behind the click-an-animal popup.
  *
- * The card itself is Three.js (`src/ui/animal-card.ts`) and stays a renderer:
- * it draws whatever this module says is true. Stages, sell gating, the Helium
- * meter and the rename rules live here so they stay testable in
+ * The card itself is a DOM panel (`src/ui/animal-card-dom.ts`) and stays a
+ * renderer: it draws whatever this module says is true. Stages, sell gating,
+ * the Helium and Hunger meters and the rename rules live here so they stay
+ * testable in
  * `tests/animal-card.test.mjs` without a browser -- the same split the animal
  * condition ladder uses on purpose.
  */
+
+import { HUNGER_LABELS, hungerLevel, type HungerLevel } from './animal-diet';
 
 /** The first stage that counts as settled. Matches `canSellAnimal` in sales. */
 export const RESIDENT_STAGE = 3;
@@ -129,4 +132,39 @@ export function placeInfoCard(
   centerX = Math.min(view.right - halfWidth, Math.max(view.left + halfWidth, centerX));
   const centerY = Math.min(view.top - halfHeight, Math.max(view.bottom + halfHeight, anchor.y));
   return { x: centerX, y: centerY };
+}
+
+// ---------------------------------------------------------------- hunger --
+
+/** Meter colour family for each rung: green, olive, amber, red. */
+export type HungerTone = 'full' | 'fed' | 'hungry' | 'starving';
+
+export interface HungerView {
+  readonly level: HungerLevel;
+  /** The rung word beside the meter: Full / Fed / Hungry / Starving. */
+  readonly label: string;
+  /** The bar's fill, 0..1. */
+  readonly fill: number;
+  readonly tone: HungerTone;
+  /** One plain line for a hungry animal; null when there is nothing to warn about. */
+  readonly hint: string | null;
+}
+
+const HUNGER_HINTS: Readonly<Record<HungerLevel, string | null>> = {
+  full: null,
+  fed: null,
+  hungry: "Hungry animals don't breed or make goods. Grow more of what it eats, or buy feed sacks on Pip's Feed tab.",
+  starving: "Starving: it is losing helium. Buy feed sacks on Pip's Feed tab, or grow more of what it eats.",
+};
+
+/** Everything the Hunger meter shows for a fullness (1 = just ate, 0 = empty). */
+export function hungerView(fullness: number): HungerView {
+  const fill = Number.isFinite(fullness) ? Math.min(1, Math.max(0, fullness)) : 1;
+  const level = hungerLevel(fill);
+  return { level, label: HUNGER_LABELS[level], fill, tone: level, hint: HUNGER_HINTS[level] };
+}
+
+/** The predator line: a hungry (or visiting) one hunts, a fed one laze about. */
+export function huntingStatus(hunting: boolean): string {
+  return hunting ? 'Hunting' : 'Lazing (fed)';
 }

@@ -83,8 +83,8 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
 /** The shed starts empty: seeds are bought at the shop, never handed out. */
 export const STARTING_SEEDS_PER_PLANT = 0
 
-/** The one exception: a single dandelion seed, so the first plant is free. */
-export const STARTING_SEED_GIFT: { readonly species: PlantId; readonly count: number } = { species: 'dandelion', count: 1 }
+/** The one exception: a single poppy seed, so the first plant is free. It grows in bare dirt, as Chapter 1 has no lawn. */
+export const STARTING_SEED_GIFT: { readonly species: PlantId; readonly count: number } = { species: 'poppy', count: 1 }
 
 /** Coins for one seed. Each is a little under what its plant sells for grown. */
 export const SEED_PRICES: Readonly<Record<PlantId, number>> = {

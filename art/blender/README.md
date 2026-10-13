@@ -208,3 +208,13 @@ blender --background --factory-startup --python art/blender/blueberry_bush.py
 The bush is a balloon-leaf dome on a pine-mulched mound, split into node groups the game shows, hides and scales as it grows (`BB_canopy`, `BB_flowers`, `BB_berries`, `BB_shoots`, ...). Its berries share one material, `BB berry`, which the game re-tints green, pink and blue as they ripen. `garden-critters.glb` holds the cast of the care minigames and helpers: the beetle (flappable wing pivots), the ladybug, a two-half leaf for slicing, the rain cloud, the fly swatter and the hedgehog. The script's docstring lists every node name the game reads.
 
 The blueberry seed packet comes from `shed_icons.py`; render only it with `-- blueberry` so the approved packets are left alone.
+## Food web icons (goods, foods, hunger bubbles)
+
+- Authoring script: [`goods_icons.py`](goods_icons.py); outputs `../../public/assets/goods/*.png` (128x128, transparent, 10-20 KB each).
+- Goods: `good-{milk,wool,egg,duck-egg,down,truffle,trinket,gem}.png`. Foods: `food-{grass,meadow,pondweed,seeds,scraps,worms,blooms,feed}.png`. Bubbles: `hunger-bubble.png` and `starving-bubble.png` (red bowl, exclamation and sweat drop).
+
+```powershell
+blender --background --factory-startup --python art/blender/goods_icons.py
+```
+
+Regeneration command: overwrites every icon (name icons after `--` to render only those). Glossy Principled materials are lit by three area lamps and rendered with Cycles on the CPU (low samples, fixed seed, no GPU or EGL needed; falls back to EEVEE when Cycles is missing). Each icon is rendered at 256px and averaged down to 128px. The contact sheet `goods-review.png` is written to `$GOODS_REVIEW_DIR` (default: the system temp dir), never into the repo. The script also runs directly under the `bpy` module (`python art/blender/goods_icons.py`).

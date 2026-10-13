@@ -20,6 +20,12 @@ const herd = (species, count, extra = {}) => Array.from({ length: count }, (_, i
 test('every species in the catalog has exactly one house, and shared houses are the coop and barn', () => {
   assert.ok(ANIMAL_CATALOG.length >= 9)
   for (const { id: species } of ANIMAL_CATALOG) {
+    // The starhorn is the one unique species: no house, so it can never breed.
+    if (species === 'starhorn') {
+      assert.equal(houseFor(species), null)
+      assert.equal(Object.values(HOUSE_SPECIES).filter((list) => list.includes(species)).length, 0)
+      continue
+    }
     assert.ok(houseFor(species), `${species} has a house`)
     assert.equal(Object.values(HOUSE_SPECIES).filter((list) => list.includes(species)).length, 1)
   }

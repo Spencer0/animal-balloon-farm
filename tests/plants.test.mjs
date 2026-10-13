@@ -25,18 +25,19 @@ test('catalog lists every plant and the seed shed starts empty', () => {
     assert.equal(simulation.seedsFor(species.id), species.id === STARTING_SEED_GIFT.species ? 1 : STARTING_SEEDS_PER_PLANT)
   }
   assert.equal(STARTING_SEEDS_PER_PLANT, 0)
-  assert.equal(STARTING_SEED_GIFT.species, 'dandelion')
+  assert.equal(STARTING_SEED_GIFT.species, 'poppy')
   assert.equal(simulation.placementResult('clover', 0, 0, surface('grass')).failure, 'out-of-seeds')
 })
 
 test('bought seeds land in the shed and every plant has a seed price', () => {
   const simulation = createPlantSimulation()
-  assert.equal(simulation.addSeeds('poppy', 2), 2)
-  assert.equal(simulation.addSeeds('poppy'), 3)
-  assert.equal(simulation.addSeeds('poppy', -4), 3)
+  const gift = simulation.seedsFor('poppy')
+  assert.equal(simulation.addSeeds('poppy', 2), gift + 2)
+  assert.equal(simulation.addSeeds('poppy'), gift + 3)
+  assert.equal(simulation.addSeeds('poppy', -4), gift + 3)
   for (const species of PLANT_CATALOG) assert.ok(SEED_PRICES[species.id] > 0)
   assert.ok(simulation.plant('poppy', 0, 0, surface('soil')))
-  assert.equal(simulation.seedsFor('poppy'), 2)
+  assert.equal(simulation.seedsFor('poppy'), gift + 2)
 })
 
 test('placement enforces bounds, substrate, visible pond water, seeds, and spacing', () => {
@@ -63,15 +64,16 @@ test('planting spends only that seed and exposes species counts for future habit
 
 test('selling a plant removes it, keeps its spent seed consumed, and cannot sell twice', () => {
   const simulation = stockedSimulation()
+  const before = simulation.seedsFor('poppy')
   const poppy = simulation.plant('poppy', 0, 0, surface('soil'))
   assert.ok(poppy)
-  assert.equal(simulation.seedsFor('poppy'), 4)
+  assert.equal(simulation.seedsFor('poppy'), before - 1)
   assert.equal(simulation.countPlants('poppy'), 1)
   assert.equal(simulation.remove(poppy.instanceId).instanceId, poppy.instanceId)
   assert.equal(simulation.countPlants('poppy'), 0)
-  assert.equal(simulation.seedsFor('poppy'), 4)
+  assert.equal(simulation.seedsFor('poppy'), before - 1)
   assert.equal(simulation.remove(poppy.instanceId), null)
-  assert.equal(simulation.seedsFor('poppy'), 4)
+  assert.equal(simulation.seedsFor('poppy'), before - 1)
 })
 
 test('ground cover needs real turf: thin grass is refused, thick grass is fine', () => {

@@ -165,7 +165,7 @@ export function createPredation(deps: PredationDeps) {
         roostedOwls.add(animal.instanceId)
         nextRoost += 1
       }
-      return { id: animal.instanceId, carnivalSpawn: carnival, stage, roost, stranded: stage >= 3 && oakCount === 0, sold: animal.isSold }
+      return { id: animal.instanceId, carnivalSpawn: carnival, stage, roost, stranded: stage >= 3 && oakCount === 0, sold: animal.isSold, hungry: progress.wantsToHunt(animal.instanceId) }
     })
     const flock = animals
       .filter((animal) => animal.id === 'chicken' && !animal.isSold && animal.isAtFarm)
@@ -199,7 +199,7 @@ export function createPredation(deps: PredationDeps) {
         const busy = animal.isCapturing || animal.isResidencyPending || animal.isGoingHome
         // `size` is the model's length, so the mouth sits a little under half of it ahead of the centre.
         const reach = (bodySizeBySpecies.get('snake') ?? 2.8) * SNAKE_MOUTH_SHARE * animal.currentScale
-        return { id: animal.instanceId, record: animal.sim, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy), reach }
+        return { id: animal.instanceId, record: animal.sim, huntAllowed: Boolean(record && record.stage >= 2 && animal.isAtFarm && !busy && progress.wantsToHunt(animal.instanceId)), reach }
       })
     if (snakes.length === 0) return
     const quarry = animals
@@ -226,6 +226,8 @@ export function createPredation(deps: PredationDeps) {
       if (event.type === 'caught') {
         const prey = animalById.get(event.preyId)
         if (prey) handlePredatorCatch(event.hunter, prey, event.roll)
+        // A catch is a big meal: a fed predator lazes about until it is hungry again.
+        progress.feedCatch(event.hunterId)
       } else if (event.type === 'escaped') {
         const prey = animalById.get(event.preyId)
         if (prey) boltHome(prey, event.roll)

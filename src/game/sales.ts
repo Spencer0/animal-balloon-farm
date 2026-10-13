@@ -23,6 +23,8 @@ export const ANIMAL_SALE_PRICES: Readonly<Record<BalloonAnimalId, number>> = {
   rat: 16,
   snake: 26,
   mole: 18,
+  // The one-of-a-kind end-game animal: worth the most, though it is far more valuable on the farm making gems.
+  starhorn: 60,
 }
 
 export interface AnimalSaleStatus {
@@ -108,6 +110,9 @@ const ANIMAL_NAMES = [
   'Button', 'Honey', 'Sprout', 'Pudding', 'Bubbles', 'Tansy', 'Muffin', 'Fern',
   'Acorn', 'Doodle', 'Bumble', 'Marigold', 'Peaches', 'Socks', 'Truffle', 'Bean',
 ] as const
+
+/** A one-of-a-kind species keeps one fixed name, not a pick from the list. */
+export const UNIQUE_ANIMAL_NAMES: Readonly<Record<string, string>> = { starhorn: 'Twinkle' }
 
 /** Make a fresh, unique set of friendly names for this game session. */
 export function generateAnimalNames(count: number, random: () => number = Math.random): readonly string[] {

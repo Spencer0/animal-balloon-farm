@@ -46,6 +46,7 @@ const FAILURE_COPY = {
   unreadable: 'This save could not be read.',
   'wrong-app': 'This is not a farm save.',
   'too-new': 'Saved by a newer version of the game.',
+  outdated: 'Saved by an older version of the game.',
   malformed: 'This save is damaged.',
 } as const
 
@@ -105,6 +106,7 @@ export function createFarmsPanel(handlers: FarmsHandlers, onToggle?: (isOpen: bo
       const rows: readonly (readonly [string, string])[] = [
         ['Farmer level', String(summary.farmerLevel)],
         ['Coins', String(summary.coins)],
+        ...(summary.gems ? [['Star gems', String(summary.gems)] as const] : []),
         ['Day', String(summary.day)],
         ['Residents', String(summary.residents)],
         ['Time played', formatPlayTime(summary.playSeconds)],
