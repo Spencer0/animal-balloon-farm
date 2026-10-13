@@ -17,11 +17,15 @@ export type CareSound =
   | 'dew' | 'bonus' | 'splash'
   // paddle
   | 'swish' | 'slurp' | 'splash' | 'thunk'
+  // rope
+  | 'hop' | 'splash' | 'swish'
 
 export interface CareSfx {
   play(sound: CareSound, pitch?: number): void
   /** A held beetle buzz, 0 (silent) to 1. */
   buzz(level: number): void
+  // rope: the runner's whoosh, 0 (silent) to 1, climbing as it nears the frog.
+  whoosh(level: number): void
   stopAll(): void
 }
 
@@ -98,6 +102,10 @@ const NOTE = (midi: number): number => 440 * 2 ** ((midi - 69) / 12)
 
 let buzzOsc: OscillatorNode | null = null
 let buzzGain: GainNode | null = null
+// rope
+let whooshSource: AudioBufferSourceNode | null = null
+let whooshFilter: BiquadFilterNode | null = null
+let whooshGain: GainNode | null = null
 
 export function createCareSfx(): CareSfx {
   return {
@@ -237,6 +245,17 @@ export function createCareSfx(): CareSfx {
           tone('triangle', 160, 60, now, 0.22, 0.5)
           hiss(now, 0.08, 0.3, 'lowpass', 800, 200, 1)
           break
+        // rope
+        case 'hop':
+          tone('sine', 360, 760, now, 0.13, 0.22)
+          break
+        case 'splash':
+          hiss(now, 0.45, 0.45, 'bandpass', 2400, 700, 0.9)
+          tone('sine', 520, 240, now, 0.2, 0.12)
+          break
+        case 'swish':
+          hiss(now, 0.3, 0.32 * pitch, 'bandpass', 600, 3000, 1.4)
+          break
       }
     },
     buzz(level): void {
@@ -266,8 +285,32 @@ export function createCareSfx(): CareSfx {
       }
       buzzGain?.gain.setTargetAtTime(target, kit.context.currentTime, 0.05)
     },
+    // rope
+    whoosh(level): void {
+      const kit = audio()
+      if (!kit) return
+      const amount = Math.max(0, Math.min(1, level))
+      const target = amount * 0.16
+      if (!whooshSource && target > 0) {
+        whooshSource = kit.context.createBufferSource()
+        whooshSource.buffer = kit.noise
+        whooshSource.loop = true
+        whooshFilter = kit.context.createBiquadFilter()
+        whooshFilter.type = 'bandpass'
+        whooshFilter.Q.value = 1.2
+        whooshGain = kit.context.createGain()
+        whooshGain.gain.value = 0
+        whooshSource.connect(whooshFilter)
+        whooshFilter.connect(whooshGain)
+        whooshGain.connect(kit.master)
+        whooshSource.start()
+      }
+      whooshFilter?.frequency.setTargetAtTime(300 + 2200 * amount, kit.context.currentTime, 0.05)
+      whooshGain?.gain.setTargetAtTime(target, kit.context.currentTime, 0.05)
+    },
     stopAll(): void {
       if (buzzGain && context) buzzGain.gain.setTargetAtTime(0, context.currentTime, 0.03)
+      if (whooshGain && context) whooshGain.gain.setTargetAtTime(0, context.currentTime, 0.03)
     },
   }
 }

@@ -42,5 +42,10 @@ export interface CareGameScene {
   /** Debug harness only: where things are, for a bot to steer by. */
   /** Debug harness: a snapshot of the scene's own state, for scripted play. Optional. */
   debug?(): unknown
+  /**
+   * How long the outro (the scene's beat, in slow motion) runs before the stamp.
+   * Omit it for the default; a scene with a longer beat sets its own.
+   */
+  readonly outroSeconds?: number
   dispose(): void
 }

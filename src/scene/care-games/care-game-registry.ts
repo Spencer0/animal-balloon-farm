@@ -4,6 +4,7 @@ import { createHopGame } from './hop-game'
 import { createChopGame } from './chop-game'
 import { createSkimGame } from './skim-game'
 import { createPaddleGame } from './paddle-game'
+import { createRopeGame } from './rope-game'
 import { createSnipGame } from './snip-game'
 import { createSwatGame } from './swat-game'
 import type { CareGameContext, CareGameScene } from './care-game-types'
@@ -42,8 +43,7 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   chop: { create: createChopGame, input: 'tap' },
   skim: { create: createSkimGame, input: 'tap' },
   paddle: { create: createPaddleGame, input: 'tap' },
-  // rope: built in rope-game.ts
-  rope: { create: null, input: 'tap' },
+  rope: { create: createRopeGame, input: 'tap' },
 }
 
 /** Whether a kind has a close-up scene yet. */
