@@ -37,8 +37,7 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   buzz: { create: null, input: 'tap' },
   // hop: built in hop-game.ts
   hop: { create: null, input: 'tap' },
-  // Takes the pointer like snip (the overlay is live) but keeps the cursor; 'tap' leaves the overlay click-through.
-  chop: { create: createChopGame, input: 'capture' },
+  chop: { create: createChopGame, input: 'tap' },
   // skim: built in skim-game.ts
   skim: { create: null, input: 'tap' },
   // paddle: built in paddle-game.ts
