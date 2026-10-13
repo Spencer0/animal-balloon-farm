@@ -41,7 +41,7 @@ import sys
 from pathlib import Path
 
 import bpy
-from mathutils import Vector
+from mathutils import Euler, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "public" / "assets" / "plants"
@@ -163,6 +163,48 @@ def fuzz(prefix, parent, centre, radii, count, length, mat):
         cone(f"{prefix}_{index + 1}", surface + direction * length * .4, .0065, .0012, length, mat, parent, 5, aim(direction))
 
 
+def tube(name, points, radii, mat, parent, sides=10):
+    """One continuous lofted tube through `points` (parent-local), so a stem has no joints."""
+    verts, faces, rings = [], [], []
+    for i, p in enumerate(points):
+        a = points[max(i - 1, 0)]
+        b = points[min(i + 1, len(points) - 1)]
+        tangent = (b - a).normalized()
+        u = tangent.cross(Vector((0, 1, 0)))
+        if u.length < 1e-4:
+            u = tangent.cross(Vector((1, 0, 0)))
+        u.normalize()
+        v = tangent.cross(u).normalized()
+        rings.append(len(verts))
+        for k in range(sides):
+            angle = math.tau * k / sides
+            verts.append(p + (u * math.cos(angle) + v * math.sin(angle)) * radii[i])
+    for i in range(len(points) - 1):
+        s0, s1 = rings[i], rings[i + 1]
+        for k in range(sides):
+            k2 = (k + 1) % sides
+            faces.append((s0 + k, s0 + k2, s1 + k2, s1 + k))
+    bottom = len(verts)
+    verts.append(points[0])
+    for k in range(sides):
+        faces.append((bottom, rings[0] + (k + 1) % sides, rings[0] + k))
+    top = len(verts)
+    verts.append(points[-1])
+    last = rings[-1]
+    for k in range(sides):
+        faces.append((top, last + k, last + (k + 1) % sides))
+    mesh = bpy.data.meshes.new(name + "_mesh")
+    mesh.from_pydata([tuple(v) for v in verts], [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    obj.parent = parent
+    obj.matrix_parent_inverse.identity()
+    obj.data.materials.append(mat)
+    smooth(obj)
+    return obj
+
+
 def googly(prefix, parent, eyes, size):
     """White googly eyes; each pupil sits off-centre so it looks like it is rolling."""
     for label, centre, look in eyes:
@@ -181,9 +223,9 @@ def dewdrop(prefix, parent, centre, size=1.0):
     sphere(f"{prefix}_shine", Vector((cx, cy, cz)) + highlight * r * .9, (r * .22,) * 3, M["dewShine"], parent, 6, 4)
 
 
-def add_critter(name, x):
-    """A critter root laid out at x for the review. The export zeroes it again."""
-    root = pivot(name, (x, 0, 0))
+def add_critter(name, x, z=0):
+    """A critter root laid out at (x, z) for the review. The export zeroes it again."""
+    root = pivot(name, (x, 0, z))
     critters.append(root)
     return root
 
@@ -200,14 +242,14 @@ for collection in (bpy.data.meshes, bpy.data.curves, bpy.data.materials,
 M = {
     # Bee.
     "bee": make_material("FLOWER bee body", "#f6c744", .42, 0, .3),
-    "beeStripe": make_material("FLOWER bee stripe", "#2b2433", .4, 0, .3),
+    "beeStripe": make_material("FLOWER bee stripe", "#3a2d3a", .4, 0, .3),
     "fuzz": make_material("FLOWER bee fuzz", "#fff4cf", .9, 0, .05),
-    "wing": make_material("FLOWER bee wing", "#d9f0ff", .2, 0, .3, alpha=.5),
+    "wing": make_material("FLOWER bee wing", "#eef8ff", .2, 0, .3, alpha=.7),
     # Water and dew.
     "dew": make_material("FLOWER dewdrop", "#6fbcf0", .06, 0, .7, alpha=.6),
     "dewShine": make_material("FLOWER dewdrop shine", "#ffffff", .1, 0, .3),
     # Aphid.
-    "aphid": make_material("FLOWER aphid body", "#bfe59a", .45, 0, .3),
+    "aphid": make_material("FLOWER aphid body", "#a8ec6a", .4, 0, .35),
     "aphidLeg": make_material("FLOWER aphid leg", "#6f9a4f", .5, 0, .1),
     # Faces.
     "eyeWhite": make_material("FLOWER eye white", "#fffaf0", .3, 0, .4),
@@ -216,17 +258,22 @@ M = {
     # Burr and thorn.
     "burr": make_material("FLOWER burr core", "#7a5a2c", .75, 0, .1),
     "burrSpike": make_material("FLOWER burr spike", "#b5523c", .45, 0, .2),
-    "thorn": make_material("FLOWER thorn", "#6b4330", .4, 0, .2),
+    "thorn": make_material("FLOWER thorn", "#9c3f2c", .38, 0, .25),
+    "stub": make_material("FLOWER thorn stub", "#5ea35a", .32, .01, .5),
     "leafGreen": make_material("FLOWER leaf", "#4c9058", .32, .01, .5),
     "leafBright": make_material("FLOWER sunlit leaf", "#79b660", .3, .01, .54),
     # Shears.
-    "steel": make_material("FLOWER shears steel", "#cfd8de", .2, .8, .3),
+    "steel": make_material("FLOWER shears steel", "#9fabb4", .28, .85, .3),
+    "brass": make_material("FLOWER shears brass", "#d9a441", .3, .8, .3),
+    "rubber": make_material("FLOWER shears rubber grip", "#d9573b", .6, 0, .1),
     "wood": make_material("FLOWER shears wood", "#c98a4b", .5, 0, .2),
     "loop": make_material("FLOWER shears grip loop", "#e2603f", .3, 0, .6),
     # Stalk.
-    "stem": make_material("FLOWER stalk stem", "#8aa552", .5, 0, .15),
-    "fluff": make_material("FLOWER seed fluff", "#f7f1e3", .85, 0, .05),
-    "seed": make_material("FLOWER seed thread", "#b89a6a", .6, 0, .05),
+    "stem": make_material("FLOWER stalk stem", "#8c9a4f", .55, 0, .15),
+    "leafBrown": make_material("FLOWER stalk leaf browning", "#b98a3e", .6, 0, .15),
+    "petal": make_material("FLOWER stalk dried petal", "#9a6a3a", .7, 0, .1),
+    "fluff": make_material("FLOWER seed fluff", "#e6dcc3", .9, 0, .05),
+    "seed": make_material("FLOWER seed thread", "#b8a27a", .6, 0, .05),
     # Review stage (never exported).
     "stageFloor": make_material("STAGE buttercream floor", "#f6e6c6", .88, 0, .02),
     "stageBack": make_material("STAGE mint studio backdrop", "#a6d8cf", .9, 0, .02),
@@ -236,12 +283,16 @@ critters = []
 
 # ----------------------------------------------------------------- bee -----
 # About 0.18 m long, facing +X. The head is the front, so the googly eyes sit
-# on its +X face, one each side, and the dewdrop hangs under the belly.
-bee = add_critter("CRITTER_bee", -.5)
-sphere("CRITTER_bee_body", (-.02, 0, 0), (.065, .05, .048), M["bee"], bee, 14, 9)
+# on its +X face, and the one big dewdrop hangs under the belly.
+bee = add_critter("CRITTER_bee", -.5, .2)
+BEE_CX, BEE_RX, BEE_RY, BEE_RZ = -.02, .065, .05, .048
+sphere("CRITTER_bee_body", (BEE_CX, 0, 0), (BEE_RX, BEE_RY, BEE_RZ), M["bee"], bee, 14, 9)
+# Soft fuzzy bands that follow the body: each band is a thin slice of the body's
+# own curve, a hair proud of the surface, so it hugs the belly instead of ringing it.
 for index, x in enumerate((-.05, -.012, .026)):
-    sphere(f"CRITTER_bee_stripe_{index + 1}", (x, 0, 0), (.012, .054, .052), M["beeStripe"], bee, 12, 6)
-fuzz("CRITTER_bee_fuzz", bee, (-.02, 0, 0), (.066, .051, .049), 16, .022, M["fuzz"])
+    k = math.sqrt(max(0.0, 1 - ((x - BEE_CX) / BEE_RX) ** 2))
+    sphere(f"CRITTER_bee_stripe_{index + 1}", (x, 0, 0), (.018, BEE_RY * k + .0025, BEE_RZ * k + .0025), M["beeStripe"], bee, 14, 8)
+fuzz("CRITTER_bee_fuzz", bee, (BEE_CX, 0, 0), (BEE_RX + .001, BEE_RY + .001, BEE_RZ + .001), 18, .022, M["fuzz"])
 sphere("CRITTER_bee_head", (.068, 0, .004), (.04, .04, .038), M["beeStripe"], bee, 12, 8)
 googly("CRITTER_bee", bee, (
     ("L", (.1, -.024, .012), (.7, -.35, .1)),
@@ -250,36 +301,38 @@ googly("CRITTER_bee", bee, (
 for label, sign in (("L", -1), ("R", 1)):
     stick(f"CRITTER_bee_antenna_{label}", (.09, sign * .018, .03), (.118, sign * .036, .08), .0035, .0025, M["beeStripe"], bee, 4)
     sphere(f"CRITTER_bee_antenna_tip_{label}", (.118, sign * .036, .08), (.009, .009, .009), M["fuzz"], bee, 6, 4)
-    # Wings: each one a pivot at its root on the back, so code can flap it.
-    wing = pivot(f"wing_{label}", (-.005, sign * .036, .034), bee)
-    sphere(f"wing_{label}_membrane", (-.012, sign * .03, .016), (.03, .036, .0035), M["wing"], wing, 10, 4)
+    # Wings: big, rounded, semi-opaque, each a pivot at its root on the back so code can flap it.
+    wing = pivot(f"wing_{label}", (-.01, sign * .04, .03), bee)
+    wing.rotation_euler = (sign * .6, 0, 0)  # tilted up and out, so it reads from the front
+    sphere(f"wing_{label}_membrane", (-.012, sign * .03, .024), (.04, .042, .004), M["wing"], wing, 14, 8)
     # Legs: the front pair hugs the dewdrop, the back pair trails.
-    stick(f"CRITTER_bee_leg_front_{label}", (.035, sign * .03, -.035), (.02, sign * .028, -.078), .0045, .003, M["beeStripe"], bee, 5)
+    stick(f"CRITTER_bee_leg_front_{label}", (.035, sign * .03, -.035), (.02, sign * .03, -.085), .0045, .003, M["beeStripe"], bee, 5)
     stick(f"CRITTER_bee_leg_back_{label}", (-.035, sign * .04, -.04), (-.068, sign * .07, -.07), .004, .0025, M["beeStripe"], bee, 5)
-dewdrop("CRITTER_bee_drop", bee, (0, 0, -.098))
+# The one dewdrop the bee carries, slung under the body.
+dewdrop("CRITTER_bee_drop", bee, (0, 0, -.11), 1.35)
 
 # ------------------------------------------------------------- dewdrop -----
-dew = add_critter("CRITTER_dewdrop", -.34)
+dew = add_critter("CRITTER_dewdrop", -.36, -.2)
 dewdrop("CRITTER_dewdrop", dew, (0, 0, -.006))
 
 # ------------------------------------------------------------- aphid -------
-# Plump and pale, facing -Y, with tiny legs and a pair of googly eyes.
-aphid = add_critter("CRITTER_aphid", -.2)
-sphere("CRITTER_aphid_body", (0, 0, 0), (.026, .022, .02), M["aphid"], aphid, 12, 8)
-sphere("CRITTER_aphid_head", (0, -.02, .006), (.016, .014, .014), M["aphid"], aphid, 10, 7)
+# Plump and bright green, facing -Y, with a clear googly face and tiny legs.
+aphid = add_critter("CRITTER_aphid", -.22, .2)
+sphere("CRITTER_aphid_body", (0, 0, 0), (.027, .023, .021), M["aphid"], aphid, 12, 8)
+sphere("CRITTER_aphid_head", (0, -.02, .006), (.018, .016, .016), M["aphid"], aphid, 10, 7)
 googly("CRITTER_aphid", aphid, (
-    ("L", (-.008, -.031, .011), (-.2, -1, .1)),
-    ("R", (.008, -.031, .011), (.2, -1, .1)),
-), .0095)
+    ("L", (-.009, -.033, .01), (-.25, -1, .15)),
+    ("R", (.009, -.033, .01), (.25, -1, .15)),
+), .013)
 for label, sign in (("L", -1), ("R", 1)):
-    sphere(f"CRITTER_aphid_cheek_{label}", (sign * .014, -.027, -.001), (.005, .003, .004), M["cheek"], aphid, 6, 4)
+    sphere(f"CRITTER_aphid_cheek_{label}", (sign * .015, -.029, -.002), (.006, .004, .005), M["cheek"], aphid, 6, 4)
     for step, y in enumerate((-.012, 0, .012)):
-        stick(f"CRITTER_aphid_leg_{label}_{step + 1}", (sign * .018, y, -.01), (sign * .034, y * 1.2, -.024), .0025, .0015, M["aphidLeg"], aphid, 4)
-    stick(f"CRITTER_aphid_antenna_{label}", (sign * .01, -.022, .02), (sign * .03, -.036, .05), .0025, .0015, M["aphidLeg"], aphid, 4)
+        stick(f"CRITTER_aphid_leg_{label}_{step + 1}", (sign * .018, y, -.01), (sign * .036, y * 1.2, -.026), .003, .0018, M["aphidLeg"], aphid, 4)
+    stick(f"CRITTER_aphid_antenna_{label}", (sign * .01, -.022, .02), (sign * .03, -.038, .05), .0028, .0016, M["aphidLeg"], aphid, 4)
 
 # ------------------------------------------------------------- burr --------
 # A dangerous seed burr: a rust-tipped spiky ball, no face.
-burr = add_critter("CRITTER_burr", -.06)
+burr = add_critter("CRITTER_burr", -.07, -.2)
 sphere("CRITTER_burr_core", (0, 0, 0), (.038, .038, .036), M["burr"], burr, 12, 8)
 SPIKES = 22
 for index in range(SPIKES):
@@ -290,80 +343,109 @@ for index in range(SPIKES):
     cone(f"CRITTER_burr_spike_{index + 1}", direction * (.038 + .012), .0085, .0012, .024, M["burrSpike"], burr, 5, aim(direction))
 
 # ------------------------------------------------------------ thorn --------
-# A curved rose thorn: a chunky tapered hook on a small leaf-cup base, centred on its origin.
-thorn = add_critter("CRITTER_thorn", .08)
+# A bold red-brown rose thorn: a chunky hook on a green stem stub, centred on its origin.
+thorn = add_critter("CRITTER_thorn", .07, .2)
 THORN_LIFT = -.07
-sphere("CRITTER_thorn_base", (0, 0, THORN_LIFT - .004), (.03, .03, .012), M["leafGreen"], thorn, 12, 6)
+stick("CRITTER_thorn_stub", (0, 0, THORN_LIFT - .02), (0, 0, THORN_LIFT + .012), .02, .016, M["stub"], thorn, 10)
+sphere("CRITTER_thorn_stub_cap", (0, 0, THORN_LIFT + .012), (.016, .016, .01), M["stub"], thorn, 10, 6)
 curve = [Vector((0, 0, 0.0)), Vector((.005, 0, .05)), Vector((.02, 0, .1)), Vector((.045, 0, .135)), Vector((.075, 0, .145))]
-radii = [.018, .013, .009, .005, .002]
+radii = [.018, .014, .0095, .0055, .0022]
 for index in range(len(curve) - 1):
     a = curve[index] + Vector((0, 0, THORN_LIFT))
     b = curve[index + 1] + Vector((0, 0, THORN_LIFT))
     stick(f"CRITTER_thorn_segment_{index + 1}", a, b, radii[index], radii[index + 1], M["thorn"], thorn, 7)
 
 # ----------------------------------------------------------- shears --------
-# Open garden shears in the XZ plane, blades up. Each half is a pivot at the
-# rivet holding its steel blade, its wooden handle and its finger loop, so the
-# two halves cross at the rivet like a real pair.
-shears = add_critter("CRITTER_shears", .27)
-sphere("CRITTER_shears_rivet", (0, 0, 0), (.012, .012, .012), M["steel"], shears, 8, 5)
-OPEN_ANGLE = math.radians(24)
-BLADE, HANDLE = .22, .2
+# Chunky bypass pruners, open, in the XZ plane. Each half is a pivot at the
+# rivet holding its steel blade (a bevelled bar with a hooked tip) and its fat
+# rubber grip, so the halves cross at the big brass rivet like a real pair.
+shears = add_critter("CRITTER_shears", .24, -.2)
+sphere("CRITTER_shears_rivet", (0, 0, 0), (.024, .024, .024), M["brass"], shears, 12, 8)
+# The spring: a brass coil loop between the grips, behind the rivet.
+bpy.ops.mesh.primitive_torus_add(major_segments=18, minor_segments=6, location=(0, 0, 0), major_radius=.045, minor_radius=.0055)
+spring = bpy.context.object
+spring.name = "CRITTER_shears_spring"
+spring.data.name = "CRITTER_shears_spring_mesh"
+spring.rotation_euler = (math.radians(90), 0, 0)
+spring.location = (0, .012, -.1)
+spring.data.materials.append(M["brass"])
+smooth(spring)
+spring.parent = shears
+spring.matrix_parent_inverse.identity()
+OPEN_ANGLE = math.radians(26)
+BLADE, GRIP = .21, .14
 for name, side in (("blade_A", -1), ("blade_B", 1)):
     half = pivot(name, (0, 0, 0), shears)
     direction = Vector((side * math.sin(OPEN_ANGLE), 0, math.cos(OPEN_ANGLE)))
-    stick(f"{name}_steel", direction * .01, direction * BLADE, .0065, .0012, M["steel"], half, 6)
-    stick(f"{name}_handle", -direction * .02, -direction * HANDLE, .013, .0095, M["wood"], half, 10)
-    sphere(f"{name}_handle_end", -direction * HANDLE, (.0095, .0095, .0095), M["wood"], half, 8, 5)
-    loop_centre = -direction * (HANDLE + .03)
-    bpy.ops.mesh.primitive_torus_add(major_segments=14, minor_segments=6, location=(0, 0, 0), major_radius=.03, minor_radius=.0065)
-    loop = bpy.context.object
-    loop.name = f"{name}_loop"
-    loop.data.name = f"{name}_loop_mesh"
-    loop.rotation_euler = (math.radians(90), 0, 0)
-    loop.location = loop_centre
-    loop.data.materials.append(M["loop"])
-    smooth(loop)
-    loop.parent = half
-    loop.matrix_parent_inverse.identity()
+    # Straight cutting bar, bevelled: width along local X, thickness along Y.
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))
+    bar = bpy.context.object
+    bar.name = f"{name}_steel"
+    bar.data.name = f"{name}_steel_mesh"
+    bar.scale = (.05, .012, BLADE * .72)
+    bar.rotation_euler = (0, side * OPEN_ANGLE, 0)  # flat in XZ: width across the pair
+    bar.data.materials.append(M["steel"])
+    bevel = bar.modifiers.new("bevel", "BEVEL")
+    bevel.width = .003
+    bevel.segments = 2
+    parent_local(bar, half, direction * BLADE * .36)
+    # Hooked tip: the last stretch bends in toward the other blade, bypass style.
+    tip_direction = Vector((side * math.sin(OPEN_ANGLE - .35), 0, math.cos(OPEN_ANGLE - .35)))
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))
+    tip = bpy.context.object
+    tip.name = f"{name}_tip"
+    tip.data.name = f"{name}_tip_mesh"
+    tip.scale = (.042, .012, BLADE * .3)
+    tip.rotation_euler = (0, side * (OPEN_ANGLE - .35), 0)
+    tip.data.materials.append(M["steel"])
+    bevel = tip.modifiers.new("bevel", "BEVEL")
+    bevel.width = .003
+    bevel.segments = 2
+    parent_local(tip, half, direction * BLADE * .72 + tip_direction * BLADE * .15)
+    # Fat rubber grip, capped round, on the far side of the rivet.
+    stick(f"{name}_grip", -direction * .02, -direction * GRIP, .021, .025, M["rubber"], half, 10)
+    sphere(f"{name}_grip_end", -direction * GRIP, (.025, .025, .025), M["rubber"], half, 10, 6)
 
 # ------------------------------------------------------------ stalk --------
-# A spent, overgrown stalk, about 0.9 m, centred on its origin. The seed head
-# is a child pivot so it can droop; it carries a little face.
-stalk = add_critter("CRITTER_stalk", .5)
-STALK_BOTTOM, STALK_TOP, STALK_BEND = -.45, .28, .02
+# A spent, overgrown flower stalk, about 0.9 m, centred on its origin: a smooth
+# S-curved stem, floppy leaves, and a wilted seed head bent over at the top.
+stalk = add_critter("CRITTER_stalk", .47, 0)
+STALK_BOTTOM, STALK_TOP = -.45, .3
+STALK_SWAY = .035
 
 
 def stalk_point(t):
-    return Vector((STALK_BEND * math.sin(math.pi * t), 0, STALK_BOTTOM + (STALK_TOP - STALK_BOTTOM) * t))
+    return Vector((STALK_SWAY * math.sin(2 * math.pi * t), 0, STALK_BOTTOM + (STALK_TOP - STALK_BOTTOM) * t))
 
 
-STEM_SEGMENTS = 6
-for index in range(STEM_SEGMENTS):
-    t0, t1 = index / STEM_SEGMENTS, (index + 1) / STEM_SEGMENTS
-    stick(f"CRITTER_stalk_stem_{index + 1}", stalk_point(t0), stalk_point(t1),
-          .019 - .007 * t0, .019 - .007 * t1, M["stem"], stalk, 8)
-for label, side, t in (("L", -1, .3), ("R", 1, .6)):
+STEM_RINGS = 24
+stem_points = [stalk_point(i / STEM_RINGS) for i in range(STEM_RINGS + 1)]
+tube("CRITTER_stalk_stem", stem_points, [.019 - .011 * i / STEM_RINGS for i in range(STEM_RINGS + 1)], M["stem"], stalk, 10)
+# Floppy leaves: two green, one browned and yellowing, all hanging outward and down.
+for label, side, t, mat in (("L", -1, .22, "leafBright"), ("R", 1, .5, "leafGreen"), ("L", -1, .74, "leafBrown")):
     base = stalk_point(t)
-    direction = Vector((side * .8, 0, .5)).normalized()
-    sphere(f"CRITTER_stalk_leaf_{label}", base + direction * .07, (.026, .01, .07), M["leafBright"], stalk, 8, 5, aim(direction))
-
-head = pivot("CRITTER_stalk_head", stalk_point(1), stalk)
-head.rotation_euler = (0, .95, 0)  # the seed head droops toward +X
-HEAD_CENTRE = (0, 0, .1)
-sphere("CRITTER_stalk_fluff", HEAD_CENTRE, (.085, .085, .1), M["fluff"], head, 12, 8)
-for index in range(14):
+    direction = Vector((side * .9, 0, -.25)).normalized()
+    # Lie the leaf flat in the XZ plane so its broad face shows from the front.
+    flat = Euler((0, math.atan2(direction.x, direction.z), 0)).to_quaternion()
+    sphere(f"CRITTER_stalk_leaf_{label}_{t:.2f}", base + direction * .075, (.034, .008, .075), M[mat], stalk, 8, 5, flat)
+# The bent neck: a short arc from the stem top, bowing over toward +X.
+top = stalk_point(1)
+neck = [Vector((0, 0, 0)), Vector((.012, 0, .04)), Vector((.04, 0, .065)), Vector((.07, 0, .07))]
+neck_points = [top + Vector((0, 0, 0)), top + Vector((.012, 0, .04)), top + Vector((.04, 0, .065)), top + Vector((.07, 0, .07))]
+tube("CRITTER_stalk_neck", neck_points, [.011, .0105, .0095, .0085], M["stem"], stalk, 8)
+HEAD_POS = top + Vector((.07, 0, .07))  # the neck's end
+head = pivot("CRITTER_stalk_head", HEAD_POS, stalk)
+head.rotation_euler = (0, .9, 0)  # the seed head hangs down and toward +X
+sphere("CRITTER_stalk_fluff", (0, 0, 0), (.07, .07, .075), M["fluff"], head, 12, 8)
+for index in range(9):
     azimuth = index * 2.399
-    elevation = math.asin(min(.9, -.3 + 1.2 * ((index + .5) / 14)))
+    elevation = math.asin(min(.9, -.4 + 1.1 * ((index + .5) / 9)))
     direction = Vector((math.cos(azimuth) * math.cos(elevation), math.sin(azimuth) * math.cos(elevation), math.sin(elevation)))
-    centre = Vector(HEAD_CENTRE)
-    stick(f"CRITTER_stalk_seed_{index + 1}", centre + direction * .08, centre + direction * .128, .0035, .0006, M["seed"], head, 4)
-googly("CRITTER_stalk", head, (
-    ("L", (-.032, -.077, .11), (.2, -1, .1)),
-    ("R", (.032, -.077, .11), (-.2, -1, .1)),
-), .024)
-for label, sign in (("L", -1), ("R", 1)):
-    sphere(f"CRITTER_stalk_cheek_{label}", (sign * .05, -.07, .085), (.014, .005, .009), M["cheek"], head, 8, 4)
+    stick(f"CRITTER_stalk_seed_{index + 1}", direction * .068, direction * .11, .0032, .0006, M["seed"], head, 4)
+# Dried, drooping petals, brown at the tips.
+for index, azimuth in enumerate((.3, 1.6, 2.9, 4.3, 5.5)):
+    direction = Vector((math.cos(azimuth), math.sin(azimuth) * .6, -.35)).normalized()
+    sphere(f"CRITTER_stalk_petal_{index + 1}", direction * .082, (.012, .005, .03), M["petal"], head, 8, 4, aim(direction))
 
 # ------------------------------------------------------ review render ------
 
@@ -377,11 +459,11 @@ scene.render.image_settings.file_format = "PNG"
 scene.render.film_transparent = False
 scene.view_settings.view_transform = "AgX"
 scene.view_settings.look = "AgX - Medium High Contrast"
-scene.view_settings.exposure = .2
+scene.view_settings.exposure = .5
 scene.world = bpy.data.worlds.new("Flower care cast review: buttercream meadow morning")
 scene.world.use_nodes = True
 scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = color_rgba("#f1e4c0")
-scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = .68
+scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 1.0
 
 bpy.ops.mesh.primitive_plane_add(size=60, location=(0, 0, -.5))
 floor = bpy.context.object
@@ -397,16 +479,16 @@ backdrop.data.materials.append(M["stageBack"])
 camera_data = bpy.data.cameras.new("STAGE camera")
 camera = bpy.data.objects.new("STAGE camera", camera_data)
 bpy.context.collection.objects.link(camera)
-camera.location = (-.03, -6.5, .3)
-camera.rotation_euler = (Vector((-.03, 0, 0.0)) - Vector(camera.location)).to_track_quat("-Z", "Y").to_euler()
+camera.location = (.01, -6.5, .6)
+camera.rotation_euler = (Vector((.01, 0, -.01)) - Vector(camera.location)).to_track_quat("-Z", "Y").to_euler()
 camera_data.type = "ORTHO"
-camera_data.ortho_scale = 1.6
+camera_data.ortho_scale = 1.4
 scene.camera = camera
 
 for name, location, energy, size, tint in [
-    ("STAGE LIGHT warm key", (3, -6, 7), 900, 5, (1.0, .93, .82)),
-    ("STAGE LIGHT cool fill", (-6, -3, 4), 500, 5, (.76, .92, 1.0)),
-    ("STAGE LIGHT soft rim", (5, 4, 6), 650, 4, (1.0, .82, .72)),
+    ("STAGE LIGHT warm key", (3, -6, 7), 1300, 5, (1.0, .93, .82)),
+    ("STAGE LIGHT cool fill", (-6, -3, 4), 800, 5, (.76, .92, 1.0)),
+    ("STAGE LIGHT soft rim", (5, 4, 6), 900, 4, (1.0, .82, .72)),
 ]:
     data = bpy.data.lights.new(name, "AREA")
     data.energy = energy
