@@ -176,9 +176,10 @@ def tube(name, points, radii, mat, parent, sides=10):
         u.normalize()
         v = tangent.cross(u).normalized()
         rings.append(len(verts))
+        width, thickness = radii[i] if isinstance(radii[i], tuple) else (radii[i], radii[i])
         for k in range(sides):
             angle = math.tau * k / sides
-            verts.append(p + (u * math.cos(angle) + v * math.sin(angle)) * radii[i])
+            verts.append(p + u * (math.cos(angle) * width) + v * (math.sin(angle) * thickness))
     for i in range(len(points) - 1):
         s0, s1 = rings[i], rings[i + 1]
         for k in range(sides):
@@ -258,12 +259,13 @@ M = {
     # Burr and thorn.
     "burr": make_material("FLOWER burr core", "#7a5a2c", .75, 0, .1),
     "burrSpike": make_material("FLOWER burr spike", "#b5523c", .45, 0, .2),
-    "thorn": make_material("FLOWER thorn", "#9c3f2c", .38, 0, .25),
+    "thorn": make_material("FLOWER thorn", "#6a2a1e", .4, 0, .25),
     "stub": make_material("FLOWER thorn stub", "#5ea35a", .32, .01, .5),
     "leafGreen": make_material("FLOWER leaf", "#4c9058", .32, .01, .5),
     "leafBright": make_material("FLOWER sunlit leaf", "#79b660", .3, .01, .54),
     # Shears.
-    "steel": make_material("FLOWER shears steel", "#9fabb4", .28, .85, .3),
+    "steel": make_material("FLOWER shears steel", "#c4ced6", .25, .9, .3),
+    "steelEdge": make_material("FLOWER shears edge glint", "#f2f8fc", .15, .9, .3),
     "brass": make_material("FLOWER shears brass", "#d9a441", .3, .8, .3),
     "rubber": make_material("FLOWER shears rubber grip", "#d9573b", .6, 0, .1),
     "wood": make_material("FLOWER shears wood", "#c98a4b", .5, 0, .2),
@@ -343,22 +345,20 @@ for index in range(SPIKES):
     cone(f"CRITTER_burr_spike_{index + 1}", direction * (.038 + .012), .0085, .0012, .024, M["burrSpike"], burr, 5, aim(direction))
 
 # ------------------------------------------------------------ thorn --------
-# A bold red-brown rose thorn: a chunky hook on a green stem stub, centred on its origin.
+# A rose thorn: one tube with a triangular section, a wide base tapering to a
+# sharp point that curls one way, set on a short green stem stub. No rings.
 thorn = add_critter("CRITTER_thorn", .07, .2)
 THORN_LIFT = -.07
 stick("CRITTER_thorn_stub", (0, 0, THORN_LIFT - .02), (0, 0, THORN_LIFT + .012), .02, .016, M["stub"], thorn, 10)
 sphere("CRITTER_thorn_stub_cap", (0, 0, THORN_LIFT + .012), (.016, .016, .01), M["stub"], thorn, 10, 6)
-curve = [Vector((0, 0, 0.0)), Vector((.005, 0, .05)), Vector((.02, 0, .1)), Vector((.045, 0, .135)), Vector((.075, 0, .145))]
-radii = [.018, .014, .0095, .0055, .0022]
-for index in range(len(curve) - 1):
-    a = curve[index] + Vector((0, 0, THORN_LIFT))
-    b = curve[index + 1] + Vector((0, 0, THORN_LIFT))
-    stick(f"CRITTER_thorn_segment_{index + 1}", a, b, radii[index], radii[index + 1], M["thorn"], thorn, 7)
+thorn_points = [Vector((x, 0, z + THORN_LIFT)) for x, z in ((0, 0), (.006, .035), (.02, .075), (.042, .11), (.068, .125), (.084, .122))]
+thorn_radii = [.026, .02, .0135, .0075, .0032, .0004]
+tube("CRITTER_thorn_spike", thorn_points, thorn_radii, M["thorn"], thorn, 3)
 
 # ----------------------------------------------------------- shears --------
-# Chunky bypass pruners, open, in the XZ plane. Each half is a pivot at the
-# rivet holding its steel blade (a bevelled bar with a hooked tip) and its fat
-# rubber grip, so the halves cross at the big brass rivet like a real pair.
+# Bypass pruners, open, in the XZ plane. Each half is a pivot at the rivet holding
+# a tapering, curved steel blade with a bright edge strip, and its fat rubber grip.
+# blade_A is the curved cutting blade; blade_B is the hooked anvil.
 shears = add_critter("CRITTER_shears", .24, -.2)
 sphere("CRITTER_shears_rivet", (0, 0, 0), (.024, .024, .024), M["brass"], shears, 12, 8)
 # The spring: a brass coil loop between the grips, behind the rivet.
@@ -374,34 +374,21 @@ spring.parent = shears
 spring.matrix_parent_inverse.identity()
 OPEN_ANGLE = math.radians(26)
 BLADE, GRIP = .21, .14
-for name, side in (("blade_A", -1), ("blade_B", 1)):
+for name, side, bulge, hook in (("blade_A", -1, .022, 0.0), ("blade_B", 1, .006, .014)):
     half = pivot(name, (0, 0, 0), shears)
     direction = Vector((side * math.sin(OPEN_ANGLE), 0, math.cos(OPEN_ANGLE)))
-    # Straight cutting bar, bevelled: width along local X, thickness along Y.
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))
-    bar = bpy.context.object
-    bar.name = f"{name}_steel"
-    bar.data.name = f"{name}_steel_mesh"
-    bar.scale = (.05, .012, BLADE * .72)
-    bar.rotation_euler = (0, side * OPEN_ANGLE, 0)  # flat in XZ: width across the pair
-    bar.data.materials.append(M["steel"])
-    bevel = bar.modifiers.new("bevel", "BEVEL")
-    bevel.width = .003
-    bevel.segments = 2
-    parent_local(bar, half, direction * BLADE * .36)
-    # Hooked tip: the last stretch bends in toward the other blade, bypass style.
-    tip_direction = Vector((side * math.sin(OPEN_ANGLE - .35), 0, math.cos(OPEN_ANGLE - .35)))
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))
-    tip = bpy.context.object
-    tip.name = f"{name}_tip"
-    tip.data.name = f"{name}_tip_mesh"
-    tip.scale = (.042, .012, BLADE * .3)
-    tip.rotation_euler = (0, side * (OPEN_ANGLE - .35), 0)
-    tip.data.materials.append(M["steel"])
-    bevel = tip.modifiers.new("bevel", "BEVEL")
-    bevel.width = .003
-    bevel.segments = 2
-    parent_local(tip, half, direction * BLADE * .72 + tip_direction * BLADE * .15)
+    inward = Vector((direction.z, 0, -direction.x)) * (-side)
+    spine, widths, edge = [], [], []
+    for i in range(9):
+        t = i / 8
+        point = direction * BLADE * t + inward * (bulge * math.sin(math.pi * t) + hook * t ** 3)
+        width = .032 * (1 - t) ** .6 + .003
+        thickness = .0065 * (1 - t) + .0012
+        spine.append(point)
+        widths.append((width, thickness))
+        edge.append(point + inward * width * .75)
+    tube(f"{name}_steel", spine, widths, M["steel"], half, 8)
+    tube(f"{name}_edge", edge, [(.0022 * (1 - i / 8) + .0007, .0022 * (1 - i / 8) + .0007) for i in range(9)], M["steelEdge"], half, 5)
     # Fat rubber grip, capped round, on the far side of the rivet.
     stick(f"{name}_grip", -direction * .02, -direction * GRIP, .021, .025, M["rubber"], half, 10)
     sphere(f"{name}_grip_end", -direction * GRIP, (.025, .025, .025), M["rubber"], half, 10, 6)
@@ -503,8 +490,17 @@ for name, location, energy, size, tint in [
 review_path = OUTPUT / "flower-care-cast-review.png"
 blend_path = OUTPUT / "flower-care-cast.blend"
 scene.render.filepath = str(review_path)
+# Review only: the shears turned to a 3/4 angle and half open, so the curves and shine read.
+# The authored pose is restored before the blend and GLB are written.
+blade_a, blade_b = bpy.data.objects["blade_A"], bpy.data.objects["blade_B"]
+blade_a.rotation_euler = (0, OPEN_ANGLE / 2, 0)
+blade_b.rotation_euler = (0, -OPEN_ANGLE / 2, 0)
+shears.rotation_euler = (0, 0, math.radians(40))
 if "--no-render" not in sys.argv:
     bpy.ops.render.render(write_still=True)
+shears.rotation_euler = (0, 0, 0)
+blade_a.rotation_euler = (0, 0, 0)
+blade_b.rotation_euler = (0, 0, 0)
 bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
 
 flatten_material_colours()
