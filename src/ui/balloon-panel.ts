@@ -11,6 +11,10 @@ export interface BalloonPanel extends UIPanel {
   contains(point: DesignPoint): boolean;
   refresh(): void;
   setPostBadge(text: string): void;
+  /** Pulse one quadrant to point the player at it (the tutorial); null stops. */
+  setHighlight(quadrant: BalloonQuadrant | null): void;
+  /** Where a callout for a quadrant points: the balloon's left rim at the icon's height, in CSS pixels from the top-left. */
+  quadrantCallout(quadrant: BalloonQuadrant): { x: number; y: number };
 }
 
 const RADIUS = 108;
@@ -96,6 +100,20 @@ export function createBalloonPanel(
   );
   glow.name = "Balloon hover glow";
   object.add(glow);
+
+  const beacon = new THREE.Mesh(
+    new THREE.RingGeometry(RADIUS + 2, RADIUS + 22, 32, 1, 0, Math.PI / 2),
+    new THREE.MeshBasicMaterial({
+      color: "#ffe9a8", transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+    }),
+  );
+  beacon.name = "Balloon tutorial beacon";
+  beacon.position.z = 6;
+  object.add(beacon);
+  let highlight: BalloonQuadrant | null = null;
+  let cssWidthNow = cssWidth;
+  let cssHeightNow = cssHeight;
 
   const sectors = new Map<BalloonQuadrant, THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>>();
   const baseColors = new Map<BalloonQuadrant, THREE.Color>();
@@ -241,6 +259,18 @@ export function createBalloonPanel(
     refresh(): void {
       layout();
     },
+    setHighlight(quadrant: BalloonQuadrant | null): void {
+      highlight = quadrant;
+      if (quadrant) beacon.rotation.z = starts[quadrant];
+    },
+    quadrantCallout(quadrant: BalloonQuadrant) {
+      const x = centerX - (RADIUS + RIM + 8);
+      const y = centerY + Math.sin(iconAngles[quadrant]) * RADIUS * 0.55;
+      return {
+        x: ((x - viewport.left) / viewport.width) * cssWidthNow,
+        y: ((viewport.top - y) / viewport.height) * cssHeightNow,
+      };
+    },
     setPostBadge(text: string): void {
       if (text === badgeText) return;
       badgeText = text;
@@ -277,6 +307,9 @@ export function createBalloonPanel(
       bobPhase += delta;
       const bob = Math.sin(bobPhase * 2.2) * 0.015 + 1;
       object.scale.setScalar(bob);
+      const beaconMaterial = beacon.material as THREE.MeshBasicMaterial;
+      const beaconTarget = highlight ? 0.55 + Math.sin(bobPhase * 4) * 0.35 : 0;
+      beaconMaterial.opacity += (beaconTarget - beaconMaterial.opacity) * Math.min(1, delta * 10);
       const glowTarget = hovered ? 0.5 + Math.sin(bobPhase * 6) * 0.12 : 0;
       const glowMaterial = glow.material as THREE.MeshBasicMaterial;
       glowMaterial.opacity += (glowTarget - glowMaterial.opacity) * Math.min(1, delta * 10);
@@ -286,13 +319,16 @@ export function createBalloonPanel(
         const base = baseColors.get(quadrant);
         if (!sector || !icon || !base) continue;
         const active = hovered === quadrant;
+        const pulse = highlight === quadrant ? 0.22 + Math.sin(bobPhase * 4) * 0.14 : 0;
         const sectorMaterial = sector.material as THREE.MeshBasicMaterial;
-        sectorMaterial.color.copy(base).lerp(new THREE.Color("#ffffff"), active ? 0.38 : 0);
+        sectorMaterial.color.copy(base).lerp(new THREE.Color("#ffffff"), active ? 0.38 : pulse);
         const iconTarget = active ? 1.16 : 1;
         icon.scale.setScalar(icon.scale.x + (iconTarget - icon.scale.x) * Math.min(1, delta * 10));
       }
     },
     resize(width, height): void {
+      cssWidthNow = width;
+      cssHeightNow = height;
       viewport.resize(width, height);
       layout();
     },
@@ -304,6 +340,8 @@ export function createBalloonPanel(
       (rim.material as THREE.Material).dispose();
       glow.geometry.dispose();
       (glow.material as THREE.Material).dispose();
+      beacon.geometry.dispose();
+      (beacon.material as THREE.Material).dispose();
       for (const sector of sectors.values()) {
         sector.geometry.dispose();
         (sector.material as THREE.Material).dispose();

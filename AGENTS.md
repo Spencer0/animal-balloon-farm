@@ -5,8 +5,8 @@
 1. **Blender for assets.** Author and render all game assets with headless
    Blender (`blender --background --factory-startup --python ...`). Never
    hand-edit binaries. See `art/blender/README.md`.
-2. **New work in a worktree.** Every task that changes files gets its own git
-   worktree and feature branch. Check `git worktree list` and
+2. **New work on its own branch.** Every task that changes files gets its own
+   `feature/` branch (a git worktree when working on Spencer's PC). Check `git worktree list` and
    `git status --short --branch` first. Never edit a checkout another agent or
    Spencer may be using.
 3. **Validate in the browser.** Before calling work done, check it in the
@@ -19,10 +19,25 @@
    `.github/workflows/performance.yml`). Run `npm run check` locally, then
    read the PR's Performance check before merging. If it fails, fix the change
    or measure and justify a new budget. Never loosen a check to get green.
-4. **Open a live preview for Spencer.** When work is ready to look at, start
-   the worktree's dev server (`PORT=<port> npm run dev`, with a port no other
-   worktree uses) and open its URL in the in-app browser so Spencer can play
-   it. Tell Spencer the URL and the branch. Stop the server once Spencer is done.
+4. **Hand Spencer a playable GitHub link, not localhost.** Work runs in cloud
+   agents, so a local dev server is irrelevant to Spencer. For UAT, every
+   change needs both of these:
+   1. **A playable link.** Push the work to a `feature/<name>` (or
+      `debug/<name>`) branch. `pages.yml` publishes only branches with those
+      prefixes, to
+      `https://spencer0.github.io/animal-balloon-farm/previews/feature-<name>/`
+      (the `/` in the branch name becomes `-`). Preview builds have the debug
+      harness on. Give Spencer that URL and the branch name. If the session's
+      assigned branch has another prefix, ask before pushing a `feature/` one.
+   2. **A debug scenario that warps to what changed.** Add one in
+      `dev/scenarios/<area>/<name>.ts`, register it in `dev/scenarios/index.ts`
+      (copy `sandbox/farmer-10.ts`) and reach it with
+      `?gardenDebug=1&scenario=<area>/<name>`. It must land Spencer on the
+      changed thing (the new animal, plant, tool or UI) with whatever stock,
+      coins or farm state it needs. Give Spencer the full preview URL with that
+      query string, for example
+      `.../previews/feature-blueberry-bush/?gardenDebug=1&scenario=plants/blueberry`.
+      Scenarios are debug-only and never reach the production build.
 5. **Ship only when Spencer says it's good.** Merge the latest `main` into the
    task branch and resolve conflicts. Run `npm run check` and push only if it
    passes. Commit with a message that explains why the change was needed, push,

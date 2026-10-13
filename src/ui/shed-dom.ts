@@ -15,10 +15,18 @@ export interface ShedDomCallbacks {
   balance: () => number;
   /** Star gems in the purse; shown beside the coins once there are any. */
   gems?: () => number;
+  /** What the first-plant trail wants glowing right now (the tutorial); omit for none. */
+  highlight?: () => ShedHighlight;
+}
+
+export interface ShedHighlight {
+  readonly tab: ShedDomTab | null;
+  readonly seed: PlantId | null;
 }
 
 export interface ShedDomPanel {
   readonly isOpen: boolean;
+  readonly tab: ShedDomTab;
   setOpen(open: boolean): void;
   refresh(): void;
   dispose(): void;
@@ -90,7 +98,8 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
   function signature(): string {
     const seeds = PLANT_CATALOG.map((p) => `${p.id}:${callbacks.seedsFor(p.id)}`).join("|");
     const props = PROP_ORDER.map((id) => `${id}:${callbacks.countsFor(id)}`).join("|");
-    return `${tab}|${selected}|${callbacks.balance()}|${callbacks.gems?.() ?? 0}|${seeds}|${props}|${[...favs].sort().join(",")}`;
+    const hint = callbacks.highlight?.();
+    return `${hint?.tab ?? ""}|${hint?.seed ?? ""}|${tab}|${selected}|${callbacks.balance()}|${callbacks.gems?.() ?? 0}|${seeds}|${props}|${[...favs].sort().join(",")}`;
   }
 
   /** Keys of what the shed actually holds on this tab: an empty slot is not shown at all. */
@@ -104,14 +113,16 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
   }
 
   function cardsHtml(): string {
+    const hint = callbacks.highlight?.();
     if (stockedKeys().length === 0) return emptyHtml();
     if (tab === "seeds") {
       return PLANT_CATALOG.filter((plant) => callbacks.seedsFor(plant.id) > 0).map((plant) => {
         const count = Math.max(0, callbacks.seedsFor(plant.id));
         const key = `seed:${plant.id}`;
         const star = favs.has(key) ? `<span class="sh-fav" aria-hidden="true">&#9733;</span>` : "";
+        const glow = hint?.seed === plant.id ? " tu-glow" : "";
         return (
-          `<button type="button" class="sh-card" data-select="${key}" aria-current="${selected === key}">` +
+          `<button type="button" class="sh-card${glow}" data-select="${key}" aria-current="${selected === key}">` +
           `<span class="sh-count">${count}x</span>${star}` +
           `<img src="${seedThumb(plant.id)}" alt="" draggable="false" />` +
           `<span>${escapeHtml(plant.name)}</span></button>`
@@ -133,6 +144,7 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
   }
 
   function previewHtml(): string {
+    const hint = callbacks.highlight?.();
     if (stockedKeys().length === 0) return `<div class="sh-locked">Empty shelves.</div>`;
     if (selected.startsWith("seed:")) {
       const id = selected.slice("seed:".length) as PlantId;
@@ -143,7 +155,7 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
       const action =
         count <= 0
           ? `<button type="button" class="sh-btn sh-btn-primary" disabled>Out of seeds</button>`
-          : `<button type="button" class="sh-btn sh-btn-primary" data-plant="${plant.id}">Plant (${count} left)</button>`;
+          : `<button type="button" class="sh-btn sh-btn-primary${hint?.seed === plant.id ? " tu-glow" : ""}" data-plant="${plant.id}">Plant (${count} left)</button>`;
       return (
         `<img src="${seedThumb(plant.id)}" alt="" draggable="false" />` +
         `<h2>${escapeHtml(plant.name)}</h2>` +
@@ -180,12 +192,13 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
     if (next === lastSignature && shed.isConnected) return;
     lastSignature = next;
     const coins = callbacks.balance();
+    const hintTab = callbacks.highlight?.().tab ?? null;
     const gems = callbacks.gems?.() ?? 0;
     shed.innerHTML =
       `<header class="fj-header">` +
       `<div class="fj-title">The Shed</div>` +
       `<nav class="fj-tabs" aria-label="Inventory">` +
-      `<button type="button" class="fj-tab" data-tab="seeds" aria-selected="${tab === "seeds"}">Seeds</button>` +
+      `<button type="button" class="fj-tab${hintTab === "seeds" ? " tu-glow" : ""}" data-tab="seeds" aria-selected="${tab === "seeds"}">Seeds</button>` +
       `<button type="button" class="fj-tab" data-tab="props" aria-selected="${tab === "props"}">Props</button>` +
       `</nav>` +
       `<span class="sh-purse"><span class="sh-coins" aria-label="${coins} coins"><span class="sh-coin" aria-hidden="true"></span>${coins}</span>` +
@@ -250,6 +263,9 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
   const panel: ShedDomPanel = {
     get isOpen() {
       return open;
+    },
+    get tab() {
+      return tab;
     },
     setOpen(next: boolean): void {
       if (open === next && overlay.hidden === !next) return;

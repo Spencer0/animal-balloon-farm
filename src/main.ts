@@ -70,6 +70,8 @@ import { createSellBurst, warmSellBursts, type SellBurst } from './ui/sell-burst
 import { createPredation } from './scene/predation'
 import { createShedPanel } from './ui/shed-panel'
 import { createShedDomPanel, type ShedDomPanel } from './ui/shed-dom'
+import { createTutorialDom } from './ui/tutorial-dom'
+import { tutorialSeed, type TutorialStep } from './game/tutorial'
 import { createLarderDom } from './ui/larder-dom'
 import { CHAPTER_ORDER, chapterPages, createFarmChapters, type ChapterDef, type ChapterId, type ChapterSignals } from './game/farm-chapters'
 import { measureHarmony } from './game/harmony'
@@ -839,6 +841,13 @@ const propCard = createPropCardDom({
 }, window.innerWidth, window.innerHeight)
 
 
+/** The first-plant trail (src/game/tutorial.ts): a glow, never a gate. Set each frame. */
+let tutorialNow: TutorialStep = 'done'
+/** Plants the trail should show off first, newest first; empty falls back to whichever seed is held. */
+const TUTORIAL_FEATURED_SEEDS: readonly PlantId[] = []
+const TUTORIAL_PLANTED_KEY = 'tutorial-planted-v1'
+const heldSeeds = (): PlantId[] => PLANT_CATALOG.filter((plant) => (gardenPlants?.simulation.seedsFor(plant.id) ?? 0) > 0).map((plant) => plant.id)
+
 const shed = createShedPanel(window.innerWidth, window.innerHeight, (isShedOpen) => {
   shedDom.setOpen(isShedOpen)
   syncFarmChrome()
@@ -874,6 +883,10 @@ const shedDom: ShedDomPanel = createShedDomPanel({
   countsFor: (id) => gardenProps?.inventory.count(id) ?? 0,
   balance: () => wallet.balance,
   gems: () => gems.balance,
+  highlight: () => ({
+    tab: tutorialNow === 'seeds-tab' ? 'seeds' : null,
+    seed: tutorialNow === 'pick-seed' ? tutorialSeed(heldSeeds(), TUTORIAL_FEATURED_SEEDS) : null,
+  }),
 })
 
 /* Keep the shed and the shop showing the same counts the world does. */
@@ -1786,6 +1799,35 @@ let lastDomRefreshAt = Number.NEGATIVE_INFINITY
 /** Debug only: pins the lawn's overgrazing regardless of the grass larder. */
 let grazingOverride: number | null = null
 
+const tutorialDom = createTutorialDom()
+let tutorialPlantedBefore = false
+try {
+  // The tutorial scenarios replay the trail for a tester who has planted before.
+  const replay = __GARDEN_DEBUG__ && (pageParams.get('scenario') ?? '').startsWith('tutorial/')
+  tutorialPlantedBefore = !replay && window.localStorage.getItem(TUTORIAL_PLANTED_KEY) === '1'
+} catch { /* private mode: the trail just checks the garden */ }
+
+function updateTutorial(): void {
+  const plantsStanding = gardenPlants?.simulation.plants.length ?? 0
+  if (plantsStanding > 0 && !tutorialPlantedBefore) {
+    tutorialPlantedBefore = true
+    try { window.localStorage.setItem(TUTORIAL_PLANTED_KEY, '1') } catch { /* nothing to remember it with */ }
+  }
+  const before = tutorialNow
+  tutorialDom.update({
+    playable: !menu.isOpen && !chapterFilm && !journal.isOpen && !shop.isOpen && !salePanel.isOpen && !playerDom.isOpen && !larderDom.isOpen,
+    shedOpen: shed.isOpen,
+    shedTab: shedDom.tab,
+    seedArmed: (gardenPlants?.selectedSpecies ?? null) !== null,
+    seedsHeld: heldSeeds().length,
+    plantsStanding,
+    plantedBefore: tutorialPlantedBefore,
+  }, balloon.quadrantCallout('shed'))
+  tutorialNow = tutorialDom.step
+  balloon.setHighlight(tutorialNow === 'open-shed' ? 'shed' : null)
+  if (tutorialNow !== before) shedDom.refresh()
+}
+
 function frame(now: number): void {
   fpsCounter.frame(now)
   const intervalMs = previousFrameTimestamp === null ? 0 : now - previousFrameTimestamp
@@ -1947,6 +1989,7 @@ function frame(now: number): void {
   const sceneRenderMs = timingEnabled ? performance.now() - stageStartedAt : 0
   stageStartedAt = timingEnabled ? performance.now() : 0
   ui.update(delta)
+  updateTutorial()
   // A chapter film is a full-screen moment: the HUD steps aside like it does for the other films.
   if (!chapterFilm) ui.render(renderer)
   let overlayRenderMs = 0
