@@ -65,3 +65,19 @@ export function chopFakeOutChance(index: number): number {
 export function chopBandHeight(random: number): number {
   return CHOP_BAND_LOW + Math.min(1, Math.max(0, random)) * (CHOP_BAND_HIGH - CHOP_BAND_LOW)
 }
+
+/** The playfield the camera frames: its width, its height, and where it bottoms out and centres (world metres). */
+export const CHOP_PLAY_WIDTH = 1.2
+export const CHOP_PLAY_HEIGHT = 1.5
+export const CHOP_PLAY_BOTTOM = -0.2
+export const CHOP_PLAY_CENTRE_X = 0.15
+
+/** The world height the camera shows at the playfield's distance: tall enough for the height, wide enough for the width. */
+export function chopViewHeight(aspect: number): number {
+  return Math.max(CHOP_PLAY_HEIGHT, CHOP_PLAY_WIDTH / Math.max(0.2, aspect))
+}
+
+/** The world height of the top edge of the view. A new stalk starts just above it, so it never pops in. */
+export function chopViewTop(aspect: number): number {
+  return CHOP_PLAY_BOTTOM + chopViewHeight(aspect)
+}

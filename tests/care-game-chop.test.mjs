@@ -77,3 +77,17 @@ test('two stalks left uncut lose the chop round', () => {
   assert.equal(round.snapshot.state, 'lost')
   assert.equal(round.snapshot.lossReason, 'misses')
 })
+
+test('the camera frames the playfield: wide enough on a phone, tall enough on a desktop', () => {
+  const desktop = chop.chopViewHeight(16 / 9)
+  const phone = chop.chopViewHeight(390 / 844)
+  assert.equal(desktop, chop.CHOP_PLAY_HEIGHT)
+  assert.ok(phone > desktop, 'a narrow window shows more height')
+  // At any aspect the view shows the whole playfield width.
+  for (const aspect of [0.4, 0.46, 0.75, 1, 1.33, 1.78, 2.4]) {
+    const view = chop.chopViewHeight(aspect)
+    assert.ok(view * aspect >= chop.CHOP_PLAY_WIDTH - 1e-9, `width at ${aspect}`)
+    assert.ok(view >= chop.CHOP_PLAY_HEIGHT - 1e-9, `height at ${aspect}`)
+    assert.ok(chop.chopViewTop(aspect) > chop.CHOP_PLAY_BOTTOM)
+  }
+})

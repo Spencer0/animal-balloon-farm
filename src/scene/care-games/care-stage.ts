@@ -19,6 +19,14 @@ import { clonePlantModel, disposePlantModel } from '../garden-plants'
  * stock materials are used, so there is no shader to twin in TSL.
  */
 
+/** A game's own camera: where it stands and looks, and its field of view, for a window's aspect (width / height). */
+export interface CareFrame {
+  readonly position: THREE.Vector3
+  readonly look: THREE.Vector3
+  readonly fov: number
+}
+export type CareFraming = (aspect: number) => CareFrame
+
 export interface CareStage {
   readonly scene: THREE.Scene
   readonly camera: THREE.PerspectiveCamera
@@ -47,6 +55,8 @@ export interface CareStage {
   screenToPlane(clientX: number, clientY: number, planeZ: number, target?: THREE.Vector3): THREE.Vector3
   /** Lean the camera toward a screen point (-1..1 each way), like looking along your aim. */
   setLook(nx: number, ny: number): void
+  /** A game frames its own playfield: the stage uses this camera instead of its default, or the default again on null. */
+  setFraming(framing: CareFraming | null): void
   shake(amount: number): void
   update(deltaSeconds: number): void
   resize(cssWidth: number, cssHeight: number): void
@@ -267,6 +277,7 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
   const look = new THREE.Vector2()
   const lookTarget = new THREE.Vector2()
   let shakeAmount = 0
+  let framing: CareFraming | null = null
   let time = 0
   const projector = new THREE.Vector3()
   const raycaster = new THREE.Raycaster()
@@ -317,6 +328,9 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
       plane.constant = -planeZ
       return raycaster.ray.intersectPlane(plane, target) ?? target.set(0, 0.5, planeZ)
     },
+    setFraming(next): void {
+      framing = next
+    },
     setLook(nx, ny): void {
       lookTarget.set(THREE.MathUtils.clamp(nx, -1, 1), THREE.MathUtils.clamp(ny, -1, 1))
     },
@@ -328,12 +342,22 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
       look.lerp(lookTarget, Math.min(1, deltaSeconds * 6))
       shakeAmount = Math.max(0, shakeAmount - deltaSeconds * 0.5)
       const jitter = shakeAmount * shakeAmount
-      camera.position.set(
-        CAMERA_HOME.x + look.x * 0.14 + (Math.random() - 0.5) * jitter,
-        CAMERA_HOME.y + look.y * 0.07 + Math.sin(time * 0.9) * 0.01 + (Math.random() - 0.5) * jitter,
-        CAMERA_HOME.z,
-      )
-      camera.lookAt(LOOK_AT.x + look.x * 0.22, LOOK_AT.y + look.y * 0.12, LOOK_AT.z)
+      const frame = framing?.(camera.aspect)
+      if (frame) {
+        camera.position.copy(frame.position)
+        if (camera.fov !== frame.fov) {
+          camera.fov = frame.fov
+          camera.updateProjectionMatrix()
+        }
+        camera.lookAt(frame.look)
+      } else {
+        camera.position.set(
+          CAMERA_HOME.x + look.x * 0.14 + (Math.random() - 0.5) * jitter,
+          CAMERA_HOME.y + look.y * 0.07 + Math.sin(time * 0.9) * 0.01 + (Math.random() - 0.5) * jitter,
+          CAMERA_HOME.z,
+        )
+        camera.lookAt(LOOK_AT.x + look.x * 0.22, LOOK_AT.y + look.y * 0.12, LOOK_AT.z)
+      }
       for (const [index, cloud] of clouds.entries()) {
         cloud.position.x += deltaSeconds * (0.08 + index * 0.03)
         if (cloud.position.x > 6) cloud.position.x = -6

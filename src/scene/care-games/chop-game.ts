@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import {
-  CHOP_FAKE_OUT_AT, CHOP_FAKE_OUT_SECONDS, CHOP_REACH,
-  chopBandHeight, chopFakeOutChance, chopFallSpeed, chopSpawnGap,
+  CHOP_FAKE_OUT_AT, CHOP_FAKE_OUT_SECONDS, CHOP_PLAY_BOTTOM, CHOP_PLAY_CENTRE_X, CHOP_REACH,
+  chopBandHeight, chopFakeOutChance, chopFallSpeed, chopSpawnGap, chopViewHeight, chopViewTop,
   fellThrough, gradeChop, hitsFor, type ChopGrade,
 } from '../../game/care-chop'
+import type { CareFrame } from './care-stage'
 import { cloneCastCritter } from '../plant-models'
 import { createBurst } from '../garden-bursts'
 import type { CareGameContext, CareGameScene } from './care-game-types'
@@ -37,8 +38,10 @@ const CUT_X = 0
 const PLANT_X = 0.42
 /** The plant's top, for the win's confetti. */
 const PLANT_TOP = 0.9
-/** A new stalk starts with its band this far above the blade line, above the top of the screen. */
-const SPAWN_ABOVE = 1.25
+/** A new stalk's band starts this far above the top of the view, so the stalk drops in from off screen. */
+const SPAWN_ABOVE_VIEW = 0.45
+/** The camera stands this far from the playfield. */
+const PLAY_DISTANCE = 2
 /** The stalk's own shape, from art/blender/flower_care_cast.py (metres, along its height). */
 const STALK_BOTTOM = -0.45
 const STALK_TOP = 0.3
@@ -73,6 +76,14 @@ interface Piece {
   readonly spin: THREE.Vector3
   readonly owned: Disposable[]
   age: number
+}
+
+/** The camera frames the playfield for a window's aspect: the shears, the stalks and the plant fill the view. */
+function chopFrame(aspect: number): CareFrame {
+  const view = chopViewHeight(aspect)
+  const look = new THREE.Vector3(CHOP_PLAY_CENTRE_X, CHOP_PLAY_BOTTOM + view / 2, 0)
+  const fov = THREE.MathUtils.radToDeg(2 * Math.atan(view / 2 / PLAY_DISTANCE))
+  return { position: new THREE.Vector3(look.x, look.y + 0.12, PLAY_DISTANCE), look, fov: Math.min(75, fov) }
 }
 
 /** The stalk's stem centreline sway at a height, as the Blender model draws it. */
@@ -160,9 +171,17 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   stage.scene.add(root)
   const owned: Disposable[] = []
   const debugHook = new URLSearchParams(location.search).has('gardenDebug')
+  // Space cuts too, for the keyboard; the pointer tap is the main input.
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.code !== 'Space' || event.repeat) return
+    event.preventDefault()
+    tap()
+  }
+  window.addEventListener('keydown', onKeyDown)
 
-  // The plant sits to one side while its stalks are cut.
+  // The plant sits to one side while its stalks are cut, and the camera frames the playfield.
   if (stage.plant) stage.plant.position.x = PLANT_X
+  stage.setFraming(chopFrame)
 
   // ---- the shears: fixed mid-screen, jaws pointing right, tilted toward the camera.
   const holder = new THREE.Group()
@@ -220,7 +239,7 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   const castStalk = cloneCastCritter('flower', 'stalk')
   const stalkTemplate = castStalk ?? fallbackStalk(owned)
   // Chunky bright dashes, so the cut band reads from a phone's distance.
-  const dashGeometry = new THREE.BoxGeometry(0.018, 0.02, 0.024)
+  const dashGeometry = new THREE.BoxGeometry(0.036, 0.05, 0.06)
   const dashMaterial = new THREE.MeshBasicMaterial({ color: '#fff27a' })
   const capMaterial = new THREE.MeshLambertMaterial({ color: '#e6d08e', side: THREE.DoubleSide })
   owned.push(dashGeometry, dashMaterial, capMaterial)
@@ -234,6 +253,9 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   let cooldown = 0
   let flash = 0
   let finished = false
+  let won = false
+  let lastGrade: ChopGrade | null = null
+  let lean = 0
 
   // A white flash on the lens, for a PERFECT: a plane held just in front of the camera.
   const flashMaterial = new THREE.MeshBasicMaterial({ color: '#fffbe8', transparent: true, opacity: 0, depthTest: false, depthWrite: false })
@@ -251,6 +273,8 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       bladeY: SHEAR_Y,
       hits: () => round.snapshot.hits,
       state: () => round.snapshot.state,
+      /** The grade of the last tap: 'perfect', 'good', 'miss', 'whiff', or null before any tap. */
+      last: () => lastGrade,
     }
   }
 
@@ -275,7 +299,7 @@ export function createChopGame(context: CareGameContext): CareGameScene {
     bandGroup.name = 'Chop cut band'
     const centreX = stalkCentreX(band)
     // Each dash sits on the stem's surface, its inner face touching the stem.
-    const radius = stalkRadius(band) + 0.009
+    const radius = stalkRadius(band) + 0.018
     for (let dash = 0; dash < DASHES; dash += 1) {
       const angle = (dash / DASHES) * Math.PI * 2
       const mesh = new THREE.Mesh(dashGeometry, dashMaterial)
@@ -295,7 +319,9 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       seed: Math.random() * 10,
       state: 'falling',
     }
-    group.position.set(CUT_X, SHEAR_Y + SPAWN_ABOVE - band, 0)
+    // Start above the top of the view, whatever the window's shape, and fall into the blades.
+    const bandY = chopViewTop(stage.camera.aspect) + SPAWN_ABOVE_VIEW
+    group.position.set(CUT_X, bandY - band, 0)
     root.add(group)
     stalks.push(stalk)
   }
@@ -309,6 +335,7 @@ export function createChopGame(context: CareGameContext): CareGameScene {
     stalk.state = 'cut'
     const at = bladePoint()
     const cutY = stalk.band
+    lastGrade = grade
     const body = stalk.root.children[0]
     // The top piece (with the seed head) flies off; the bottom drops. Each gets a flat cut face.
     for (const [name, keepAbove] of [['Stalk top', true], ['Stalk bottom', false]] as const) {
@@ -353,8 +380,22 @@ export function createChopGame(context: CareGameContext): CareGameScene {
     } else {
       sfx.play('chopMiss')
       popAt(at, 'MISS', 'bad', true)
-      stage.shake(0.04)
     }
+  }
+
+  /** One cut attempt: the nearest stalk in reach, or a snap on air. Pointer and Space both come here. */
+  function tap(): void {
+    if (finished || cooldown > 0) return
+    const stalk = nearestInReach()
+    if (!stalk) {
+      closeShears()
+      snapOnAir()
+      round.whiff()
+      lastGrade = 'whiff'
+      return
+    }
+    closeShears()
+    cut(stalk, gradeChop(distanceOf(stalk)))
   }
 
   function snapOnAir(): void {
@@ -441,24 +482,22 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       haloMaterial.opacity = near ? 0.4 : 0.18
       flash = Math.max(0, flash - dt * 2.6)
       flashMaterial.opacity = flash * 0.6
+      // A lost round: the plant droops away from the lost stalks, and eases back when it is over.
+      if (stage.plant) {
+        const target = finished && !won ? 0.26 : 0
+        lean += (target - lean) * Math.min(1, dt * 3)
+        stage.plant.rotation.z = lean
+      }
     },
     pointerDown(): void {
-      if (finished || cooldown > 0) return
-      const stalk = nearestInReach()
-      if (!stalk) {
-        closeShears()
-        snapOnAir()
-        round.whiff()
-        return
-      }
-      closeShears()
-      cut(stalk, gradeChop(distanceOf(stalk)))
+      tap()
     },
     pointerMove(): void {},
     pointerUp(): void {},
-    finish(won): void {
+    finish(didWin): void {
       finished = true
-      if (won) {
+      won = didWin
+      if (didWin) {
         stage.bounce(1)
         flash = 0.5
         const crown = new THREE.Vector3(PLANT_X, PLANT_TOP, 0.1)
@@ -469,6 +508,8 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       }
     },
     dispose(): void {
+      window.removeEventListener('keydown', onKeyDown)
+      if (stage.plant) stage.plant.rotation.z = 0
       if (debugHook) delete (window as unknown as { __chopGame?: unknown }).__chopGame
       for (const stalk of stalks) stalk.root.removeFromParent()
       stalks.length = 0
