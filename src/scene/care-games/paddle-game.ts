@@ -31,7 +31,7 @@ import type { CareGameContext, CareGameScene } from './care-game-types'
  * (`rules.seconds - timeLeft`), so the course is the same at any frame rate.
  */
 
-const FROG_SCALE = 1.7
+const FROG_SCALE = 0.85
 const MOSQUITO_SCALE = 4
 const SNAG_SCALE = 1.5
 /** The log model is this long along X before it is stretched to its lanes. */
@@ -59,7 +59,7 @@ const BLINK_SECONDS = 1.1
 const SPIN_SECONDS = 0.6
 const SWIPE_PX = 30
 const CAMERA_Z = 1.45
-const CAMERA_Y = 0.3
+const CAMERA_Y = 0.5
 /** A beat is hidden once it has passed the frog (it flies off past the camera), or while it is still lost in the fog. */
 const SHOW_NEAR = 0.3
 const SHOW_FAR = -24
@@ -209,7 +209,7 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
   frog.rotation.y = FROG_AWAY
   frogRig.add(frog)
   const tongue = frog.getObjectByName('tongue') ?? null
-  const frogShadow = makeShadow('Paddle frog shadow', 0.34, 0.4)
+  const frogShadow = makeShadow('Paddle frog shadow', 0.18, 0.22)
 
   // ---- the lily at the far end, growing nearer
   const lilyHolder = new THREE.Group()
@@ -356,7 +356,7 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
       CAMERA_Y + (Math.random() - 0.5) * jitter,
       CAMERA_Z,
     )
-    camera.lookAt(x * 0.5, 0.07, -3)
+    camera.lookAt(x * 0.5, -0.05, -2.5)
     camera.updateMatrixWorld()
   }
   frame(0)
@@ -452,7 +452,7 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
       frog.rotation.y = FROG_AWAY + Math.sin(elapsed * 7) * 0.06
       if (elapsed < spinUntil) frog.rotation.y += ((spinUntil - elapsed) / SPIN_SECONDS) * Math.PI * 2
       frogShadow.position.set(frogRig.position.x, WATER_Y + 0.003, 0)
-      frogShadow.scale.set(0.34 * (1 - hopHeight * 2.5), 1, 0.4 * (1 - hopHeight * 2.5))
+      frogShadow.scale.set(0.18 * (1 - hopHeight * 2.5), 1, 0.22 * (1 - hopHeight * 2.5))
 
       // The tongue: out to the mosquito, a beat, then back in.
       if (tongue) {
