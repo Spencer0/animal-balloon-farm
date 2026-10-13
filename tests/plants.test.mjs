@@ -167,6 +167,23 @@ test('a blueberry bush asks for a drink, a beetle swat and a snip, in that order
   assert.equal(simulation.plants[0].mature, true)
 })
 
+test('a save from before the blueberry gift gets one blueberry seed, and a used-up one stays at zero', () => {
+  const legacy = createPlantSimulation()
+  const saved = JSON.parse(JSON.stringify(legacy.exportState()))
+  delete saved.seeds.blueberry
+  saved.seeds.poppy = 0
+  const restored = createPlantSimulation()
+  restored.importState(saved)
+  assert.equal(restored.seedsFor('blueberry'), 1)
+  assert.equal(restored.seedsFor('poppy'), 0)
+
+  const usedUp = createPlantSimulation()
+  const state = JSON.parse(JSON.stringify(usedUp.exportState()))
+  state.seeds.blueberry = 0
+  usedUp.importState(state)
+  assert.equal(usedUp.seedsFor('blueberry'), 0)
+})
+
 test('a saved bush waiting on its beetles is still waiting after a reload', () => {
   const simulation = stockedSimulation()
   const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
