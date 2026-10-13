@@ -299,7 +299,12 @@ export function createPlantSimulation(): PlantSimulation {
     },
     importState(state): void {
       const finite = (value: unknown, fallback = 0): number => (typeof value === 'number' && Number.isFinite(value) ? value : fallback)
-      for (const { id } of PLANT_CATALOG) seedCounts.set(id, Math.max(0, Math.floor(finite(state.seeds[id]))))
+      // A save from before a species existed has no entry for it. Its starting gift
+      // (if it has one) is granted then; a saved zero stays zero.
+      for (const { id } of PLANT_CATALOG) {
+        const gift = STARTING_SEED_GIFTS.find((entry) => entry.species === id)?.count ?? STARTING_SEEDS_PER_PLANT
+        seedCounts.set(id, Math.max(0, Math.floor(finite(state.seeds[id], gift))))
+      }
       plants.length = 0
       let highest = 0
       for (const saved of state.plants) {
