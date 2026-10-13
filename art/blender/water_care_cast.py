@@ -186,7 +186,8 @@ M = {
     "dragonTeal": make_material("WC dragonfly teal", "#2aa6a0", .3, 0, .5),
     "dragonBlue": make_material("WC dragonfly blue", "#1f6f8b", .3, 0, .5),
     "dragonDeep": make_material("WC dragonfly head", "#17606e", .3, 0, .5),
-    "wingGlass": make_material("WC dragonfly glassy wing", "#c9f0ee", .12, 0, .3, alpha=.5),
+    "wingFore": make_material("WC dragonfly fore wing", "#e4f6ff", .12, 0, .4, alpha=.72),
+    "wingHind": make_material("WC dragonfly hind wing", "#efe6ff", .12, 0, .4, alpha=.72),
     "eyeWhite": make_material("WC googly eye white", "#fffaf0", .3, 0, .4),
     "ink": make_material("WC googly pupil ink", "#24202a", .4, 0, .4),
     # Frog.
@@ -228,10 +229,9 @@ M = {
     "leafRib": make_material("WC runner leaf rib", "#b9e08a", .45, 0, .2),
     "stemRun": make_material("WC runner stem", "#5a8f4a", .45, 0, .2),
     # Review stage only (never exported).
-    "stagePond": make_material("STAGE pond floor", "#9fd6d4", .9, 0, .02),
+    "stagePond": make_material("STAGE buttercream floor", "#f6e6c6", .88, 0, .02),
     "stageBack": make_material("STAGE mint backdrop", "#a6d8cf", .9, 0, .02),
-    "stageLily": make_material("STAGE water lily pad", "#6fbf8a", .5, 0, .2),
-}
+    }
 
 critters = []
 
@@ -256,52 +256,57 @@ sphere("CRITTER_dragonfly_thorax", (.04, 0, .014), (.033, .03, .03), M["dragonTe
 sphere("CRITTER_dragonfly_head", (.08, 0, .014), (.03, .03, .028), M["dragonDeep"], dragon, 12, 8)
 WING_TILT = math.radians(35)  # wings splay out and up in a V, so they read from the side
 for label, side in (("L", 1), ("R", -1)):
-    # Wings are glassy blades on a shoulder pivot: a fore wing and a hind wing per side.
-    wing = pivot(f"CRITTER_dragonfly_wing_{label}", (.03, side * .02, .035), dragon)
-    tilt = Euler((side * WING_TILT, 0, 0)).to_quaternion()
+    # Each wing is a shoulder pivot carrying a large fore wing and a smaller hind wing.
+    wing = pivot(f"wing_{label}", (.03, side * .02, .035), dragon)
 
     def wing_point(y, x=0.0):
         return (x, y * math.cos(side * WING_TILT), y * math.sin(side * WING_TILT))
 
-    sphere(f"CRITTER_dragonfly_wing_{label}_fore", wing_point(.07), (.028, .075, .0015), M["wingGlass"], wing, 8, 5, tilt)
-    sphere(f"CRITTER_dragonfly_wing_{label}_hind", wing_point(.06, -.03), (.024, .06, .0015), M["wingGlass"], wing, 8, 5, tilt)
+    tilt = Euler((side * WING_TILT, 0, 0)).to_quaternion()
+    sphere(f"wing_{label}_fore", wing_point(.09), (.038, .095, .002), M["wingFore"], wing, 10, 6, tilt)
+    sphere(f"wing_{label}_hind", wing_point(.075, -.032), (.03, .078, .002), M["wingHind"], wing, 10, 6, tilt)
     googly_eye(f"CRITTER_dragonfly_{label}", dragon, (.078, side * .022, .02), (.5, side, 0), .02)
 
 # ------------------------------------------------------------------ frog --
 
-frog = add_critter("CRITTER_frog", "about 0.18 m, sitting, faces -Y")
-sphere("CRITTER_frog_back", (0, .01, .045), (.06, .056, .046), M["frogGreen"], frog, 10, 7)
-sphere("CRITTER_frog_head", (0, -.018, .085), (.05, .04, .042), M["frogGreen"], frog, 10, 7)
-sphere("CRITTER_frog_belly", (0, -.03, .036), (.043, .03, .03), M["frogBelly"], frog, 12, 8)
-sphere("CRITTER_frog_chin", (0, -.052, .066), (.03, .02, .02), M["frogBelly"], frog, 10, 6)
-# Dark spots on the back: they must read from behind, where the stream game sees the frog.
-for index, (x, y, z) in enumerate(((-.03, .058, .07), (.03, .058, .07), (-.02, .062, .04), (.025, .062, .035), (0, .064, .056))):
-    sphere(f"CRITTER_frog_spot_{index + 1}", (x, y, z), (.011, .006, .011), M["frogDark"], frog, 8, 5)
+frog = add_critter("CRITTER_frog", "about 0.2 m, sitting, faces -Y")
+sphere("CRITTER_frog_body", (0, .005, .055), (.085, .075, .06), M["frogGreen"], frog, 14, 9)
+sphere("CRITTER_frog_head", (0, -.02, .1), (.07, .05, .04), M["frogGreen"], frog, 12, 8)
+sphere("CRITTER_frog_belly", (0, -.045, .04), (.06, .035, .04), M["frogBelly"], frog, 12, 8)
+# Spots on the back (+Y side) read from behind, where the stream game sees the frog.
+for index, (x, y, z) in enumerate(((-.04, .074, .07), (.04, .074, .07), (-.02, .078, .04), (.03, .078, .035),
+                                    (0, .08, .06), (-.06, .07, .03), (.06, .07, .03))):
+    sphere(f"CRITTER_frog_spot_{index + 1}", (x, y, z), (.013, .006, .013), M["frogDark"], frog, 8, 5)
 for label, sign in (("L", -1), ("R", 1)):
-    # Chunky back legs: their haunches are the big silhouette from behind.
-    sphere(f"CRITTER_frog_haunch_{label}", (sign * .058, .02, .03), (.036, .042, .03), M["frogGreen"], frog, 10, 7)
-    sphere(f"CRITTER_frog_foot_{label}", (sign * .07, -.05, .008), (.03, .04, .01), M["frogDark"], frog, 8, 5)
-    stick(f"CRITTER_frog_arm_{label}", (sign * .04, -.03, .04), (sign * .062, -.05, .012), .011, .008, M["frogGreen"], frog, 6)
-    sphere(f"CRITTER_frog_cheek_{label}", (sign * .03, -.053, .068), (.012, .005, .008), M["cheek"], frog, 8, 5)
-    googly_eye(f"CRITTER_frog_{label}", frog, (sign * .03, -.02, .112), (0, -1, .35), .028)
-stick("CRITTER_frog_mouth", (-.028, -.058, .07), (.028, -.058, .07), .0025, .0025, M["ink"], frog, 5)
-tongue = pivot("CRITTER_frog_tongue", (0, -.056, .072), frog)
+    # Big folded back legs: their thighs are the two bumps you see from behind.
+    sphere(f"CRITTER_frog_thigh_{label}", (sign * .075, .03, .025), (.045, .05, .036), M["frogGreen"], frog, 12, 8)
+    sphere(f"CRITTER_frog_foot_{label}", (sign * .068, -.072, .01), (.035, .028, .013), M["frogDark"], frog, 8, 5)
+    stick(f"CRITTER_frog_arm_{label}", (sign * .045, -.035, .04), (sign * .07, -.058, .012), .011, .009, M["frogGreen"], frog, 6)
+    sphere(f"CRITTER_frog_cheek_{label}", (sign * .042, -.058, .085), (.014, .005, .01), M["cheek"], frog, 8, 5)
+    # Googly eyes raised on top of the head; pupils look forward and up.
+    googly_eye(f"CRITTER_frog_{label}", frog, (sign * .032, -.02, .132), (0, -.2, 1), .03)
+# Wide smile: a curve of short ink strokes across the front of the head.
+SMILE = [(-.065, -.052, .094), (-.04, -.064, .09), (-.02, -.069, .088), (0, -.07, .088),
+         (.02, -.069, .088), (.04, -.064, .09), (.065, -.052, .094)]
+for index in range(len(SMILE) - 1):
+    stick(f"CRITTER_frog_smile_{index + 1}", SMILE[index], SMILE[index + 1], .0032, .0032, M["ink"], frog, 5)
+tongue = pivot("tongue", (0, -.07, .088), frog)
 stick("CRITTER_frog_tongue_strand", (0, 0, 0), (0, -.045, 0), .009, .007, M["tongue"], tongue, 8)
 sphere("CRITTER_frog_tongue_tip", (0, -.048, 0), (.011, .011, .011), M["tongue"], tongue, 8, 5)
 
 # ------------------------------------------------------------------ fish --
 
 fish = add_critter("CRITTER_fish", "about 0.25 m, mid-leap arc, faces +X")
-# The spine is walked from the tail: heading turns from a tail-down dip to a
-# head-up lift, so the body arcs like a leap. Radii swell from tail to head.
-SPINE_N = 5
+# The spine is walked from the tail: heading sweeps from a tail-down dip to a
+# head-up lift, so the body is clearly curved like a leap. Radii swell to the head.
+SPINE_N = 6
 spine = []
 x = z = 0.0
 for index in range(SPINE_N):
     t = index / (SPINE_N - 1)
     spine.append((x, z, t))
-    heading = math.radians(-45 + 100 * t)  # a bow: tail dips, head lifts
-    step = .215 / (SPINE_N - 1)
+    heading = math.radians(-62 + 124 * t)
+    step = .24 / (SPINE_N - 1)
     x += math.cos(heading) * step
     z += math.sin(heading) * step
 mid_x = sum(p[0] for p in spine) / SPINE_N
@@ -310,28 +315,35 @@ spine = [(px - mid_x, pz - mid_z, t) for px, pz, t in spine]
 
 
 def fish_radius(t):
-    return .016 + .026 * t ** .6
+    return .014 + .026 * t ** .6
 
 
 for index, (px, pz, t) in enumerate(spine):
     r = fish_radius(t)
     # Long, overlapping ellipsoids read as a fish body; round balls read as a grub.
-    sphere(f"CRITTER_fish_body_{index + 1}", (px, 0, pz), (r * 2.1, r * .95, r), M["fishOrange"], fish, 10, 6)
-    if index in (1, 3):
-        for side in (-1, 1):
-            sphere(f"CRITTER_fish_patch_{index + 1}_{'L' if side > 0 else 'R'}", (px, side * r * .8, pz + r * .25),
-                   (r * .8, .004, r * .7), M["fishWhite"], fish, 8, 4)
+    sphere(f"CRITTER_fish_body_{index + 1}", (px, 0, pz), (r * 1.9, r * .95, r), M["fishOrange"], fish, 10, 6)
+for index in (1, 3):
+    px, pz, _ = spine[index]
+    r = fish_radius(spine[index][2])
+    for side, label in ((-1, "L"), (1, "R")):
+        sphere(f"CRITTER_fish_patch_{index + 1}_{label}", (px, side * r * .85, pz + r * .15),
+               (r * .85, .005, r * .7), M["fishWhite"], fish, 8, 4)
 hx, hz, _ = spine[-1]
-sphere("CRITTER_fish_head", (hx + .01, 0, hz), (.04, .034, .034), M["fishOrange"], fish, 10, 6)
-sphere("CRITTER_fish_snout", (hx + .03, 0, hz - .004), (.014, .016, .014), M["fishWhite"], fish, 8, 5)
-sphere("CRITTER_fish_dorsal", (spine[2][0], 0, spine[2][1] + fish_radius(.5) * .9), (.03, .005, .026), M["fishFin"], fish, 8, 4)
-tx, tz, _ = spine[0]
-sphere("CRITTER_fish_tail_upper", (tx - .022, 0, tz + .024), (.03, .006, .026), M["fishTail"], fish, 8, 4)
-sphere("CRITTER_fish_tail_lower", (tx - .022, 0, tz - .018), (.03, .006, .024), M["fishTail"], fish, 8, 4)
-sphere("CRITTER_fish_tail_root", (tx - .008, 0, tz + .002), (.02, .016, .016), M["fishTail"], fish, 8, 4)
+sphere("CRITTER_fish_head", (hx + .012, 0, hz), (.042, .036, .036), M["fishOrange"], fish, 10, 6)
+sphere("CRITTER_fish_snout", (hx + .034, 0, hz - .005), (.014, .016, .014), M["fishWhite"], fish, 8, 5)
+mx, mz, _ = spine[2]
+sphere("CRITTER_fish_dorsal", (mx, 0, mz + fish_radius(.5) * .95 + .012), (.034, .005, .03), M["fishFin"], fish, 8, 4)
 for side, label in ((-1, "L"), (1, "R")):
-    sphere(f"CRITTER_fish_pectoral_{label}", (spine[3][0], side * .03, spine[3][1] - .012), (.016, .005, .01), M["fishWhite"], fish, 6, 4)
-    googly_eye(f"CRITTER_fish_{label}", fish, (hx + .012, side * .024, hz + .01), (.3, side, .15), .015)
+    sphere(f"CRITTER_fish_pectoral_{label}", (spine[2][0] + .01, side * .03, spine[2][1] - .015),
+           (.02, .006, .012), M["fishWhite"], fish, 6, 4, Euler((0, 0, side * math.radians(25))).to_quaternion())
+    googly_eye(f"CRITTER_fish_{label}", fish, (hx + .022, side * .028, hz + .012), (.2, side, .2), .016)
+# Forked tail: two fan lobes swept back and apart, with a root between them.
+tx, tz, _ = spine[0]
+sphere("CRITTER_fish_tail_upper", (tx - .03, 0, tz + .02), (.036, .005, .018), M["fishTail"], fish, 8, 4,
+       Euler((0, math.radians(30), 0)).to_quaternion())
+sphere("CRITTER_fish_tail_lower", (tx - .03, 0, tz - .02), (.036, .005, .018), M["fishTail"], fish, 8, 4,
+       Euler((0, math.radians(-30), 0)).to_quaternion())
+sphere("CRITTER_fish_tail_root", (tx - .008, 0, tz), (.02, .016, .016), M["fishTail"], fish, 8, 4)
 
 # --------------------------------------------------------------- cattail --
 
@@ -414,41 +426,45 @@ print("Water cast total triangles:", sum(triangles(root) for root in critters))
 # Review layout: each critter on the stage, with a water lily pad under the frog
 # for scale. The dragonfly is enlarged 1.5x and the two smallest critters 3x, in the render only.
 REVIEW_LAYOUT = {
-    "CRITTER_cattail": (-1.45, .5, 0),
-    "CRITTER_snag": (-.85, .5, 0),
-    "CRITTER_log": (.3, .5, 0),
-    "CRITTER_dragonfly": (1.2, .55, .35),
+    # Back row
+    "CRITTER_cattail": (-1.35, .5, 0),
+    "CRITTER_snag": (-.7, .5, 0),
+    "CRITTER_mosquito": (-.1, .5, .15),
+    "CRITTER_dragonfly": (.75, .5, .4),
+    "CRITTER_runner_leaf": (1.35, .5, 0),
+    # Front row
     "CRITTER_frog": (-1.2, -.3, 0),
-    "CRITTER_fish": (-.3, -.3, .16),
-    "CRITTER_mosquito": (.62, -.3, .12),
-    "CRITTER_runner_leaf": (1.3, -.3, 0),
+    "CRITTER_fish": (-.35, -.3, .15),
+    "CRITTER_log": (.9, -.3, 0),
 }
-REVIEW_ENLARGE = {"CRITTER_dragonfly": 1.5, "CRITTER_mosquito": 3.0, "CRITTER_runner_leaf": 3.0}
+# The whole cast is drawn at 2x so it fills the frame; the smallest ones at 4x.
+# Review-only: the GLB keeps true sizes.
+REVIEW_ENLARGE = {"CRITTER_mosquito": 4.0, "CRITTER_runner_leaf": 4.0}
+REVIEW_DEFAULT_ENLARGE = 2.0
 
 for root in critters:
     root.location = REVIEW_LAYOUT[root.name]
-    if root.name in REVIEW_ENLARGE:
-        root.scale = (REVIEW_ENLARGE[root.name],) * 3
+    root.scale = (REVIEW_ENLARGE.get(root.name, REVIEW_DEFAULT_ENLARGE),) * 3
 
 scene = bpy.context.scene
 engines = [item.identifier for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
 scene.render.engine = "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines else "BLENDER_EEVEE"
 scene.render.resolution_x, scene.render.resolution_y = 900, 600
 scene.render.resolution_percentage = 100
-scene.eevee.taa_render_samples = 24
+scene.eevee.taa_render_samples = 32
 scene.render.image_settings.file_format = "PNG"
 scene.render.film_transparent = False
 scene.view_settings.view_transform = "AgX"
 scene.view_settings.look = "AgX - Medium High Contrast"
-scene.view_settings.exposure = .2
+scene.view_settings.exposure = .35
 scene.world = bpy.data.worlds.new("Water cast review: mint pond morning")
 scene.world.use_nodes = True
 scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = color_rgba("#b7dcd2")
-scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = .68
+scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = .95
 
 bpy.ops.mesh.primitive_plane_add(size=60, location=(0, 0, -.05))
 floor = bpy.context.object
-floor.name = "STAGE pond floor"
+floor.name = "STAGE floor"
 floor.data.materials.append(M["stagePond"])
 bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 6, 3))
 backdrop = bpy.context.object
@@ -456,21 +472,20 @@ backdrop.name = "STAGE backdrop"
 backdrop.dimensions = (60, .25, 12)
 bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 backdrop.data.materials.append(M["stageBack"])
-cone("STAGE water lily pad", (0, 0, -.01), .5, .5, .02, M["stageLily"], None, 18)
 
 camera_data = bpy.data.cameras.new("STAGE camera")
 camera = bpy.data.objects.new("STAGE camera", camera_data)
 bpy.context.collection.objects.link(camera)
-camera.location = (0, -7.5, 2.4)
-camera.rotation_euler = (Vector((0, 0, .25)) - Vector(camera.location)).to_track_quat("-Z", "Y").to_euler()
+camera.location = (0, -8.0, 2.6)
+camera.rotation_euler = (Vector((0, 0, .75)) - Vector(camera.location)).to_track_quat("-Z", "Y").to_euler()
 camera_data.type = "ORTHO"
-camera_data.ortho_scale = 3.7
+camera_data.ortho_scale = 3.5
 scene.camera = camera
 
 for name, location, energy, size, tint in [
-    ("STAGE LIGHT warm key", (3, -6, 7), 900, 5, (1.0, .93, .82)),
-    ("STAGE LIGHT cool fill", (-6, -3, 4), 500, 5, (.76, .92, 1.0)),
-    ("STAGE LIGHT soft rim", (5, 4, 6), 650, 4, (1.0, .82, .72)),
+    ("STAGE LIGHT warm key", (3, -6, 7), 1200, 5, (1.0, .93, .82)),
+    ("STAGE LIGHT cool fill", (-6, -3, 4), 700, 5, (.76, .92, 1.0)),
+    ("STAGE LIGHT soft rim", (5, 4, 6), 850, 4, (1.0, .82, .72)),
 ]:
     data = bpy.data.lights.new(name, "AREA")
     data.energy = energy
@@ -522,11 +537,11 @@ if "--no-render" not in sys.argv:
     back_png = os.environ.get("WATER_CARE_BACK_PNG")
     if back_png:
         # The frog from behind: the stream game sees its back.
-        render_extra_view(back_png, (-1.2, .9, .3), (-1.2, -.3, .08), .45,
+        render_extra_view(back_png, (-1.2, .9, .35), (-1.2, -.3, .15), .6,
                           {obj.name for obj in tree(frog)})
     close_png = os.environ.get("WATER_CARE_CLOSE_PNG")
     if close_png:
-        render_extra_view(close_png, (-.5, -7.0, 1.2), (-.5, 0.0, .15), 1.6)
+        render_extra_view(close_png, (-.6, -7.0, 1.0), (-.6, -.1, .3), 2.6)
 
 # Undo the review layout before saving and exporting: true scale, roots at origin.
 for root in critters:
