@@ -1,8 +1,9 @@
 import * as THREE from 'three'
 import {
-  CHOP_FAKE_OUT_AT, CHOP_FAKE_OUT_SECONDS, CHOP_PLAY_BOTTOM, CHOP_PLAY_CENTRE_X, CHOP_REACH,
-  chopBandHeight, chopFakeOutChance, chopFallSpeed, chopSpawnGap, chopViewHeight, chopViewTop,
-  fellThrough, gradeChop, hitsFor, type ChopGrade,
+  CHOP_MAX_POINTS, CHOP_PLAY_BOTTOM, CHOP_PLAY_CENTRE_X, CHOP_ROUND_PAUSE, CHOP_ROUNDS, CHOP_SCORE_REACH,
+  CHOP_STALK_PAUSE, CHOP_STALKS_PER_ROUND,
+  chopBandHeight, chopFallSeconds, chopGravity, chopPassScore, chopPassed, chopPoints,
+  chopViewHeight, chopViewTop, fellThrough, gradeChop, type ChopGrade,
 } from '../../game/care-chop'
 import type { CareFrame } from './care-stage'
 import { cloneCastCritter } from '../plant-models'
@@ -10,21 +11,18 @@ import { createBurst } from '../garden-bursts'
 import type { CareGameContext, CareGameScene } from './care-game-types'
 
 /**
- * CUT! A spent, overgrown stalk drops straight down past a pair of garden
- * shears that are fixed mid-screen. Each stalk has a bright dashed cut band
- * painted across it at a random height. Tap when the band meets the blades:
- * the shears snap, and the stalk is cut where the blades are. The top piece
- * flies off spinning, the bottom drops.
+ * CUT! A spent, overgrown stalk is released from rest above the screen and
+ * drops under gravity past a pair of garden shears fixed mid-screen, so it is
+ * moving fast when it reaches them. Each stalk has a bright band painted across
+ * it at a random height. Tap to snap the shears: the stalk is cut where the
+ * blades are, and the points depend on how close the band is to the blade line
+ * (full marks on it, fewer the further off, nothing for a tap that comes too
+ * early). A stalk that drops past uncut scores nothing too.
  *
- * The grade is how far the band is from the blade line: PERFECT (tight) counts
- * double, GOOD counts one, and a sloppy cut is a MISS. A stalk that falls past
- * the blades uncut is a MISS too. A tap with no stalk in reach just snaps the
- * shears on air: no penalty, but no cut either.
- *
- * The blade line glows so the window is visible, with a faint shadow line under
- * it. Some stalks stall just short of the blades (a fake-out), so a tap then is
- * a MISS. The player's plant stands to one side and perks up after each clean
- * cut; a PERFECT flashes the screen, and the win scatters confetti leaves.
+ * Four stalks make a round and there are three rounds, each dropping faster
+ * than the last. The round is won when the total clears the pass mark
+ * (`chopPassScore`); the rules module only sees one hit per round played, and
+ * a failing total on the last round.
  */
 
 const SHEAR_X = -0.14
@@ -40,6 +38,8 @@ const PLANT_X = 0.42
 const PLANT_TOP = 0.9
 /** A new stalk's band starts this far above the top of the view, so the stalk drops in from off screen. */
 const SPAWN_ABOVE_VIEW = 0.45
+/** The least a stalk drops before it reaches the blades, in metres. */
+const MIN_DROP = 1.9
 /** The camera stands this far from the playfield. */
 const PLAY_DISTANCE = 2
 /** The stalk's own shape, from art/blender/flower_care_cast.py (metres, along its height). */
@@ -49,7 +49,7 @@ const STALK_SWAY = 0.035
 /** The shears snap shut for this long, then open again. */
 const SNAP_CLOSE_SECONDS = 0.08
 const SNAP_OPEN_SECONDS = 0.35
-const SNAP_COOLDOWN = 0.28
+const SNAP_COOLDOWN = 0.12
 const BLADE_OPEN_ANGLE = THREE.MathUtils.degToRad(26)
 const GRAVITY = 4.6
 const PIECE_SECONDS = 1.6
@@ -62,11 +62,12 @@ interface Stalk {
   readonly root: THREE.Group
   /** The band's height on the stalk, in the stalk's own metres. */
   readonly band: number
-  readonly speed: number
-  readonly fakeOut: boolean
-  fakeDone: boolean
-  stall: number
+  /** Metres per second, downward; gravity adds to it every frame. */
+  velocity: number
+  readonly gravity: number
   readonly seed: number
+  /** Scored (cut, tapped too early, or dropped past): the stalk still falls but no longer counts. */
+  resolved: boolean
   state: 'falling' | 'cut' | 'gone'
 }
 
@@ -247,15 +248,22 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   const stalks: Stalk[] = []
   const pieces: Piece[] = []
   let time = 0
-  let spawned = 0
-  let nextSpawn = 0.6
+  // Where the match stands: which round, which stalk of it, the points so far.
+  let roundIndex = 0
+  let stalkInRound = 0
+  let roundScore = 0
+  let total = 0
+  /** Seconds until the next stalk is released; null while one is still in play. */
+  let waitSeconds: number | null = 0.7
+  let bannerPending = true
   let snapAge = 1
   let cooldown = 0
   let flash = 0
   let finished = false
   let won = false
-  let lastGrade: ChopGrade | null = null
+  let lastGrade: ChopGrade | 'whiff' | null = null
   let lean = 0
+  let lastPoints = 0
 
   // A white flash on the lens, for a PERFECT: a plane held just in front of the camera.
   const flashMaterial = new THREE.MeshBasicMaterial({ color: '#fffbe8', transparent: true, opacity: 0, depthTest: false, depthWrite: false })
@@ -266,15 +274,30 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   stage.camera.add(flashPlane)
   owned.push(flashPlane.geometry, flashMaterial)
 
+  // The running score, in a small pill under the round bar: it is the thing the player is playing for.
+  const scoreEl = document.createElement('div')
+  scoreEl.className = 'cg-score-pill'
+  document.body.appendChild(scoreEl)
+  function renderScore(): void {
+    const shown = Math.min(roundIndex + 1, CHOP_ROUNDS)
+    scoreEl.textContent = `Round ${shown}/${CHOP_ROUNDS} · Score ${total} · Pass ${chopPassScore()}`
+  }
+  renderScore()
+
   if (debugHook) {
     ;(window as unknown as { __chopGame?: unknown }).__chopGame = {
-      /** Each falling stalk's band distance from the blade line, in metres (positive above). */
-      distances: () => stalks.filter((stalk) => stalk.state === 'falling').map(distanceOf),
+      /** Each unscored falling stalk's band distance from the blade line, in metres (positive above). */
+      distances: () => stalks.filter((stalk) => stalk.state === 'falling' && !stalk.resolved).map(distanceOf),
       bladeY: SHEAR_Y,
       hits: () => round.snapshot.hits,
       state: () => round.snapshot.state,
-      /** The grade of the last tap: 'perfect', 'good', 'miss', 'whiff', or null before any tap. */
+      /** The grade of the last tap: 'perfect', 'good', 'ok', 'early', 'whiff', or null before any tap. */
       last: () => lastGrade,
+      points: () => lastPoints,
+      total: () => total,
+      round: () => roundIndex,
+      /** Tap now, as the pointer would. */
+      tap: () => tap(),
     }
   }
 
@@ -287,8 +310,6 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   }
 
   function spawnStalk(): void {
-    const index = spawned
-    spawned += 1
     const band = chopBandHeight(Math.random())
     const group = new THREE.Group()
     group.name = 'Chop stalk'
@@ -309,19 +330,19 @@ export function createChopGame(context: CareGameContext): CareGameScene {
     }
     bandGroup.position.set(centreX, band, 0)
     group.add(bandGroup)
+    // Start at rest above the top of the view, whatever the window's shape. Gravity is set so the
+    // band reaches the blade line exactly `chopFallSeconds` later: the later the round, the faster.
+    const drop = Math.max(MIN_DROP, chopViewTop(stage.camera.aspect) + SPAWN_ABOVE_VIEW - SHEAR_Y)
     const stalk: Stalk = {
       root: group,
       band,
-      speed: chopFallSpeed(index),
-      fakeOut: Math.random() < chopFakeOutChance(index),
-      fakeDone: false,
-      stall: 0,
+      velocity: 0,
+      gravity: chopGravity(drop, chopFallSeconds(roundIndex)),
       seed: Math.random() * 10,
+      resolved: false,
       state: 'falling',
     }
-    // Start above the top of the view, whatever the window's shape, and fall into the blades.
-    const bandY = chopViewTop(stage.camera.aspect) + SPAWN_ABOVE_VIEW
-    group.position.set(CUT_X, bandY - band, 0)
+    group.position.set(CUT_X, SHEAR_Y + drop - band, 0)
     root.add(group)
     stalks.push(stalk)
   }
@@ -331,10 +352,43 @@ export function createChopGame(context: CareGameContext): CareGameScene {
     cooldown = SNAP_COOLDOWN
   }
 
-  function cut(stalk: Stalk, grade: ChopGrade): void {
+  /** One stalk is done with: bank its points, and either start the next stalk's wait or close the round. */
+  function settle(points: number): void {
+    lastPoints = points
+    total += points
+    roundScore += points
+    stalkInRound += 1
+    if (stalkInRound < CHOP_STALKS_PER_ROUND) {
+      waitSeconds = CHOP_STALK_PAUSE
+    } else {
+      endRound()
+    }
+    renderScore()
+  }
+
+  function endRound(): void {
+    const lastRound = roundIndex === CHOP_ROUNDS - 1
+    const at = new THREE.Vector3(CUT_X, SHEAR_Y + 0.55, 0.05)
+    if (lastRound) {
+      if (chopPassed(total)) round.hit()
+      else round.fail('score')
+      return
+    }
+    round.hit()
+    popAt(at, `ROUND ${roundIndex + 1}: ${roundScore} / ${CHOP_STALKS_PER_ROUND * CHOP_MAX_POINTS}`, 'plain', true)
+    roundIndex += 1
+    stalkInRound = 0
+    roundScore = 0
+    waitSeconds = CHOP_ROUND_PAUSE
+    bannerPending = true
+  }
+
+  function cut(stalk: Stalk, points: number, grade: ChopGrade): void {
     stalk.state = 'cut'
+    stalk.resolved = true
     const at = bladePoint()
-    const cutY = stalk.band
+    // Cut where the blades are, which is not always where the band is.
+    const cutY = THREE.MathUtils.clamp(SHEAR_Y - stalk.root.position.y, STALK_BOTTOM + 0.06, STALK_TOP - 0.06)
     lastGrade = grade
     const body = stalk.root.children[0]
     // The top piece (with the seed head) flies off; the bottom drops. Each gets a flat cut face.
@@ -362,58 +416,61 @@ export function createChopGame(context: CareGameContext): CareGameScene {
     stalk.root.removeFromParent()
 
     bursts.add(createBurst(at, { count: 12, colors: ['#b9db7a', '#7fb64f', '#e9f7c4'], shape: 'leaf', size: 0.03, speed: [1, 2.2], lift: 0.3, gravity: 5, seconds: 0.55, onTop: true }), root)
-    for (let index = 0; index < hitsFor(grade); index += 1) round.hit()
-    if (grade === 'miss') round.miss()
 
     if (grade === 'perfect') {
       sfx.play('chopPerfect')
-      popAt(at, 'PERFECT!', 'good', true)
+      popAt(at, `PERFECT! +${points}`, 'good', true)
       hitStop(0.08)
       flash = 0.45
       stage.bounce(0.6)
       bursts.add(createBurst(at, { count: 14, colors: ['#fff3b0', '#ffd23f', '#ffffff'], shape: 'star', size: 0.035, speed: [1.2, 2.4], lift: 0.5, gravity: 3, seconds: 0.7, onTop: true }), root)
     } else if (grade === 'good') {
       sfx.play('chopGood')
-      popAt(at, 'GOOD', 'good', true)
+      popAt(at, `GOOD +${points}`, 'good', true)
       hitStop(0.03)
       stage.bounce(0.3)
     } else {
-      sfx.play('chopMiss')
-      popAt(at, 'MISS', 'bad', true)
+      sfx.play('chopGood')
+      popAt(at, `+${points}`, 'plain', true)
+      stage.bounce(0.1)
     }
+    settle(points)
   }
 
-  /** One cut attempt: the nearest stalk in reach, or a snap on air. Pointer and Space both come here. */
+  /** The stalk in play: the one that has not been scored yet. */
+  function activeStalk(): Stalk | null {
+    return stalks.find((stalk) => stalk.state === 'falling' && !stalk.resolved) ?? null
+  }
+
+  /** One cut attempt on the stalk in play. Pointer and Space both come here. */
   function tap(): void {
     if (finished || cooldown > 0) return
-    const stalk = nearestInReach()
+    closeShears()
+    const stalk = activeStalk()
     if (!stalk) {
-      closeShears()
       snapOnAir()
       round.whiff()
       lastGrade = 'whiff'
       return
     }
-    closeShears()
-    cut(stalk, gradeChop(distanceOf(stalk)))
+    const distance = distanceOf(stalk)
+    const points = chopPoints(distance)
+    if (points === 0) {
+      // Too early: the shears snap on air, the stalk drops on untouched, and it counts for nothing.
+      snapOnAir()
+      round.whiff()
+      lastGrade = 'early'
+      stalk.resolved = true
+      sfx.play('chopMiss')
+      popAt(new THREE.Vector3(CUT_X, SHEAR_Y + 0.25, 0.05), 'TOO EARLY! +0', 'bad', true)
+      settle(0)
+      return
+    }
+    cut(stalk, points, gradeChop(distance))
   }
 
   function snapOnAir(): void {
     sfx.play('chopSnap')
-  }
-
-  function nearestInReach(): Stalk | null {
-    let best: Stalk | null = null
-    let bestGap = Infinity
-    for (const stalk of stalks) {
-      if (stalk.state !== 'falling') continue
-      const gap = Math.abs(distanceOf(stalk))
-      if (gap <= CHOP_REACH && gap < bestGap) {
-        best = stalk
-        bestGap = gap
-      }
-    }
-    return best
   }
 
   return {
@@ -426,34 +483,37 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       if (bladeA) bladeA.rotation.z = -BLADE_OPEN_ANGLE * (1 - open)
       if (bladeB) bladeB.rotation.z = BLADE_OPEN_ANGLE * (1 - open)
 
-      if (!finished && time >= nextSpawn) {
-        spawnStalk()
-        nextSpawn = time + chopSpawnGap(spawned - 1)
+      if (!finished && waitSeconds !== null) {
+        waitSeconds -= dt
+        if (bannerPending && waitSeconds < CHOP_ROUND_PAUSE * 0.6 && roundIndex > 0) {
+          bannerPending = false
+          popAt(new THREE.Vector3(CUT_X, SHEAR_Y + 0.55, 0.05), `ROUND ${roundIndex + 1}`, 'good', true)
+        }
+        if (waitSeconds <= 0) {
+          waitSeconds = null
+          bannerPending = false
+          spawnStalk()
+        }
       }
 
       for (const stalk of stalks) {
         if (stalk.state !== 'falling') continue
-        const gap = distanceOf(stalk)
-        if (stalk.fakeOut && !stalk.fakeDone && gap <= CHOP_FAKE_OUT_AT) {
-          // The fake-out: the stalk stops just short of the blades, looking ready.
-          stalk.fakeDone = true
-          stalk.stall = CHOP_FAKE_OUT_SECONDS
+        // Gravity: the stalk gains speed every frame, so it is fastest at the blades.
+        stalk.velocity += stalk.gravity * dt
+        stalk.root.position.y -= stalk.velocity * dt
+        stalk.root.rotation.z = Math.sin(time * 2.4 + stalk.seed) * 0.02
+        if (!stalk.resolved && fellThrough(distanceOf(stalk))) {
+          stalk.resolved = true
+          if (!finished) {
+            sfx.play('chopThud')
+            popAt(new THREE.Vector3(CUT_X, SHEAR_Y - 0.2, 0.05), 'MISSED +0', 'bad')
+            settle(0)
+          }
         }
-        if (stalk.stall > 0) {
-          stalk.stall = Math.max(0, stalk.stall - dt)
-        } else {
-          stalk.root.position.y -= stalk.speed * dt
-        }
-        const shiver = stalk.stall > 0 ? 0.06 : 0.02
-        stalk.root.rotation.z = Math.sin(time * 2.4 + stalk.seed) * shiver
-        if (fellThrough(distanceOf(stalk))) {
+        // Gone once it is well below the view.
+        if (stalk.root.position.y + STALK_TOP < CHOP_PLAY_BOTTOM - 0.4) {
           stalk.state = 'gone'
           stalk.root.removeFromParent()
-          if (!finished) {
-            round.miss()
-            sfx.play('chopThud')
-            popAt(new THREE.Vector3(CUT_X, SHEAR_Y - 0.2, 0.05), 'MISS', 'bad')
-          }
         }
       }
       for (let index = stalks.length - 1; index >= 0; index -= 1) {
@@ -476,7 +536,8 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       }
 
       // The blade line glows brighter as a band comes into reach.
-      const near = nearestInReach()
+      const active = activeStalk()
+      const near = active !== null && Math.abs(distanceOf(active)) < CHOP_SCORE_REACH
       const pulse = 0.55 + 0.25 * Math.sin(time * 7)
       glowMaterial.opacity = near ? Math.min(1, pulse + 0.3) : pulse * 0.7
       haloMaterial.opacity = near ? 0.4 : 0.18
@@ -509,6 +570,7 @@ export function createChopGame(context: CareGameContext): CareGameScene {
     },
     dispose(): void {
       window.removeEventListener('keydown', onKeyDown)
+      scoreEl.remove()
       if (stage.plant) stage.plant.rotation.z = 0
       if (debugHook) delete (window as unknown as { __chopGame?: unknown }).__chopGame
       for (const stalk of stalks) stalk.root.removeFromParent()

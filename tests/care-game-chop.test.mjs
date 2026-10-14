@@ -8,49 +8,56 @@ const { outputFiles: roundFiles } = await build({ entryPoints: ['src/game/care-m
 const games = await import(`data:text/javascript;base64,${Buffer.from(roundFiles[0].text).toString('base64')}`)
 const { createCareRound, CARE_GAME_RULES } = games
 
-test('a tap grades by how far the band is from the blade line', () => {
-  assert.equal(chop.gradeChop(0), 'perfect')
-  assert.equal(chop.gradeChop(-chop.CHOP_PERFECT_BAND), 'perfect')
-  assert.equal(chop.gradeChop(chop.CHOP_PERFECT_BAND + 0.001), 'good')
-  assert.equal(chop.gradeChop(-chop.CHOP_GOOD_BAND), 'good')
-  assert.equal(chop.gradeChop(chop.CHOP_GOOD_BAND + 0.001), 'miss')
-  assert.equal(chop.gradeChop(-chop.CHOP_REACH), 'miss')
-  assert.equal(chop.gradeChop(chop.CHOP_REACH + 0.01), 'whiff')
-  assert.equal(chop.gradeChop(Number.NaN), 'whiff')
+test('points peak on the line and fall off in a straight line to nothing', () => {
+  assert.equal(chop.chopPoints(0), chop.CHOP_MAX_POINTS)
+  assert.equal(chop.chopPoints(chop.CHOP_PERFECT_BAND), chop.CHOP_MAX_POINTS)
+  let last = chop.CHOP_MAX_POINTS
+  for (let distance = chop.CHOP_PERFECT_BAND; distance < chop.CHOP_SCORE_REACH; distance += 0.01) {
+    const points = chop.chopPoints(distance)
+    assert.ok(points <= last, `monotonic at ${distance}`)
+    last = points
+  }
+  assert.equal(chop.chopPoints(chop.CHOP_SCORE_REACH), 0)
+  assert.equal(chop.chopPoints(2), 0, 'cut far too early scores nothing')
+  assert.equal(chop.chopPoints(Number.NaN), 0)
 })
 
-test('a PERFECT is worth more hits than a GOOD; a MISS and a whiff are worth none', () => {
-  assert.equal(chop.hitsFor('perfect'), chop.CHOP_PERFECT_HITS)
-  assert.ok(chop.hitsFor('perfect') > chop.hitsFor('good'))
-  assert.equal(chop.hitsFor('good'), 1)
-  assert.equal(chop.hitsFor('miss'), 0)
-  assert.equal(chop.hitsFor('whiff'), 0)
+test('points are the same either side of the line', () => {
+  for (const distance of [0.02, 0.1, 0.2, 0.35]) assert.equal(chop.chopPoints(distance), chop.chopPoints(-distance))
+})
+
+test('a cut is graded by its points; too early is EARLY', () => {
+  assert.equal(chop.gradeChop(0), 'perfect')
+  assert.equal(chop.gradeChop(0.15), 'good')
+  assert.equal(chop.gradeChop(chop.CHOP_SCORE_REACH - 0.01), 'ok')
+  assert.equal(chop.gradeChop(1), 'early')
+  assert.equal(chop.gradeChop(-0.001), 'perfect')
 })
 
 test('a stalk that drops out of reach below the blades has fallen through', () => {
-  assert.equal(chop.fellThrough(-chop.CHOP_REACH - 0.01), true)
-  assert.equal(chop.fellThrough(-chop.CHOP_REACH), false)
+  assert.equal(chop.fellThrough(-chop.CHOP_SCORE_REACH), true)
+  assert.equal(chop.fellThrough(-chop.CHOP_SCORE_REACH + 0.01), false)
   assert.equal(chop.fellThrough(0.5), false)
 })
 
-test('stalks fall faster and come more often as the round goes on, within limits', () => {
-  for (let index = 1; index < 12; index += 1) {
-    assert.ok(chop.chopFallSpeed(index) >= chop.chopFallSpeed(index - 1))
-    assert.ok(chop.chopSpawnGap(index) <= chop.chopSpawnGap(index - 1))
-  }
-  assert.ok(chop.chopFallSpeed(0) < 1, 'the first stalk is gentle')
-  assert.ok(chop.chopFallSpeed(99) <= 1.6)
-  assert.ok(chop.chopSpawnGap(99) >= 1.0, 'stalks stay far enough apart that two bands are never in reach at once')
+test('the pass mark is a good score, not the maximum and not a gimme', () => {
+  assert.equal(chop.chopMaxScore(), chop.CHOP_ROUNDS * chop.CHOP_STALKS_PER_ROUND * chop.CHOP_MAX_POINTS)
+  assert.ok(chop.chopPassScore() > chop.chopMaxScore() / 2)
+  assert.ok(chop.chopPassScore() < chop.chopMaxScore())
+  assert.equal(chop.chopPassed(chop.chopPassScore()), true)
+  assert.equal(chop.chopPassed(chop.chopPassScore() - 1), false)
+  assert.equal(chop.chopPassed(0), false)
 })
 
-test('fake-outs are rarer at the start and capped', () => {
-  assert.ok(chop.chopFakeOutChance(0) < chop.chopFakeOutChance(5))
-  for (let index = 0; index < 50; index += 1) {
-    const chance = chop.chopFakeOutChance(index)
-    assert.ok(chance >= 0 && chance <= 0.45)
+test('gravity drops a stalk the height in the time, and later rounds hit the blades faster', () => {
+  const height = 1.9
+  for (let round = 0; round < chop.CHOP_ROUNDS; round += 1) {
+    const seconds = chop.chopFallSeconds(round)
+    const g = chop.chopGravity(height, seconds)
+    assert.ok(Math.abs(0.5 * g * seconds * seconds - height) < 1e-9)
+    assert.ok(Math.abs(g * seconds - chop.chopImpactSpeed(height, seconds)) < 1e-9)
+    if (round > 0) assert.ok(chop.chopImpactSpeed(height, seconds) > chop.chopImpactSpeed(height, chop.chopFallSeconds(round - 1)))
   }
-  // A fake-out stalls just outside GOOD, so a tap then is a MISS, not a free hit.
-  assert.ok(chop.CHOP_FAKE_OUT_AT > chop.CHOP_GOOD_BAND)
 })
 
 test('the band is painted on the stalk between its low and high marks', () => {
@@ -60,22 +67,19 @@ test('the band is painted on the stalk between its low and high marks', () => {
   assert.equal(chop.chopBandHeight(-3), chop.CHOP_BAND_LOW)
 })
 
-test('six cuts can win the chop round, with the PERFECT rule', () => {
+test('three rounds, one hit each, win the chop round on the rules side', () => {
   const round = createCareRound('chop')
-  for (let index = 0; index < CARE_GAME_RULES.chop.goal; index += 1) {
-    if (round.snapshot.state !== 'playing') break
-    for (let hits = 0; hits < chop.hitsFor('perfect'); hits += 1) round.hit()
-  }
+  for (let index = 0; index < chop.CHOP_ROUNDS; index += 1) round.hit()
+  assert.equal(CARE_GAME_RULES.chop.goal, chop.CHOP_ROUNDS)
   assert.equal(round.snapshot.state, 'won')
 })
 
-test('two stalks left uncut lose the chop round', () => {
+test('a score under the pass mark fails the chop round', () => {
   const round = createCareRound('chop')
-  round.miss()
-  assert.equal(round.snapshot.state, 'playing')
-  round.miss()
+  round.hit()
+  round.fail('score')
   assert.equal(round.snapshot.state, 'lost')
-  assert.equal(round.snapshot.lossReason, 'misses')
+  assert.equal(round.snapshot.lossReason, 'score')
 })
 
 test('the camera frames the playfield: wide enough on a phone, tall enough on a desktop', () => {
