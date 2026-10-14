@@ -191,6 +191,6 @@ test('delivered Blender assets exist, use six berry slots and ship matching WALK
   assert.deepEqual(channels[0], channels[1])
   assert.deepEqual(channels[1], channels[2])
   assert.ok(squirrel.nodes.some((node) => node.name === 'SQUIRREL RIG held berry'))
-  const bush = readGlb('public/assets/plants/blueberry.glb')
-  for (let slot = 0; slot < 6; slot++) assert.ok(bush.nodes.some((node) => node.name === `BLUEBERRY berry ${slot}`))
+  const bush = readGlb('public/assets/plants/blueberry-bush.glb')
+  for (let slot = 1; slot <= 6; slot++) assert.ok(bush.nodes.some((node) => node.name === `BB_berry_${slot}_1`), `berry group ${slot}`)
 })
