@@ -13,7 +13,7 @@ export interface FarmMeasureDeps {
   readonly gardenSurface: () => THREE.Mesh | undefined
   readonly gardenTerrain: GardenTerrain | null
   readonly gardenWater: ReturnType<typeof createGardenWaterField> | null
-  readonly gardenTools: { meadowArea(): number } | null
+  readonly gardenTools: { meadowArea(): number; shortGrassArea(): number } | null
   readonly gardenPlants: () => { readonly simulation: { readonly plants: readonly { readonly mature: boolean; readonly species: string }[] } } | null
   readonly gardenProps: () => { propCounts(): Record<string, number> } | null
   readonly residentCounts: () => Record<string, number>
@@ -110,11 +110,13 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
   const MEADOW_REMEASURE_MS = 1000
   let meadowMeasuredAt = Number.NEGATIVE_INFINITY
   let meadowAreaCache = 0
+  let shortGrassAreaCache = 0
 
   function currentMeadowArea(): number {
     const now = performance.now()
     if (now - meadowMeasuredAt >= MEADOW_REMEASURE_MS) {
       meadowAreaCache = gardenTools?.meadowArea() ?? 0
+      shortGrassAreaCache = gardenTools?.shortGrassArea() ?? 0
       meadowMeasuredAt = now
     }
     return meadowAreaCache
@@ -131,6 +133,7 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
     lastFarmState = {
       ...measureFarmState(lawn, terrain, currentWaterSample(), maturePlantCounts()),
       meadowArea: currentMeadowArea(),
+      shortGrassArea: shortGrassAreaCache,
       residentCounts: residentCounts(),
       harmony: harmonyOverride ?? measureHarmony(harmonyResidents()).score,
       terrainShares: {

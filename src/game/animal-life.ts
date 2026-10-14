@@ -115,6 +115,8 @@ export interface AnimalRecord {
   readonly ageSeconds: number
   readonly growth: number
   readonly parentIds: readonly string[]
+  /** A personal, saved feeding tally. One guest cannot settle another by eating. */
+  readonly fruitEaten?: Readonly<Record<string, number>>
   readonly adultScale: number
   /**
    * 1 = full of helium, 0 = flat. Only a resident whose species holds its
@@ -184,6 +186,8 @@ export interface SavedAnimal {
   readonly baby: boolean
   readonly ageSeconds: number
   readonly parentIds: readonly string[]
+  /** A personal, saved feeding tally. One guest cannot settle another by eating. */
+  readonly fruitEaten?: Readonly<Record<string, number>>
   readonly inside?: boolean
   /** Helium left, 0..1; absent in older saves, which read as full. */
   readonly helium?: number
@@ -235,6 +239,8 @@ export interface AnimalLife {
   setStage(id: string, stage: AnimalStage): readonly AnimalLifeEvent[]
   discover(species: string): readonly AnimalLifeEvent[]
   remove(id: string): AnimalRecord | null
+  /** Credit one completed bite to this animal only. */
+  recordFruitEaten(id: string, plant: string): boolean
   /** Set an animal's helium outright, 0..1. The debug harness and the tests use it. */
   setHelium(id: string, level: number): void
   /** Room across every house, and how many animals are inside. */
@@ -297,6 +303,7 @@ interface MutableAnimal {
   baby: boolean
   ageSeconds: number
   parentIds: readonly string[]
+  fruitEaten: Record<string, number>
   insideId: string | null
   helium: number
   unsettled: boolean
@@ -363,6 +370,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       baby,
       ageSeconds: 0,
       parentIds,
+      fruitEaten: {},
       insideId: null,
       helium: 1,
       unsettled: false,
@@ -395,6 +403,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       ageSeconds: animal.ageSeconds,
       growth,
       parentIds: animal.parentIds,
+      fruitEaten: { ...animal.fruitEaten },
       adultScale: config.adultScale,
       helium: animal.helium,
       unsettled: animal.unsettled,
@@ -679,7 +688,8 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     },
     statusOf(id) {
       const animal = animals.get(id)
-      const farm = lastSnapshot?.farm ?? null
+      const snapshotFarm = lastSnapshot?.farm ?? null
+      const farm = snapshotFarm ? { ...snapshotFarm, state: { ...snapshotFarm.state, fruitEaten: animal?.fruitEaten ?? {} } } : null
       const stage = animal?.stage ?? 0
       return getSpeciesConditions(animal?.species ?? id).map((definition) => {
         const revealed = definition.stage <= stage + 1
@@ -768,6 +778,12 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       eventsFor(animal, stage, events, false)
       return events
     },
+    recordFruitEaten(id, plant) {
+      const animal = animals.get(id)
+      if (!animal || animal.baby || animal.stage < 2 || animal.insideId) return false
+      animal.fruitEaten[plant] = (animal.fruitEaten[plant] ?? 0) + 1
+      return true
+    },
     setHelium(id, level) {
       const animal = animals.get(id)
       if (animal && Number.isFinite(level)) animal.helium = Math.max(0, Math.min(1, level))
@@ -826,6 +842,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           baby: animal.baby,
           ageSeconds: animal.ageSeconds,
           parentIds: [...animal.parentIds],
+          fruitEaten: { ...animal.fruitEaten },
           inside: animal.insideId !== null,
           ...(animal.helium < 1 ? { helium: animal.helium } : {}),
           ...(animal.fullness < 1 ? { fullness: Math.round(animal.fullness * 1000) / 1000 } : {}),
@@ -867,6 +884,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           baby: Boolean(saved.baby),
           ageSeconds: Math.max(0, finite(saved.ageSeconds)),
           parentIds: ids(saved.parentIds),
+          fruitEaten: Object.fromEntries(Object.entries(saved.fruitEaten ?? {}).map(([plant, count]) => [plant, Math.max(0, Math.floor(finite(count)))])),
           // Back indoors once the caller knows this session's houses.
           insideId: null,
           helium: Math.max(0, Math.min(1, finite(saved.helium, 1))),
@@ -982,7 +1000,10 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
           animal.elapsed += stageDt
           const next = getSpeciesConditions(animal.species)[animal.stage]
           const onTheirShift = onShift(animal.species)
-          const suitable = next ? requirementMet(next.requirement, snapshot.farm) : false
+          const personalFarm = next?.requirement?.kind === 'fruitEaten'
+            ? { ...snapshot.farm, state: { ...snapshot.farm.state, fruitEaten: animal.fruitEaten } }
+            : snapshot.farm
+          const suitable = next ? requirementMet(next.requirement, personalFarm) : false
           if (animal.stage === 1 && animal.leaving !== null) {
             // Walking off the grounds; the scene watches `departing` and sends it on its way.
             animal.leaving -= stageDt

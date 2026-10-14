@@ -20,6 +20,7 @@ export type CritterName = 'beetle' | 'ladybug' | 'leaf' | 'cloud' | 'swatter' | 
 
 /** The bush's groups, as GLTFLoader names them. */
 export const BUSH_GROUPS = ['BB_mound', 'BB_canes', 'BB_canopy', 'BB_shoots', 'BB_flowers', 'BB_berries'] as const
+export const HARVEST_BERRY_PIVOTS = ['BB_berry_1_1', 'BB_berry_1_2', 'BB_berry_1_3', 'BB_berry_2_1', 'BB_berry_2_2', 'BB_berry_2_3'] as const
 export type BushGroup = (typeof BUSH_GROUPS)[number]
 
 /** The berry material's name in the GLB; re-tinted per bush as the berries ripen. */
@@ -38,7 +39,7 @@ let pending: Promise<GardenModels> | null = null
 
 function prepareBush(root: THREE.Object3D): THREE.Object3D {
   const bush = root.getObjectByName('BB_root') ?? root
-  mergeStaticMeshes(bush, { isPivot: (object) => (BUSH_GROUPS as readonly string[]).includes(object.name) })
+  mergeStaticMeshes(bush, { isPivot: (object) => (BUSH_GROUPS as readonly string[]).includes(object.name) || (HARVEST_BERRY_PIVOTS as readonly string[]).includes(object.name) })
   bush.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return
     object.castShadow = true

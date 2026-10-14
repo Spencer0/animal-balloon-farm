@@ -25,7 +25,10 @@ export function createJournalConditions(deps: JournalConditionsDeps) {
       noteJournalStages()
       const stage = journalBestStage.get(species) ?? 0
       if (stage < 1) return null
-      const farm = measureFarm()
+      // The best-fed individual is the journal's representative, never the sum of a crowd.
+      const individual = progress.all().filter((animal) => animal.species === species)
+        .sort((a, b) => (b.fruitEaten?.blueberry ?? 0) - (a.fruitEaten?.blueberry ?? 0))[0]
+      const farm = { ...measureFarm(), fruitEaten: individual?.fruitEaten ?? {} }
       const definitions = getSpeciesConditions(species)
       if (!definitions.length) return null
       return {

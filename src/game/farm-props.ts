@@ -12,7 +12,7 @@
 import type { Wallet } from './sales'
 
 export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak' | 'garbage-can' | 'dumpster'
-  | 'goose-house' | 'sty' | 'frog-house' | 'owl-box' | 'hollow-log' | 'rock-pile' | 'molehill'
+  | 'goose-house' | 'sty' | 'frog-house' | 'owl-box' | 'hollow-log' | 'rock-pile' | 'molehill' | 'squirrel-house'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -53,6 +53,13 @@ export interface PropDefinition {
  * cow and a half. Effortless to retune once the earn rate is felt.
  */
 export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
+  'squirrel-house': {
+    id: 'squirrel-house', name: 'Squirrel House',
+    description: 'A tiny cedar den with an acorn-cap roof and a round open door.',
+    blurb: 'A minimal woodland home: room for ten squirrels, with kits born inside. Keep a blueberry bush nearby.',
+    color: '#bd683c', price: 65, footprint: { width: 1, depth: 1 }, size: 1.8,
+    kind: 'cell', rotatable: true, blocking: true, modelUrl: 'assets/props/squirrel-house.glb',
+  },
   fence: {
     id: 'fence',
     name: 'Fence',
@@ -266,7 +273,7 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'sty', 'goose-house', 'frog-house', 'hollow-log', 'oak', 'owl-box', 'rock-pile', 'molehill', 'garbage-can', 'dumpster']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'sty', 'goose-house', 'frog-house', 'hollow-log', 'oak', 'owl-box', 'rock-pile', 'molehill', 'squirrel-house', 'garbage-can', 'dumpster']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -305,6 +312,7 @@ const PROP_CATEGORY: Readonly<Record<PropId, string>> = {
   'hollow-log': 'Shelter',
   'rock-pile': 'Shelter',
   molehill: 'Shelter',
+  'squirrel-house': 'Shelter',
 }
 
 /** Chip copy for the info card, e.g. "Shelter" or "Fence run - 4 sections". */
@@ -330,7 +338,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0, 'goose-house': 0, sty: 0, 'frog-house': 0, 'owl-box': 0, 'hollow-log': 0, 'rock-pile': 0, molehill: 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0, 'goose-house': 0, sty: 0, 'frog-house': 0, 'owl-box': 0, 'hollow-log': 0, 'rock-pile': 0, molehill: 0, 'squirrel-house': 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0

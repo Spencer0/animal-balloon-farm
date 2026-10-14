@@ -7,6 +7,8 @@ export type PlantSubstrate = 'grass' | 'soil' | 'water' | 'unknown'
 export type PlantPlacementFailure = 'out-of-bounds' | 'wrong-substrate' | 'needs-visible-water' | 'too-close' | 'out-of-seeds' | 'tall-grass'
 
 export interface PlantSpecies {
+  /** Number of berries on a mature bush and seconds for each picked berry to regrow. */
+  readonly fruit?: { readonly count: number; readonly regrowSeconds: number }
   readonly id: PlantId
   readonly name: string
   readonly subtitle: string
@@ -77,6 +79,7 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
     growthSeconds: 150,
     care: [{ at: 0.22, kind: 'water' }, { at: 0.5, kind: 'pest' }, { at: 0.76, kind: 'prune' }],
     minigames: true,
+    fruit: { count: 6, regrowSeconds: 60 },
   },
 ] as const
 
@@ -135,6 +138,9 @@ export interface GardenPlant {
   readonly growth: number
   readonly mature: boolean
   readonly careNeeded: PlantCare | null
+  /** Seconds left until each berry returns; zero is ripe. Non-fruiting plants have none. */
+  readonly fruitTimers?: readonly number[]
+  readonly ripeFruit?: number
 }
 
 export interface PlantPlacementResult {
@@ -150,6 +156,8 @@ export interface PlantSimulation {
   countPlants(species?: PlantId): number
   placementResult(species: PlantId, x: number, z: number, surface: PlantSurface): PlantPlacementResult
   plant(species: PlantId, x: number, z: number, surface: PlantSurface): GardenPlant | null
+  /** Pick one ripe berry atomically; returns its slot, or null when none remain. */
+  pickFruit(instanceId: number): number | null
   remove(instanceId: number): GardenPlant | null
   resolveCare(instanceId: number, care: PlantCare): boolean
   tick(deltaSeconds: number): void
@@ -167,6 +175,8 @@ export interface SavedPlant {
   readonly growth: number
   readonly careNeeded: PlantCare | null
   readonly stopsDone: number
+  /** Optional for old saves, which load with a full crop. */
+  readonly fruitTimers?: readonly number[]
 }
 
 export interface PlantSimulationState {
@@ -184,6 +194,7 @@ interface MutablePlant {
   careNeeded: PlantCare | null
   /** How many of the species' care stops have been answered. */
   stopsDone: number
+  fruitTimers: number[]
 }
 
 const SPECIES_BY_ID = new Map(PLANT_CATALOG.map((species) => [species.id, species]))
@@ -208,6 +219,10 @@ export function createPlantSimulation(): PlantSimulation {
       growth: plant.growth,
       mature: plant.growth >= 1,
       careNeeded: plant.careNeeded,
+      ...(plantSpecies(plant.species).fruit ? {
+        fruitTimers: [...plant.fruitTimers],
+        ripeFruit: plant.growth >= 1 ? plant.fruitTimers.filter((timer) => timer === 0).length : 0,
+      } : {}),
     }
   }
 
@@ -261,10 +276,20 @@ export function createPlantSimulation(): PlantSimulation {
         growth: 0.04,
         careNeeded: null,
         stopsDone: 0,
+        fruitTimers: Array(plantSpecies(species).fruit?.count ?? 0).fill(0),
       }
       plants.push(plant)
       seedCounts.set(species, (seedCounts.get(species) ?? 0) - 1)
       return snapshot(plant)
+    },
+    pickFruit(instanceId): number | null {
+      const plant = plants.find((entry) => entry.instanceId === instanceId)
+      const fruit = plant && plantSpecies(plant.species).fruit
+      if (!plant || !fruit || plant.growth < 1) return null
+      const slot = plant.fruitTimers.findIndex((timer) => timer === 0)
+      if (slot < 0) return null
+      plant.fruitTimers[slot] = fruit.regrowSeconds
+      return slot
     },
     remove(instanceId): GardenPlant | null {
       const index = plants.findIndex((plant) => plant.instanceId === instanceId)
@@ -281,7 +306,7 @@ export function createPlantSimulation(): PlantSimulation {
     exportState(): PlantSimulationState {
       return {
         seeds: Object.fromEntries(seedCounts),
-        plants: plants.map(({ instanceId, species, x, z, growth, careNeeded, stopsDone }) => ({ instanceId, species, x, z, growth, careNeeded, stopsDone })),
+        plants: plants.map(({ instanceId, species, x, z, growth, careNeeded, stopsDone, fruitTimers }) => ({ instanceId, species, x, z, growth, careNeeded, stopsDone, fruitTimers: [...fruitTimers] })),
         nextInstanceId,
       }
     },
@@ -307,6 +332,8 @@ export function createPlantSimulation(): PlantSimulation {
           growth,
           careNeeded: growth < 1 && PLANT_CARE_KINDS.includes(saved.careNeeded as PlantCare) ? saved.careNeeded : null,
           stopsDone: Math.max(0, Math.min(definition.care.length, Math.floor(finite(saved.stopsDone)))),
+          fruitTimers: Array.from({ length: definition.fruit?.count ?? 0 }, (_, slot) =>
+            Math.max(0, Math.min(definition.fruit?.regrowSeconds ?? 0, finite(saved.fruitTimers?.[slot])))),
         })
         highest = Math.max(highest, saved.instanceId)
       }
@@ -316,7 +343,11 @@ export function createPlantSimulation(): PlantSimulation {
       const delta = Number.isFinite(deltaSeconds) ? Math.max(0, deltaSeconds) : 0
       if (delta === 0) return
       for (const plant of plants) {
-        if (plant.growth >= 1 || plant.careNeeded) continue
+        if (plant.growth >= 1) {
+          plant.fruitTimers = plant.fruitTimers.map((timer) => Math.max(0, timer - delta))
+          continue
+        }
+        if (plant.careNeeded) continue
         const definition = plantSpecies(plant.species)
         const stop = definition.care[plant.stopsDone]
         const nextGrowth = Math.min(1, plant.growth + delta / definition.growthSeconds)

@@ -13,12 +13,12 @@ import { stageHasHeartEyes, type AnimalStage } from '../game/animal-conditions'
 import { canSellAnimal, startsCaptured } from '../game/sales'
 import { carnivalRing } from '../game/animal-travel'
 import { requestStage, tickResidency } from '../game/animal-residency'
-import { beginSimStep, createAnimalSimRecord, drainSimEvents, holdAnimalSim, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord, type AnimalSleepSpot } from '../game/animal-sim'
+import { headingOf, beginSimStep, createAnimalSimRecord, drainSimEvents, holdAnimalSim, interpolateAnimalSim, pushAnimalSim, setSimAlarmed, setSimPursuit, snapAnimalSim, type AnimalPursuit, type AnimalSimRecord, type AnimalSleepSpot } from '../game/animal-sim'
 import { stepGateTravel, stepHomeTrip, stepPursuit, stepSleep, tickVisitCooldown } from '../game/animal-routes'
 import { ALARM_SPEED_SCALE, chooseWanderTarget, stepWander, type WanderContext } from '../game/animal-wander'
 import { seededRandom } from '../game/seeded-random'
 
-export type AnimalClip = 'IDLE' | 'WALK' | 'SLEEP'
+export type AnimalClip = 'IDLE' | 'WALK' | 'SLEEP' | 'EAT'
 export type AnimalAppearance = 'standard' | 'wild'
 export type { BalloonAnimalId } from './animal-catalog'
 
@@ -154,6 +154,9 @@ export interface BalloonAnimal {
    * sim record directly (game/animal-hunt.ts); this is the command for the rest.
    */
   setPursuit(pursuit: AnimalPursuit | null): void
+  facePoint(x: number, z: number): void
+  setEating(eating: boolean, holdingBerry?: boolean): void
+  readonly isEating: boolean
   /** Stand at a point, e.g. a house door it has just stepped out of, and wander from there. */
   placeAt(x: number, z: number): void
   readonly isLoose: boolean
@@ -214,6 +217,7 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   mouse: new THREE.MeshStandardMaterial({ color: '#c99a6b', roughness: 0.3, metalness: 0.01 }),
   rat: new THREE.MeshStandardMaterial({ color: '#7b7480', roughness: 0.3, metalness: 0.01 }),
   snake: new THREE.MeshStandardMaterial({ color: '#3f9e6e', roughness: 0.26, metalness: 0.01 }),
+  squirrel: new THREE.MeshStandardMaterial({ color: '#bd683c', roughness: 0.26, metalness: 0.01 }),
   mole: new THREE.MeshStandardMaterial({ color: '#5b5663', roughness: 0.3, metalness: 0.01 }),
   starhorn: new THREE.MeshStandardMaterial({ color: '#bf9fe6', roughness: 0.28, metalness: 0.03 }),
 }
@@ -473,6 +477,9 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   /** The alarm the mixer rate last followed, so a hunt panicking the sim record reaches the clips. */
   let shownAlarmed = false
   let wasPursuing = false
+  let eating = false
+  let holdingBerry = false
+  let heldBerry: THREE.Object3D | null = null
   let flightRate = 1
   let sleepBlend = 0
   // Shared by every walk, chase and wander branch; each one uses it at once, so
@@ -545,10 +552,12 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const actions = new Map<AnimalClip, THREE.AnimationAction>()
         for (const clip of asset.animations) {
           const normalizedName = clip.name.toUpperCase()
-          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : normalizedName.includes('SLEEP') ? 'SLEEP' : null
+          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : normalizedName.includes('SLEEP') ? 'SLEEP' : normalizedName.includes('EAT') ? 'EAT' : null
           if (kind) actions.set(kind, mixer.clipAction(clip))
         }
         loaded = { gltf: asset, root: modelRoot, mixer, actions, activeAnimation: null }
+        heldBerry = modelRoot.getObjectByName('SQUIRREL_RIG_held_berry') ?? null
+        if (heldBerry) heldBerry.scale.setScalar(holdingBerry ? 1 : 0.0001)
         posePivot.add(modelRoot)
         wrapper.updateMatrixWorld(true)
         const animalBounds = getLocalBounds(wrapper, modelRoot)
@@ -850,7 +859,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     get groundHeight(): number { return groundYCurrent },
     get footprintRadius(): number { return options.size * 0.5 * wrapper.scale.x },
     get renderPriority(): number {
-      return (focused ? 100 : 0) + (capture ? 90 : 0) + (sim.stage >= 3 ? 10 : 0)
+      return (focused ? 100 : 0) + (eating ? 80 : 0) + (capture ? 90 : 0) + (sim.stage >= 3 ? 10 : 0)
     },
     get isFlier(): boolean { return Boolean(options.flier) },
     sim,
@@ -870,6 +879,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       sim.home = door ? { x: door.x, z: door.z, speedScale: scale } : null
       sim.atDoor = false
       if (loaded) loaded.mixer.timeScale = scale > 1 ? Math.min(3, scale) : alarmScale()
+    },
+    facePoint(x, z): void { sim.heading = headingOf(x - sim.x, z - sim.z) },
+    get isEating(): boolean { return eating },
+    setEating(next, holding = false): void {
+      eating = next
+      holdingBerry = next && holding
+      if (heldBerry) heldBerry.scale.setScalar(holdingBerry ? 1 : 0.0001)
     },
     setPursuit(next): void {
       if (options.flier) return
@@ -1038,8 +1054,12 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-3 * delta))
         setAnimation(hasSleepClip() ? 'SLEEP' : 'IDLE', 0.6)
       } else if (sim.motion === 'idle') {
-        setAnimation('IDLE', pursuit ? 0.3 : 0.28)
-        if (pursuit && loaded) loaded.mixer.timeScale = 0.6
+        if (eating) {
+          facingScratch.setFromAxisAngle(upAxis, sim.heading)
+          wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-5 * delta))
+        }
+        setAnimation(eating && loaded?.actions.has('EAT') ? 'EAT' : 'IDLE', 0.18)
+        if (pursuit && loaded) loaded.mixer.timeScale = eating ? 1 : 0.6
       }
       if (sleeping) {
         if (loaded) loaded.mixer.timeScale = sim.asleep ? (hasSleepClip() ? 0.5 : 0.3) : 1

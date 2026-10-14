@@ -41,34 +41,33 @@ test('on a bare plot only the cow turns up: sheep and chickens wait for their pl
   assert.equal(stageOf(life, 'owl'), 0)
 })
 
-test('two clover patches bring the sheep, two dandelion patches bring the chickens', () => {
+test('one grown food patch brings each early plant animal while the cow settles on lawn', () => {
   const life = lifeOf()
-  run(life, farm({ tallGrassArea: 20 }), 10)
+  run(life, farm({ tallGrassArea: 20, shortGrassArea: 20 }), 10)
   assert.equal(stageOf(life, 'cow'), 3, 'the cow settles on grass alone')
-  run(life, farm({ tallGrassArea: 20, plantCounts: { clover: 1, dandelion: 1 } }), 30)
   assert.equal(stageOf(life, 'sheep'), 0)
   assert.equal(stageOf(life, 'chicken'), 0)
-  run(life, farm({ tallGrassArea: 20, plantCounts: { clover: 2 } }), 30)
+  run(life, farm({ tallGrassArea: 20, shortGrassArea: 20, plantCounts: { clover: 1 } }), 30)
   assert.ok(stageOf(life, 'sheep') >= 1)
   assert.equal(stageOf(life, 'chicken'), 0)
-  run(life, farm({ tallGrassArea: 20, plantCounts: { clover: 2, dandelion: 2 } }), 30)
+  run(life, farm({ tallGrassArea: 20, shortGrassArea: 20, plantCounts: { clover: 1, dandelion: 1 } }), 30)
   assert.ok(stageOf(life, 'chicken') >= 1)
 })
 
-test('a sheep only wanders onto the farm once three clover patches are growing', () => {
+test('a sheep still waits at the carnival if its grown clover is gone, then enters for one patch', () => {
   const life = lifeOf()
-  run(life, farm({ tallGrassArea: 20 }), 10)
-  run(life, farm({ tallGrassArea: 20, plantCounts: { clover: 2 } }), 30)
+  life.discover('sheep')
+  run(life, farm({ shortGrassArea: 20 }), 10)
   assert.equal(stageOf(life, 'sheep'), 1)
-  run(life, farm({ tallGrassArea: 20, plantCounts: { clover: 3 } }), 5)
+  run(life, farm({ shortGrassArea: 20, plantCounts: { clover: 1 } }), 5)
   assert.equal(stageOf(life, 'sheep'), 2)
 })
 
 test('sheep settle only with level pasture and a barn; chickens only with grass and a coop', () => {
   const life = lifeOf()
   const plants = { clover: 3, dandelion: 3 }
-  const pasture = { plantCounts: plants, flatGrassArea: 20, tallGrassArea: 20 }
-  run(life, farm({ tallGrassArea: 20 }), 10)
+  const pasture = { plantCounts: plants, flatGrassArea: 20, tallGrassArea: 20, shortGrassArea: 20 }
+  run(life, farm({ tallGrassArea: 20, shortGrassArea: 20 }), 10)
   run(life, farm(pasture), 40)
   run(life, farm({ plantCounts: plants, tallGrassArea: 0 }), 0.25)
   run(life, farm(pasture), 10)
@@ -107,13 +106,13 @@ test('day animals arrive and visit only in daylight, owls only after dark', () =
 
 test('a day animal that has already arrived waits for morning to step inside the fence', () => {
   const life = createAnimalLife(['cow'], { config: { ...quick, visitDelaySeconds: 0 } })
-  run(life, farm({}, false), 2)
+  run(life, farm({ shortGrassArea: 2 }, false), 2)
   assert.equal(stageOf(life, 'cow'), 2)
   const night = createAnimalLife(['cow'], { config: quick })
   night.setStage(night.all()[0].id, 1)
   run(night, farm({}, true), 10)
   assert.equal(stageOf(night, 'cow'), 1)
-  run(night, farm({}, false), 2)
+  run(night, farm({ shortGrassArea: 2 }, false), 2)
   assert.equal(stageOf(night, 'cow'), 2)
 })
 

@@ -28,6 +28,7 @@ export const HOUSE_SPECIES: Readonly<Record<string, readonly string[]>> = {
   'hollow-log': ['mouse', 'rat'],
   'rock-pile': ['snake'],
   molehill: ['mole'],
+  'squirrel-house': ['squirrel'],
 }
 
 /** Animals each house holds. */
