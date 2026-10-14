@@ -503,8 +503,19 @@ function makePlantModel(species: PlantId): THREE.Group {
   return root
 }
 
+/**
+ * A fully grown plant model of any species, unscaled (the garden scales it as it
+ * grows). The care stage clones these, so the minigame shows the player's own plant.
+ * Free it with `disposePlantModel`.
+ */
+export function clonePlantModel(species: PlantId): THREE.Group {
+  const model = makePlantModel(species)
+  model.scale.setScalar(1)
+  return model
+}
+
 /** Free what a procedural plant model owns: its geometry and its materials. */
-function disposePlantModel(group: THREE.Object3D): void {
+export function disposePlantModel(group: THREE.Object3D): void {
   group.traverse((object) => {
     if (object instanceof THREE.Mesh) object.geometry.dispose()
   })

@@ -1862,17 +1862,25 @@ let grazingOverride: number | null = null
 
 const tutorialDom = createTutorialDom()
 let tutorialPlantedBefore = false
+// True while a tutorial scenario replays the trail; replays never persist the flag.
+let tutorialReplay = false
 try {
   // The tutorial scenarios replay the trail for a tester who has planted before.
-  const replay = __GARDEN_DEBUG__ && (pageParams.get('scenario') ?? '').startsWith('tutorial/')
-  tutorialPlantedBefore = !replay && window.localStorage.getItem(TUTORIAL_PLANTED_KEY) === '1'
+  tutorialReplay = __GARDEN_DEBUG__ && (pageParams.get('scenario') ?? '').startsWith('tutorial/')
+  // A new farm replays the trail even for a veteran: the "planted" memory
+  // belongs to the farm left behind, so starting fresh clears it. Loading a
+  // save keeps it, so a veteran's loaded farm stays quiet.
+  if (!loadedSave) window.localStorage.removeItem(TUTORIAL_PLANTED_KEY)
+  tutorialPlantedBefore = !tutorialReplay && window.localStorage.getItem(TUTORIAL_PLANTED_KEY) === '1'
 } catch { /* private mode: the trail just checks the garden */ }
 
 function updateTutorial(): void {
   const plantsStanding = gardenPlants?.simulation.plants.length ?? 0
   if (plantsStanding > 0 && !tutorialPlantedBefore) {
     tutorialPlantedBefore = true
-    try { window.localStorage.setItem(TUTORIAL_PLANTED_KEY, '1') } catch { /* nothing to remember it with */ }
+    if (!tutorialReplay) {
+      try { window.localStorage.setItem(TUTORIAL_PLANTED_KEY, '1') } catch { /* nothing to remember it with */ }
+    }
   }
   const before = tutorialNow
   tutorialDom.update({

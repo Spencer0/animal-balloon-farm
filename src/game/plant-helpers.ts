@@ -56,6 +56,17 @@ export function helperPrice(care: PlantCare, seedPrice: number): number {
   return Math.round(CARE_HELPERS[care].basePrice * scale)
 }
 
+/**
+ * How a chore was answered decides whether it earns a Green Thumb ribbon: only
+ * winning a real minigame does. A plain tap (a game not built yet) answers the
+ * care but earns nothing.
+ */
+export type CareAnswer = 'game-won' | 'plain-tap'
+
+export function earnsRibbon(answer: CareAnswer): boolean {
+  return answer === 'game-won'
+}
+
 export type HelperStatus = 'needs-ribbon' | 'available' | 'hired'
 
 export interface HelperQuote {

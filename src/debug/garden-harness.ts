@@ -19,7 +19,10 @@ import type { createAnimalLife, AnimalRecord } from '../game/animal-life'
 import type { Bed } from '../game/sleep'
 import type { createProgressLedger } from '../game/farm-progression'
 import type { createAccomplishmentTracker } from '../game/accomplishments'
-import { PLANT_CARE_KINDS, PLANT_CATALOG, type PlantCare, type PlantId, type PlantSurface } from '../game/plants'
+import { PLANT_CARE_KINDS, PLANT_CATALOG, type PlantCare, type PlantId, type PlantSurface, type PlantType } from '../game/plants'
+import { CARE_GAME_COPY, CARE_GAME_KINDS, CARE_GAMES, type CareGameKind } from '../game/care-minigames'
+import { CLOSE_UP_GAMES } from '../scene/care-games/care-game-registry'
+import { createCarePicker, type CarePickerGroup } from '../ui/care-picker-dom'
 import type { CareController } from '../care-controller'
 import type { GreenThumb } from '../game/plant-helpers'
 import { PROP_CATALOG, purchaseProp, type PropId } from '../game/farm-props'
@@ -136,6 +139,14 @@ interface GardenDebugHarness {
   careState(): unknown
   /** Settle the open care minigame now, won or lost. */
   settleCare(won: boolean): unknown
+  /** The open close-up care game: its kind, the plant on its stage, its phase and round. Null when none is open. */
+  careGame(): { kind: string | null; species: string; phase: string; snapshot: unknown; debug: unknown } | null
+  /** Open a close-up game on the stage directly, no plant growing needed. Default species: the first of the kind's type. */
+  playCareGame(kind: string, species?: string): { kind: string; species: string } | { error: string }
+  /** The bare care stage with a species' plant on it, no game, for screenshots. */
+  careStage(species: string): { species: string; type: string } | { error: string }
+  /** Close the open game or bare stage. */
+  closeCareStage(): unknown
   /** Ribbons and hired helpers. `hire` grants a species' chore ribbon and hires its helper for free. */
   greenThumb(hire?: { species: string; care: string }): unknown
   /** Hold a seed as if picked from the shed, so the placement preview follows the pointer. */
@@ -786,6 +797,24 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       deps.careController.startGame(plant, plant.careNeeded)
       return { ok: true, care: plant.careNeeded, playing: deps.careController.playing, rain: deps.careController.rain.active }
     },
+    careGame: () => {
+      const player = deps.careController.player
+      if (!player) return null
+      const described = player.describe()
+      return { kind: player.kind, species: player.species, phase: described.phase, snapshot: described.snapshot, debug: described.debug }
+    },
+    playCareGame: (kind, species) => {
+      if (!CARE_GAME_KINDS.includes(kind as CareGameKind)) return { error: `unknown game ${kind}` }
+      return deps.careController.openDebugGame(kind as CareGameKind, species as PlantId | undefined)
+    },
+    careStage: (species) => {
+      if (!PLANT_CATALOG.some((entry) => entry.id === species)) return { error: `unknown species ${species}` }
+      return deps.careController.showStage(species as PlantId)
+    },
+    closeCareStage: () => {
+      deps.careController.closeDebug()
+      return { playing: deps.careController.playing }
+    },
     careState: () => ({
       playing: deps.careController.playing,
       rain: deps.careController.rain.active,
@@ -984,6 +1013,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'sowGrass / digPond / digAt / pourAt / clearGarden': 'Terrain + water fixtures in garden meters.',
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'growUntilCare / startCare / settleCare': "growUntilCare('pest') then startCare() opens the swat game; settleCare(true) wins it.",
+      'careGame / playCareGame / careStage / closeCareStage': "playCareGame('buzz') opens a game on the stage with no plant growing (default species: the first of its type; unbuilt games say so). careStage('poppy') shows the bare stage; closeCareStage() ends it. URL: ?gardenDebug=1&careGame=<kind>[&careSpecies=<id>] opens a game at load; &careGames=1 shows a picker of all nine.",
       greenThumb: "greenThumb({ species: 'blueberry', care: 'water' }) hires the Pet Raincloud for free.",
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
       expandFarm: 'expandFarm(level) — reveal parcels without earning them.',
@@ -1311,6 +1341,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
   }
   Object.defineProperty(window, '__gardenDebug', { value: debugHarness, configurable: true })
   window.dispatchEvent(new CustomEvent('garden-debug-ready'))
+  installCareDebugUrls(deps, debugHarness)
   // ?scenario=owl/hunt-now jumps straight into a saved test state on load.
   const requestedScenario = deps.pageParams.get('scenario')
   if (requestedScenario) {
@@ -1319,4 +1350,50 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       (error) => console.error('[Animal Balloon Farm] scenario failed', error),
     )
   }
+}
+
+/**
+ * ?careGame=<kind>[&careSpecies=<id>] opens that game at load, and ?careGames=1
+ * shows the picker of every game. Both skip the main menu.
+ */
+function installCareDebugUrls(deps: GardenHarnessDeps, harness: { closeMenu(): void; playCareGame(kind: string, species?: string): unknown }): void {
+  const { pageParams, careController } = deps
+  const requested = pageParams.get('careGame')
+  const speciesParam = pageParams.get('careSpecies') ?? undefined
+  if (requested) {
+    harness.closeMenu()
+    harness.playCareGame(requested, speciesParam)
+    return
+  }
+  if (!pageParams.has('careGames')) return
+  harness.closeMenu()
+  const types: Array<{ type: PlantType; label: string }> = [
+    { type: 'flower', label: 'Flower' },
+    { type: 'water', label: 'Water plant' },
+    { type: 'bush', label: 'Bush' },
+  ]
+  const groups: CarePickerGroup[] = types.map(({ type, label }) => {
+    const plants = PLANT_CATALOG.filter((entry) => entry.careType === type).map((entry) => ({ id: entry.id, name: entry.name }))
+    return {
+      type: label,
+      games: PLANT_CARE_KINDS.map((care) => {
+        const kind = CARE_GAMES[type][care]
+        // The rain cloud is played on the farm, not close up, so it is listed but not a button.
+        const closeUp = kind !== 'rain' && CLOSE_UP_GAMES[kind].create !== null
+        return {
+          kind,
+          chore: kind === 'rain' ? `${CARE_GAME_COPY[kind].chore} (on the farm)` : CARE_GAME_COPY[kind].chore,
+          built: closeUp,
+          species: plants,
+        }
+      }),
+    }
+  })
+  const picker = createCarePicker(groups, (kind, species) => {
+    picker.hide()
+    const opened = harness.playCareGame(kind, species)
+    if (typeof opened === 'object' && opened !== null && 'error' in opened) picker.show()
+  })
+  careController.onClosed(() => picker.show())
+  picker.show()
 }

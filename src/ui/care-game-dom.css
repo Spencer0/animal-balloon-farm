@@ -547,3 +547,33 @@ body.care-game-playing > :not(#game):not(.cg-overlay) {
 @keyframes cg-bob {
   to { transform: translateX(-50%) translateY(-6px) scale(1.06); }
 }
+
+/* Phones: the fuse takes its own row, and the pips and hearts shrink to fit 390px. */
+@media (max-width: 560px) {
+  .cg-top {
+    min-width: 0;
+    width: calc(100vw - 24px);
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 6px 10px;
+  }
+  .cg-fuse {
+    order: -1;
+    flex: 1 1 100%;
+  }
+  .cg-count {
+    gap: 3px;
+  }
+  .cg-pip {
+    width: 8px;
+    height: 8px;
+    border-width: 1.5px;
+  }
+  .cg-hearts {
+    padding-left: 8px;
+  }
+  .cg-heart {
+    width: 18px;
+    height: 18px;
+  }
+}

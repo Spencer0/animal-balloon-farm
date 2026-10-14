@@ -128,7 +128,7 @@ test('care is paced by growth, not by a clock: an unattended seedling never with
   assert.equal(simulation.countPlants('dandelion'), 1)
 })
 
-test('poppy needs pruning during growth, then matures without further maintenance', () => {
+test('poppy asks for a drink, a pest shoo and a prune during growth, then matures without further maintenance', () => {
   const simulation = stockedSimulation()
   const poppy = simulation.plant('poppy', 0, 0, surface('soil'))
   assert.ok(poppy)
@@ -142,11 +142,29 @@ test('poppy needs pruning during growth, then matures without further maintenanc
       assert.equal(simulation.resolveCare(poppy.instanceId, care), true)
     }
   }
-  assert.deepEqual(answered, ['water', 'prune', 'water'])
+  assert.deepEqual(answered, ['water', 'pest', 'prune', 'water'])
   assert.equal(simulation.plants[0].mature, true)
   simulation.tick(100)
   assert.equal(simulation.plants[0].growth, 1)
   assert.equal(simulation.plants[0].careNeeded, null)
+})
+
+test('every species has a care type and plays a minigame for each chore it asks for', () => {
+  const types = new Set(['flower', 'bush', 'water'])
+  for (const species of PLANT_CATALOG) {
+    assert.ok(types.has(species.careType), `${species.id} has a care type`)
+    assert.equal(species.minigames, true, `${species.id} plays minigames`)
+    for (const stop of species.care) assert.ok(['water', 'pest', 'prune'].includes(stop.kind), `${species.id} asks a known chore`)
+  }
+  const byType = Object.fromEntries(['flower', 'bush', 'water'].map((type) => [type, PLANT_CATALOG.filter((species) => species.careType === type).map(({ id }) => id)]))
+  assert.deepEqual(byType, { flower: ['clover', 'dandelion', 'poppy'], bush: ['blueberry'], water: ['water-lily'] })
+})
+
+test('every flower and water plant asks for all three chores, so each type uses all three games', () => {
+  for (const id of ['poppy', 'water-lily']) {
+    const kinds = PLANT_CATALOG.find((species) => species.id === id).care.map((stop) => stop.kind)
+    assert.deepEqual([...new Set(kinds)].sort(), ['pest', 'prune', 'water'], id)
+  }
 })
 
 test('a blueberry bush asks for a drink, a beetle swat and a snip, in that order', () => {

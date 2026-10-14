@@ -1,5 +1,11 @@
 export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily' | 'blueberry'
 export type PlantCare = 'water' | 'prune' | 'pest'
+/**
+ * What kind of plant it is. Each type has its own three care minigames (see
+ * `CARE_GAMES` in `care-minigames.ts`): a flower's bee run, a bush's rain cloud
+ * and beetle swat, a water plant's dragonfly skim.
+ */
+export type PlantType = 'flower' | 'bush' | 'water'
 
 /** Every care kind, in the order a care marker or a shop list shows them. */
 export const PLANT_CARE_KINDS: readonly PlantCare[] = ['water', 'pest', 'prune']
@@ -15,6 +21,8 @@ export interface PlantSpecies {
   readonly description: string
   readonly color: string
   readonly substrate: PlantSubstrate
+  /** The care-game type: which three minigames this plant plays. */
+  readonly careType: PlantType
   readonly spacingRadius: number
   readonly growthSeconds: number
   /**
@@ -29,8 +37,8 @@ export interface PlantSpecies {
    */
   readonly groundCover?: { readonly minCoverage: number }
   /**
-   * Care is earned, not tapped: each marker opens a minigame (rain cloud,
-   * swatter, snips) that can be lost and retried. Winning one once earns the
+   * Care is earned, not tapped: each marker opens a minigame (the games of the
+   * species' type) that can be lost and retried. Winning one once earns the
    * species a Green Thumb ribbon for that chore (see `plant-helpers.ts`).
    */
   readonly minigames?: boolean
@@ -45,37 +53,41 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
   {
     id: 'clover', name: 'Clover', subtitle: 'Meadow groundcover',
     description: 'A round patch of clover sown into short lawn grass. Water it twice while it spreads; it stays for good. Sheep come for it.',
-    color: '#79ad58', substrate: 'grass', spacingRadius: 1.05,
+    color: '#79ad58', substrate: 'grass', careType: 'flower', spacingRadius: 1.05,
     growthSeconds: 80,
     care: [{ at: 0.2, kind: 'water' }, { at: 0.6, kind: 'water' }],
     groundCover: { minCoverage: 0.5 },
+    minigames: true,
   },
   {
     id: 'dandelion', name: 'Dandelion', subtitle: 'Sunny lawn weed',
     description: 'A round patch of dandelions sown into short lawn grass. Water it twice while it blooms; it stays for good. Chickens come for it.',
-    color: '#e9c545', substrate: 'grass', spacingRadius: 1.05,
+    color: '#e9c545', substrate: 'grass', careType: 'flower', spacingRadius: 1.05,
     growthSeconds: 90,
     care: [{ at: 0.25, kind: 'water' }, { at: 0.65, kind: 'water' }],
     groundCover: { minCoverage: 0.5 },
+    minigames: true,
   },
   {
     id: 'poppy', name: 'Poppy', subtitle: 'A bright little flower',
-    description: 'Plant in bare soil. Keep it watered and pinch back one stray shoot.',
-    color: '#e77b62', substrate: 'soil', spacingRadius: 0.64,
+    description: 'Plant in bare soil. Keep it watered, shoo off the aphids, and pinch back one stray shoot.',
+    color: '#e77b62', substrate: 'soil', careType: 'flower', spacingRadius: 0.64,
     growthSeconds: 90,
-    care: [{ at: 0.3, kind: 'water' }, { at: 0.52, kind: 'prune' }, { at: 0.78, kind: 'water' }],
+    care: [{ at: 0.25, kind: 'water' }, { at: 0.45, kind: 'pest' }, { at: 0.62, kind: 'prune' }, { at: 0.8, kind: 'water' }],
+    minigames: true,
   },
   {
     id: 'water-lily', name: 'Water lily', subtitle: 'Pondside floater',
-    description: 'Needs a visible pond, a drink, and a little pruning as it grows.',
-    color: '#d994c9', substrate: 'water', spacingRadius: 0.8,
+    description: 'Needs a visible pond, a drink, a shoo for the mosquitoes, and a little pruning as it grows.',
+    color: '#d994c9', substrate: 'water', careType: 'water', spacingRadius: 0.8,
     growthSeconds: 100,
-    care: [{ at: 0.3, kind: 'water' }, { at: 0.48, kind: 'prune' }, { at: 0.75, kind: 'water' }],
+    care: [{ at: 0.28, kind: 'water' }, { at: 0.46, kind: 'pest' }, { at: 0.64, kind: 'prune' }, { at: 0.82, kind: 'water' }],
+    minigames: true,
   },
   {
     id: 'blueberry', name: 'Blueberry bush', subtitle: 'A sour-soil berry bush',
     description: 'Plant in bare soil. Call a rain cloud, swat the berry beetles, and snip its wild shoots, and it fruits for good.',
-    color: '#5b73c7', substrate: 'soil', spacingRadius: 0.62,
+    color: '#5b73c7', substrate: 'soil', careType: 'bush', spacingRadius: 0.62,
     growthSeconds: 150,
     care: [{ at: 0.22, kind: 'water' }, { at: 0.5, kind: 'pest' }, { at: 0.76, kind: 'prune' }],
     minigames: true,
