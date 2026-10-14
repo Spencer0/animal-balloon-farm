@@ -55,6 +55,8 @@ const GRAVITY = 4.6
 const PIECE_SECONDS = 1.6
 const DASHES = 8
 
+declare const __GARDEN_DEBUG__: boolean
+
 type Disposable = { dispose(): void }
 
 interface Stalk {
@@ -171,7 +173,8 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   root.name = 'Chop game'
   stage.scene.add(root)
   const owned: Disposable[] = []
-  const debugHook = new URLSearchParams(location.search).has('gardenDebug')
+  // The scripted-play hook (`window.__chopGame`, including `tap()`) is debug-only: a production build folds it away.
+  const debugHook = __GARDEN_DEBUG__ && new URLSearchParams(location.search).has('gardenDebug')
   // Space cuts too, for the keyboard; the pointer tap is the main input.
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.code !== 'Space' || event.repeat) return
@@ -284,7 +287,7 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   }
   renderScore()
 
-  if (debugHook) {
+  if (__GARDEN_DEBUG__ && debugHook) {
     ;(window as unknown as { __chopGame?: unknown }).__chopGame = {
       /** Each unscored falling stalk's band distance from the blade line, in metres (positive above). */
       distances: () => stalks.filter((stalk) => stalk.state === 'falling' && !stalk.resolved).map(distanceOf),
@@ -572,7 +575,7 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       window.removeEventListener('keydown', onKeyDown)
       scoreEl.remove()
       if (stage.plant) stage.plant.rotation.z = 0
-      if (debugHook) delete (window as unknown as { __chopGame?: unknown }).__chopGame
+      if (__GARDEN_DEBUG__ && debugHook) delete (window as unknown as { __chopGame?: unknown }).__chopGame
       for (const stalk of stalks) stalk.root.removeFromParent()
       stalks.length = 0
       for (const piece of pieces) {
