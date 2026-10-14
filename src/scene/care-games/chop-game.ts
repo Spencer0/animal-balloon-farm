@@ -53,7 +53,7 @@ const SNAP_COOLDOWN = 0.28
 const BLADE_OPEN_ANGLE = THREE.MathUtils.degToRad(26)
 const GRAVITY = 4.6
 const PIECE_SECONDS = 1.6
-const DASHES = 6
+const DASHES = 8
 
 type Disposable = { dispose(): void }
 
@@ -239,8 +239,8 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   const castStalk = cloneCastCritter('flower', 'stalk')
   const stalkTemplate = castStalk ?? fallbackStalk(owned)
   // Chunky bright dashes, so the cut band reads from a phone's distance.
-  const dashGeometry = new THREE.BoxGeometry(0.036, 0.05, 0.06)
-  const dashMaterial = new THREE.MeshBasicMaterial({ color: '#fff27a' })
+  const dashGeometry = new THREE.BoxGeometry(0.05, 0.075, 0.09)
+  const dashMaterial = new THREE.MeshBasicMaterial({ color: '#ff6a1f' })
   const capMaterial = new THREE.MeshLambertMaterial({ color: '#e6d08e', side: THREE.DoubleSide })
   owned.push(dashGeometry, dashMaterial, capMaterial)
 

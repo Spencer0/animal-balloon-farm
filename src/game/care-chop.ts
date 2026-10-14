@@ -48,12 +48,12 @@ export function fellThrough(distance: number): boolean {
 
 /** Metres per second for the nth stalk (0-based): each stalk falls a little faster. */
 export function chopFallSpeed(index: number): number {
-  return Math.min(1.3, 0.72 + 0.06 * index)
+  return Math.min(1.6, 0.85 + 0.07 * index)
 }
 
 /** Seconds from one stalk's spawn to the next: quicker as the round goes on. */
 export function chopSpawnGap(index: number): number {
-  return Math.max(1.9, 2.7 - 0.08 * index)
+  return Math.max(1.0, 1.7 - 0.07 * index)
 }
 
 /** Chance that the nth stalk (0-based) stalls just short of the blades. */

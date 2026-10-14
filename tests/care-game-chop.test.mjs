@@ -39,8 +39,8 @@ test('stalks fall faster and come more often as the round goes on, within limits
     assert.ok(chop.chopSpawnGap(index) <= chop.chopSpawnGap(index - 1))
   }
   assert.ok(chop.chopFallSpeed(0) < 1, 'the first stalk is gentle')
-  assert.ok(chop.chopFallSpeed(99) <= 1.3)
-  assert.ok(chop.chopSpawnGap(99) >= 1.9, 'a stalk is never rushed onto the blades')
+  assert.ok(chop.chopFallSpeed(99) <= 1.6)
+  assert.ok(chop.chopSpawnGap(99) >= 1.0, 'stalks stay far enough apart that two bands are never in reach at once')
 })
 
 test('fake-outs are rarer at the start and capped', () => {
