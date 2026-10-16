@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import type { BalloonAnimal } from './animals/balloon-animal'
 import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
 import { isHouse } from './game/animal-housing'
+import { carnivalRing } from './game/animal-travel'
 import { createHousing } from './scene/housing'
 import type { Bed } from './game/sleep'
 import { SIM_HZ, SIM_MAX_STEPS_PER_FRAME, createSimClock } from './game/sim-clock'
@@ -21,6 +22,7 @@ import {
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
+import { createBerryForaging } from './scene/berry-forage'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
 import { createHungerBubbles } from './scene/hunger-bubbles'
 import { createHouseGoodsBadges } from './scene/house-goods-badges'
@@ -58,6 +60,7 @@ import { createJournalPanel } from './ui/journal-panel'
 import { createJournalConditions } from './ui/journal-conditions'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuDomPanel } from './ui/menu-dom'
+import { createEscapeRouter, menuCloseLayer, menuOpenLayer } from './game/escape-router'
 import { createOptionsDomPanel, type OptionsDomPanel } from './ui/options-dom'
 import { createFpsCounter } from './ui/fps-counter'
 import { createSettingsStore } from './game/settings'
@@ -151,6 +154,7 @@ const farmCamera = createFarmCamera({
   tourSubjects: () => tourSubjectsOf(animals),
   onReframed: () => refreshAnimalVisibility(performance.now() / 1000, true),
   onTourStart: () => input.cancelDrag(),
+  panLimits: () => carnivalRing(currentGardenBounds),
 })
 const camera = farmCamera.camera
 const cameraTarget = farmCamera.target
@@ -727,10 +731,16 @@ gardenTools?.setTallGrassBlocker((x, z) => {
 syncOwnedTools()
 syncGrassPack()
 
+/** Escape may close the main menu only after it has been closed once, so a fresh boot cannot skip it. */
+let menuDismissable = false
 const menu = createMenuDomPanel({
   onChoose: (choice) => handleMenuChoice(choice),
   keysEnabled: () => !optionsDom.isOpen && !farmsPanel.isOpen,
-  onToggle: () => syncFarmChrome(),
+  onToggle: (isOpen) => {
+    // Once the menu has been closed (Enter, a loaded farm), Escape may close it again.
+    if (!isOpen) menuDismissable = true
+    syncFarmChrome()
+  },
 })
 
 
@@ -1458,6 +1468,36 @@ const input = createFarmInput({
 const refreshCursor = (): void => input.refreshCursor()
 input.attach()
 
+// Escape: one router, top of the screen first, acting on key-up (see game/escape-router.ts).
+const closePanel = (panel: { setOpen(open: boolean): void }): boolean => {
+  panel.setOpen(false)
+  syncFarmChrome()
+  refreshCursor()
+  return true
+}
+const menuEscape = {
+  get isOpen() { return menu.isOpen },
+  get dismissable() { return menuDismissable },
+  open: () => menu.open(),
+  dismiss: () => handleMenuChoice('enter'),
+}
+const escapeRouter = createEscapeRouter([
+  () => optionsDom.isOpen && closePanel(optionsDom),
+  () => farmsPanel.back(),
+  menuCloseLayer(menuEscape),
+  () => notificationDom.isOpen && closePanel(notificationDom),
+  () => larderDom.isOpen && closePanel(larderDom),
+  () => playerDom.isOpen && closePanel(playerDom),
+  () => shop.isOpen && closePanel(shop),
+  () => shed.isOpen && (shed.close(), true),
+  () => journal.isOpen && (journal.close(), true),
+  () => input.escapeFarmAction(),
+  menuOpenLayer(menuEscape),
+])
+window.addEventListener('keydown', (event) => escapeRouter.keyDown(event))
+window.addEventListener('keyup', (event) => escapeRouter.keyUp(event))
+window.addEventListener('blur', () => escapeRouter.reset())
+
 menu.open()
 syncFarmChrome()
 if (loadedSave) applySavedWorld(loadedSave)
@@ -1810,6 +1850,7 @@ function plantShadowKey(): number {
  * walk home, the gate trips, the collision push-out and the owl and snake hunts
  * (game/animal-hunt.ts). Animation, camera and water stay per frame.
  */
+const berryForaging = createBerryForaging(animals, progress, () => gardenPlants)
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
 
 /**
@@ -1824,6 +1865,7 @@ function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: b
   // Push the walkers out of houses and each other once they have moved; the view blends the result.
   collideAnimalsTick(nowSeconds)
   if (huntsActive) tickHunts(stepSeconds)
+  berryForaging.tick(stepSeconds, huntsActive && !journal.isOpen)
 }
 
 function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {

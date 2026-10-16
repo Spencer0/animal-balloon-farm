@@ -288,7 +288,7 @@ test('a visit that stays at stage two by day is not undone by daylight', () => {
 test('the night shift is paced apart from the day visitors', () => {
   // The cow arrives first and is stuck at stage two with no pasture. It must not keep the owl waiting.
   const life = owlLife({}, ['cow', 'owl'])
-  tickFor(life, farmWith({}, false), 30)
+  tickFor(life, farmWith({ shortGrassArea: 2 }, false), 30)
   assert.equal(life.all().find((animal) => animal.species === 'cow').stage, 2)
   tickFor(life, farmWith({ residentCounts: { chicken: 1 } }), 30)
   assert.ok(owlOf(life).stage >= 1)

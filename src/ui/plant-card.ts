@@ -325,15 +325,6 @@ export function createPlantCard(actions: PlantCardActions, cssWidth: number, css
       if (!target || !containsCard(point)) return undefined
       return regionAt(point) ? 'point' : 'idle'
     },
-    keyDown(event): boolean {
-      if (!target || event.ctrlKey || event.metaKey || event.altKey) return false
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        this.close()
-        return true
-      }
-      return false
-    },
     hitTest(point): boolean {
       return target !== null && containsCard(point)
     },

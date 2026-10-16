@@ -1,22 +1,12 @@
 import * as THREE from 'three'
 import type { PlantCare } from '../game/plants'
-import { berryColor, cloneBush, cloneCritter, loadGardenModels, ownBerryMaterial, type BushGroup } from './plant-models'
+import { berryColor, cloneBush, cloneCritter, HARVEST_BERRY_PIVOTS, loadGardenModels, ownBerryMaterial, type BushGroup } from './plant-models'
 
 /**
- * How a blueberry bush looks at each moment of its life, from the Blender
- * model's groups:
- *
- * - The canopy grows in from a sapling tuft; the canes stretch with it.
- * - White bells flower mid-growth, then give way to berries that ripen
- *   green -> pink -> dusty blue as the bush matures.
- * - The bush shows what it needs before you read a marker: it droops when
- *   thirsty, beetles crawl over it when pests come, and three wild shoots
- *   stick out when it wants a trim.
- *
- * The model loads once for every bush (scene/plant-models.ts); a bush planted
- * before it arrives fills in as soon as it does.
+ * Mainline blueberry bush look: growth, flowers, pests and pruning all reuse the
+ * authored Blender groups. Six visible fruit meshes are linked to the crop
+ * slots; the rest of the mainline canopy berries remain decorative.
  */
-
 export interface BlueberryLook {
   readonly growth: number
   readonly care: PlantCare | null
@@ -25,11 +15,9 @@ export interface BlueberryLook {
 }
 
 export interface BlueberryVisual {
-  /** Add this under the plant's group; it is scaled and swayed from inside. */
   readonly root: THREE.Group
-  /** True once the Blender model is attached. */
   readonly ready: boolean
-  update(look: BlueberryLook, elapsed: number, deltaSeconds: number): void
+  update(look: BlueberryLook, elapsed: number, deltaSeconds: number, fruitTimers?: readonly number[]): void
   dispose(): void
 }
 
@@ -70,7 +58,7 @@ export function createBlueberryVisual(): BlueberryVisual {
       const group = clone.getObjectByName(name)
       if (group) groups.set(name, group)
     }
-    // Two beetles that crawl over the leaves while pests are about.
+    // Mainline beetle models remain part of the visible pest-care state.
     for (let index = 0; index < 2; index += 1) {
       const beetle = cloneCritter('beetle')
       if (!beetle) continue
@@ -83,15 +71,15 @@ export function createBlueberryVisual(): BlueberryVisual {
     root.add(clone)
   }
 
+  function group(name: BushGroup): THREE.Object3D | undefined { return groups.get(name) }
+
   attach()
   if (!bush) void loadGardenModels().then(attach).catch(() => {})
-
-  const group = (name: BushGroup): THREE.Object3D | undefined => groups.get(name)
 
   return {
     root,
     get ready() { return bush !== null },
-    update(look, elapsed, deltaSeconds): void {
+    update(look, elapsed, deltaSeconds, fruitTimers): void {
       if (!bush) {
         attach()
         if (!bush) return
@@ -99,7 +87,6 @@ export function createBlueberryVisual(): BlueberryVisual {
       const growth = THREE.MathUtils.clamp(look.growth, 0, 1)
       const sapling = 0.32 + 0.68 * smoothstep(0, 1, growth)
       const thirsty = look.care === 'water' && !look.answering
-      // A thirsty bush slumps a little and its sway slows; a drink stands it back up.
       const droop = thirsty ? 0.86 : 1
       const canopy = group('BB_canopy')
       if (canopy) {
@@ -112,7 +99,6 @@ export function createBlueberryVisual(): BlueberryVisual {
       const mound = group('BB_mound')
       if (mound) mound.scale.setScalar(0.75 + 0.25 * sapling)
 
-      // Bells open from 30% and drop as the berries set.
       const flowers = group('BB_flowers')
       if (flowers) {
         const bloom = smoothstep(0.3, 0.4, growth) * (1 - smoothstep(0.72, 0.84, growth))
@@ -124,13 +110,16 @@ export function createBlueberryVisual(): BlueberryVisual {
         const set = smoothstep(0.6, 0.78, growth)
         berries.visible = set > 0.01
         berries.scale.setScalar(Math.max(0.001, 0.45 + 0.55 * set) * sapling)
+        HARVEST_BERRY_PIVOTS.forEach((name, slot) => {
+          const berry = bush?.getObjectByName(name)
+          if (berry) berry.visible = growth >= 1 && (fruitTimers?.[slot] ?? 0) <= 0
+        })
         if (berryMaterial) {
           berryMaterial.color.copy(berryColor((growth - 0.62) / 0.38, tint))
-          // A ripe berry is dusty, not shiny.
           berryMaterial.roughness = 0.3 + 0.25 * smoothstep(0.85, 1, growth)
         }
       }
-      // Wild shoots spring out when a trim is due and snap back once cut.
+
       const shoots = group('BB_shoots')
       const wantShoots = look.care === 'prune' && !look.answering ? 1 : 0
       shootsShown += (wantShoots - shootsShown) * Math.min(1, deltaSeconds * (wantShoots ? 5 : 12))
@@ -139,7 +128,6 @@ export function createBlueberryVisual(): BlueberryVisual {
         const wobble = 1 + Math.sin(elapsed * 6) * 0.04 * shootsShown
         shoots.scale.setScalar(Math.max(0.001, shootsShown * sapling * wobble))
       }
-      // Beetles circle the canopy, nibbling, while pests are the trouble.
       const wantBeetles = look.care === 'pest' && !look.answering ? 1 : 0
       beetlesShown += (wantBeetles - beetlesShown) * Math.min(1, deltaSeconds * 6)
       for (const beetle of beetles) {
@@ -149,7 +137,6 @@ export function createBlueberryVisual(): BlueberryVisual {
         const lift = 0.5 + Math.sin(elapsed * 2.1 + beetle.phase) * 0.12
         const radius = 0.46 * sapling
         beetle.object.position.set(Math.cos(angle) * radius, lift * sapling + 0.1, Math.sin(angle) * radius)
-        // Face along the path, belly to the leaves.
         beetle.object.rotation.set(0, -angle + (beetle.speed > 0 ? 0 : Math.PI), Math.sin(elapsed * 9 + beetle.phase) * 0.15)
         beetle.object.scale.setScalar(0.9 * beetlesShown)
         const flutter = Math.sin(elapsed * 40 + beetle.phase) * 0.5
@@ -158,8 +145,6 @@ export function createBlueberryVisual(): BlueberryVisual {
     },
     dispose(): void {
       disposed = true
-      // Geometry and the shared materials belong to the template; only the
-      // berry material is this bush's own.
       berryMaterial?.dispose()
       root.clear()
       bush = null

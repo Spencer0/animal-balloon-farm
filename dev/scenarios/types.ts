@@ -45,6 +45,8 @@ export interface ScenarioHarness {
   setHelium(species: string, level: number): number
   stepHunt(seconds: number, secondsPerStep?: number): unknown
   focusPoint(x: number, z: number, height?: number): void
+  placeAnimal(id: string, x: number, z: number): boolean
+  forageFor(seconds: number): unknown
   animalReport(): Record<string, unknown>[]
 }
 

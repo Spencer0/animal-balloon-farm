@@ -86,16 +86,13 @@ export function createOptionsDomPanel(callbacks: OptionsDomCallbacks): OptionsDo
   });
 
   /**
-   * While the screen is open it owns the keyboard: Escape closes it and no
-   * other key reaches the menu underneath (its 1/2/3 hotkeys would otherwise
-   * start the game from behind the dialog).
+   * While the screen is open it owns the keyboard: no key reaches the menu
+   * underneath (its 1/2/3 hotkeys would otherwise start the game from behind the
+   * dialog). Escape is the exception. It goes on to the escape router, which
+   * closes this screen when the key is released.
    */
   function onKeyDown(event: KeyboardEvent): void {
-    if (!open) return;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      callbacks.onClose();
-    }
+    if (!open || event.key === "Escape") return;
     event.stopImmediatePropagation();
   }
   window.addEventListener("keydown", onKeyDown, true);

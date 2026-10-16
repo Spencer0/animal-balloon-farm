@@ -32,6 +32,8 @@ export interface FarmsPanel {
   readonly isOpen: boolean
   open(notice?: string): void
   close(): void
+  /** Escape: back out of a pending confirm, else close. False when the screen is not up. */
+  back(): boolean
   dispose(): void
 }
 
@@ -205,22 +207,25 @@ export function createFarmsPanel(handlers: FarmsHandlers, onToggle?: (isOpen: bo
     }
   })
 
-  // While the screen is up it owns the keyboard: Escape backs out one step, and
-  // nothing leaks through to the menu signs or the farm underneath.
+  // While the screen is up it owns the keyboard: nothing leaks through to the
+  // menu signs or the farm underneath. Escape goes on to the escape router,
+  // which calls back() when the key is released.
   function onKeyDown(event: KeyboardEvent): void {
-    if (!isOpen) return
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      if (confirm) {
-        confirm = null
-        render()
-      } else {
-        setOpen(false)
-      }
-    } else if (event.key !== 'Tab') {
-      event.preventDefault()
-    }
+    if (!isOpen || event.key === 'Escape') return
+    if (event.key !== 'Tab') event.preventDefault()
     event.stopPropagation()
+  }
+
+  /** Escape: back out of a pending confirm, else close. False when the screen is not up. */
+  function back(): boolean {
+    if (!isOpen) return false
+    if (confirm) {
+      confirm = null
+      render()
+    } else {
+      setOpen(false)
+    }
+    return true
   }
   window.addEventListener('keydown', onKeyDown, true)
 
@@ -234,6 +239,7 @@ export function createFarmsPanel(handlers: FarmsHandlers, onToggle?: (isOpen: bo
     close(): void {
       setOpen(false)
     },
+    back,
     dispose(): void {
       window.removeEventListener('keydown', onKeyDown, true)
       overlay.remove()

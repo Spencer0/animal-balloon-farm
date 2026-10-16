@@ -23,6 +23,7 @@ export const ANIMAL_SALE_PRICES: Readonly<Record<BalloonAnimalId, number>> = {
   rat: 16,
   snake: 26,
   mole: 18,
+  squirrel: 22,
   // The one-of-a-kind end-game animal: worth the most, though it is far more valuable on the farm making gems.
   starhorn: 60,
 }

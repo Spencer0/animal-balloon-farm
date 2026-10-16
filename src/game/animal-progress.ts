@@ -258,7 +258,7 @@ export function createAnimalProgress(
         progress.set(entry.species, withTime)
 
         if (entry.stage === 1) {
-          if (withTime.elapsed < visitDelay) continue
+          if (withTime.elapsed < visitDelay || !requirementMet(next.requirement, farm)) continue
           advance(entry.species, 2, events)
           continue
         }

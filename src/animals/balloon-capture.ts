@@ -16,6 +16,7 @@ const PAINT_PALETTES: Record<BalloonAnimalId, readonly [string, string]> = {
   mouse: ['#c99a6b', '#f0a3b0'],
   rat: ['#7b7480', '#dd8f9c'],
   snake: ['#3f9e6e', '#2a7650'],
+  squirrel: ['#bd683c', '#f2d4b0'],
   mole: ['#5b5663', '#f2a3ad'],
   starhorn: ['#bf9fe6', '#ffd84f'],
 }
@@ -283,6 +284,14 @@ function captureGesture(id: BalloonAnimalId, time: number, duration: number): Ca
         pitch: Math.sin(time * 2.1) * 0.03 * active,
         roll: Math.sin(time * 2.6) * 0.05 * active,
         yaw: Math.sin(time * 2.6) * 0.22 * active,
+      }
+    case 'squirrel':
+      return {
+        fill,
+        lift: active * (0.04 + Math.max(0, Math.sin(time * 5.8)) * 0.12),
+        pitch: Math.sin(time * 4.5) * 0.08 * active,
+        roll: Math.sin(time * 3.4) * 0.07 * active,
+        yaw: Math.sin(time * 2.7) * 0.12 * active,
       }
   }
 }
