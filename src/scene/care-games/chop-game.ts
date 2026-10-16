@@ -172,7 +172,8 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   const root = new THREE.Group()
   root.name = 'Chop game'
   stage.scene.add(root)
-  const owned: Disposable[] = []
+  // GPU parts go on the player's shelf; it frees them once the next round is ready.
+  const owned: Disposable[] = context.owned
   // The scripted-play hook (`window.__chopGame`, including `tap()`) is debug-only: a production build folds it away.
   const debugHook = __GARDEN_DEBUG__ && new URLSearchParams(location.search).has('gardenDebug')
   // Space cuts too, for the keyboard; the pointer tap is the main input.
@@ -587,7 +588,6 @@ export function createChopGame(context: CareGameContext): CareGameScene {
       pieces.length = 0
       flashPlane.removeFromParent()
       root.removeFromParent()
-      for (const part of owned) part.dispose()
     },
   }
 }

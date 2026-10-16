@@ -107,7 +107,11 @@ function softDisc(): THREE.CanvasTexture {
   return texture
 }
 
-export function createCareStage(cssWidth: number, cssHeight: number, species: PlantId): CareStage {
+/**
+ * `owned` collects the stage's geometries, materials and textures (and the
+ * plant model's) for the caller to free; `dispose` only clears the scene.
+ */
+export function createCareStage(cssWidth: number, cssHeight: number, species: PlantId, owned: Array<{ dispose(): void }>): CareStage {
   const scene = new THREE.Scene()
   scene.name = 'Care minigame stage'
   const sky = skyTexture()
@@ -129,7 +133,7 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
   rim.position.set(-3, 2, -2)
   scene.add(rim)
 
-  const owned: Array<{ dispose(): void }> = [sky]
+  owned.push(sky)
   const lawnMaterial = new THREE.MeshLambertMaterial({ color: '#86b85c' })
   const lawn = new THREE.Mesh(new THREE.CircleGeometry(12, 48), lawnMaterial)
   lawn.rotation.x = -Math.PI / 2
@@ -397,8 +401,10 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
       camera.updateProjectionMatrix()
     },
     dispose(): void {
-      for (const part of owned) part.dispose()
-      if (plantModel) disposePlantModel(plantModel)
+      if (plantModel) {
+        const model = plantModel
+        owned.push({ dispose: () => disposePlantModel(model) })
+      }
       scene.clear()
     },
   }

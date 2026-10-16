@@ -129,7 +129,8 @@ export function createSkimGame(context: CareGameContext): CareGameScene {
   const root = new THREE.Group()
   root.name = 'Skim game'
   stage.scene.add(root)
-  const owned: Array<{ dispose(): void }> = []
+  // GPU parts go on the player's shelf; it frees them once the next round is ready.
+  const owned: Array<{ dispose(): void }> = context.owned
 
   // ---- the frame: a wide sheet of water under the stage, and the lily in the foreground.
   // The stage's own pond, rim and reeds would read as hazards in this lane, so they step aside for the round.
@@ -697,7 +698,6 @@ export function createSkimGame(context: CareGameContext): CareGameScene {
       root.removeFromParent()
       if (lily) stage.scene.add(lily)
       for (const object of stageWater) object.visible = true
-      for (const part of owned) part.dispose()
     },
   }
 }

@@ -129,7 +129,8 @@ export function createHopGame(context: CareGameContext): CareGameScene {
   const root = new THREE.Group()
   root.name = 'Hop game'
   stage.scene.add(root)
-  const owned: Array<{ dispose(): void }> = []
+  // GPU parts go on the player's shelf; it frees them once the next round is ready.
+  const owned: Array<{ dispose(): void }> = context.owned
 
   // ---- the framing: a fixed view height; the width follows the window.
   const fov = THREE.MathUtils.radToDeg(2 * Math.atan(VIEW_HEIGHT / 2 / CAMERA_DISTANCE))
@@ -623,7 +624,6 @@ export function createHopGame(context: CareGameContext): CareGameScene {
       delete (window as unknown as { __hopDebug?: unknown }).__hopDebug
       if (stage.plant && stage.plant.parent === flowerHolder) stage.scene.add(stage.plant)
       root.removeFromParent()
-      for (const part of owned) part.dispose()
     },
   }
 }

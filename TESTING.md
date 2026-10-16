@@ -72,6 +72,7 @@ override it.
 | `plant` | Seed rules, growth ticks, grass and water simulation |
 | `expand` | Parcel expansion mid-animation (bounds, terrain and water regrid) |
 | `crowd-ramp` | Sustained instanced crowd. Gated on its smallest step. |
+| `minigame` | A paddle round on a crowded farm, steered by an autopilot, then a second visit. Fails on any shader program built mid-play or rebuilt on the second visit, as well as on work. |
 
 Every scenario checks its own fixture before it scores anything (for example,
 that the pond actually holds water). A broken fixture fails the gate, so a
@@ -127,6 +128,11 @@ console for one-line usage of every command; highlights:
 - `setCrowd(n)` / `clearCrowd()` — sustained crowd load (restored on reset)
 - `crowdStressTest(n)` — one render snapshot: draw calls + triangles
 - `performanceSamples()` — per-frame work/interval splits behind every gate
+  (minigame frames included: their update and render land in `otherUpdateMs`
+  and `sceneRenderMs`)
+- `shaderPrograms()` — `{ live, newestId }` of WebGL's shader programs. Ids
+  only grow, so a newer id after play started means something compiled
+  mid-play: the frame of a hit stalls on it
 
 Rules: viewport ~1280x720 before measuring, one screenshot per state
 change, never in a loop (an oversized capture poisons the thread).

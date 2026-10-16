@@ -290,6 +290,109 @@ const SCENARIOS = {
       return null;
     },
   },
+
+  minigame: {
+    description: 'Play the paddle minigame on a crowded farm: hit effects and spawns must not compile shaders mid-play, and a second visit must reuse the first one\'s.',
+    minSamples: 30,
+    expression: `(async () => {${PRELUDE}
+    debug.closeMenu();
+    // A late-game farm under the minigame: the farm must hold still, not bleed into its frames.
+    await debug.setCrowd(30);
+    await waitFrames(5);
+    const phaseOf = () => debug.careGame()?.phase ?? null;
+    const until = async (test, ms) => {
+      const start = performance.now();
+      while (!test() && performance.now() - start < ms) await waitFrames(1);
+      return test();
+    };
+    // Program ids only grow, so the newest id seen over a stretch counts every program built in it.
+    const newestProgram = () => debug.shaderPrograms()?.newestId ?? null;
+    const newestOver = async (test, ms) => {
+      let newest = newestProgram() ?? 0;
+      const start = performance.now();
+      while (!test() && performance.now() - start < ms) {
+        await waitFrames(1);
+        newest = Math.max(newest, newestProgram() ?? 0);
+      }
+      return newest;
+    };
+    const press = (code) => window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+    // An autopilot: be in the lane of the next mosquito unless a snag is there, hop logs.
+    const steer = () => {
+      const scene = debug.careGame()?.debug;
+      if (!scene) return;
+      const soon = scene.upcoming.filter((beat) => beat.contact - scene.elapsed < 0.9 && beat.contact - scene.elapsed > -0.05);
+      const snagged = (lane) => soon.some((beat) => beat.kind === 'snag' && beat.lanes.includes(lane));
+      const food = soon.find((beat) => beat.kind === 'mosquito');
+      let target = scene.lane;
+      if (food && !snagged(food.lanes[0])) target = food.lanes[0];
+      if (snagged(target)) target = [-1, 0, 1].find((lane) => !snagged(lane)) ?? target;
+      if (target !== scene.lane) press(target < scene.lane ? 'ArrowLeft' : 'ArrowRight');
+      else if (!scene.airborne && soon.some((beat) => beat.kind === 'log' && beat.lanes.includes(scene.lane) && beat.contact - scene.elapsed < 0.35)) press('Space');
+    };
+
+    const programsBeforeEntry = newestProgram();
+    const opened = debug.playCareGame('paddle');
+    if (opened.error) throw new Error('Could not open the paddle game: ' + opened.error);
+    const firstEntryNewest = await newestOver(() => phaseOf() === 'play', 90000);
+    if (phaseOf() !== 'play') throw new Error('The paddle game never reached play (phase ' + phaseOf() + ').');
+    const programsAtPlay = newestProgram();
+    let programsNewest = Math.max(programsAtPlay ?? 0, firstEntryNewest);
+    const samples = [];
+    const intervals = [];
+    let sampledFrameNumber = -1;
+    const start = performance.now();
+    // Play until enough frames and hits are in, or the round ends.
+    while (phaseOf() === 'play' && performance.now() - start < ${MAX_SAMPLE_MS} * 1.5) {
+      steer();
+      await waitFrames(1);
+      programsNewest = Math.max(programsNewest, newestProgram() ?? 0);
+      const latest = debug.performanceSamples().at(-1);
+      if (latest && latest.frameNumber !== sampledFrameNumber && latest.intervalMs > 0) {
+        sampledFrameNumber = latest.frameNumber;
+        samples.push(latest.workMs);
+        intervals.push(latest.intervalMs);
+      }
+      if (samples.length >= 30 && (debug.careGame()?.snapshot?.hits ?? 0) >= 4) break;
+    }
+    const hits = debug.careGame()?.snapshot?.hits ?? 0;
+
+    // Back to the farm, then the same game again: it should find every program it needs.
+    debug.settleCare(false);
+    await until(() => phaseOf() === 'result', 30000);
+    document.querySelector('[data-cg="close"]')?.click();
+    await until(() => phaseOf() === null, 10000);
+    await waitFrames(3);
+    const programsBeforeReentry = Math.max(newestProgram() ?? 0, programsNewest);
+    debug.playCareGame('paddle');
+    const reentryNewest = await newestOver(() => phaseOf() === 'play', 90000);
+    const reentered = phaseOf() === 'play';
+    debug.settleCare(false);
+    await until(() => phaseOf() === 'result', 30000);
+    document.querySelector('[data-cg="close"]')?.click();
+    await until(() => phaseOf() === null, 10000);
+    return {
+      kind: 'minigame',
+      viewport: [innerWidth, innerHeight],
+      hits,
+      reentered,
+      programsCounted: programsAtPlay !== null,
+      firstEntryCompiles: programsBeforeEntry === null ? null : firstEntryNewest - programsBeforeEntry,
+      midPlayCompiles: programsAtPlay === null ? null : programsNewest - Math.max(programsAtPlay, firstEntryNewest),
+      reentryCompiles: programsAtPlay === null ? null : reentryNewest - programsBeforeReentry,
+      samples, intervals,
+    };
+  })()`,
+    /** @param {any} result @returns {string | null} */
+    check: (result) => {
+      if (result.hits < 3) return `the autopilot snapped only ${result.hits} mosquitoes, so the hit effects never ran`;
+      if (!result.reentered) return 'the second visit never reached play';
+      if (!result.programsCounted) return 'shader programs could not be counted (run on WebGL)';
+      if (result.midPlayCompiles > 0) return `${result.midPlayCompiles} shader program(s) compiled mid-play: a hit or spawn is not precompiled`;
+      if (result.reentryCompiles > 0) return `${result.reentryCompiles} shader program(s) compiled again on the second visit: the last visit's were freed too early`;
+      return null;
+    },
+  },
 };
 
 export { SCENARIOS };
