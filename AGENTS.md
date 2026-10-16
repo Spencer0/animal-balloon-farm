@@ -67,11 +67,19 @@ Artifact to try, iterate on that same PR.**
    canvas: oversized images break the agent thread). Say what you did not
    exercise. Don't run `npm run gate` locally: its stress scenarios are heavy,
    and it runs on GitHub CI for every PR (the Performance workflow,
-   `.github/workflows/performance.yml`). Read the PR's Performance check before
-   merging. If it fails, fix the change or measure and justify a new budget.
-   Never loosen a check to get green.
-7. **Merge only when Spencer says it's good.** Opening the PR is automatic;
-   merging is not. A push to `main` deploys to GitHub Pages, so a red build
+   `.github/workflows/performance.yml`). The PR's Performance check is part of
+   the CI that gates the merge (rule 7).
+7. **Merging is Spencer's go, then CI.** Opening the PR is automatic; merging
+   waits for Spencer to say the Artifact is shippable. Once he does: merge the
+   latest `main` into the branch if the PR is behind, make sure the PR's checks
+   (including the Performance check) are running, wait for them to go green,
+   then merge the PR. Don't ask again. In cloud sessions
+   `PUT /repos/Spencer0/animal-balloon-farm/pulls/<n>/ccr/auto_merge` turns on
+   auto-merge, which merges as soon as CI is green; otherwise poll the checks
+   and merge with `gh api -X PUT repos/Spencer0/animal-balloon-farm/pulls/<n>/merge -f merge_method=merge`
+   (the repo's history uses merge commits). If CI goes red, fix it or measure
+   and justify a new budget, push to the same PR, and wait again. Never loosen a
+   check to get green. A push to `main` deploys to GitHub Pages, so a red build
    must never reach it.
 8. **No file deletion from the shell.** Never run `Remove-Item`, `rm`, `del`,
    `rmdir`, or any other recursive delete, on Windows or anywhere else. Git
