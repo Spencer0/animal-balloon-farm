@@ -60,8 +60,8 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   buzz: { goal: 8, hearts: 2, misses: 0, seconds: 24 },
   // Twelve aphids eaten on the run; two thorns and it is over.
   hop: { goal: 12, hearts: 2, misses: 0, seconds: 22 },
-  // Six clean cuts; two stalks missed and it is over. No hearts.
-  chop: { goal: 6, hearts: 0, misses: 2, seconds: 22 },
+  // Three rounds of falling stalks, one hit per round played; the score decides the pass (see care-chop.ts).
+  chop: { goal: 3, hearts: 0, misses: 0, seconds: 55 },
   // Eighteen dewdrops; three knocks and the dragonfly is out.
   skim: { goal: 18, hearts: 3, misses: 0, seconds: 24 },
   // Twelve mosquitoes; three snags or logs and the frog is out.
@@ -85,7 +85,7 @@ export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
   snip: { command: 'SNIP!', goalLine: 'Slice twelve wild leaves. Leave the berries alone!', winLine: 'Neat as a pin!', chore: 'the snipping' },
   buzz: { command: 'FLAP!', goalLine: 'Flap the bee through eight gaps. Bonk a stem and you lose a heart.', winLine: 'Dewdrop delivered!', chore: 'the bee run' },
   hop: { command: 'JUMP!', goalLine: 'Eat twelve aphids on the run. Jump the thorns and burrs!', winLine: 'Every aphid gobbled!', chore: 'the ladybug run' },
-  chop: { command: 'CUT!', goalLine: 'Tap when the dashed line meets the blades. Six clean cuts, two misses and it is over.', winLine: 'Clean as a whistle!', chore: 'the stalk chop' },
+  chop: { command: 'CUT!', goalLine: 'Tap as the orange band hits the blade line. Closer scores more, too early scores zero. Three rounds: score big to pass!', winLine: 'Clean as a whistle!', chore: 'the stalk chop' },
   skim: { command: 'HOLD!', goalLine: 'Hold to climb through the dewdrops. Dodge the cattails, fish and fluff!', winLine: 'The lily drinks it all!', chore: 'the dragonfly skim' },
   paddle: { command: 'SWIPE!', goalLine: 'Swipe or tap a side to change lanes, up to hop a log. Snap twelve mosquitoes!', winLine: 'Tongue-tastic!', chore: 'the frog paddle' },
   rope: { command: 'JUMP!', goalLine: 'Hop each sweep of the runner. Ten passes, and do not get caught!', winLine: 'Nothing tripped the frog!', chore: 'the lily skip' },
@@ -95,7 +95,7 @@ export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
 export const CARE_GAME_INTRO_SECONDS = 1.15
 
 export type CareRoundState = 'playing' | 'won' | 'lost'
-export type CareLossReason = 'time' | 'hearts' | 'misses' | 'forfeit'
+export type CareLossReason = 'time' | 'hearts' | 'misses' | 'forfeit' | 'score'
 
 export interface CareRoundSnapshot {
   readonly kind: CareGameKind
@@ -130,6 +130,8 @@ export interface CareRound {
    */
   release(): void
   tick(deltaSeconds: number): void
+  /** End the round as lost for a reason the rules above do not track (the chop's score too low). */
+  fail(reason: CareLossReason): void
   forfeit(): void
 }
 
@@ -200,6 +202,9 @@ export function createCareRound(kind: CareGameKind, rules: CareGameRules = CARE_
       timeLeft = Math.max(0, timeLeft - deltaSeconds)
       if (timeLeft <= 0) lose('time')
     },
+    fail(reason): void {
+      lose(reason)
+    },
     forfeit(): void {
       lose('forfeit')
     },
@@ -213,7 +218,7 @@ const LOSS_LINES: Readonly<Record<CareGameKind, Readonly<Partial<Record<CareLoss
   snip: { time: 'Out of time!', misses: 'Too many leaves got away.', hearts: 'Too many berries got sliced.' },
   buzz: { time: 'The bee ran out of puff.', hearts: 'The bee bonked too often.' },
   hop: { time: 'Out of time!', hearts: 'Too many thorns caught the ladybug.' },
-  chop: { time: 'Out of time!', misses: 'Too many stalks missed the cut.' },
+  chop: { time: 'Out of time!', score: 'Not enough points to pass. Cut closer to the line!' },
   skim: { time: 'Out of time!', hearts: 'The dragonfly got knocked out of the air.' },
   paddle: { time: 'Out of time!', hearts: 'The frog got snagged too often.' },
   rope: { time: 'Out of time!', hearts: 'The runner caught the frog.' },

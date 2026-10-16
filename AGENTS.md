@@ -19,29 +19,44 @@
    `.github/workflows/performance.yml`). Run `npm run check` locally, then
    read the PR's Performance check before merging. If it fails, fix the change
    or measure and justify a new budget. Never loosen a check to get green.
-4. **Share work through GitHub Pages previews, not localhost.** Work runs in
-   cloud agents, so a local dev server is irrelevant to Spencer. Every branch
-   is shareable as a live URL; that is how Spencer tests and how he sends a
-   build to a friend. For UAT, every change needs both of these:
-   1. **A playable link.** Push the work to a `feature/<name>` (or
-      `debug/<name>`) branch. `pages.yml` publishes only branches with those
-      prefixes, to
+4. **Use Claude Artifacts so the developer can try the game.** Work runs in
+   cloud agents, so a local dev server is irrelevant to Spencer, and a GitHub
+   Pages preview takes too long to iterate on. Publish a playable build as a
+   private Artifact (the `Artifact` tool) and give Spencer the link. Republish
+   to the same file path to keep the URL, so each change is a few seconds.
+   For UAT, every change needs both of these:
+   1. **A playable Artifact.** Build a lean debug bundle, not the whole game:
+      `GARDEN_DEBUG=1 PAGES_OUTDIR=<scratch dir> node scripts/build.mjs`, then
+      copy into a second scratch folder only the files the changed thing
+      loads (record them with Playwright's `response` events). Constraints:
+      - Artifacts serve only pages, CSS, JS, JSON, text, common images, fonts
+        and media. `.glb` is not served, so pack the models as base64 in one
+        `glb-pack.json` and add a small inline `fetch()` shim in the page that
+        answers `*.glb` requests from it.
+      - The query string is not passed to the page. Set it first with
+        `history.replaceState(null, '', '?gardenDebug=1&...')` in an inline
+        script before the module script.
+      - Inline `main-*.css` into the page; the page file takes body content
+        only (the Artifact tool adds the document skeleton); at most 255
+        files and 64 MB per publish, 16 MB per file.
+      - Keep this scaffolding in the scratch folder, not in the repo.
+      Artifacts are private. Spencer opens his own link; sharing with a friend
+      is done from the page's Share menu, which you cannot change.
+      Pushing a `feature/<name>` (or `debug/<name>`) branch still publishes a
+      GitHub Pages preview at
       `https://spencer0.github.io/animal-balloon-farm/previews/feature-<name>/`
-      (the `/` in the branch name becomes `-`). Preview builds have the debug
-      harness on. Give Spencer that URL and the branch name. If the session is
-      assigned a differently named branch (for example `claude/...`), also
-      push the same commit to a `feature/<name>` branch: this rule is
-      standing permission for that push, with no need to ask. Wait for the
-      Deploy to GitHub Pages run to finish (a few minutes) before sharing.
+      (the `/` becomes `-`). Treat it as the slow fallback, not the way to
+      iterate; use it when a build must go to someone who cannot open the
+      Artifact.
    2. **A debug scenario that warps to what changed.** Add one in
       `dev/scenarios/<area>/<name>.ts`, register it in `dev/scenarios/index.ts`
       (copy `sandbox/farmer-10.ts`) and reach it with
-      `?gardenDebug=1&scenario=<area>/<name>`. It must land Spencer on the
-      changed thing (the new animal, plant, tool or UI) with whatever stock,
-      coins or farm state it needs. Give Spencer the full preview URL with that
-      query string, for example
-      `.../previews/feature-blueberry-bush/?gardenDebug=1&scenario=plants/blueberry`.
-      Scenarios are debug-only and never reach the production build.
+      `?gardenDebug=1&scenario=<area>/<name>` (for a minigame,
+      `?gardenDebug=1&careGame=<kind>` already opens it). It must land Spencer
+      on the changed thing (the new animal, plant, tool or UI) with whatever
+      stock, coins or farm state it needs. For an Artifact, put that query in
+      the page's `replaceState`. Scenarios are debug-only and never reach the
+      production build.
 5. **Ship only when Spencer says it's good.** Merge the latest `main` into the
    task branch and resolve conflicts. Run `npm run check` and push only if it
    passes. Commit with a message that explains why the change was needed, push,

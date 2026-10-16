@@ -31,8 +31,26 @@
 }
 
 /* A minigame owns the screen: every other DOM panel steps aside. */
-body.care-game-playing > :not(#game):not(.cg-overlay) {
+body.care-game-playing > :not(#game):not(.cg-overlay):not(.cg-score-pill) {
   visibility: hidden !important;
+}
+
+/* A running score under the round bar, for the games that are played for points (chop). */
+.cg-score-pill {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  pointer-events: none;
+  font: 700 15px "Trebuchet MS", Verdana, sans-serif;
+  color: #6b4a33;
+  background: #faf3e2;
+  border: 2px solid #6b4a33;
+  border-radius: 999px;
+  padding: 4px 14px;
+  box-shadow: 0 2px 0 #6b4a33;
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------------ command card */

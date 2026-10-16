@@ -59,15 +59,14 @@ test('flower and water species play their own games', () => {
   assert.equal(PLANT_CATALOG.find(({ id }) => id === 'poppy').careType, 'flower')
 })
 
-test('new games: the chop has no hearts, its misses lose; the flapping bee loses on bonks', () => {
+test('new games: the chop loses on a low score; the flapping bee loses on bonks', () => {
   const chop = createCareRound('chop')
   for (let stalk = 0; stalk < CARE_GAME_RULES.chop.goal; stalk += 1) chop.hit()
   assert.equal(chop.snapshot.state, 'won')
   const missed = createCareRound('chop')
-  missed.miss()
-  missed.miss()
-  assert.equal(missed.snapshot.lossReason, 'misses')
-  assert.match(lossLine('chop', 'misses'), /missed/)
+  missed.fail('score')
+  assert.equal(missed.snapshot.lossReason, 'score')
+  assert.match(lossLine('chop', 'score'), /points/)
   const bee = createCareRound('buzz')
   bee.harm()
   bee.harm()
