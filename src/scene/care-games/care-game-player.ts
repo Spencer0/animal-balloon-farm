@@ -249,8 +249,10 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     settle(win): void {
       if (phase === 'intro') startPlay()
       if (phase !== 'play') return
-      if (win) while (round.snapshot.state === 'playing') round.hit()
-      else round.forfeit()
+      if (!win) return round.forfeit()
+      // A run to the end is only won when its clock runs out, so hit the goal, then end the clock.
+      while (round.snapshot.state === 'playing' && round.snapshot.hits < round.snapshot.goal) round.hit()
+      if (round.snapshot.state === 'playing') round.tick(round.snapshot.timeLeft)
     },
     dispose(): void {
       if (disposed) return

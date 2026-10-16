@@ -19,18 +19,51 @@ export const PADDLE_LANE_SPACING = 0.36
 export const PADDLE_HOP_SECONDS = 0.6
 /** How far ahead of the frog a mosquito is snapped up, in metres. */
 export const PADDLE_REACH = 1.4
+/** Seconds between the mosquitoes of a trail down one lane. */
+export const PADDLE_TRAIL_SPACING = 0.22
 /** Nothing is due before this many seconds: the first seconds are clear. */
 export const PADDLE_FIRST_BEAT_SECONDS = 3
 
-/** The stream's speed in metres per second, `seconds` into the round. */
-export function paddleSpeed(seconds: number): number {
+/**
+ * The finish glide: once the last beat is past, the stream slows over this many
+ * seconds before the round ends, so the frog drifts up to the lily instead of
+ * slamming into it. The course keeps these seconds clear (see `buildPaddleCourse`).
+ */
+export const PADDLE_GLIDE_SECONDS = 1.5
+/** How fast the stream is still going when the frog reaches the lily, in metres per second. */
+export const PADDLE_ARRIVAL_SPEED = 1.5
+
+function cruiseSpeed(seconds: number): number {
   return 5.5 + 0.28 * Math.max(0, seconds)
 }
 
-/** How far the stream has run by `seconds` into the round, in metres. */
-export function paddleDistance(seconds: number): number {
+function cruiseDistance(seconds: number): number {
   const t = Math.max(0, seconds)
   return 5.5 * t + 0.14 * t * t
+}
+
+/**
+ * The stream's speed in metres per second, `seconds` into a round that ends at
+ * `end`: it ramps up through the round, then glides down to the arrival speed
+ * over the last `PADDLE_GLIDE_SECONDS`. With no end there is no glide.
+ */
+export function paddleSpeed(seconds: number, end = Number.POSITIVE_INFINITY): number {
+  const glideStart = end - PADDLE_GLIDE_SECONDS
+  if (seconds <= glideStart) return cruiseSpeed(seconds)
+  const from = cruiseSpeed(glideStart)
+  const into = Math.min(1, (seconds - glideStart) / PADDLE_GLIDE_SECONDS)
+  return from + (PADDLE_ARRIVAL_SPEED - from) * into
+}
+
+/** How far the stream has run by `seconds` into a round that ends at `end`, in metres: the integral of `paddleSpeed`. */
+export function paddleDistance(seconds: number, end = Number.POSITIVE_INFINITY): number {
+  const glideStart = end - PADDLE_GLIDE_SECONDS
+  if (seconds <= glideStart) return cruiseDistance(seconds)
+  const from = cruiseSpeed(glideStart)
+  const into = Math.min(seconds - glideStart, PADDLE_GLIDE_SECONDS)
+  const glided = from * into + ((PADDLE_ARRIVAL_SPEED - from) * into * into) / (2 * PADDLE_GLIDE_SECONDS)
+  const after = Math.max(0, seconds - end) * PADDLE_ARRIVAL_SPEED
+  return cruiseDistance(glideStart) + glided + after
 }
 
 /** Sideways position of a lane's centre, in world units (the middle lane is 0). */
@@ -99,7 +132,8 @@ function mix(from: number, to: number, amount: number): number {
  * patterns that read as choices. Patterns start simple and get denser and
  * nastier as the round goes on:
  *
- *   single      one mosquito in a lane, sometimes a lane shift away
+ *   single      one mosquito in a lane, sometimes a lane shift away; past the
+ *               warm-up, often a trail of three down the same lane
  *   zigzag      two mosquitoes in two lanes, half a second apart
  *   snagMoth    a snag, then a mosquito hovering right behind it in the same lane:
  *               dodge the snag, then come back for the mosquito
@@ -108,12 +142,12 @@ function mix(from: number, to: number, amount: number): number {
  *   snagPair    (later) two snags, the mosquito in the one lane left open
  *
  * Returns beats in order of arrival. Nothing is due before the first seconds
- * are clear, and nothing is due in the last one and a half seconds, so a
- * round always has time to finish.
+ * are clear, and nothing is due in the closing glide, so the frog's run to
+ * the lily is clear water.
  */
 export function buildPaddleCourse(random: Random, seconds: number): PaddleBeat[] {
   const beats: PaddleBeat[] = []
-  const end = seconds - 1.5
+  const end = seconds - PADDLE_GLIDE_SECONDS
   let at = PADDLE_FIRST_BEAT_SECONDS
   let lastLane = 0
   while (at < end) {
@@ -123,8 +157,11 @@ export function buildPaddleCourse(random: Random, seconds: number): PaddleBeat[]
     let gap = pace
     if (at < 6 || roll < 0.36) {
       const lane = pickLane(random, lastLane)
-      beats.push({ kind: 'mosquito', at, lanes: [lane] })
+      // Past the warm-up, half of these are a trail of three down one lane.
+      const trail = at >= 6 && random() < 0.5 ? 3 : 1
+      for (let index = 0; index < trail; index += 1) beats.push({ kind: 'mosquito', at: at + index * PADDLE_TRAIL_SPACING, lanes: [lane] })
       lastLane = lane
+      gap = pace + (trail - 1) * PADDLE_TRAIL_SPACING
     } else if (roll < 0.52) {
       const first = pickLane(random)
       const second = pickLane(random, first)
@@ -164,4 +201,21 @@ export function buildPaddleCourse(random: Random, seconds: number): PaddleBeat[]
   return beats
     .filter((beat) => beat.at < end)
     .sort((a, b) => a.at - b.at)
+}
+
+/** Mosquitoes a course carries beyond the goal, so a wrong lane or two never decides the run. */
+export const PADDLE_SPARE_MOSQUITOES = 4
+
+/**
+ * A course with enough mosquitoes for `goal` and its spares: `buildPaddleCourse`
+ * rolled again until one has them (the last roll stands if none does).
+ */
+export function paddleCourseFor(random: Random, seconds: number, goal: number): PaddleBeat[] {
+  let course = buildPaddleCourse(random, seconds)
+  for (let tries = 0; tries < 24 && countMosquitoes(course) < goal + PADDLE_SPARE_MOSQUITOES; tries += 1) course = buildPaddleCourse(random, seconds)
+  return course
+}
+
+function countMosquitoes(course: readonly PaddleBeat[]): number {
+  return course.reduce((count, beat) => count + (beat.kind === 'mosquito' ? 1 : 0), 0)
 }
