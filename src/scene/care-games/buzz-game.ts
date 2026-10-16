@@ -99,7 +99,8 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
   const root = new THREE.Group()
   root.name = 'Buzz game'
   stage.scene.add(root)
-  const owned: Array<{ dispose(): void }> = []
+  // GPU parts go on the player's shelf; it frees them once the next round is ready.
+  const owned: Array<{ dispose(): void }> = context.owned
 
   // ---- stems: a pool of pairs. A poppy stalk stands up from the lawn, a grass blade hangs down from the top.
   const stemMaterial = new THREE.MeshLambertMaterial({ color: '#2d5a2a' })
@@ -547,7 +548,6 @@ export function createBuzzGame(context: CareGameContext): CareGameScene {
         plant.position.z = plantBase.z
       }
       if (plantModel) plantModel.scale.setScalar(plantBase.scale)
-      for (const part of owned) part.dispose()
       for (const heart of hearts) heart.material.dispose()
     },
   }

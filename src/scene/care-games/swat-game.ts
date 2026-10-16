@@ -63,7 +63,8 @@ export function createSwatGame(context: CareGameContext): CareGameScene {
   const root = new THREE.Group()
   root.name = 'Swat game'
   stage.scene.add(root)
-  const owned: Array<{ dispose(): void }> = []
+  // GPU parts go on the player's shelf; it frees them once the next round is ready.
+  const owned: Array<{ dispose(): void }> = context.owned
 
   // Berries of its own, one per spot, so each can be eaten on its own. The
   // bush's merged berries are hidden for the round.
@@ -335,7 +336,6 @@ export function createSwatGame(context: CareGameContext): CareGameScene {
       if (bushBerries) bushBerries.visible = true
       holder.removeFromParent()
       root.removeFromParent()
-      for (const part of owned) part.dispose()
     },
   }
 }

@@ -1,5 +1,5 @@
 import type { GoodId } from '../game/animal-diet'
-import { frameRenderStats, type FarmRenderer } from '../render/backend'
+import { frameRenderStats, shaderProgramStats, type FarmRenderer } from '../render/backend'
 import * as THREE from 'three'
 import type { BalloonAnimal } from '../animals/balloon-animal'
 import type { FarmCamera } from '../scene/farm-camera'
@@ -173,6 +173,8 @@ interface GardenDebugHarness {
   crowdStressTest(count?: number): Promise<{ readonly count: number; readonly renderCalls: number; readonly triangles: number }>
   /** Render the current scene once, with the shadow map forced to redraw, and report draw calls and triangles. Deterministic for a given scene. */
   renderSnapshot(): { readonly renderCalls: number; readonly triangles: number }
+  /** WebGL's live shader programs and the newest one's id (null on WebGPU). A newer id after play started is a mid-play compile. */
+  shaderPrograms(): { readonly live: number; readonly newestId: number } | null
   /** One-line usage for every harness command, so agents stop rediscovering this surface. */
   help(): Record<string, string>
   /**
@@ -961,6 +963,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       return { count, ...renderSnapshot() }
     },
     renderSnapshot,
+    shaderPrograms: () => shaderProgramStats(renderer),
     setCrowd: async (requestedCount = OUTDOOR_LIMITS.total) => {
       const count = await setCrowdFixtures(requestedCount)
       focusCamera()
@@ -1005,6 +1008,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'grantCoins / shop / buy / placeProp / placeFence / propCounts': 'Wallet + prop placement without UI clicks.',
       crowdStressTest: 'crowdStressTest(n) — stand n real animal models up and render once; returns calls/tris.',
       renderSnapshot: 'renderSnapshot() — render the current scene once (shadows forced); returns calls/tris.',
+      shaderPrograms: 'shaderPrograms() — { live, newestId } of WebGL shader programs (null on WebGPU); a newer id after play started is a mid-play compile.',
       'setCrowd / clearCrowd': 'setCrowd(n) keeps n real animal models live for sustained ramps; clearCrowd removes them.',
       'scenarios / runScenario / holdTime': 'scenarios() lists saved test states; runScenario(id) jumps into one; ?scenario=id does it on load; holdTime(bool) freezes the clock.',
       performanceSamples: 'Per-frame work/interval splits. Basis for every perf scenario; see TESTING.md.',

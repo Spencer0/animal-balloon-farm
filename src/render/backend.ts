@@ -163,6 +163,18 @@ export function frameRenderStats(renderer: FarmRenderer): { renderCalls: number;
 }
 
 /**
+ * The shader programs WebGL holds right now, and the id of the newest one, or
+ * null on WebGPU (its pipelines are not counted the same way). Ids only grow,
+ * so a newer id means a program was built, even if an old one was released in
+ * between. One built while a scene plays is a mid-play compile, the classic hitch.
+ */
+export function shaderProgramStats(renderer: FarmRenderer): { readonly live: number; readonly newestId: number } | null {
+  if (isWebGPURenderer(renderer)) return null
+  const programs = renderer.info.programs ?? []
+  return { live: programs.length, newestId: programs.reduce((newest, program) => Math.max(newest, program.id), 0) }
+}
+
+/**
  * Compile every program a scene needs before its first frame. WebGPU compiles
  * pipelines asynchronously (and stalls the first frame if not asked to).
  *
@@ -176,14 +188,42 @@ export function frameRenderStats(renderer: FarmRenderer): { renderCalls: number;
 export async function precompile(renderer: FarmRenderer, scene: THREE.Scene, camera: THREE.Camera, includeHidden = false): Promise<void> {
   const restore = includeHidden ? revealForCompile(scene) : () => {}
   try {
-    if (isWebGPURenderer(renderer)) {
-      const compiling = renderer.compileAsync(scene, camera)
-      restore()
-      await compiling
-    } else {
-      renderer.compile(scene, camera)
-    }
+    // Both start every compile at the call, then resolve once the programs are
+    // ready: WebGPU's pipelines, and WebGL's by polling, without blocking, where
+    // the browser has KHR_parallel_shader_compile.
+    const compiling = renderer.compileAsync(scene, camera)
+    restore()
+    await compiling
   } finally {
+    restore()
+  }
+}
+
+/**
+ * WebGL only: draw a scene once, hidden objects included, into a single pixel.
+ * `compile` starts every program, but three.js checks a program the first time
+ * it draws with it, and that check waits for the driver to finish compiling.
+ * Drawing once here, while something covers the stage, moves that wait off the
+ * frame where a hidden effect first shows. A 1x1 scissor keeps the draw out of
+ * sight and keeps the screen's own program variants (a render target would
+ * build different ones). WebGPU awaits its pipelines in `precompile`, so this
+ * is a no-op there.
+ */
+export function warmDraw(renderer: FarmRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
+  if (isWebGPURenderer(renderer)) return
+  const restore = revealForCompile(scene)
+  const viewport = renderer.getViewport(new THREE.Vector4())
+  const scissor = renderer.getScissor(new THREE.Vector4())
+  const scissorTest = renderer.getScissorTest()
+  try {
+    renderer.setViewport(0, 0, 1, 1)
+    renderer.setScissor(0, 0, 1, 1)
+    renderer.setScissorTest(true)
+    renderer.render(scene, camera)
+  } finally {
+    renderer.setViewport(viewport)
+    renderer.setScissor(scissor)
+    renderer.setScissorTest(scissorTest)
     restore()
   }
 }

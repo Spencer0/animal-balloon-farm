@@ -112,7 +112,8 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
   const root = new THREE.Group()
   root.name = 'Paddle game'
   stage.scene.add(root)
-  const owned: Array<{ dispose(): void }> = []
+  // GPU parts go on the player's shelf; it frees them once the next round is ready.
+  const owned: Array<{ dispose(): void }> = context.owned
   const dummy = new THREE.Object3D()
 
   // ---- set dressing: a stream instead of the pond, with a longer fog so the
@@ -562,7 +563,6 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
       disposed = true
       window.removeEventListener('keydown', onKey)
       root.removeFromParent()
-      for (const part of owned) part.dispose()
     },
     debug() {
       return {

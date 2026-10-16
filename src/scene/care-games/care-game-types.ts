@@ -12,6 +12,13 @@ export interface CareGameContext {
   readonly dom: CareGameDom
   readonly sfx: CareSfx
   readonly bursts: BurstPool
+  /**
+   * Every geometry, material and texture the scene makes goes here; the scene
+   * never frees them itself. The player frees them once the next round's
+   * shaders are ready, so a retry or the next game reuses the compiled
+   * programs instead of building them again.
+   */
+  readonly owned: Array<{ dispose(): void }>
   /** Freeze the action for a beat, so a hit lands. */
   hitStop(seconds: number): void
   /** A word that pops off a point in the world. */
@@ -25,7 +32,7 @@ export interface CareGameContext {
  * stage's camera and the plant in its constructor, e.g. to frame a pond or to
  * lift the plant into a swing. The stage restores nothing on its own, so a
  * scene that moves the camera should not expect it back. Its `dispose()` must
- * free every geometry, material and texture it created, but not the stage's.
+ * undo what it did to the stage; the GPU parts it put on `owned` are the player's to free.
  *
  * Plant reactions go through the stage: `stage.plant` is the player's plant
  * (null if its model failed to load), `stage.plantHeight` its height, and

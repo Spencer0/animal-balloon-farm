@@ -54,7 +54,8 @@ export function createSnipGame(context: CareGameContext): CareGameScene {
   const root = new THREE.Group()
   root.name = 'Snip game'
   stage.scene.add(root)
-  const owned: Array<{ dispose(): void }> = []
+  // GPU parts go on the player's shelf; it frees them once the next round is ready.
+  const owned: Array<{ dispose(): void }> = context.owned
   const berryGeometry = new THREE.SphereGeometry(0.075, 14, 10)
   owned.push(berryGeometry)
 
@@ -288,7 +289,6 @@ export function createSnipGame(context: CareGameContext): CareGameScene {
         shoots.scale.setScalar(1)
       }
       root.removeFromParent()
-      for (const part of owned) part.dispose()
     },
   }
 }

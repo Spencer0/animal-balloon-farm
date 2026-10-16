@@ -9,7 +9,7 @@ import {
 } from '../../game/care-minigames'
 import type { PlantId } from '../../game/plants'
 import type { CareGameDom, CareGameResultView } from '../../ui/care-game-dom'
-import { precompile, type FarmRenderer } from '../../render/backend'
+import { precompile, warmDraw, type FarmRenderer } from '../../render/backend'
 import { createBurstPool, warmBurstLooks } from '../garden-bursts'
 import { cloneWholeCast, loadCareCast, type CareCastType } from '../plant-models'
 import { createCareSfx } from './care-sfx'
@@ -69,9 +69,46 @@ type Phase = 'loading' | 'intro' | 'play' | 'outro' | 'result' | 'still'
 
 const OUTRO_SECONDS = 0.85
 const RETRY_INTRO_SECONDS = 0.8
+/** The longest a round waits for its shaders before the command card shows anyway. */
+const PREPARE_TIMEOUT_MS = 5000
+
+type GpuPart = { dispose(): void }
+
+/**
+ * The GPU parts of the last game that closed. Freeing a material lets three.js
+ * release its shader program, so freeing them at once made the next visit
+ * compile the stage and the game all over again. They are freed once the next
+ * game's shaders are ready (its materials then hold the programs), or after a
+ * while with no game, so they never linger.
+ */
+let retired: GpuPart[] = []
+let retiredTimer = 0
+const RETIRED_SECONDS = 120
+
+function freeParts(parts: readonly GpuPart[]): void {
+  for (const part of parts) part.dispose()
+}
+
+function freeRetired(): void {
+  window.clearTimeout(retiredTimer)
+  const parts = retired
+  retired = []
+  freeParts(parts)
+}
+
+function retire(parts: readonly GpuPart[]): void {
+  freeRetired()
+  retired = [...parts]
+  retiredTimer = window.setTimeout(freeRetired, RETIRED_SECONDS * 1000)
+}
 
 export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, request: CareGameRequest): CareGamePlayer {
-  const stage = createCareStage(window.innerWidth, window.innerHeight, request.species)
+  /** The stage's GPU parts, and the current round's (each round's game makes its own). */
+  const stageParts: GpuPart[] = []
+  let roundParts: GpuPart[] = []
+  /** Earlier rounds' parts, freed once the round being prepared is ready. */
+  const staleParts: GpuPart[] = []
+  const stage = createCareStage(window.innerWidth, window.innerHeight, request.species, stageParts)
   const sfx = createCareSfx()
   const bursts = createBurstPool()
   const still = request.kind === null
@@ -88,6 +125,7 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
 
   const context = (): CareGameContext => ({
     stage,
+    owned: roundParts,
     get round() { return round },
     dom,
     sfx,
@@ -99,34 +137,76 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     },
   })
 
-  function startIntro(): void {
-    phase = 'intro'
-    phaseTime = 0
+  /**
+   * Build the round and its scene, then compile every shader it can need (the
+   * hidden hit effects, the critters it will spawn and the burst looks
+   * included) before the command card shows. Until then nothing draws, so the
+   * last frame (the farm, or the result card's backdrop) stays on screen
+   * instead of freezing on a stage frame that waits for the driver. A retry
+   * comes back through here; its programs are cached, so it is ready at once.
+   */
+  function prepareRound(): void {
     const kind = request.kind
     if (!kind) return
+    phase = 'loading'
+    phaseTime = 0
     round = createCareRound(kind)
+    // The last round's GPU parts stay until this one's shaders are ready, so they share programs.
+    staleParts.push(...roundParts)
+    roundParts = []
     game?.dispose()
     game = CLOSE_UP_GAMES[kind].create?.(context()) ?? null
-    // Build the stage's pipelines while the command card covers it, the hidden
-    // hit effects and the bursts included, so no hit stalls on a shader compile.
-    // A retry builds the game afresh, so it compiles again (cached programs are free).
+    endWarmUp()
     const warmers = new THREE.Group()
     warmers.name = 'Care game shader warm-up'
+    // Hidden in real frames; the precompile and the warm draw show it to themselves.
+    warmers.visible = false
     warmers.add(...cloneWholeCast(stage.type))
     for (const template of game?.warm ?? []) warmers.add(template.clone(true))
     stage.scene.add(warmers)
     const unwarmBursts = warmBurstLooks(stage.scene)
-    void precompile(renderer, stage.scene, stage.camera, true).catch(() => {}).finally(() => {
-      warmers.removeFromParent()
-      unwarmBursts()
-    })
+    warmUp = {
+      end(): void {
+        warmers.removeFromParent()
+        unwarmBursts()
+      },
+    }
+    const attempt = ++preparing
+    const ready = (): void => {
+      if (disposed || attempt !== preparing || phase !== 'loading') return
+      // The programs are linked now, so this first use costs nothing; on WebGL
+      // it moves three's one-time program check off the frame of a hit.
+      warmDraw(renderer, stage.scene, stage.camera)
+      endWarmUp()
+      freeParts(staleParts.splice(0))
+      freeRetired()
+      startIntro(kind)
+    }
+    // A driver that never reports ready must not strand the player on a frozen frame.
+    const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, PREPARE_TIMEOUT_MS))
+    void Promise.race([precompile(renderer, stage.scene, stage.camera, true), timeout]).catch(() => {}).then(ready)
+  }
+  let preparing = 0
+
+  function startIntro(kind: CloseUpGameKind): void {
+    phase = 'intro'
+    phaseTime = 0
     dom.showIntro(kind, request.subject)
     sfx.play('sting')
     document.body.classList.add('care-game-playing')
   }
 
+  /** The shader warm-up of the round being prepared, until its warm draw has run. */
+  let warmUp: { end(): void } | null = null
+
+  function endWarmUp(): void {
+    warmUp?.end()
+    warmUp = null
+  }
+
   function startPlay(): void {
     if (!request.kind) return
+    endWarmUp()
     phase = 'play'
     phaseTime = 0
     dom.hideIntro()
@@ -161,7 +241,7 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     dom.showResult(pendingResult ?? { won, line: '' }, () => {
       dom.hideResult()
       introSeconds = RETRY_INTRO_SECONDS
-      startIntro()
+      prepareRound()
     }, close)
   }
 
@@ -169,10 +249,6 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     done = true
   }
 
-  /** The first intro: the plant's cast is ready, so the games can build their critters. */
-  function beginIntro(): void {
-    startIntro()
-  }
 
   // ---- input: the overlay owns the pointer while a round plays.
   const onPointerDown = (event: PointerEvent): void => {
@@ -207,12 +283,12 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     document.body.classList.remove('care-game-playing')
   } else if (stage.type === 'bush') {
     // The bush's own model is already loaded with the garden: start at once.
-    beginIntro()
+    prepareRound()
   } else {
     // The cast critters load on first use; the command card waits for them.
     const castType: CareCastType = stage.type
     void loadCareCast(castType).then(() => {
-      if (!disposed && phase === 'loading') beginIntro()
+      if (!disposed && phase === 'loading') prepareRound()
     })
   }
 
@@ -248,7 +324,8 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
       if (phase === 'outro' && phaseTime >= (game?.outroSeconds ?? OUTRO_SECONDS)) showResult()
     },
     render(): void {
-      if (!disposed) renderer.render(stage.scene, stage.camera)
+      // While a round is prepared nothing draws, so the last frame stays up.
+      if (!disposed && phase !== 'loading') renderer.render(stage.scene, stage.camera)
     },
     resize(cssWidth, cssHeight): void {
       stage.resize(cssWidth, cssHeight)
@@ -273,9 +350,12 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
       window.removeEventListener('pointerup', onPointerUp)
       window.removeEventListener('keydown', onKeyDown, true)
       sfx.stopAll()
+      endWarmUp()
       game?.dispose()
       bursts.dispose()
       stage.dispose()
+      // Kept for the next visit's shaders; see `retired`.
+      retire([...stageParts, ...staleParts, ...roundParts])
       dom.hideIntro()
       dom.hideHud()
       dom.hideResult()

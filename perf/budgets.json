@@ -1,5 +1,5 @@
 {
-  "calibratedOn": "Windows 10, Chrome headless with SwiftShader, 2026-10-08. Local p95 work: shovel 14-24ms, dig 15-26ms, plant 10-16ms, expand 13-72ms, crowd 13-14ms. CI (ubuntu, SwiftShader) p95 work: shovel 16ms, dig 17ms, plant 19ms, expand 11ms, crowd 11ms, at ~0.6-0.7 FPS, so a 60s sampling cap yields ~40 frames. Draw-call and triangle budgets: measured in CI run 38099574363 (renderSnapshot, shadows forced) plus 15%, rounded up. Crowd-ramp draw-call budgets (10/30/50 animals) are each +1 for the animal contact-shadow InstancedMesh (src/animals/animal-shadows.ts): measured locally 67/127/187 without it and 68/128/188 with it, triangles +20/+60/+100 (within the existing thousand-rounded slack, so unchanged); scenarios with no animals draw nothing extra (37 vs 37). Timing budgets are unchanged; plant and the crowd floor are judged on the median of 3 runs.",
+  "calibratedOn": "Windows 10, Chrome headless with SwiftShader, 2026-10-08. Local p95 work: shovel 14-24ms, dig 15-26ms, plant 10-16ms, expand 13-72ms, crowd 13-14ms. CI (ubuntu, SwiftShader) p95 work: shovel 16ms, dig 17ms, plant 19ms, expand 11ms, crowd 11ms, at ~0.6-0.7 FPS, so a 60s sampling cap yields ~40 frames. Draw-call and triangle budgets: measured in CI run 38099574363 (renderSnapshot, shadows forced) plus 15%, rounded up. Crowd-ramp draw-call budgets (10/30/50 animals) are each +1 for the animal contact-shadow InstancedMesh (src/animals/animal-shadows.ts): measured locally 67/127/187 without it and 68/128/188 with it, triangles +20/+60/+100 (within the existing thousand-rounded slack, so unchanged); scenarios with no animals draw nothing extra (37 vs 37). Timing budgets are unchanged; plant and the crowd floor are judged on the median of 3 runs. minigame (added 2026-10-16): local SwiftShader p95 work 3.7, 5.4, 7.4 and 8.2ms over four runs; budget set at 20ms pending CI runs. Its hard gates are shader compiles, not time: zero programs built mid-play and zero rebuilt on a second visit.",
   "scenarios": {
     "shovel": {
       "minSamples": 30,
@@ -52,6 +52,11 @@
           "maxTriangles": 1469000
         }
       }
+    },
+    "minigame": {
+      "minSamples": 30,
+      "maxP95WorkMs": 20,
+      "runs": 1
     }
   }
 }

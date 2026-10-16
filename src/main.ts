@@ -1921,8 +1921,26 @@ function frame(now: number): void {
   }
   // A close-up care minigame plays like a film: the farm holds still underneath.
   if (careController.playing) {
+    const updateStartedAt = timingEnabled ? performance.now() : 0
     careController.update(delta)
+    const renderStartedAt = timingEnabled ? performance.now() : 0
     careController.render()
+    // Minigame frames are timed too (the farm's stages read zero), so the perf
+    // scenarios and the FPS panel see a minigame's cost, not a gap.
+    if (__GARDEN_DEBUG__ && timingEnabled) {
+      const finishedAt = performance.now()
+      frameTimer?.record(now, {
+        intervalMs,
+        workMs: finishedAt - workStartedAt,
+        fairgroundMs: 0,
+        expansionBoundsMs: 0,
+        animalsMs: 0,
+        toolsMs: 0,
+        otherUpdateMs: renderStartedAt - updateStartedAt,
+        sceneRenderMs: finishedAt - renderStartedAt,
+        overlayRenderMs: 0,
+      })
+    }
     requestAnimationFrame(frame)
     return
   }
