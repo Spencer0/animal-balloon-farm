@@ -208,6 +208,17 @@ blender --background --factory-startup --python art/blender/blueberry_bush.py
 The bush is a balloon-leaf dome on a pine-mulched mound, split into node groups the game shows, hides and scales as it grows (`BB_canopy`, `BB_flowers`, `BB_berries`, `BB_shoots`, ...). Its berries share one material, `BB berry`, which the game re-tints green, pink and blue as they ripen. `garden-critters.glb` holds the cast of the care minigames and helpers: the beetle (flappable wing pivots), the ladybug, a two-half leaf for slicing, the rain cloud, the fly swatter and the hedgehog. The script's docstring lists every node name the game reads.
 
 The blueberry seed packet comes from `shed_icons.py`; render only it with `-- blueberry` so the approved packets are left alone.
+
+## Poppy
+
+- Authoring script: [`poppy.py`](poppy.py)
+- Outputs in `../../public/assets/plants/`: `poppy.blend`, `poppy-review.png`, `poppy.glb`
+
+```powershell
+blender --background --factory-startup --python art/blender/poppy.py
+```
+
+The second plant built like the bush, and the template for the small flowers: a small bed of tilled soil and pebbles (much smaller than the bush's mound, but enough to see and click on bare soil), a lobed rosette, and three stalks whose heads go from nodding hairy bud to scarlet cup. Care shows on the plant itself: aphids on the stalks (`PP_aphids_N`) and a leggy stray shoot (`PP_shoot`). A stalk stretches as it grows, so its head and aphids are siblings that the game keeps riding the stalk's tip (`src/scene/poppy-visual.ts`); the docstring lists every node name. The review render shows four moments of its life side by side.
 ## Food web icons (goods, foods, hunger bubbles)
 
 - Authoring script: [`goods_icons.py`](goods_icons.py); outputs `../../public/assets/goods/*.png` (128x128, transparent, 10-20 KB each).

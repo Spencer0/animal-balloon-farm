@@ -9,7 +9,8 @@ import { createHelperFx, type HelperFx } from './care-helper-fx'
 import { createBurst, createBurstPool, springOut } from './garden-bursts'
 import { BANNER_HEIGHT, BANNER_WIDTH, CARE_MARKER_HEIGHT, CARE_MARKER_WIDTH, careMarkerTexture, disposePlantCareArt, maturityBannerTexture, maturitySealTexture } from './plant-care-art'
 import { createPlacementArt, type GhostModel } from './plant-placement-art'
-import { cloneBush, loadGardenModels } from './plant-models'
+import { cloneBush, loadGardenModels, loadPoppyModel } from './plant-models'
+import { cloneGrownPoppy, createPoppyVisual, POPPY_GROWN_SCALE, poppyHeight } from './poppy-visual'
 
 export interface PlantPointerEvent {
   readonly clientX: number
@@ -90,8 +91,13 @@ interface PlantVisual {
   sealGrow: number
   readonly plantNumber: number
   markerPosition: THREE.Vector3
-  /** The Blender bush, for species that have one. */
-  readonly bush: BlueberryVisual | null
+  /** The Blender model that grows itself, for species that have one (blueberry, poppy). */
+  readonly modeled: BlueberryVisual | null
+  /**
+   * An invisible column over the plant's footprint that clicks and hovers test
+   * instead of its meshes, so a thin flower is as easy to hit as a bush.
+   */
+  readonly hitArea: THREE.Mesh
   /** Seconds since planted, for the springy pop; Infinity for plants loaded from a save. */
   plantedAge: number
   /** A hired helper doing a chore here, and whether its chore has been counted yet. */
@@ -367,6 +373,15 @@ function makePlantModel(species: PlantId): THREE.Group {
  * Free it with `disposePlantModel`.
  */
 export function clonePlantModel(species: PlantId): THREE.Group {
+  const poppy = species === 'poppy' ? cloneGrownPoppy() : null
+  if (poppy) {
+    const model = new THREE.Group()
+    model.name = 'Plant · poppy'
+    model.add(poppy)
+    // The clone shares the loaded template's geometry and materials.
+    model.userData.sharedModel = true
+    return model
+  }
   const model = makePlantModel(species)
   model.scale.setScalar(1)
   return model
@@ -374,6 +389,7 @@ export function clonePlantModel(species: PlantId): THREE.Group {
 
 /** Free what a procedural plant model owns: its geometry and its materials. */
 export function disposePlantModel(group: THREE.Object3D): void {
+  if (group.userData.sharedModel === true) return
   group.traverse((object) => {
     if (object instanceof THREE.Mesh) object.geometry.dispose()
   })
@@ -384,23 +400,50 @@ export function disposePlantModel(group: THREE.Object3D): void {
 function disposePlantVisual(visual: PlantVisual): void {
   visual.helper?.dispose()
   visual.helper = null
-  // The bush shares the loaded model's geometry and materials; it frees only its own.
-  if (visual.bush) visual.bush.dispose()
+  // A Blender model shares the loaded geometry and materials; it frees only its own.
+  if (visual.modeled) visual.modeled.dispose()
   else disposePlantModel(visual.group)
 }
 
-/** The Blender bush in a plant group; the bush grows itself, the group only places it. */
-function makeBushGroup(bush: BlueberryVisual): THREE.Group {
+/**
+ * Species drawn from a Blender model that grows itself from inside. Every other
+ * species is a procedural model the garden scales as it grows.
+ */
+const MODELED_PLANTS: Partial<Record<PlantId, { readonly create: () => BlueberryVisual; readonly grownScale: number }>> = {
+  blueberry: { create: createBlueberryVisual, grownScale: BLUEBERRY_GROWN_SCALE },
+  poppy: { create: createPoppyVisual, grownScale: POPPY_GROWN_SCALE },
+}
+
+/** A Blender model in a plant group; the model grows itself, the group only places it. */
+function makeModeledGroup(species: PlantId, modeled: BlueberryVisual, grownScale: number): THREE.Group {
   const group = new THREE.Group()
-  group.name = 'Plant · blueberry'
-  bush.root.scale.setScalar(BLUEBERRY_GROWN_SCALE)
-  group.add(bush.root)
+  group.name = `Plant · ${species}`
+  modeled.root.scale.setScalar(grownScale)
+  group.add(modeled.root)
   group.scale.setScalar(0.0001)
   return group
 }
 
+/** Shared by every plant's hit area: a unit column standing on its base, never drawn. */
+const HIT_AREA_GEOMETRY = new THREE.CylinderGeometry(1, 1, 1, 16).translate(0, 0.5, 0)
+const HIT_AREA_MATERIAL = new THREE.MeshBasicMaterial({ visible: false })
+
+/**
+ * How far from its centre a plant answers a click: most of the room it claims
+ * (its spacing ring), so a small flower is caught by its whole bed and not just
+ * its stem. Neighbours' areas never overlap, as their spacing rings don't.
+ */
+function hitRadius(species: PlantId, groundCover: boolean, growth: number): number {
+  if (groundCover) return PATCH_RADIUS * (0.3 + 0.7 * growth)
+  return Math.max(0.3, plantSpecies(species).spacingRadius * 0.78)
+}
+
 /** A grown plant to ghost under the cursor while placing its seed. */
 function makeGhostModel(species: PlantId): GhostModel | null {
+  if (species === 'poppy') {
+    const poppy = cloneGrownPoppy()
+    return poppy ? { object: poppy, dispose: () => {} } : null
+  }
   if (species === 'blueberry') {
     const bush = cloneBush()
     if (!bush) return null
@@ -419,6 +462,7 @@ function makeGhostModel(species: PlantId): GhostModel | null {
 /** How tall a plant stands, for markers and helpers: a bush by its growth, others by their scale. */
 function plantHeight(plant: GardenPlant, groundCover: boolean, scale: number): number {
   if (plant.species === 'blueberry') return 0.92 * BLUEBERRY_GROWN_SCALE * (0.32 + 0.68 * plant.growth)
+  if (plant.species === 'poppy') return POPPY_GROWN_SCALE * poppyHeight(plant.growth)
   return (groundCover ? 0.3 : 1) * scale
 }
 
@@ -444,8 +488,9 @@ export function createGardenPlants(
   const bursts = createBurstPool()
   let careHandlers: PlantCareHandlers | null = null
   let answeringId: number | null = null
-  // The bush and the minigame cast load early, so a bush is never planted invisible.
+  // The bush, the poppy and the minigame cast load early, so a plant is never planted invisible.
   void loadGardenModels().catch(() => {})
+  void loadPoppyModel().catch(() => {})
   let selectedSpecies: PlantId | null = null
   let previewVisible = false
   let hoveredPlantId: number | null = null
@@ -489,8 +534,12 @@ export function createGardenPlants(
   }
 
   function addVisual(plant: GardenPlant, plantedNow = false): void {
-    const bush = plant.species === 'blueberry' ? createBlueberryVisual() : null
-    const group = bush ? makeBushGroup(bush) : makePlantModel(plant.species)
+    const spec = MODELED_PLANTS[plant.species]
+    const modeled = spec ? spec.create() : null
+    const group = spec && modeled ? makeModeledGroup(plant.species, modeled, spec.grownScale) : makePlantModel(plant.species)
+    const hitArea = new THREE.Mesh(HIT_AREA_GEOMETRY, HIT_AREA_MATERIAL)
+    hitArea.name = `Plant hit area · ${plant.instanceId}`
+    hitArea.userData.instanceId = plant.instanceId
     const celebration = new THREE.Group()
     celebration.name = `Plant maturity celebration · ${plant.instanceId}`
     celebration.visible = false
@@ -533,7 +582,7 @@ export function createGardenPlants(
     // Anchored at the tail's tip, so the pin always points down at the plant.
     marker.center.set(0.5, MARKER_TIP_FROM_BOTTOM)
     marker.visible = false
-    root.add(group, celebration, completionBadge, maturitySeal, marker)
+    root.add(group, celebration, completionBadge, maturitySeal, marker, hitArea)
     visuals.set(plant.instanceId, {
       instanceId: plant.instanceId,
       species: plant.species,
@@ -553,7 +602,8 @@ export function createGardenPlants(
       sealGrow: 0,
       plantNumber: plantNumberFor(plant),
       markerPosition: new THREE.Vector3(),
-      bush,
+      modeled,
+      hitArea,
       plantedAge: plantedNow ? 0 : Number.POSITIVE_INFINITY,
       helper: null,
       helperResolved: false,
@@ -585,6 +635,13 @@ export function createGardenPlants(
     return best
   }
 
+  /** The plant whose hit area the pointer ray (already cast) meets first. */
+  function hitAreaAt(): PlantVisual | null {
+    const areas = [...visuals.values()].filter((visual) => visual.group.visible).map((visual) => visual.hitArea)
+    const hit = raycaster.intersectObjects(areas, false)[0]
+    return hit ? visuals.get(hit.object.userData.instanceId as number) ?? null : null
+  }
+
   function selectPlantAt(clientX: number, clientY: number): GardenPlant | null {
     const marker = markerHit(clientX, clientY)
     if (marker) {
@@ -594,24 +651,7 @@ export function createGardenPlants(
     }
     const rect = canvas.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0 || !pointerRay({ clientX, clientY })) return null
-    const plantMeshes = [...visuals.values()].filter((visual) => visual.group.visible).flatMap((visual) => {
-      const meshes: THREE.Mesh[] = []
-      visual.group.traverse((object) => { if (object instanceof THREE.Mesh) meshes.push(object) })
-      return meshes
-    })
-    const hit = raycaster.intersectObjects(plantMeshes, false)[0]
-    if (!hit) return null
-    let selected: PlantVisual | null = null
-    for (const visual of visuals.values()) {
-      if (visual.group === hit.object || visual.group.children.some((child) => child === hit.object || child.getObjectById(hit.object.id))) {
-        selected = visual
-        break
-      }
-      if (hit.object.parent === visual.group || visual.group.children.some((child) => child === hit.object.parent)) {
-        selected = visual
-        break
-      }
-    }
+    const selected = hitAreaAt()
     if (!selected) return null
     selectedPlantIds.clear()
     selectedPlantIds.add(selected.instanceId)
@@ -623,7 +663,7 @@ export function createGardenPlants(
     for (const [id, visual] of visuals) {
       if (current.has(id)) continue
       selectedPlantIds.delete(id)
-      root.remove(visual.group, visual.celebration, visual.completionBadge, visual.maturitySeal, visual.marker)
+      root.remove(visual.group, visual.celebration, visual.completionBadge, visual.maturitySeal, visual.marker, visual.hitArea)
       disposePlantVisual(visual)
       ;(visual.marker.material as THREE.Material).dispose()
       visual.completionBadge.material.dispose()
@@ -650,16 +690,20 @@ export function createGardenPlants(
       const groundCover = visual.group.userData.groundCover === true
       // A patch grows from a small round seedling mat to the full circle; it
       // sits on the lawn and does not sway or bob the way a flower does.
-      // The bush grows itself from inside (blueberry-visual.ts); the group only places it.
-      const scale = visual.bush ? 1 : groundCover ? 0.3 + 0.7 * plant.growth : Math.max(0.16, plant.growth)
+      // A Blender model grows itself from inside (blueberry-visual.ts, poppy-visual.ts); the group only places it.
+      const scale = visual.modeled ? 1 : groundCover ? 0.3 + 0.7 * plant.growth : Math.max(0.16, plant.growth)
       // A fresh plant springs out of the soil with a little overshoot.
       const pop = visual.plantedAge < PLANT_POP_SECONDS ? Math.max(0.02, springOut(visual.plantedAge / PLANT_POP_SECONDS)) : 1
       visual.group.scale.setScalar((plant.instanceId === hoveredPlantId ? scale * HOVER_GROW : scale) * pop)
-      if (!groundCover && !visual.bush) {
+      if (!groundCover && !visual.modeled) {
         visual.group.rotation.y = Math.sin(elapsed * 1.3 + plant.instanceId) * 0.08
         visual.group.position.y += Math.sin(elapsed * 2 + plant.instanceId) * 0.018 * scale
       }
       visual.group.visible = true
+      const reach = hitRadius(plant.species, groundCover, plant.growth)
+      visual.hitArea.position.set(plant.x, visual.group.position.y, plant.z)
+      visual.hitArea.scale.set(reach, Math.max(0.3, plantHeight(plant, groundCover, scale) + 0.1), reach)
+      visual.hitArea.updateMatrixWorld()
       visual.group.userData.saleSelected = selectedPlantIds.has(plant.instanceId)
       visual.group.children.forEach((child) => {
         if (!(child instanceof THREE.Mesh)) return
@@ -909,18 +953,11 @@ export function createGardenPlants(
       if (rect.width <= 0 || rect.height <= 0) return null
       ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(ndc, camera)
-      let best: { visual: PlantVisual; distance: number } | null = null
-      for (const visual of visuals.values()) {
-        if (!visual.group.visible) continue
-        const meshes: THREE.Mesh[] = []
-        visual.group.traverse((object) => { if (object instanceof THREE.Mesh) meshes.push(object) })
-        const hit = raycaster.intersectObjects(meshes, false)[0]
-        if (hit && (!best || hit.distance < best.distance)) best = { visual, distance: hit.distance }
-      }
+      const best = hitAreaAt()
       if (!best) return null
-      const group = best.visual.group
+      const group = best.group
       return {
-        instanceId: best.visual.instanceId,
+        instanceId: best.instanceId,
         x: group.position.x,
         y: group.position.y,
         z: group.position.z,
@@ -958,7 +995,7 @@ export function createGardenPlants(
       const groundCover = visual.group.userData.groundCover === true
       return {
         position: new THREE.Vector3(plant.x, visual.group.position.y, plant.z),
-        height: plantHeight(plant, groundCover, visual.bush ? 1 : visual.group.scale.x),
+        height: plantHeight(plant, groundCover, visual.modeled ? 1 : visual.group.scale.x),
       }
     },
     celebrateCare(instanceId, care): void {
@@ -984,7 +1021,7 @@ export function createGardenPlants(
       syncVisuals(deltaSeconds)
       for (const plant of simulation.plants) {
         const visual = visuals.get(plant.instanceId)
-        visual?.bush?.update({ growth: plant.growth, care: plant.careNeeded, answering: plant.instanceId === answeringId }, elapsed + plant.instanceId * 1.7, deltaSeconds)
+        visual?.modeled?.update({ growth: plant.growth, care: plant.careNeeded, answering: plant.instanceId === answeringId }, elapsed + plant.instanceId * 1.7, deltaSeconds)
       }
       bursts.update(deltaSeconds)
       placementArt.update(deltaSeconds)
