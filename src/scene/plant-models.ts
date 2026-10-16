@@ -15,6 +15,8 @@ import { mergeStaticMeshes } from './merge-static-meshes'
 
 export const BLUEBERRY_BUSH_URL = 'assets/plants/blueberry-bush.glb'
 export const GARDEN_CRITTERS_URL = 'assets/plants/garden-critters.glb'
+/** The poppy (art/blender/poppy.py); its groups are listed in POPPY_PIVOTS. */
+export const POPPY_URL = 'assets/plants/poppy.glb'
 
 /**
  * The care casts: the critters of the flower and water minigames, authored in
@@ -140,6 +142,42 @@ export function loadCareCast(type: CareCastType): Promise<void> {
 export function cloneCastCritter<T extends CareCastType>(type: T, name: CareCritterName<T>): THREE.Object3D | null {
   const source = castModels.get(type)?.get(name)
   return source ? source.clone(true) : null
+}
+
+/**
+ * The poppy's groups, as GLTFLoader names them: the bed, the rosette, the stray
+ * shoot, and per stalk N its stem, its head (holding bud and bloom) and its aphids.
+ */
+const POPPY_PIVOTS = /^PP_(mound|rosette|shoot|stalk_\d|head_\d|bud_\d|bloom_\d|aphids_\d)$/
+
+let poppyModel: THREE.Object3D | null = null
+let poppyPending: Promise<THREE.Object3D> | null = null
+
+/** Start loading the poppy (once) and resolve when it is ready. */
+export function loadPoppyModel(): Promise<THREE.Object3D> {
+  if (poppyModel) return Promise.resolve(poppyModel)
+  if (poppyPending) return poppyPending
+  poppyPending = new GLTFLoader().loadAsync(POPPY_URL).then((gltf) => {
+    const poppy = gltf.scene.getObjectByName('PP_root') ?? gltf.scene
+    mergeStaticMeshes(poppy, { isPivot: (object) => POPPY_PIVOTS.test(object.name) })
+    poppy.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      object.castShadow = true
+      object.receiveShadow = true
+    })
+    poppyModel = poppy
+    return poppy
+  })
+  poppyPending.catch((error: unknown) => {
+    console.warn('[plants] could not load the poppy', error)
+    poppyPending = null
+  })
+  return poppyPending
+}
+
+/** A fresh poppy clone in its fully grown pose, or null until the model has loaded. */
+export function clonePoppy(): THREE.Object3D | null {
+  return poppyModel ? poppyModel.clone(true) : null
 }
 
 /** Start loading (once) and resolve when both models are ready. */

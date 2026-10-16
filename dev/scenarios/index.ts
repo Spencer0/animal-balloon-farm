@@ -20,6 +20,7 @@ import { gemFarm } from './starhorn/gem-farm'
 import { firstPlant } from './tutorial/first-plant'
 import { panLimit } from './camera/pan-limit'
 import { careCues } from './garden/care-cues'
+import { poppyStages } from './garden/poppy-stages'
 import { escapeKeys } from './ui/escape-keys'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
@@ -33,7 +34,7 @@ export const SCENARIOS: readonly Scenario[] = [
   gemFarm,
   firstPlant,
   panLimit,
-  careCues,
+  careCues, poppyStages,
   escapeKeys,
 ]
 
