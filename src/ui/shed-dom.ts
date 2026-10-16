@@ -253,13 +253,6 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
     if (place) callbacks.onPlace(place);
   });
 
-  function onKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();
-      callbacks.onClose();
-    }
-  }
-
   const panel: ShedDomPanel = {
     get isOpen() {
       return open;
@@ -283,11 +276,9 @@ export function createShedDomPanel(callbacks: ShedDomCallbacks): ShedDomPanel {
       if (open) render();
     },
     dispose(): void {
-      window.removeEventListener("keydown", onKeyDown, true);
       overlay.remove();
     },
   };
 
-  window.addEventListener("keydown", onKeyDown, true);
   return panel;
 }

@@ -260,14 +260,6 @@ export function createLarderDom(callbacks: LarderDomCallbacks): LarderDom {
     if (img instanceof HTMLImageElement) img.remove();
   }, true);
 
-  function onKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();
-      callbacks.onClose();
-    }
-  }
-  window.addEventListener("keydown", onKeyDown, true);
-
   // ---------------------------------------------------------------- API --
   function refreshChip(): void {
     if (!chipVisible) return;
@@ -314,7 +306,6 @@ export function createLarderDom(callbacks: LarderDomCallbacks): LarderDom {
       if (open && !pressing) render();
     },
     dispose() {
-      window.removeEventListener("keydown", onKeyDown, true);
       window.clearTimeout(hideTimer);
       chip.remove();
       tip.remove();

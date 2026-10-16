@@ -85,13 +85,6 @@ export function createNotificationDomPanel(callbacks: { onClose: () => void }): 
     if (target.dataset["action"] === "close") callbacks.onClose();
   });
 
-  function onKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();
-      callbacks.onClose();
-    }
-  }
-
   const panel: NotificationDomPanel = {
     get isOpen() {
       return open;
@@ -121,11 +114,9 @@ export function createNotificationDomPanel(callbacks: { onClose: () => void }): 
       place();
     },
     dispose(): void {
-      window.removeEventListener("keydown", onKeyDown, true);
       card.remove();
     },
   };
 
-  window.addEventListener("keydown", onKeyDown, true);
   return panel;
 }

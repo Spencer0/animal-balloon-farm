@@ -538,15 +538,6 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
     }
   });
 
-  function onKeyDown(event: KeyboardEvent): void {
-    // A tool-unlock film plays over the open shop; its Escape skips the film.
-    if (document.body.classList.contains("film-playing")) return;
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();
-      callbacks.onClose();
-    }
-  }
-
   const panel: ShopDomPanel = {
     get isOpen() {
       return open;
@@ -569,11 +560,9 @@ export function createShopDomPanel(callbacks: ShopDomCallbacks): ShopDomPanel {
       if (open) render();
     },
     dispose(): void {
-      window.removeEventListener("keydown", onKeyDown, true);
       overlay.remove();
     },
   };
 
-  window.addEventListener("keydown", onKeyDown, true);
   return panel;
 }

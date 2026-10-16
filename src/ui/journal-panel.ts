@@ -1218,12 +1218,8 @@ export function createJournalPanel(
         openJournal()
         return true
       }
-      if (event.key !== 'Escape') return false
-      event.preventDefault()
-      if (selectedEntry) setEntry(null)
-      else if (category) setCategory(null)
-      else closeJournal()
-      return true
+      // Escape is the escape router's: one press closes the whole journal.
+      return false
     },
     update(): void {
       // The journal is canvas-driven; the only thing to advance per frame is
