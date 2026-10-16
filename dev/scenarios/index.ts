@@ -17,6 +17,7 @@ import { ratsAndRaccoons } from './sleep/rats-and-raccoons'
 import { balancedFarm, crowdedPasture } from './foodweb/crowded-pasture'
 import { gemFarm } from './starhorn/gem-farm'
 import { firstPlant } from './tutorial/first-plant'
+import { escapeKeys } from './ui/escape-keys'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
@@ -27,6 +28,7 @@ export const SCENARIOS: readonly Scenario[] = [
   crowdedPasture, balancedFarm,
   gemFarm,
   firstPlant,
+  escapeKeys,
 ]
 
 /** Accepts `owl/hunt-now` or the bare `hunt-now`, as long as the bare name is unambiguous. */

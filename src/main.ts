@@ -728,10 +728,16 @@ gardenTools?.setTallGrassBlocker((x, z) => {
 syncOwnedTools()
 syncGrassPack()
 
+/** Escape may close the main menu only after it has been closed once, so a fresh boot cannot skip it. */
+let menuDismissable = false
 const menu = createMenuDomPanel({
   onChoose: (choice) => handleMenuChoice(choice),
   keysEnabled: () => !optionsDom.isOpen && !farmsPanel.isOpen,
-  onToggle: () => syncFarmChrome(),
+  onToggle: (isOpen) => {
+    // Once the menu has been closed (Enter, a loaded farm), Escape may close it again.
+    if (!isOpen) menuDismissable = true
+    syncFarmChrome()
+  },
 })
 
 
@@ -1362,8 +1368,6 @@ const { openAnimalCardFor, completeAnimalSale, openPropCardFor, refreshShopUi, b
   progressionHudState,
   ownedSeedSpecies,
 })
-/** Escape may close the main menu only once the player has chosen Enter, so a fresh boot cannot skip it. */
-let menuDismissable = false
 const { selectGardenTool, handleMenuChoice, syncFarmChrome } = createFarmModes({
   menu,
   salePanel,
@@ -1378,10 +1382,7 @@ const { selectGardenTool, handleMenuChoice, syncFarmChrome } = createFarmModes({
   larderDom,
   optionsDom,
   farmsPanel,
-  markEntered: () => {
-    markEntered()
-    menuDismissable = true
-  },
+  markEntered,
   introWanted,
   startIntro,
   gardenTools,

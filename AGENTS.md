@@ -2,33 +2,35 @@
 
 ## Workflow
 
+Spencer works from Claude on the web and desktop (cloud sessions). He does not
+code locally, does not run a dev server, and does not use GitHub Pages previews
+for testing: they are too slow. The loop is: **change, open a PR, publish an
+Artifact to try, iterate on that same PR.**
+
 1. **Blender for assets.** Author and render all game assets with headless
    Blender (`blender --background --factory-startup --python ...`). Never
    hand-edit binaries. See `art/blender/README.md`.
-2. **New work on its own branch.** Every task that changes files gets its own
-   `feature/` branch (a git worktree when working on Spencer's PC). Check `git worktree list` and
-   `git status --short --branch` first. Never edit a checkout another agent or
-   Spencer may be using.
-3. **Validate in the browser.** Before calling work done, check it in the
-   running game with the in-app browser or Playwright, and take screenshots.
-   Use `scripts/screenshot.mjs` (1280x720 JPEG), with output outside the repo.
-   Take one screenshot per state change, never in a loop, and never fullPage on
-   the game canvas. Oversized images break the agent thread.
-   Don't run `npm run gate` locally: its stress scenarios bog down Spencer's
-   PC. It runs on GitHub CI for every pull request (the Performance workflow,
-   `.github/workflows/performance.yml`). Run `npm run check` locally, then
-   read the PR's Performance check before merging. If it fails, fix the change
-   or measure and justify a new budget. Never loosen a check to get green.
-4. **Use Claude Artifacts so the developer can try the game.** Work runs in
-   cloud agents, so a local dev server is irrelevant to Spencer, and a GitHub
-   Pages preview takes too long to iterate on. Publish a playable build as a
-   private Artifact (the `Artifact` tool) and give Spencer the link. Republish
-   to the same file path to keep the URL, so each change is a few seconds.
-   For UAT, every change needs both of these:
+2. **One branch and one PR per task.** Work on a `feature/<name>` branch off
+   the latest `main` (the PR needs a branch on GitHub; nothing else does). Check
+   `git status --short --branch` first, and never edit a checkout another agent
+   may be using. Stage only the paths you changed, never `git add -A`.
+3. **Open the PR as soon as the first commit is pushed.** Opening a PR is
+   harmless and non-destructive, and CI takes a long time, so start it early.
+   Do not wait for Spencer to ask. Run `npm run check` before each push, push
+   only if it passes, and write the PR body with the *why* (what Spencer saw,
+   the cause, what changed, what you did and did not verify). In cloud sessions
+   `gh pr create` fails (GraphQL is blocked); use the REST API:
+   `gh api repos/Spencer0/animal-balloon-farm/pulls -f title=... -f head=feature/<name> -f base=main -F body=@<file>`.
+   The branch push also triggers a GitHub Pages preview. Ignore it: do not wait
+   for it and do not send its link.
+4. **Publish a playable Artifact for Spencer to try.** This is how he tests.
+   Every change needs both of these, and the Artifact link goes in your reply
+   together with the PR link:
    1. **A playable Artifact.** Build a lean debug bundle, not the whole game:
       `GARDEN_DEBUG=1 PAGES_OUTDIR=<scratch dir> node scripts/build.mjs`, then
       copy into a second scratch folder only the files the changed thing
-      loads (record them with Playwright's `response` events). Constraints:
+      loads (record them with Playwright's `response` events while you drive
+      the changed feature). Constraints:
       - Artifacts serve only pages, CSS, JS, JSON, text, common images, fonts
         and media. `.glb` is not served, so pack the models as base64 in one
         `glb-pack.json` and add a small inline `fetch()` shim in the page that
@@ -40,14 +42,10 @@
         only (the Artifact tool adds the document skeleton); at most 255
         files and 64 MB per publish, 16 MB per file.
       - Keep this scaffolding in the scratch folder, not in the repo.
+      - Test the exact folder you publish (serve it, wrap it in a skeleton,
+        drive it with Playwright) before publishing.
       Artifacts are private. Spencer opens his own link; sharing with a friend
       is done from the page's Share menu, which you cannot change.
-      Pushing a `feature/<name>` (or `debug/<name>`) branch still publishes a
-      GitHub Pages preview at
-      `https://spencer0.github.io/animal-balloon-farm/previews/feature-<name>/`
-      (the `/` becomes `-`). Treat it as the slow fallback, not the way to
-      iterate; use it when a build must go to someone who cannot open the
-      Artifact.
    2. **A debug scenario that warps to what changed.** Add one in
       `dev/scenarios/<area>/<name>.ts`, register it in `dev/scenarios/index.ts`
       (copy `sandbox/farmer-10.ts`) and reach it with
@@ -57,13 +55,25 @@
       stock, coins or farm state it needs. For an Artifact, put that query in
       the page's `replaceState`. Scenarios are debug-only and never reach the
       production build.
-5. **Ship only when Spencer says it's good.** Merge the latest `main` into the
-   task branch and resolve conflicts. Run `npm run check` and push only if it
-   passes. Commit with a message that explains why the change was needed, push,
-   and open or merge the PR with the `gh` CLI. A push to `main` deploys to
-   GitHub Pages, so a red build must never reach it. Stage only the paths you
-   changed, never `git add -A`.
-6. **No file deletion from the shell.** Never run `Remove-Item`, `rm`, `del`,
+5. **Iterate on the same PR.** When Spencer reports back, push more commits to
+   the same branch and republish the Artifact to the **same file path** so the
+   link stays the same. Do not open a new PR or a new Artifact for feedback.
+   Commit messages explain why the change was needed. Merge the latest `main`
+   into the branch and resolve conflicts when the PR falls behind.
+6. **Validate in a browser before calling work done.** Drive the game with
+   Playwright and check the changed behaviour with real input; take
+   screenshots with `scripts/screenshot.mjs` (1280x720 JPEG, output outside the
+   repo, one per state change, never in a loop, never fullPage on the game
+   canvas: oversized images break the agent thread). Say what you did not
+   exercise. Don't run `npm run gate` locally: its stress scenarios are heavy,
+   and it runs on GitHub CI for every PR (the Performance workflow,
+   `.github/workflows/performance.yml`). Read the PR's Performance check before
+   merging. If it fails, fix the change or measure and justify a new budget.
+   Never loosen a check to get green.
+7. **Merge only when Spencer says it's good.** Opening the PR is automatic;
+   merging is not. A push to `main` deploys to GitHub Pages, so a red build
+   must never reach it.
+8. **No file deletion from the shell.** Never run `Remove-Item`, `rm`, `del`,
    `rmdir`, or any other recursive delete, on Windows or anywhere else. Git
    commands are fine for undoing and discarding changes, including `git reset`
    and `git clean`. No force-push and no rewriting pushed history. If a push is
@@ -126,8 +136,9 @@ entry in `TOOL_UNLOCK_FILMS`, with no Blender work.
   one uniform scale. Never scale x and y independently. Test with the
   `?gardenDebug=1` harness (`window.__gardenDebug.layout()`) rather than
   eyeballing screenshots.
-- **Dev server:** Use the local esbuild server, never `file://`. `npm run dev`
-  writes to `dist-<branch>` so worktrees never share an output directory.
+- **Dev server:** For your own checks, use the local esbuild server, never
+  `file://`. `npm run dev` writes to `dist-<branch>` so checkouts never share an
+  output directory. Spencer does not use it; he tests through the Artifact.
 - **Pinned deps:** Pin Three.js and its addons and types together.
 - **Pure simulation:** `src/game/animal-conditions.ts`, `animal-progress.ts`,
   and `farm-state.ts` have no Three.js and no DOM. Keep them that way so they
