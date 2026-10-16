@@ -60,6 +60,7 @@ import { createJournalPanel } from './ui/journal-panel'
 import { createJournalConditions } from './ui/journal-conditions'
 import { createJournalDomPanel, type JournalDomPanel } from './ui/journal-dom'
 import { createMenuDomPanel } from './ui/menu-dom'
+import { createEscapeRouter, menuCloseLayer, menuOpenLayer } from './game/escape-router'
 import { createOptionsDomPanel, type OptionsDomPanel } from './ui/options-dom'
 import { createFpsCounter } from './ui/fps-counter'
 import { createSettingsStore } from './game/settings'
@@ -730,10 +731,16 @@ gardenTools?.setTallGrassBlocker((x, z) => {
 syncOwnedTools()
 syncGrassPack()
 
+/** Escape may close the main menu only after it has been closed once, so a fresh boot cannot skip it. */
+let menuDismissable = false
 const menu = createMenuDomPanel({
   onChoose: (choice) => handleMenuChoice(choice),
   keysEnabled: () => !optionsDom.isOpen && !farmsPanel.isOpen,
-  onToggle: () => syncFarmChrome(),
+  onToggle: (isOpen) => {
+    // Once the menu has been closed (Enter, a loaded farm), Escape may close it again.
+    if (!isOpen) menuDismissable = true
+    syncFarmChrome()
+  },
 })
 
 
@@ -1460,6 +1467,36 @@ const input = createFarmInput({
 // Used by the UI and the harness; the input module owns the actual cursor logic.
 const refreshCursor = (): void => input.refreshCursor()
 input.attach()
+
+// Escape: one router, top of the screen first, acting on key-up (see game/escape-router.ts).
+const closePanel = (panel: { setOpen(open: boolean): void }): boolean => {
+  panel.setOpen(false)
+  syncFarmChrome()
+  refreshCursor()
+  return true
+}
+const menuEscape = {
+  get isOpen() { return menu.isOpen },
+  get dismissable() { return menuDismissable },
+  open: () => menu.open(),
+  dismiss: () => handleMenuChoice('enter'),
+}
+const escapeRouter = createEscapeRouter([
+  () => optionsDom.isOpen && closePanel(optionsDom),
+  () => farmsPanel.back(),
+  menuCloseLayer(menuEscape),
+  () => notificationDom.isOpen && closePanel(notificationDom),
+  () => larderDom.isOpen && closePanel(larderDom),
+  () => playerDom.isOpen && closePanel(playerDom),
+  () => shop.isOpen && closePanel(shop),
+  () => shed.isOpen && (shed.close(), true),
+  () => journal.isOpen && (journal.close(), true),
+  () => input.escapeFarmAction(),
+  menuOpenLayer(menuEscape),
+])
+window.addEventListener('keydown', (event) => escapeRouter.keyDown(event))
+window.addEventListener('keyup', (event) => escapeRouter.keyUp(event))
+window.addEventListener('blur', () => escapeRouter.reset())
 
 menu.open()
 syncFarmChrome()

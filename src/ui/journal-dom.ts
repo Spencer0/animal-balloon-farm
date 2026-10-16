@@ -219,14 +219,6 @@ export function createJournalDomPanel(options: JournalDomOptions): JournalDomPan
   overlay.append(backdrop, journal);
   document.body.append(overlay);
 
-  function onKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && open) {
-      event.preventDefault();
-      options.onClose();
-    }
-  }
-  window.addEventListener("keydown", onKeyDown, true);
-
   function stageOf(species: string): number {
     try {
       return conditionsSource?.get(species)?.stage ?? 0;
@@ -726,7 +718,6 @@ export function createJournalDomPanel(options: JournalDomOptions): JournalDomPan
     },
     dispose(): void {
       stopTimer();
-      window.removeEventListener("keydown", onKeyDown, true);
       overlay.remove();
     },
   };

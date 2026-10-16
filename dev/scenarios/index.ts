@@ -20,6 +20,7 @@ import { gemFarm } from './starhorn/gem-farm'
 import { firstPlant } from './tutorial/first-plant'
 import { panLimit } from './camera/pan-limit'
 import { careCues } from './garden/care-cues'
+import { escapeKeys } from './ui/escape-keys'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
@@ -33,6 +34,7 @@ export const SCENARIOS: readonly Scenario[] = [
   firstPlant,
   panLimit,
   careCues,
+  escapeKeys,
 ]
 
 /** Accepts `owl/hunt-now` or the bare `hunt-now`, as long as the bare name is unambiguous. */

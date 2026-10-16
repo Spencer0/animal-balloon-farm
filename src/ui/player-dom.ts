@@ -267,13 +267,6 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
     }
   });
 
-  function onKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();
-      callbacks.onClose();
-    }
-  }
-
   const panel: PlayerDomPanel = {
     get isOpen() {
       return open;
@@ -299,11 +292,9 @@ export function createPlayerDomPanel(callbacks: { onClose: () => void }): Player
       render();
     },
     dispose(): void {
-      window.removeEventListener("keydown", onKeyDown, true);
       overlay.remove();
     },
   };
 
-  window.addEventListener("keydown", onKeyDown, true);
   return panel;
 }

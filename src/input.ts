@@ -61,6 +61,8 @@ export interface FarmInput {
   cancelDrag(): void
   plantingArmed(): boolean
   isWorldToolActive(): boolean
+  /** Escape on the farm: cancel a placement, end a tour or close a card. False when there was nothing to put away. */
+  escapeFarmAction(): boolean
   readonly pointerSeen: () => boolean
   readonly pointerPosition: () => { x: number; y: number }
 }
@@ -558,19 +560,11 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
     for (let index = panels.length - 1; index >= 0; index -= 1) {
       if (panels[index].keyDown?.(event)) return
     }
-    // A prop on the ghost answers R (rotate) and Escape (cancel) before anything else.
+    // A prop on the ghost answers R (rotate) before anything else. Escape is the escape router's.
     if (gardenProps()?.placingId && !menu.isOpen && !journal.isOpen) {
       if (event.key.toLowerCase() === 'r' && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault()
         gardenProps()!.rotate(event.shiftKey ? -1 : 1)
-        return
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        gardenProps()!.cancelPlacement()
-        shed.setPlacementActive(false)
-        refreshShopUi()
-        syncFarmChrome()
         return
       }
     }
@@ -586,39 +580,48 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
       event.preventDefault()
       return
     }
-    if (event.key === 'Escape' && farmCamera.tour) {
-      // Escape leaves the tour before it means anything else, so a tour ends
-      // where it started instead of dropping the player into the menu.
-      event.preventDefault()
-      endCameraTour(true)
-      return
-    }
     if (PAN_KEYS.includes(key)) {
       pressedKeys.add(key)
       event.preventDefault()
       return
     }
-    if (event.key === 'Escape' && (salePanel.isOpen || animalCard.isOpen || plantCard.isOpen)) {
+  }
+
+  /**
+   * Escape on the farm itself: put away whatever the player is holding or looking
+   * at, one thing per press. False when there was nothing, so the escape router
+   * moves on to the main menu.
+   */
+  function escapeFarmAction(): boolean {
+    if (gardenProps()?.placingId) {
+      gardenProps()!.cancelPlacement()
+      shed.setPlacementActive(false)
+      refreshShopUi()
+      syncFarmChrome()
+      return true
+    }
+    if (farmCamera.tour) {
+      // The tour ends where it started instead of dropping the player into the menu.
+      endCameraTour(true)
+      return true
+    }
+    if (salePanel.isOpen || animalCard.isOpen || plantCard.isOpen || propCard.isOpen) {
       salePanel.close()
       animalCard.close()
       plantCard.close()
+      propCard.close()
       syncFarmChrome()
-      event.preventDefault()
-      return
+      return true
     }
-    if (event.key === 'Escape' && !menu.isOpen && !journal.isOpen) {
-      if (gardenPlants()?.selectedSpecies) {
-        gardenPlants()!.cancelPlacement()
-        shed.setPlacementActive(false)
-        gardenTools?.setPlantingMode(false)
-        if (lastPointerClient.x >= 0) gardenTools?.pointerMove({ clientX: lastPointerClient.x, clientY: lastPointerClient.y })
-        syncFarmChrome()
-        event.preventDefault()
-        return
-      }
-      menu.open()
-      event.preventDefault()
+    if (gardenPlants()?.selectedSpecies) {
+      gardenPlants()!.cancelPlacement()
+      shed.setPlacementActive(false)
+      gardenTools?.setPlantingMode(false)
+      if (lastPointerClient.x >= 0) gardenTools?.pointerMove({ clientX: lastPointerClient.x, clientY: lastPointerClient.y })
+      syncFarmChrome()
+      return true
     }
+    return false
   }
 
   function handleKeyUp(event: KeyboardEvent): void {
@@ -711,6 +714,7 @@ export function createFarmInput(deps: FarmInputDeps): FarmInput {
     },
     plantingArmed,
     isWorldToolActive,
+    escapeFarmAction,
     pointerSeen: () => pointerWasSeen,
     pointerPosition: () => pointerPosition,
   }

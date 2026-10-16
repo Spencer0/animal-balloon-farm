@@ -329,7 +329,6 @@ export function createPropCardDom(actions: PropCardActions, cssWidth: number, cs
       }
     },
     dispose(): void {
-      window.removeEventListener('keydown', onKeyDown, true)
       window.clearTimeout(noticeTimer)
       card.remove()
     },
@@ -382,16 +381,6 @@ export function createPropCardDom(actions: PropCardActions, cssWidth: number, cs
   for (const type of ['pointerdown', 'pointerup', 'wheel', 'contextmenu'] as const) {
     card.addEventListener(type, (event) => event.stopPropagation())
   }
-
-  function onKeyDown(event: KeyboardEvent): void {
-    if (!target || event.ctrlKey || event.metaKey || event.altKey) return
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      panel.close()
-    }
-  }
-  window.addEventListener('keydown', onKeyDown, true)
 
   return panel
 }
