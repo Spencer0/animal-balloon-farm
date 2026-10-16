@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import type { BalloonAnimal } from './animals/balloon-animal'
 import { getAnimalSceneOptions, ANIMAL_CATALOG } from './animals/animal-catalog'
 import { isHouse } from './game/animal-housing'
+import { carnivalRing } from './game/animal-travel'
 import { createHousing } from './scene/housing'
 import type { Bed } from './game/sleep'
 import { SIM_HZ, SIM_MAX_STEPS_PER_FRAME, createSimClock } from './game/sim-clock'
@@ -150,6 +151,7 @@ const farmCamera = createFarmCamera({
   tourSubjects: () => tourSubjectsOf(animals),
   onReframed: () => refreshAnimalVisibility(performance.now() / 1000, true),
   onTourStart: () => input.cancelDrag(),
+  panLimits: () => carnivalRing(currentGardenBounds),
 })
 const camera = farmCamera.camera
 const cameraTarget = farmCamera.target

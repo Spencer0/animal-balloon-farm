@@ -130,3 +130,24 @@ test('reset returns the camera to its opening shot after a tour', () => {
   assert.equal(camera.tour, null)
   assert.ok(camera.target.distanceTo(opening) < 1e-9)
 })
+
+test('player pans stop at the pan limits and keep the view angle', () => {
+  const { camera } = makeCamera({ panLimits: () => ({ x: 20, z: 15 }) })
+  camera.focus()
+  const offsetBefore = camera.camera.position.clone().sub(camera.target)
+  for (let step = 0; step < 2000; step += 1) camera.moveAlongGround(1, 1, 1, 0.1)
+  assert.ok(Math.abs(camera.target.x) <= 20 + 1e-9 && Math.abs(camera.target.z) <= 15 + 1e-9, 'keys stop at the edge')
+  for (let step = 0; step < 2000; step += 1) camera.dragPan(-40, 60)
+  assert.ok(Math.abs(camera.target.x) <= 20 + 1e-9 && Math.abs(camera.target.z) <= 15 + 1e-9, 'drags stop at the edge')
+  assert.ok(Math.abs(camera.target.y - 1.25) < 1e-9, 'a vertical drag cannot lift the look-at away')
+  const offsetAfter = camera.camera.position.clone().sub(camera.target)
+  assert.ok(offsetAfter.distanceTo(offsetBefore) < 1e-6, `eye offset unchanged (${offsetAfter.distanceTo(offsetBefore)})`)
+})
+
+test('pans default to the meadow around the starting plot', () => {
+  const { camera } = makeCamera()
+  camera.focus()
+  for (let step = 0; step < 5000; step += 1) camera.moveAlongGround(-1, 0, 1, 0.1)
+  const reach = Math.hypot(camera.target.x, camera.target.z)
+  assert.ok(reach < 80, `look-at stayed near the farm (${reach.toFixed(1)})`)
+})

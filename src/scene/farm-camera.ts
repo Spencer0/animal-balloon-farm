@@ -1,7 +1,9 @@
 import type { FarmRenderer } from '../render/backend'
 import * as THREE from 'three'
 import { createCameraTour, type CameraTour, type CameraTourSubject } from '../game/camera-tour'
-import { cameraPanStep } from '../game/camera-rig'
+import { cameraPanStep, clampPanTarget, type PanLimits } from '../game/camera-rig'
+import { carnivalRing } from '../game/animal-travel'
+import { FARM_EXPANSION_CONFIG } from '../game/farm-expansion'
 
 /** The farm's opening framing, in world units of view height. */
 export const NORMAL_VIEW_HEIGHT = 43
@@ -11,6 +13,8 @@ const CAMERA_MIN_ZOOM = 1.25
 const CAMERA_MAX_ZOOM = 34
 const CAMERA_SHAKE_DURATION = 0.82
 const CAMERA_SHAKE_AMPLITUDE = 0.38
+/** The lawn height the opening shot looks at, and where a panned look-at rests. */
+const CAMERA_GROUND_Y = 1.25
 
 export interface FarmCameraContext {
   readonly renderer: FarmRenderer
@@ -24,6 +28,11 @@ export interface FarmCameraContext {
   readonly onReframed: () => void
   /** A tour owns the camera outright, so a half-finished drag must not fight it. */
   readonly onTourStart: () => void
+  /**
+   * How far the player may pan the look-at from the farm's middle. Defaults to
+   * the carnival meadow around the starting plot.
+   */
+  readonly panLimits?: () => PanLimits
 }
 
 /**
@@ -135,6 +144,27 @@ export function createFarmCamera(context: FarmCameraContext): FarmCamera {
   const menuDriftBase = new THREE.Vector3()
   const menuDriftOffset = new THREE.Vector3()
   const worldUp = new THREE.Vector3(0, 1, 0)
+
+  /**
+   * Hold the player's pans inside the meadow around the farm. Without a bound
+   * a long edge-pan or WASD hold carried the view out into empty grass with no
+   * landmark to steer home by. The eye keeps its offset, so only the slide
+   * stops: the angle and zoom the player chose are untouched.
+   */
+  const panEyeOffset = new THREE.Vector3()
+  const panRay = new THREE.Vector3()
+  function clampPlayerPan(): void {
+    const limits = context.panLimits?.() ?? carnivalRing(FARM_EXPANSION_CONFIG.startBounds)
+    // Measure the eye's real offset: the menu drift swings the eye without
+    // touching `viewDirection`, and the clamp must not snap that swing back.
+    panEyeOffset.subVectors(camera.position, cameraTarget)
+    panRay.copy(panEyeOffset).normalize()
+    const clamped = clampPanTarget(cameraTarget, panRay, CAMERA_GROUND_Y, limits)
+    cameraTarget.set(clamped.x, clamped.y, clamped.z)
+    camera.position.copy(cameraTarget).add(panEyeOffset)
+    camera.lookAt(cameraTarget)
+    camera.updateMatrixWorld()
+  }
 
   function updateCameraProjection(): void {
     const width = window.innerWidth
@@ -274,8 +304,7 @@ export function createFarmCamera(context: FarmCameraContext): FarmCamera {
       targetOffset.set(step.x, step.y, step.z)
       cameraTarget.add(targetOffset)
       camera.position.copy(cameraTarget).addScaledVector(viewDirection, cameraDistance)
-      camera.lookAt(cameraTarget)
-      camera.updateMatrixWorld()
+      clampPlayerPan()
     },
     dragOrbit(dx, dy): void {
       const offset = new THREE.Vector3().subVectors(camera.position, cameraTarget)
@@ -303,8 +332,7 @@ export function createFarmCamera(context: FarmCameraContext): FarmCamera {
       const movement = direction.multiplyScalar(speed * deltaSeconds)
       cameraTarget.add(movement)
       camera.position.add(movement)
-      camera.lookAt(cameraTarget)
-      camera.updateMatrixWorld()
+      clampPlayerPan()
     },
     zoomBy(deltaY): void {
       // Zooming takes the camera back from a running tour at its current pose.
