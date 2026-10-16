@@ -19,7 +19,7 @@ import type { createAnimalLife, AnimalRecord } from '../game/animal-life'
 import type { Bed } from '../game/sleep'
 import type { createProgressLedger } from '../game/farm-progression'
 import type { createAccomplishmentTracker } from '../game/accomplishments'
-import { PLANT_CARE_KINDS, PLANT_CATALOG, type PlantCare, type PlantId, type PlantSurface, type PlantType } from '../game/plants'
+import { PLANT_CARE_KINDS, PLANT_CATALOG, plantSpecies, type PlantCare, type PlantId, type PlantSurface, type PlantType } from '../game/plants'
 import { CARE_GAME_COPY, CARE_GAME_KINDS, CARE_GAMES, type CareGameKind } from '../game/care-minigames'
 import { CLOSE_UP_GAMES } from '../scene/care-games/care-game-registry'
 import { createCarePicker, type CarePickerGroup } from '../ui/care-picker-dom'
@@ -133,6 +133,11 @@ interface GardenDebugHarness {
    * prune), answering every other need on the way. Null if it never asks.
    */
   growUntilCare(care: string, species?: string, maxSteps?: number): { instanceId: number; growth: number } | null
+  /**
+   * Set a plant's growth (0..1) with every care stop before it answered, so the
+   * next stop or maturity comes on its own in a moment of real play.
+   */
+  setPlantGrowth(instanceId: number, growth: number): { instanceId: number; growth: number } | null
   /** Press a plant's care marker (default: the first plant that needs care), opening its minigame. */
   startCare(instanceId?: number): unknown
   /** Where the open care minigame is: its phase and round. */
@@ -788,6 +793,24 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       }
       return null
     },
+    setPlantGrowth: (instanceId, growth) => {
+      const simulation = deps.gardenPlants()?.simulation
+      const target = simulation?.plants.find((plant) => plant.instanceId === instanceId)
+      if (!simulation || !target) return null
+      const clamped = Math.min(1, Math.max(0, growth))
+      const stops = plantSpecies(target.species).care
+      const state = simulation.exportState()
+      simulation.importState({
+        ...state,
+        plants: state.plants.map((plant) => plant.instanceId !== instanceId ? plant : {
+          ...plant,
+          growth: clamped,
+          careNeeded: null,
+          stopsDone: stops.filter((stop) => stop.at < clamped).length,
+        }),
+      })
+      return { instanceId, growth: clamped }
+    },
     startCare: (instanceId) => {
       const plant = deps.gardenPlants()?.simulation.plants.find((entry) => (instanceId === undefined ? entry.careNeeded !== null : entry.instanceId === instanceId))
       if (!plant?.careNeeded) return { ok: false, failure: 'no-care-needed' }
@@ -991,6 +1014,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'sowGrass / digPond / digAt / pourAt / clearGarden': 'Terrain + water fixtures in garden meters.',
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'growUntilCare / startCare / settleCare': "growUntilCare('pest') then startCare() opens the swat game; settleCare(true) wins it.",
+      setPlantGrowth: 'setPlantGrowth(id, 0.49) parks a plant just before a care stop (or 0.99 before maturity); real play takes it from there.',
       'careGame / playCareGame / careStage / closeCareStage': "playCareGame('buzz') opens a game on the stage with no plant growing (default species: the first of its type; unbuilt games say so). careStage('poppy') shows the bare stage; closeCareStage() ends it. URL: ?gardenDebug=1&careGame=<kind>[&careSpecies=<id>] opens a game at load; &careGames=1 shows a picker of all nine.",
       greenThumb: "greenThumb({ species: 'blueberry', care: 'water' }) hires the Pet Raincloud for free.",
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',

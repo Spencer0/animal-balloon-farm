@@ -7,6 +7,7 @@ import type { GardenWaterField } from '../game/garden-water'
 import { BLUEBERRY_GROWN_SCALE, createBlueberryVisual, type BlueberryVisual } from './blueberry-visual'
 import { createHelperFx, type HelperFx } from './care-helper-fx'
 import { createBurst, createBurstPool, springOut } from './garden-bursts'
+import { BANNER_HEIGHT, BANNER_WIDTH, CARE_MARKER_HEIGHT, CARE_MARKER_WIDTH, careMarkerTexture, disposePlantCareArt, maturityBannerTexture, maturitySealTexture } from './plant-care-art'
 import { createPlacementArt, type GhostModel } from './plant-placement-art'
 import { cloneBush, loadGardenModels } from './plant-models'
 
@@ -77,6 +78,16 @@ interface PlantVisual {
   readonly maturitySeal: THREE.Sprite
   maturityCelebrationRemaining: number
   maturitySealDismissed: boolean
+  /** 0 hidden .. 1 shown, eased so the marker springs in and tucks away instead of flicking. */
+  markerGrow: number
+  /** The chore the marker last showed; it keeps its icon while it tucks away. */
+  markerCare: PlantCare | null
+  /** The marker is asking now (not tucking away), so a press on it counts. */
+  markerWanted: boolean
+  /** How far above its anchor (the tail's tip) the badge's centre sits, in CSS pixels. */
+  markerLiftPx: number
+  /** 0 hidden .. 1 shown, for the fully grown seal. */
+  sealGrow: number
   readonly plantNumber: number
   markerPosition: THREE.Vector3
   /** The Blender bush, for species that have one. */
@@ -88,14 +99,33 @@ interface PlantVisual {
   helperResolved: boolean
 }
 
-const careTextureCache = new Map<PlantCare, THREE.CanvasTexture>()
-let completionTexture: THREE.CanvasTexture | null = null
-let completionCheckTexture: THREE.CanvasTexture | null = null
 const CELEBRATION_SECONDS = 3.2
+/** How long a care marker or seal takes to spring in; tucking away is twice as quick. */
+const MARKER_POP_SECONDS = 0.42
+/** The fully grown banner's spring in, at the start of the celebration. */
+const BANNER_POP_SECONDS = 0.5
+/** Care marker art, in texture pixels: where the tail's tip and the badge's centre sit. */
+const MARKER_TIP_Y = 284
+const MARKER_BADGE_Y = 124
+const MARKER_TIP_FROM_BOTTOM = 1 - MARKER_TIP_Y / CARE_MARKER_HEIGHT
+/** On-screen sizes, in CSS pixels at a 720px-tall canvas; they scale with the canvas within limits. */
+const MARKER_WIDTH_PX = 58
+const SEAL_PX = 46
+const BANNER_WIDTH_PX = 236
 /** How long a fresh plant takes to spring out of the soil. */
 const PLANT_POP_SECONDS = 0.7
 /** How much bigger a plant stands while the pointer rests on it. */
 const HOVER_GROW = 1.12
+
+/** Ease a 0..1 show amount toward shown or hidden; hiding runs twice as fast. */
+function stepGrow(grow: number, wanted: boolean, deltaSeconds: number): number {
+  return wanted ? Math.min(1, grow + deltaSeconds / MARKER_POP_SECONDS) : Math.max(0, grow - deltaSeconds * 2 / MARKER_POP_SECONDS)
+}
+
+/** Scale for a show amount: a springy overshoot on the way in, a quick shrink on the way out. */
+function growScale(grow: number, wanted: boolean): number {
+  return wanted ? Math.max(0.001, springOut(grow)) : Math.max(0.001, grow * grow)
+}
 
 export interface HoverPlant {
   readonly instanceId: number
@@ -103,178 +133,6 @@ export interface HoverPlant {
   readonly y: number
   readonly z: number
   readonly radius: number
-}
-
-function plantCompletionCheckTexture(): THREE.CanvasTexture {
-  if (completionCheckTexture) return completionCheckTexture
-  const canvas = document.createElement('canvas')
-  canvas.width = 96
-  canvas.height = 96
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('2D canvas context unavailable for plant completion icon')
-  context.fillStyle = '#fff4d2'
-  context.strokeStyle = '#c49742'
-  context.lineWidth = 6
-  context.beginPath()
-  context.arc(48, 48, 42, 0, Math.PI * 2)
-  context.fill()
-  context.stroke()
-  context.strokeStyle = '#688e4d'
-  context.lineWidth = 10
-  context.lineCap = 'round'
-  context.lineJoin = 'round'
-  context.beginPath()
-  context.moveTo(25, 49)
-  context.lineTo(41, 64)
-  context.lineTo(70, 33)
-  context.stroke()
-  completionCheckTexture = new THREE.CanvasTexture(canvas)
-  completionCheckTexture.colorSpace = THREE.SRGBColorSpace
-  return completionCheckTexture
-}
-
-function plantCompletionTexture(): THREE.CanvasTexture {
-  if (completionTexture) return completionTexture
-  const canvas = document.createElement('canvas')
-  canvas.width = 384
-  canvas.height = 112
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('2D canvas context unavailable for plant completion banner')
-  context.fillStyle = 'rgba(60, 40, 23, .22)'
-  context.beginPath()
-  context.roundRect(8, 10, 368, 94, 30)
-  context.fill()
-  context.fillStyle = '#fff4d2'
-  context.strokeStyle = '#d9ad52'
-  context.lineWidth = 7
-  context.beginPath()
-  context.roundRect(5, 4, 368, 94, 28)
-  context.fill()
-  context.stroke()
-  context.textAlign = 'center'
-  context.textBaseline = 'middle'
-  context.fillStyle = '#678b4b'
-  context.font = 'bold 43px Georgia, "Times New Roman", serif'
-  context.fillText('FULLY GROWN!', 190, 39)
-  context.fillStyle = '#805d39'
-  context.font = 'italic 21px Georgia, "Times New Roman", serif'
-  context.fillText('No more care needed', 190, 73)
-  context.fillStyle = '#e4b94f'
-  for (const [x, y] of [[33, 24], [351, 77]] as const) {
-    context.beginPath()
-    context.moveTo(x, y - 10)
-    context.lineTo(x + 3, y - 3)
-    context.lineTo(x + 10, y)
-    context.lineTo(x + 3, y + 3)
-    context.lineTo(x, y + 10)
-    context.lineTo(x - 3, y + 3)
-    context.lineTo(x - 10, y)
-    context.lineTo(x - 3, y - 3)
-    context.closePath()
-    context.fill()
-  }
-  completionTexture = new THREE.CanvasTexture(canvas)
-  completionTexture.colorSpace = THREE.SRGBColorSpace
-  return completionTexture
-}
-
-function careTexture(care: PlantCare): THREE.CanvasTexture {
-  const existing = careTextureCache.get(care)
-  if (existing) return existing
-  const canvas = document.createElement('canvas')
-  canvas.width = 128
-  canvas.height = 128
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('2D canvas context unavailable for plant-care marker')
-  context.fillStyle = '#fff5dc'
-  context.beginPath()
-  context.arc(64, 64, 57, 0, Math.PI * 2)
-  context.fill()
-  context.lineWidth = 7
-  context.strokeStyle = care === 'water' ? '#6ca9b3' : care === 'pest' ? '#7a5aa8' : '#ae7044'
-  context.stroke()
-  context.lineCap = 'round'
-  context.lineJoin = 'round'
-  context.strokeStyle = care === 'water' ? '#438e9c' : '#7d5639'
-  context.lineWidth = 8
-  if (care === 'pest') {
-    // A jewel-backed beetle, head up: legs, then shell, then head and eyes.
-    context.strokeStyle = '#2b2530'
-    context.lineWidth = 6
-    for (const y of [56, 72, 88]) {
-      context.beginPath()
-      context.moveTo(40, y - 6)
-      context.lineTo(26, y + 4)
-      context.moveTo(88, y - 6)
-      context.lineTo(102, y + 4)
-      context.stroke()
-    }
-    context.fillStyle = '#6b47ad'
-    context.beginPath()
-    context.ellipse(64, 76, 26, 32, 0, 0, Math.PI * 2)
-    context.fill()
-    context.strokeStyle = '#3f2a6b'
-    context.lineWidth = 4
-    context.beginPath()
-    context.moveTo(64, 46)
-    context.lineTo(64, 106)
-    context.stroke()
-    context.fillStyle = '#4fb38f'
-    context.beginPath()
-    context.ellipse(52, 66, 6, 11, -0.3, 0, Math.PI * 2)
-    context.fill()
-    context.fillStyle = '#2b2530'
-    context.beginPath()
-    context.arc(64, 40, 15, 0, Math.PI * 2)
-    context.fill()
-    context.fillStyle = '#fffaf0'
-    for (const x of [57, 71]) {
-      context.beginPath()
-      context.arc(x, 36, 6, 0, Math.PI * 2)
-      context.fill()
-    }
-    context.fillStyle = '#2b2530'
-    for (const x of [57, 71]) {
-      context.beginPath()
-      context.arc(x, 34, 3, 0, Math.PI * 2)
-      context.fill()
-    }
-  } else if (care === 'water') {
-    context.fillStyle = '#78c5d0'
-    context.beginPath()
-    context.moveTo(64, 24)
-    context.bezierCurveTo(52, 43, 36, 58, 36, 75)
-    // Round the bottom of the drop (anticlockwise from left to right), not over its top.
-    context.arc(64, 75, 28, Math.PI, 0, true)
-    context.bezierCurveTo(92, 58, 76, 43, 64, 24)
-    context.fill()
-    context.stroke()
-    context.fillStyle = '#e9fbf8'
-    context.beginPath()
-    context.ellipse(55, 69, 5, 9, -0.4, 0, Math.PI * 2)
-    context.fill()
-  } else {
-    context.beginPath()
-    context.moveTo(39, 88)
-    context.lineTo(86, 40)
-    context.moveTo(50, 97)
-    context.lineTo(96, 51)
-    context.moveTo(33, 75)
-    context.quadraticCurveTo(27, 57, 46, 56)
-    context.lineTo(73, 83)
-    context.quadraticCurveTo(70, 103, 52, 94)
-    context.moveTo(79, 39)
-    context.quadraticCurveTo(96, 30, 97, 47)
-    context.moveTo(40, 94)
-    context.lineTo(31, 103)
-    context.moveTo(51, 103)
-    context.lineTo(42, 112)
-    context.stroke()
-  }
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  careTextureCache.set(care, texture)
-  return texture
 }
 
 /** Radius of a fully grown ground-cover patch, in metres. */
@@ -651,30 +509,29 @@ export function createGardenPlants(
       celebration.add(sparkle)
       return sparkle
     })
-    const completionMaterial = new THREE.SpriteMaterial({ map: plantCompletionTexture(), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
+    const completionMaterial = new THREE.SpriteMaterial({ map: maturityBannerTexture(), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
     const completionBadge = new THREE.Sprite(completionMaterial)
     completionBadge.name = `Plant complete · ${plant.instanceId}`
     completionBadge.renderOrder = 1500
+    completionBadge.scale.set(0, 0, 1)
     completionBadge.visible = false
-    const maturityMaterial = new THREE.SpriteMaterial({ map: plantCompletionCheckTexture(), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
+    const maturityMaterial = new THREE.SpriteMaterial({ map: maturitySealTexture(), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
     const maturitySeal = new THREE.Sprite(maturityMaterial)
     maturitySeal.name = `Plant fully grown · ${plant.instanceId}`
     maturitySeal.renderOrder = 1499
+    maturitySeal.scale.set(0, 0, 1)
+    // Anchored at the rosette's middle rather than the canvas's, which includes the ribbon tails.
+    maturitySeal.center.set(0.5, 0.6)
     maturitySeal.visible = false
-    const markerMaterial = new THREE.SpriteMaterial({ map: careTexture('water'), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
+    const markerMaterial = new THREE.SpriteMaterial({ map: careMarkerTexture('water'), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
     const marker = new THREE.Sprite(markerMaterial)
     marker.name = `Plant care marker · ${plant.instanceId}`
     marker.renderOrder = 2000
-    marker.onBeforeRender = (renderer, _scene, activeCamera) => {
-      marker.material.sizeAttenuation = false
-      const pixelSize = THREE.MathUtils.clamp(renderer.domElement.clientHeight * 0.065, 42, 64)
-      const worldUnitsPerPixel = activeCamera instanceof THREE.OrthographicCamera
-        ? (activeCamera.top - activeCamera.bottom) / renderer.domElement.clientHeight
-        : 1
-      const worldSize = pixelSize * worldUnitsPerPixel
-      marker.scale.set(worldSize, worldSize, 1)
-    }
-    marker.scale.set(52, 52, 1)
+    // Sized every frame in syncVisuals, before the frame's matrices are built;
+    // zero until then so a marker never flashes in at the wrong size.
+    marker.scale.set(0, 0, 1)
+    // Anchored at the tail's tip, so the pin always points down at the plant.
+    marker.center.set(0.5, MARKER_TIP_FROM_BOTTOM)
     marker.visible = false
     root.add(group, celebration, completionBadge, maturitySeal, marker)
     visuals.set(plant.instanceId, {
@@ -689,6 +546,11 @@ export function createGardenPlants(
       maturitySeal,
       maturityCelebrationRemaining: 0,
       maturitySealDismissed: false,
+      markerGrow: 0,
+      markerCare: null,
+      markerWanted: false,
+      markerLiftPx: 0,
+      sealGrow: 0,
       plantNumber: plantNumberFor(plant),
       markerPosition: new THREE.Vector3(),
       bush,
@@ -705,14 +567,14 @@ export function createGardenPlants(
     let bestDistance = 34
     for (const visual of visuals.values()) {
       for (const [kind, visible, position] of [
-        ['care', visual.marker.visible, visual.markerPosition],
+        ['care', visual.marker.visible && visual.markerWanted, visual.markerPosition],
         ['mature', visual.maturitySeal.visible && !visual.maturitySealDismissed, visual.maturitySeal.position],
       ] as const) {
         if (!visible) continue
         markerProjector.copy(position).project(camera)
         if (markerProjector.z < -1 || markerProjector.z > 1) continue
         const x = rect.left + (markerProjector.x + 1) * rect.width / 2
-        const y = rect.top + (1 - markerProjector.y) * rect.height / 2
+        const y = rect.top + (1 - markerProjector.y) * rect.height / 2 - (kind === 'care' ? visual.markerLiftPx : 0)
         const distance = Math.hypot(clientX - x, clientY - y)
         if (distance < bestDistance) {
           best = { visual, kind }
@@ -756,7 +618,7 @@ export function createGardenPlants(
     return plantsById().get(selected.instanceId) ?? null
   }
 
-  function syncVisuals(): void {
+  function syncVisuals(deltaSeconds = 0): void {
     const current = plantsById()
     for (const [id, visual] of visuals) {
       if (current.has(id)) continue
@@ -817,18 +679,31 @@ export function createGardenPlants(
       visual.celebration.position.set(plant.x, visual.group.position.y, plant.z)
       visual.celebration.scale.setScalar(Math.max(scale, 0.7))
       const worldUnitsPerPixel = camera instanceof THREE.OrthographicCamera
-        ? (camera.top - camera.bottom) / Math.max(1, canvas.clientHeight)
+        ? (camera.top - camera.bottom) / camera.zoom / Math.max(1, canvas.clientHeight)
         : 1
-      visual.maturitySeal.visible = plant.mature && !visual.maturitySealDismissed
-      visual.maturitySeal.position.set(plant.x + 0.34, visual.group.position.y + 1.02, plant.z)
-      visual.maturitySeal.scale.set(38 * worldUnitsPerPixel, 38 * worldUnitsPerPixel, 1)
-      visual.completionBadge.visible = visual.maturityCelebrationRemaining > 0
-      if (visual.completionBadge.visible) {
-        const progress = 1 - visual.maturityCelebrationRemaining / CELEBRATION_SECONDS
-        const pop = 1 + Math.sin(Math.min(1, progress * 2) * Math.PI / 2) * 0.16
-        visual.completionBadge.position.set(plant.x, visual.group.position.y + 1.25 + progress * 0.45, plant.z)
-        visual.completionBadge.scale.set(210 * worldUnitsPerPixel * pop, 62 * worldUnitsPerPixel * pop, 1)
-        ;(visual.completionBadge.material as THREE.SpriteMaterial).opacity = Math.min(1, visual.maturityCelebrationRemaining / 0.5)
+      // Cues grow a little on big screens and shrink a little on small ones.
+      const uiScale = THREE.MathUtils.clamp(canvas.clientHeight / 720, 0.8, 1.25)
+      const celebrating = visual.maturityCelebrationRemaining > 0
+      // The seal waits for the banner to finish, then springs in where it stood.
+      const sealWanted = plant.mature && !visual.maturitySealDismissed && visual.maturityCelebrationRemaining < 0.35
+      visual.sealGrow = stepGrow(visual.sealGrow, sealWanted, deltaSeconds)
+      visual.maturitySeal.visible = visual.sealGrow > 0
+      if (visual.maturitySeal.visible) {
+        const size = SEAL_PX * uiScale * worldUnitsPerPixel * growScale(visual.sealGrow, sealWanted)
+        visual.maturitySeal.position.set(plant.x + 0.34, visual.group.position.y + 1.02, plant.z)
+        visual.maturitySeal.scale.set(size, size, 1)
+        visual.maturitySeal.material.opacity = Math.min(1, visual.sealGrow * 2)
+      }
+      visual.completionBadge.visible = celebrating
+      if (celebrating) {
+        const age = CELEBRATION_SECONDS - visual.maturityCelebrationRemaining
+        const progress = age / CELEBRATION_SECONDS
+        const pop = springOut(Math.min(1, age / BANNER_POP_SECONDS))
+        const width = BANNER_WIDTH_PX * uiScale * worldUnitsPerPixel * pop
+        visual.completionBadge.position.set(plant.x, visual.group.position.y + 1.3 + progress * 0.35, plant.z)
+        visual.completionBadge.scale.set(width, width * BANNER_HEIGHT / BANNER_WIDTH, 1)
+        visual.completionBadge.material.rotation = Math.sin(age * 5) * 0.035 * (1 - progress)
+        visual.completionBadge.material.opacity = Math.min(1, visual.maturityCelebrationRemaining / 0.45)
       }
       if (visual.maturityCelebrationRemaining > 0) {
         const progress = 1 - visual.maturityCelebrationRemaining / CELEBRATION_SECONDS
@@ -852,16 +727,36 @@ export function createGardenPlants(
         || plant.instanceId === answeringId
         || (plantSpecies(plant.species).minigames === true && careHandlers?.helperHired(plant.species, plant.careNeeded) === true)
       )
-      if (!plant.careNeeded || handled) {
+      const wanted = plant.careNeeded !== null && !handled
+      // A new chore while the old one is still tucking away waits for it to finish.
+      const swapping = wanted && visual.markerCare !== null && visual.markerCare !== plant.careNeeded
+      visual.markerWanted = wanted && !swapping
+      visual.markerGrow = stepGrow(visual.markerGrow, visual.markerWanted, deltaSeconds)
+      if (visual.markerWanted) visual.markerCare = plant.careNeeded
+      if (visual.markerGrow <= 0) {
+        visual.markerCare = null
         visual.marker.visible = false
         continue
       }
-      const markerY = visual.group.position.y + plantHeight(plant, groundCover, scale) + 0.44
+      const care = visual.markerCare ?? plant.careNeeded ?? 'water'
+      const material = visual.marker.material
+      const map = careMarkerTexture(care)
+      if (material.map !== map) {
+        material.map = map
+        material.needsUpdate = true
+      }
+      const width = MARKER_WIDTH_PX * uiScale * growScale(visual.markerGrow, visual.markerWanted)
+      const height = width * CARE_MARKER_HEIGHT / CARE_MARKER_WIDTH
+      visual.markerLiftPx = height * (MARKER_TIP_Y - MARKER_BADGE_Y) / CARE_MARKER_HEIGHT
+      visual.marker.scale.set(width * worldUnitsPerPixel, height * worldUnitsPerPixel, 1)
+      // A gentle bob, and every few seconds a little wiggle to catch the eye.
+      const bob = Math.sin(elapsed * 2.6 + plant.instanceId) * 0.035
+      const nudge = (elapsed * 0.32 + plant.instanceId * 0.37) % 1
+      material.rotation = nudge < 0.16 ? Math.sin(nudge / 0.16 * Math.PI * 4) * 0.16 * (1 - nudge / 0.16) : 0
+      material.opacity = Math.min(1, visual.markerGrow * 2.5)
+      const markerY = visual.group.position.y + plantHeight(plant, groundCover, scale) + 0.12 + bob
       visual.marker.position.set(plant.x, markerY, plant.z)
       visual.markerPosition.set(plant.x, markerY, plant.z)
-      const material = visual.marker.material as THREE.SpriteMaterial
-      material.map = careTexture(plant.careNeeded)
-      material.needsUpdate = true
       visual.marker.visible = true
     }
   }
@@ -1086,7 +981,7 @@ export function createGardenPlants(
         visual.plantedAge += deltaSeconds
       }
       runHelpers(deltaSeconds)
-      syncVisuals()
+      syncVisuals(deltaSeconds)
       for (const plant of simulation.plants) {
         const visual = visuals.get(plant.instanceId)
         visual?.bush?.update({ growth: plant.growth, care: plant.careNeeded, answering: plant.instanceId === answeringId }, elapsed + plant.instanceId * 1.7, deltaSeconds)
@@ -1113,14 +1008,7 @@ export function createGardenPlants(
       }
       placementArt.dispose()
       bursts.dispose()
-      for (const care of ['water', 'prune', 'pest'] as const) {
-        careTextureCache.get(care)?.dispose()
-        careTextureCache.delete(care)
-      }
-      completionTexture?.dispose()
-      completionTexture = null
-      completionCheckTexture?.dispose()
-      completionCheckTexture = null
+      disposePlantCareArt()
     },
   }
 }

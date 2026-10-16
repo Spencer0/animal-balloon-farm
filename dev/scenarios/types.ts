@@ -31,6 +31,8 @@ export interface ScenarioHarness {
   sowGrass(x: number, z: number, radius: number, pack?: 'short' | 'tall'): unknown
   plant(species: string, x: number, z: number): unknown
   growPlants(steps?: number, secondsPerStep?: number): unknown
+  /** Park a plant at a growth (0..1) with earlier care answered; play carries on from there. */
+  setPlantGrowth(instanceId: number, growth: number): unknown
   setTimeOfDay(time: number): void
   /** Freeze (or release) the day clock, so a night scenario stays night. */
   holdTime(hold: boolean): void
