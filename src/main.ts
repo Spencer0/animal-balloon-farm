@@ -37,6 +37,7 @@ import { createGardenTerrain } from './scene/garden-terrain'
 import { createGardenWaterField, WATER_MIN_RENDER_DEPTH } from './game/garden-water'
 import { createGardenWaterMesh } from './scene/garden-water-mesh'
 import { createGardenPlants, type GardenPlants } from './scene/garden-plants'
+import { warmBurstLooks } from './scene/garden-bursts'
 import { createGardenProps, type GardenProps, type PropSelection } from './scene/garden-props'
 import { PLANT_CARE_KINDS, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
 import { createGreenThumb } from './game/plant-helpers'
@@ -2110,10 +2111,16 @@ try {
   const warmupRoot = new THREE.Group()
   warmupRoot.name = 'Animal look warm-up (parked, hidden)'
   scene.add(warmupRoot)
-  await warmSellBursts(scene, async () => {
-    if (!cowOptions) return drawWarmScene()
-    await warmAnimalLooks(warmupRoot, cowOptions, drawWarmScene)
-  })
+  // The garden's bursts (a planted seed's dirt, a snip's leaves) share one material per look; build those too.
+  const unwarmBursts = warmBurstLooks(scene)
+  try {
+    await warmSellBursts(scene, async () => {
+      if (!cowOptions) return drawWarmScene()
+      await warmAnimalLooks(warmupRoot, cowOptions, drawWarmScene)
+    })
+  } finally {
+    unwarmBursts()
+  }
   warmupRoot.visible = false
 } catch (error) {
   // A WebGPU device that starts but cannot build the farm's pipelines (a driver

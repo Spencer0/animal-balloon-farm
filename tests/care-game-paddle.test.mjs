@@ -8,6 +8,8 @@ const {
   PADDLE_HOP_SECONDS, PADDLE_REACH, PADDLE_FIRST_BEAT_SECONDS, buildPaddleCourse, paddleAirborne, paddleContactTime,
   paddleDistance, paddleLaneX, paddleOutcome, paddleSpeed, paddleStepLane,
 } = paddle
+const rulesBuild = await build({ entryPoints: ['src/game/care-minigames.ts'], bundle: true, format: 'esm', platform: 'node', write: false })
+const { CARE_GAME_RULES } = await import(`data:text/javascript;base64,${Buffer.from(rulesBuild.outputFiles[0].text).toString('base64')}`)
 
 /** A seeded generator, so the course is the same on every run. */
 function seeded(seed) {
@@ -84,8 +86,8 @@ test('the course is ordered, deterministic for a seed, and gives plenty of mosqu
   for (let index = 1; index < first.length; index += 1) assert.ok(first[index].at >= first[index - 1].at)
   for (const seed of [1, 7, 42, 99, 2026]) {
     const mosquitoes = buildPaddleCourse(seeded(seed), 22).filter((beat) => beat.kind === 'mosquito').length
-    // The goal is twelve: a round needs spares, or one wrong lane ends it.
-    assert.ok(mosquitoes >= 13, `seed ${seed}: ${mosquitoes} mosquitoes`)
+    // A round needs spares over the goal, or one wrong lane ends it.
+    assert.ok(mosquitoes >= CARE_GAME_RULES.paddle.goal + 2, `seed ${seed}: ${mosquitoes} mosquitoes`)
   }
 })
 
@@ -105,5 +107,31 @@ test('every snag and log leaves a lane open, and each beat sits in a real lane',
       const same = coincident.filter((other) => other.at === beat.at).flatMap((other) => other.lanes)
       assert.ok(new Set(same).size < 3, `seed ${seed}: all lanes blocked at ${beat.at}`)
     }
+  }
+})
+
+test('the stream glides down to the lily at the end, and the course leaves the glide clear', () => {
+  const end = 22
+  const { PADDLE_GLIDE_SECONDS, PADDLE_ARRIVAL_SPEED } = paddle
+  assert.ok(Math.abs(paddleSpeed(end, end) - PADDLE_ARRIVAL_SPEED) < 1e-9)
+  assert.ok(paddleSpeed(end - 0.5, end) < paddleSpeed(end - PADDLE_GLIDE_SECONDS, end))
+  // The glide is still the integral of the speed.
+  let distance = 0
+  const dt = 0.0005
+  for (let t = 0; t < end; t += dt) distance += paddleSpeed(t + dt / 2, end) * dt
+  assert.ok(Math.abs(distance - paddleDistance(end, end)) < 0.02, `${distance} vs ${paddleDistance(end, end)}`)
+  // Before the glide nothing changes, so every beat sits where it always did.
+  assert.equal(paddleDistance(10, end), paddleDistance(10))
+  for (const seed of [1, 7, 42]) {
+    for (const beat of buildPaddleCourse(seeded(seed), end)) assert.ok(beat.at < end - PADDLE_GLIDE_SECONDS, `seed ${seed}: beat at ${beat.at}`)
+  }
+})
+
+test('a course always carries spare mosquitoes over the goal', () => {
+  const { paddleCourseFor, PADDLE_SPARE_MOSQUITOES } = paddle
+  const { goal, seconds } = CARE_GAME_RULES.paddle
+  for (let seed = 1; seed <= 60; seed += 1) {
+    const mosquitoes = paddleCourseFor(seeded(seed), seconds, goal).filter((beat) => beat.kind === 'mosquito').length
+    assert.ok(mosquitoes >= goal + PADDLE_SPARE_MOSQUITOES, `seed ${seed}: ${mosquitoes} mosquitoes`)
   }
 })

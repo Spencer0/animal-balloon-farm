@@ -132,3 +132,27 @@ test('forfeit loses at once and bad ticks are ignored', () => {
   round.forfeit()
   assert.equal(round.snapshot.lossReason, 'forfeit')
 })
+
+test('paddle: a run to the lily is decided on arrival, not when the goal is met', () => {
+  const { goal, seconds, hearts } = CARE_GAME_RULES.paddle
+  const fed = createCareRound('paddle')
+  for (let snap = 0; snap < goal + 2; snap += 1) fed.hit()
+  assert.equal(fed.snapshot.state, 'playing', 'the goal alone does not end the run')
+  fed.tick(seconds - 0.1)
+  assert.equal(fed.snapshot.state, 'playing')
+  fed.tick(0.2)
+  assert.equal(fed.snapshot.state, 'won')
+
+  const hungry = createCareRound('paddle')
+  for (let snap = 0; snap < goal - 1; snap += 1) hungry.hit()
+  hungry.tick(seconds + 1)
+  assert.equal(hungry.snapshot.state, 'lost')
+  assert.equal(hungry.snapshot.lossReason, 'score')
+  assert.match(lossLine('paddle', 'score'), /lily/)
+
+  const knocked = createCareRound('paddle')
+  for (let snap = 0; snap < goal; snap += 1) knocked.hit()
+  for (let knock = 0; knock < hearts; knock += 1) knocked.harm()
+  assert.equal(knocked.snapshot.state, 'lost', 'hearts still end the run early')
+  assert.equal(knocked.snapshot.lossReason, 'hearts')
+})

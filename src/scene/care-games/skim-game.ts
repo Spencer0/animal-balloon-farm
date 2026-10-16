@@ -630,6 +630,8 @@ export function createSkimGame(context: CareGameContext): CareGameScene {
   }
 
   return {
+    // Dewdrops and fluff are cloned as they spawn; warm their shaders first.
+    warm: [dewTemplate, fluffTemplate],
     update(dt): void {
       time += dt
       frame()
