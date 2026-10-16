@@ -165,8 +165,47 @@ export function frameRenderStats(renderer: FarmRenderer): { renderCalls: number;
 /**
  * Compile every program a scene needs before its first frame. WebGPU compiles
  * pipelines asynchronously (and stalls the first frame if not asked to).
+ *
+ * Both renderers skip hidden objects, and WebGPU skips ones outside the view
+ * too. With `includeHidden` those are compiled as well: the care minigames keep
+ * their hit effects hidden until a hit (a dewdrop's glint, a splash ring), and
+ * left out they compiled on the very frame of the hit. Both renderers gather
+ * the scene synchronously at the call, so it is restored before any frame
+ * draws it.
  */
-export async function precompile(renderer: FarmRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<void> {
-  if (isWebGPURenderer(renderer)) await renderer.compileAsync(scene, camera)
-  else renderer.compile(scene, camera)
+export async function precompile(renderer: FarmRenderer, scene: THREE.Scene, camera: THREE.Camera, includeHidden = false): Promise<void> {
+  const restore = includeHidden ? revealForCompile(scene) : () => {}
+  try {
+    if (isWebGPURenderer(renderer)) {
+      const compiling = renderer.compileAsync(scene, camera)
+      restore()
+      await compiling
+    } else {
+      renderer.compile(scene, camera)
+    }
+  } finally {
+    restore()
+  }
+}
+
+function revealForCompile(scene: THREE.Scene): () => void {
+  const hidden: THREE.Object3D[] = []
+  const culled: THREE.Object3D[] = []
+  scene.traverse((object) => {
+    if (!object.visible) {
+      hidden.push(object)
+      object.visible = true
+    }
+    if (object.frustumCulled) {
+      culled.push(object)
+      object.frustumCulled = false
+    }
+  })
+  let restored = false
+  return () => {
+    if (restored) return
+    restored = true
+    for (const object of hidden) object.visible = false
+    for (const object of culled) object.frustumCulled = true
+  }
 }

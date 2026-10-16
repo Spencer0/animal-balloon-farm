@@ -10,8 +10,8 @@ import {
 import type { PlantId } from '../../game/plants'
 import type { CareGameDom, CareGameResultView } from '../../ui/care-game-dom'
 import { precompile, type FarmRenderer } from '../../render/backend'
-import { createBurstPool } from '../garden-bursts'
-import { loadCareCast, type CareCastType } from '../plant-models'
+import { createBurstPool, warmBurstLooks } from '../garden-bursts'
+import { cloneWholeCast, loadCareCast, type CareCastType } from '../plant-models'
 import { createCareSfx } from './care-sfx'
 import { createCareStage } from './care-stage'
 import { CLOSE_UP_GAMES, type CloseUpGameKind } from './care-game-registry'
@@ -107,6 +107,19 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     round = createCareRound(kind)
     game?.dispose()
     game = CLOSE_UP_GAMES[kind].create?.(context()) ?? null
+    // Build the stage's pipelines while the command card covers it, the hidden
+    // hit effects and the bursts included, so no hit stalls on a shader compile.
+    // A retry builds the game afresh, so it compiles again (cached programs are free).
+    const warmers = new THREE.Group()
+    warmers.name = 'Care game shader warm-up'
+    warmers.add(...cloneWholeCast(stage.type))
+    for (const template of game?.warm ?? []) warmers.add(template.clone(true))
+    stage.scene.add(warmers)
+    const unwarmBursts = warmBurstLooks(stage.scene)
+    void precompile(renderer, stage.scene, stage.camera, true).catch(() => {}).finally(() => {
+      warmers.removeFromParent()
+      unwarmBursts()
+    })
     dom.showIntro(kind, request.subject)
     sfx.play('sting')
     document.body.classList.add('care-game-playing')
@@ -159,8 +172,6 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
   /** The first intro: the plant's cast is ready, so the games can build their critters. */
   function beginIntro(): void {
     startIntro()
-    // Build the stage's pipelines while the command card covers it.
-    void precompile(renderer, stage.scene, stage.camera).catch(() => {})
   }
 
   // ---- input: the overlay owns the pointer while a round plays.
@@ -249,8 +260,10 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     settle(win): void {
       if (phase === 'intro') startPlay()
       if (phase !== 'play') return
-      if (win) while (round.snapshot.state === 'playing') round.hit()
-      else round.forfeit()
+      if (!win) return round.forfeit()
+      // A run to the end is only won when its clock runs out, so hit the goal, then end the clock.
+      while (round.snapshot.state === 'playing' && round.snapshot.hits < round.snapshot.goal) round.hit()
+      if (round.snapshot.state === 'playing') round.tick(round.snapshot.timeLeft)
     },
     dispose(): void {
       if (disposed) return

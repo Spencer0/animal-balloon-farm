@@ -3,8 +3,15 @@ import * as THREE from 'three'
 /**
  * Little one-shot particle effects for the garden and the care minigames: dirt
  * kicked up by a planted seed, leaf confetti from a snip, berry juice, rain.
- * Each effect is one InstancedMesh (one draw call) that owns its geometry and
- * material and frees them when it finishes.
+ * Each effect is one InstancedMesh (one draw call).
+ *
+ * The geometries and materials are shared, not built per burst: a material
+ * made and disposed for every burst made three.js release its shader program
+ * when the burst ended and compile it again for the next one, a stall of
+ * several milliseconds (far more on some GPUs, and a node rebuild on WebGPU)
+ * on exactly the frame a hit lands. A burst borrows a material from a small
+ * free list per look and hands it back when it finishes, so each look is
+ * compiled once per session. They live for the session on purpose.
  */
 
 export interface GardenBurst {
@@ -57,20 +64,54 @@ function starGeometry(): THREE.BufferGeometry {
   return new THREE.ShapeGeometry(shape)
 }
 
+type BurstShape = NonNullable<BurstOptions['shape']>
+
+const sharedGeometries = new Map<BurstShape, THREE.BufferGeometry>()
+
+function burstGeometry(shape: BurstShape): THREE.BufferGeometry {
+  let geometry = sharedGeometries.get(shape)
+  if (!geometry) {
+    geometry = shape === 'leaf'
+      ? new THREE.SphereGeometry(1, 6, 4).scale(1, 0.18, 0.55)
+      : shape === 'star'
+        ? starGeometry()
+        : new THREE.SphereGeometry(1, 6, 4)
+    geometry.name = `Garden burst ${shape}`
+    sharedGeometries.set(shape, geometry)
+  }
+  return geometry
+}
+
+/** Idle materials, per look (shape and whether it draws on top). Every one of a look shares one shader program. */
+const freeMaterials = new Map<string, THREE.MeshLambertMaterial[]>()
+
+function borrowMaterial(shape: BurstShape, onTop: boolean): THREE.MeshLambertMaterial {
+  const key = `${shape}${onTop ? ' on top' : ''}`
+  const material = freeMaterials.get(key)?.pop() ?? new THREE.MeshLambertMaterial({
+    name: `Garden burst ${key}`,
+    color: '#ffffff', transparent: true, depthWrite: false,
+    side: shape === 'star' ? THREE.DoubleSide : THREE.FrontSide,
+    depthTest: !onTop,
+  })
+  material.userData.burstKey = key
+  material.opacity = 1
+  return material
+}
+
+function returnMaterial(material: THREE.MeshLambertMaterial): void {
+  const key = material.userData.burstKey as string
+  let free = freeMaterials.get(key)
+  if (!free) freeMaterials.set(key, free = [])
+  free.push(material)
+}
+
 export function createBurst(origin: THREE.Vector3, options: BurstOptions): GardenBurst {
   const seconds = options.seconds ?? 0.9
   const gravity = options.gravity ?? 9
   const drag = options.drag ?? 0.6
-  const geometry = options.shape === 'leaf'
-    ? new THREE.SphereGeometry(1, 6, 4).scale(1, 0.18, 0.55)
-    : options.shape === 'star'
-      ? starGeometry()
-      : new THREE.SphereGeometry(1, 6, 4)
-  const material = new THREE.MeshLambertMaterial({
-    color: '#ffffff', transparent: true, depthWrite: false,
-    side: options.shape === 'star' ? THREE.DoubleSide : THREE.FrontSide,
-    depthTest: !options.onTop,
-  })
+  const shape = options.shape ?? 'blob'
+  const geometry = burstGeometry(shape)
+  const material = borrowMaterial(shape, options.onTop ?? false)
   const mesh = new THREE.InstancedMesh(geometry, material, options.count)
   mesh.name = `Garden burst (${options.shape ?? 'blob'})`
   mesh.frustumCulled = false
@@ -138,12 +179,33 @@ export function createBurst(origin: THREE.Vector3, options: BurstOptions): Garde
       if (disposed) return
       disposed = true
       mesh.removeFromParent()
-      geometry.dispose()
-      material.dispose()
+      // The geometry and material are shared: only the mesh's own instance buffers go.
+      returnMaterial(material)
       mesh.dispose()
     },
   }
   return burst
+}
+
+/**
+ * Put one invisible-sized burst of every look under `parent`, so a precompile
+ * of that scene builds their shader programs before play. Returns a function
+ * that takes them away again; their materials go back to the free list, so the
+ * programs stay compiled for the first real burst.
+ */
+export function warmBurstLooks(parent: THREE.Object3D): () => void {
+  const origin = new THREE.Vector3()
+  const warm: GardenBurst[] = []
+  for (const shape of ['blob', 'leaf', 'star'] as const) {
+    for (const onTop of [false, true]) {
+      const burst = createBurst(origin, { count: 1, colors: ['#ffffff'], size: 0.0001, speed: [0, 0], shape, onTop })
+      parent.add(burst.root)
+      warm.push(burst)
+    }
+  }
+  return () => {
+    for (const burst of warm) burst.dispose()
+  }
 }
 
 /** A set of live bursts that ticks and prunes itself. */

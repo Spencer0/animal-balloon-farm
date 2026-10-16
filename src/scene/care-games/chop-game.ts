@@ -477,6 +477,8 @@ export function createChopGame(context: CareGameContext): CareGameScene {
   }
 
   return {
+    // The cut band and the cut faces are only built as stalks spawn and split; warm their shaders first.
+    warm: [new THREE.Mesh(dashGeometry, dashMaterial), new THREE.Mesh(dashGeometry, capMaterial)],
     update(dt): void {
       time += dt
       snapAge += dt
