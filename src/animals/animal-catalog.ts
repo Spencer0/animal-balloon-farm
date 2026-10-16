@@ -110,6 +110,12 @@ export const ANIMAL_CATALOG = [
     assetUrl: 'assets/animals/balloon-mole.glb', spawn: [1, -2], carnivalSpawn: [19, 14], seed: 10211, size: 1.7, speed: 0.9, bounds: { x: 10.5, z: 6.1 },
   },
   {
+    id: 'squirrel', name: 'Squirrel', label: 'squirrel', spriteUrl: 'assets/animals/balloon-squirrel-review.png',
+    subtitle: 'The bright-eyed berry forager', description: 'A quick little woodland visitor who holds berries in both paws and takes time to savor each bite.',
+    note: 'Follow it to a blueberry bush. Six berries make a picnic worth coming home for.', color: '#bd683c', gesture: 'Nibbles a berry',
+    assetUrl: 'assets/animals/balloon-squirrel.glb', spawn: [-3, 4], carnivalSpawn: [-20, 5], seed: 12421, size: 1.55, speed: 1.35, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
     id: 'starhorn', name: 'Starhorn', label: 'starhorn', spriteUrl: 'assets/animals/balloon-starhorn-review.png',
     subtitle: 'The harmony pony', description: 'A pearly lilac balloon pony with a twisted star-tipped horn, a pastel-rainbow cloud mane and a little gold star on its flank.',
     note: 'There is only one. It trots in when the farm is in tune, sips nectar from the flowers, and leaves a star gem behind. It has no house and no young.', color: '#bf9fe6', gesture: 'Tosses its mane',

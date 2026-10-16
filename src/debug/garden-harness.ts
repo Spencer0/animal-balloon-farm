@@ -163,6 +163,9 @@ interface GardenDebugHarness {
   /** Forget everything: no grass, no pond, every animal back to the carnival. */
   resetConditions(): void
   /** Where each animal is, and what it looks like right now. */
+  plantReport(): readonly import('../game/plants').GardenPlant[]
+  forageFor(seconds: number): readonly import('../game/animal-life').AnimalRecord[]
+  placeAnimal(id: string, x: number, z: number): boolean
   animalReport(): Record<string, unknown>[]
   /** Frame a species closely, for inspecting eyes and other small details. */
   focusSpecies(species: string, height?: number): void
@@ -926,6 +929,23 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       measureFarm()
       reportConditions()
     },
+    plantReport: () => deps.gardenPlants()?.simulation.plants ?? [],
+    forageFor: (seconds: number) => {
+      const step = 1 / SIM_HZ
+      for (let elapsed = 0; elapsed < Math.min(180, Math.max(0, seconds)); elapsed += step) {
+        deps.gardenPlants()?.simulation.tick(step)
+        deps.stepAnimalWorld(step, performance.now() / 1000, true)
+        handleAnimalLifeEvents(progress.tick(animalLifeSnapshot(), step))
+        animals.forEach((animal) => animal.update(step, 1))
+      }
+      return progress.all().filter((animal) => animal.species === 'squirrel')
+    },
+    placeAnimal: (id: string, x: number, z: number) => {
+      const animal = animalById.get(id)
+      if (!animal) return false
+      animal.placeAt(x, z)
+      return true
+    },
     animalReport: () => animals.filter((animal) => !animal.isSold).map((animal) => ({
       id: animal.instanceId,
       species: animal.id,
@@ -941,6 +961,8 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       atFarm: animal.isAtFarm,
       residencyPending: animal.isResidencyPending,
       sleeping: animal.isSleeping,
+      eating: animal.isEating,
+      fruitEaten: progress.animal(animal.instanceId)?.fruitEaten ?? {},
       bed: sleepBeds.get(animal.instanceId) ?? null,
     })),
     focusSpecies: (species, height = 4.5) => {

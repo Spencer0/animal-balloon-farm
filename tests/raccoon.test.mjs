@@ -32,7 +32,7 @@ test('the raccoon is a night animal, found through a resident cow', () => {
 test('a garbage can settles the raccoon, and a dumpster (with the can) lets it breed', () => {
   const rungs = conditions.getSpeciesConditions('raccoon')
   assert.equal(rungs.length, 4)
-  assert.equal(rungs[1].requirement, null)
+  assert.deepEqual(rungs[1].requirement, { kind: 'shortGrassArea', amount: 2 })
   assert.deepEqual(rungs[2].requirement, { kind: 'propCount', species: 'garbage-can', amount: 1 })
   assert.equal(rungs[3].requirement.species, 'dumpster')
   const settle = (extra) => progress.requirementMet(rungs[2].requirement, farmWith(extra))

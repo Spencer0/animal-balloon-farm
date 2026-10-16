@@ -22,6 +22,7 @@ import {
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
+import { createBerryForaging } from './scene/berry-forage'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
 import { createHungerBubbles } from './scene/hunger-bubbles'
 import { createHouseGoodsBadges } from './scene/house-goods-badges'
@@ -1812,6 +1813,7 @@ function plantShadowKey(): number {
  * walk home, the gate trips, the collision push-out and the owl and snake hunts
  * (game/animal-hunt.ts). Animation, camera and water stay per frame.
  */
+const berryForaging = createBerryForaging(animals, progress, () => gardenPlants)
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
 
 /**
@@ -1826,6 +1828,7 @@ function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: b
   // Push the walkers out of houses and each other once they have moved; the view blends the result.
   collideAnimalsTick(nowSeconds)
   if (huntsActive) tickHunts(stepSeconds)
+  berryForaging.tick(stepSeconds, huntsActive && !journal.isOpen)
 }
 
 function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {

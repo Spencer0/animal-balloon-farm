@@ -126,7 +126,7 @@ export function createHousing(deps: HousingDeps) {
     if (id === getFocusedAnimal() || (newbornUntil.get(id) ?? 0) > nowSeconds) return true
     const animal = animalById.get(id)
     if (!animal) return false
-    return animal.isCapturing || animal.isResidencyPending || animal.isAlarmed || !animal.isAtFarm
+    return animal.isEating || animal.isCapturing || animal.isResidencyPending || animal.isAlarmed || !animal.isAtFarm
       || isHunted(id)
   }
 

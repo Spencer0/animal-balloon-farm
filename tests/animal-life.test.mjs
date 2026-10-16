@@ -143,7 +143,7 @@ test('selling the only cow queues a new cow instead of ending its visits', () =>
 })
 
 const lcg = (seed) => () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296 }
-const clover = { state: { tallGrassArea: 20, waterArea: 0, flatGrassArea: 0, plantCounts: { clover: 2 } }, residentSpecies: new Set() }
+const clover = { state: { tallGrassArea: 20, waterArea: 0, flatGrassArea: 0, plantCounts: {} }, residentSpecies: new Set() }
 const cloverReady = { state: { ...clover.state, plantCounts: { clover: 3 } }, residentSpecies: new Set() }
 
 test('selling a cow does not summon a replacement straight away', () => {

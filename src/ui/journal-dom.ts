@@ -72,6 +72,7 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   mouse: { rarity: "Common", traits: ["Seed Nibbler", "Meadow Dweller", "Tiny Pitter-Patter"] },
   rat: { rarity: "Uncommon", traits: ["Scavenger", "Night Shift", "Shares the Log"] },
   snake: { rarity: "Rare", traits: ["Meadow Hunter", "Slithers", "Basks on Rocks"] },
+  squirrel: { rarity: "Uncommon", traits: ["Berry Nibbler", "Bushy Tail", "Daytime Forager"] },
   mole: { rarity: "Uncommon", traits: ["Digs Deep", "Loves Bare Earth", "Poor Eyesight"] },
   starhorn: { rarity: "Legendary", traits: ["One of a Kind", "Sips Nectar", "Makes Star Gems"] },
 };
@@ -117,6 +118,8 @@ interface RowVisual {
 /** The icon and label for what a rung measures, straight from its requirement. */
 function visualForKind(kind: string, species: string | undefined, metricLabel: string | undefined): RowVisual | null {
   switch (kind) {
+    case "shortGrassArea": return { icon: "tall-grass", label: metricLabel ?? "Short lawn grass", isCount: false };
+    case "fruitEaten": return { icon: "sprout", label: metricLabel ?? "Berries eaten", isCount: true };
     case "grassArea": return { icon: "tall-grass", label: "Grass", isCount: false };
     case "meadowArea": return { icon: "tall-grass", label: "Tall meadow grass", isCount: false };
     case "waterArea": return { icon: "pond-water", label: "Pond water", isCount: false };
@@ -527,7 +530,7 @@ export function createJournalDomPanel(options: JournalDomOptions): JournalDomPan
         <div class="fj-req"><img src="${ICON_BASE}/journal-icon-${visual.icon}.png" alt="" draggable="false">
         <span class="fj-req-label">${escapeHtml(visual.label)}</span>
         <span class="fj-bar" role="progressbar" aria-valuenow="${row.current}" aria-valuemax="${row.target}" aria-label="${escapeHtml(visual.label)}"><i style="width:${(pct * 100).toFixed(1)}%"></i></span>
-        <span class="fj-numbers">${formatMetric(row.current, visual.isCount)} / ${formatMetric(row.target, visual.isCount)}${unit}</span></div>${alsoNeeds(row.alsoNeeds)}</div>`;
+        <span class="fj-numbers">${formatMetric(row.current, visual.isCount)} / ${formatMetric(row.target, visual.isCount)}${unit}</span></div>${alsoNeeds(row.alsoNeeds)}${row.requirementKind === "fruitEaten" ? `<div class="fj-note">${escapeHtml(row.hint)}</div>` : ""}</div>`;
     }).join("");
     const dietHtml = dietShown() ? dietSection(entry.id, entry.name) : "";
     detail.innerHTML = `<div class="fj-hero">

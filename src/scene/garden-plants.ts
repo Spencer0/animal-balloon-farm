@@ -984,7 +984,7 @@ export function createGardenPlants(
       syncVisuals(deltaSeconds)
       for (const plant of simulation.plants) {
         const visual = visuals.get(plant.instanceId)
-        visual?.bush?.update({ growth: plant.growth, care: plant.careNeeded, answering: plant.instanceId === answeringId }, elapsed + plant.instanceId * 1.7, deltaSeconds)
+        visual?.bush?.update({ growth: plant.growth, care: plant.careNeeded, answering: plant.instanceId === answeringId }, elapsed + plant.instanceId * 1.7, deltaSeconds, plant.fruitTimers)
       }
       bursts.update(deltaSeconds)
       placementArt.update(deltaSeconds)

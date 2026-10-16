@@ -616,7 +616,30 @@ def build_molehill():
     return root, {"camera": (3.6, -6.4, 3.4), "target": (0, -.05, .35), "ortho": 2.6}
 
 
+def build_squirrel_house():
+    M = shared_materials("SQUIRREL HOUSE")
+    root = pivot("PROP SQUIRREL HOUSE · export root", (0, 0, 0))
+    root["asset_id"] = "squirrel-house"
+    root["description"] = "Minimal cedar acorn den, open round doorway, blueberry-blue trim"
+    blue = make_material("SQUIRREL HOUSE · blueberry trim", "#5869b8", .55, 0, .16)
+    cylinder("SQUIRREL HOUSE · cedar den", (0, 0, .55), .57, 1.05, M["wood"], root, segments=24)
+    for index in range(12):
+        angle = index * math.tau / 12
+        box(f"SQUIRREL HOUSE · cedar seam {index}", (.565 * math.cos(angle), .565 * math.sin(angle), .55), (.018, .018, .85), M["woodDark"], root, .004)
+    # A quiet acorn silhouette: just a cap, little stem, and one open door.
+    blob("SQUIRREL HOUSE · acorn cap", (0, 0, 1.1), (.72, .72, .31), M["roof"], root, 24, 12)
+    cylinder("SQUIRREL HOUSE · cap rim", (0, 0, 1.06), .70, .08, M["roofDark"], root, segments=24)
+    cylinder("SQUIRREL HOUSE · stem", (0, 0, 1.43), .065, .18, M["woodDark"], root, segments=12, rotation=(0, .23, 0))
+    cylinder("SQUIRREL HOUSE · round door trim", (0, -.54, .4), .32, .10, blue, root, "Y", 24)
+    cylinder("SQUIRREL HOUSE · open door", (0, -.60, .4), .26, .04, M["dark"], root, "Y", 24)
+    box("SQUIRREL HOUSE · doorstep", (0, -.72, .06), (.64, .42, .12), M["wall"], root, .04)
+    for side in (-1, 1):
+        blob("SQUIRREL HOUSE · tiny leaf", (side * .44, -.43, .25), (.14, .07, .06), M["grass"], root, 12, 8)
+    return root, {"camera": (3, -5, 2.9), "target": (0, 0, .65), "ortho": 2.2}
+
+
 HOUSES = {
+    "squirrel-house": build_squirrel_house,
     "molehill": build_molehill,
     "goose-house": build_goose_house,
     "sty": build_sty,
@@ -718,7 +741,8 @@ def requested():
     return args or list(HOUSES)
 
 
-for asset_id in requested():
-    fresh_scene()
-    house_root, house_framing = HOUSES[asset_id]()
-    stage_and_export(asset_id, house_root, house_framing)
+if __name__ == '__main__':
+    for asset_id in requested():
+        fresh_scene()
+        house_root, house_framing = HOUSES[asset_id]()
+        stage_and_export(asset_id, house_root, house_framing)

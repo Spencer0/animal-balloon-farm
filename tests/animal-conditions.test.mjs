@@ -35,7 +35,7 @@ const {
 const { measureTallGrass, measureWater, measureFlatGrassArea, measureFarmState, DEFAULT_MATURITY } = farmState
 const { createAnimalProgress, requirementMet, startingCarnivalSpecies, makeFarmSnapshot } = progressModule
 
-const SPECIES = ['pig', 'sheep', 'cow', 'chicken', 'duck', 'goose', 'frog']
+const SPECIES = ['pig', 'sheep', 'cow', 'chicken', 'duck', 'goose', 'frog', 'raccoon', 'squirrel']
 
 /**
  * A lawn grid of `cols` x `rows` vertices with uniform coverage. Pass a number
@@ -88,22 +88,23 @@ test('every species defines the same four conditions in the same order', () => {
     assert.deepEqual(stages.map((stage) => stage.stage), [1, 2, 3, 4], `${species} stage numbers`)
     assert.deepEqual(
       stages.map((stage) => stage.title),
-      ['Visit the carnival', 'Visit the farm', 'Call the farm home', 'Love the farm'],
+      [species === 'raccoon' || species === 'owl' || species === 'rat' ? 'Appear at the carnival' : 'Visit the carnival', 'Visit the farm', 'Call the farm home', 'Love the farm'],
       `${species} titles`,
     )
   }
 })
 
-test('the carnival asks nothing; a visit asks nothing unless the animal is lured by plants; the last two do', () => {
-  const lured = { sheep: 'clover', chicken: 'dandelion' }
+test('the carnival asks nothing; visits ask for a small short lawn or a grown food plant', () => {
+  const lured = { sheep: 'clover', chicken: 'dandelion', squirrel: 'blueberry' }
   for (const species of SPECIES) {
     const stages = getSpeciesConditions(species)
     assert.equal(stages[0].requirement, null, `${species} carnival needs nothing`)
     if (lured[species]) {
       assert.equal(stages[1].requirement.kind, 'plantCount', `${species} visiting needs its plant`)
       assert.equal(stages[1].requirement.species, lured[species])
+      assert.equal(stages[1].requirement.amount, 1)
     } else {
-      assert.equal(stages[1].requirement, null, `${species} visiting needs nothing`)
+      assert.deepEqual(stages[1].requirement, { kind: 'shortGrassArea', amount: 2 }, `${species} visiting has its intended criterion`)
     }
     assert.ok(stages[2].requirement, `${species} calling home needs something`)
     assert.ok(stages[3].requirement, `${species} loving the farm needs something`)
@@ -326,19 +327,20 @@ test('a fresh plot leaves every species at the carnival and nothing further', ()
   for (const species of ['pig', 'goose']) assert.equal(progress.progressOf(species).stage, 0)
 
   const events = tickFor(progress, snapshot(EMPTY_FARM), 20)
-  // Stage 1 -> 2 happens after the visit delay even on bare soil, because
-  // visiting the farm asks nothing of the player.
-  assert.ok(events.some((event) => event.kind === 'enterFarm' && event.species === 'cow'))
+  // A grown food plant is enough for a plant-lured visitor; short lawn is
+  // needed by previously unrestricted daytime visitors. Duck and raccoon
+  // remain criterion-free as requested.
+  assert.equal(events.some((event) => event.kind === 'enterFarm' && event.species === 'cow'), false)
   for (const species of startingCarnivalSpecies(SPECIES)) {
-    assert.equal(progress.progressOf(species).stage, 2, `${species} should be visiting`)
+    assert.equal(progress.progressOf(species).stage, 1, `${species} should remain at the carnival without established lawn`)
   }
   // Nobody settles on an empty plot.
   for (const species of SPECIES) assert.ok(progress.progressOf(species).stage < 3, `${species} should not be a resident`)
 })
 
 test('visiting the farm and calling it home are separate beats', () => {
-  // Stage 1 -> 2 is on a timer, because it asks nothing of the player. Stage
-  // 2 -> 3 waits on the land. They must not collapse into one step.
+  // A tiny lawn permits a visit but not a settle; timing keeps the beats distinct.
+  const littleLawn = snapshot({ ...EMPTY_FARM, shortGrassArea: 2 })
   const progress = createAnimalProgress(['cow'], { deltaSeconds: 1 / 30 })
   progress.discover('cow')
 
@@ -346,10 +348,10 @@ test('visiting the farm and calling it home are separate beats', () => {
   progress.tick(snapshot(EMPTY_FARM), 1/30)
   assert.equal(progress.progressOf('cow').stage, 1)
 
-  tickFor(progress, snapshot(EMPTY_FARM), 3)
+  tickFor(progress, littleLawn, 3)
   assert.equal(progress.progressOf('cow').stage, 1, 'still lingering at the carnival')
 
-  tickFor(progress, snapshot(EMPTY_FARM), 3)
+  tickFor(progress, littleLawn, 3)
   assert.equal(progress.progressOf('cow').stage, 2, 'now visiting the farm')
 })
 
@@ -523,6 +525,7 @@ test('a naive, direct progression run reaches the full four-step arc', () => {
     // Sow grass, dig a pond, then plant and grow lily pads, as a player would.
     const state = {
       tallGrassArea: Math.min(40, step * 0.5),
+      shortGrassArea: Math.min(40, step * 0.5),
       waterArea: Math.min(25, step * 0.5),
       flatGrassArea: Math.min(40, step * 0.5),
       plantCounts: {

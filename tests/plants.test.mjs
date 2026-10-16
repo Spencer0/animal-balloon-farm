@@ -172,6 +172,7 @@ test('a blueberry bush asks for a drink, a beetle swat and a snip, in that order
   const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
   assert.ok(bush)
   assert.equal(PLANT_CATALOG.find(({ id }) => id === 'blueberry').minigames, true)
+  assert.deepEqual(PLANT_CATALOG.find(({ id }) => id === 'blueberry').fruit, { count: 6, regrowSeconds: 60 })
   const answered = []
   for (let step = 0; step < 400; step += 1) {
     simulation.tick(1)
@@ -183,6 +184,50 @@ test('a blueberry bush asks for a drink, a beetle swat and a snip, in that order
   }
   assert.deepEqual(answered, ['water', 'pest', 'prune'])
   assert.equal(simulation.plants[0].mature, true)
+})
+
+test('mature blueberry bushes offer six renewable berries without replacing the minigame plant', () => {
+  const simulation = stockedSimulation()
+  const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
+  assert.ok(bush)
+  assert.equal(simulation.pickFruit(bush.instanceId), null, 'unripe bushes have no harvest')
+  for (let step = 0; step < 400 && !simulation.plants[0].mature; step += 1) {
+    simulation.tick(1)
+    const plant = simulation.plants[0]
+    if (plant.careNeeded) simulation.resolveCare(bush.instanceId, plant.careNeeded)
+  }
+  assert.equal(simulation.plants[0].ripeFruit, 6)
+  for (let slot = 0; slot < 6; slot += 1) {
+    assert.equal(simulation.pickFruit(bush.instanceId), slot)
+    assert.equal(simulation.plants[0].ripeFruit, 5 - slot)
+  }
+  assert.equal(simulation.pickFruit(bush.instanceId), null)
+  assert.equal(simulation.plants[0].mature, true)
+  simulation.tick(59.9)
+  assert.equal(simulation.plants[0].ripeFruit, 0)
+  simulation.tick(0.1 + 1e-9)
+  assert.equal(simulation.plants[0].ripeFruit, 6)
+  assert.deepEqual(simulation.plants[0].fruitTimers, [0, 0, 0, 0, 0, 0])
+})
+
+test('berry timers persist through saved crops and older saves restore a ripe bush', () => {
+  const simulation = stockedSimulation()
+  const bush = simulation.plant('blueberry', 0, 0, surface('soil'))
+  for (let step = 0; step < 400 && !simulation.plants[0].mature; step += 1) {
+    simulation.tick(1)
+    const plant = simulation.plants[0]
+    if (plant.careNeeded) simulation.resolveCare(bush.instanceId, plant.careNeeded)
+  }
+  simulation.pickFruit(bush.instanceId)
+  simulation.tick(20)
+  const restored = createPlantSimulation()
+  restored.importState(JSON.parse(JSON.stringify(simulation.exportState())))
+  assert.deepEqual(restored.plants[0].fruitTimers, simulation.plants[0].fruitTimers)
+  restored.tick(40)
+  assert.equal(restored.plants[0].ripeFruit, 6)
+  const legacy = simulation.exportState()
+  restored.importState({ ...legacy, plants: legacy.plants.map(({ fruitTimers: _timers, ...plant }) => plant) })
+  assert.equal(restored.plants[0].ripeFruit, 6)
 })
 
 test('a save from before the blueberry gift gets one blueberry seed, and a used-up one stays at zero', () => {

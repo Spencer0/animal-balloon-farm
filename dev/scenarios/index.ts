@@ -1,3 +1,4 @@
+import { berryPicnic, squirrelHome } from './squirrel/berry-picnic'
 import type { Scenario, ScenarioHarness } from './types'
 import { farmer10 } from './sandbox/farmer-10'
 import { breedReady } from './owl/breed-ready'
@@ -22,6 +23,7 @@ import { careCues } from './garden/care-cues'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
+  berryPicnic, squirrelHome,
   farmer10, firstNight, huntNow, readyToSettle, residentRoosting, breedReady, lowHelium,
   raccoonFirstNight, sleepingByCan, sleepingByDumpster, raccoonBreedReady,
   tallGrassGarden, tallGrassNight, emptyMeadow, snakeHunt, ratsAndRaccoons,

@@ -123,6 +123,8 @@ export interface GardenTools {
    * every blade, so the caller decides how often to ask.
    */
   meadowArea(): number
+  /** Square meters of short lawn, excluding tall meadow blades. */
+  shortGrassArea(): number
   /** Square meters of lawn under snow (each snowy vertex stands for one lawn cell). */
   snowArea(): number
   /** Snow cover 0..1 at a point, blended from the nearby lawn vertices. */
@@ -1853,6 +1855,14 @@ export function createGardenTools(
         for (const batch of batches.values()) yield* batch.blades
       }
       return measureMeadow(everyBlade())
+    },
+    shortGrassArea(): number {
+      function* shortBlades(): Generator<MeadowBlade> {
+        for (const batch of batches.values()) {
+          for (const blade of batch.blades) if (blade.height > 0 && blade.height <= SHORT_GRASS_CEILING) yield blade
+        }
+      }
+      return measureMeadow(shortBlades(), 0.16)
     },
     overLawn(event): boolean {
       if (!pointerRay(event)) return false

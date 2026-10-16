@@ -42,6 +42,8 @@ export const TERRAIN_KINDS: readonly TerrainKind[] = ['dirt', 'snow']
 
 export interface FarmState {
   readonly tallGrassArea: number
+  /** Mature short-lawn cells only; tall meadow is a separate habitat. */
+  readonly shortGrassArea?: number
   readonly waterArea: number
   readonly flatGrassArea: number
   /**
@@ -64,6 +66,8 @@ export interface FarmState {
   readonly residentCounts?: Readonly<Record<string, number>>
   /** Prey eaten on this farm per species, for `preyEaten` conditions. */
   readonly preyEaten?: Readonly<Record<string, number>>
+  /** Personal fruit tally supplied by the animal life system when testing a rung. */
+  readonly fruitEaten?: Readonly<Record<string, number>>
   /** Placed shop props per prop id, for `propCount` conditions. */
   readonly propCounts?: Readonly<Record<string, number>>
   /**
@@ -192,6 +196,13 @@ export interface MeadowBlade {
  * cell counts once it holds a few blades past `MEADOW_MIN_HEIGHT`. One pass over
  * the blades; the scene throttles how often it asks.
  */
+export function measureShortGrass(blades: Iterable<MeadowBlade>): number {
+  function* short(): Generator<MeadowBlade> {
+    for (const blade of blades) if (blade.height < MEADOW_MIN_HEIGHT) yield blade
+  }
+  return measureMeadow(short(), 0.16)
+}
+
 export function measureMeadow(blades: Iterable<MeadowBlade>, minHeight = MEADOW_MIN_HEIGHT, cell = MEADOW_CELL): number {
   const counts = new Map<number, number>()
   let cells = 0
@@ -299,6 +310,8 @@ export function measureFarmState(
 export function farmMetric(state: FarmState, kind: string, species?: string): number {
   switch (kind) {
     case 'grassArea': return state.tallGrassArea
+    case 'shortGrassArea': return state.shortGrassArea ?? 0
+    case 'fruitEaten': return species ? state.fruitEaten?.[species] ?? 0 : 0
     case 'meadowArea': return state.meadowArea ?? 0
     case 'waterArea': return state.waterArea
     case 'flatArea': return state.flatGrassArea
