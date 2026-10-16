@@ -47,6 +47,12 @@ export interface CareGameRules {
   readonly misses: number
   /** The round is lost when this runs out. */
   readonly seconds: number
+  /**
+   * The round runs its whole clock, like a run to a finish line: reaching the
+   * goal early does not end it, and when the clock runs out the round is won
+   * if the goal was met and lost on 'score' if not. Hearts still end it early.
+   */
+  readonly toTheEnd?: boolean
 }
 
 export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
@@ -64,8 +70,8 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   chop: { goal: 3, hearts: 0, misses: 0, seconds: 55 },
   // Eighteen dewdrops; three knocks and the dragonfly is out.
   skim: { goal: 18, hearts: 3, misses: 0, seconds: 24 },
-  // Twelve mosquitoes; three snags or logs and the frog is out.
-  paddle: { goal: 12, hearts: 3, misses: 0, seconds: 22 },
+  // A run to the lily: arrive with twelve mosquitoes snapped. Three snags or logs and the frog is out.
+  paddle: { goal: 12, hearts: 3, misses: 0, seconds: 22, toTheEnd: true },
   // Ten passes skipped; two caught and the frog is out.
   rope: { goal: 10, hearts: 2, misses: 0, seconds: 22 },
 }
@@ -77,6 +83,8 @@ export interface CareGameCopy {
   readonly winLine: string
   /** What the game is for, in the middle of a sentence: "Pip now stocks ... does the bee run". */
   readonly chore: string
+  /** The keyboard controls, shown under the goal line on a desktop (a fine pointer that hovers). */
+  readonly keysLine?: string
 }
 
 export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
@@ -87,7 +95,13 @@ export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
   hop: { command: 'JUMP!', goalLine: 'Eat twelve aphids on the run. Jump the thorns and burrs!', winLine: 'Every aphid gobbled!', chore: 'the ladybug run' },
   chop: { command: 'CUT!', goalLine: 'Tap as the orange band hits the blade line. Closer scores more, too early scores zero. Three rounds: score big to pass!', winLine: 'Clean as a whistle!', chore: 'the stalk chop' },
   skim: { command: 'HOLD!', goalLine: 'Hold to climb through the dewdrops. Dodge the cattails, fish and fluff!', winLine: 'The lily drinks it all!', chore: 'the dragonfly skim' },
-  paddle: { command: 'SWIPE!', goalLine: 'Swipe or tap a side to change lanes, up to hop a log. Snap twelve mosquitoes!', winLine: 'Tongue-tastic!', chore: 'the frog paddle' },
+  paddle: {
+    command: 'SWIM!',
+    goalLine: 'Swim to the lily! Snap twelve mosquitoes on the way. Dodge snags, hop logs.',
+    keysLine: 'Left and right arrows (or A and D) change lanes. Space or up hops.',
+    winLine: 'Tongue-tastic!',
+    chore: 'the frog paddle',
+  },
   rope: { command: 'JUMP!', goalLine: 'Hop each sweep of the runner. Ten passes, and do not get caught!', winLine: 'Nothing tripped the frog!', chore: 'the lily skip' },
 }
 
@@ -158,6 +172,7 @@ export function createCareRound(kind: CareGameKind, rules: CareGameRules = CARE_
     if (rules.misses > 0 && misses >= rules.misses) return lose('misses')
     // A swat round counts beetles that got away against the goal too: the
     // round is over once every one of them has been dealt with.
+    if (rules.toTheEnd) return
     if (hits >= rules.goal || (kind === 'swat' && hits + released >= rules.goal)) state = 'won'
   }
 
@@ -200,7 +215,10 @@ export function createCareRound(kind: CareGameKind, rules: CareGameRules = CARE_
     tick(deltaSeconds): void {
       if (state !== 'playing' || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return
       timeLeft = Math.max(0, timeLeft - deltaSeconds)
-      if (timeLeft <= 0) lose('time')
+      if (timeLeft > 0) return
+      if (!rules.toTheEnd) lose('time')
+      else if (hits >= rules.goal) state = 'won'
+      else lose('score')
     },
     fail(reason): void {
       lose(reason)
@@ -220,7 +238,7 @@ const LOSS_LINES: Readonly<Record<CareGameKind, Readonly<Partial<Record<CareLoss
   hop: { time: 'Out of time!', hearts: 'Too many thorns caught the ladybug.' },
   chop: { time: 'Out of time!', score: 'Not enough points to pass. Cut closer to the line!' },
   skim: { time: 'Out of time!', hearts: 'The dragonfly got knocked out of the air.' },
-  paddle: { time: 'Out of time!', hearts: 'The frog got snagged too often.' },
+  paddle: { score: 'Made it to the lily, but still hungry. Snap more mosquitoes!', hearts: 'The frog got snagged too often.' },
   rope: { time: 'Out of time!', hearts: 'The runner caught the frog.' },
 }
 

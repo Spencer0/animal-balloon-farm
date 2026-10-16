@@ -131,6 +131,19 @@ body.care-game-playing > :not(#game):not(.cg-overlay):not(.cg-score-pill) {
   animation: cg-rise 0.5s 0.18s cubic-bezier(0.2, 1.4, 0.4, 1) both;
 }
 
+/* The keyboard controls, under the goal on a desktop. */
+.cg-keys {
+  max-width: min(520px, 84vw);
+  padding: 6px 16px;
+  background: #6b4a33;
+  color: #faf3e2;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: clamp(13px, 1.6vw, 16px);
+  text-align: center;
+  animation: cg-rise 0.5s 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
 .cg-subject {
   font-size: 13px;
   font-weight: 800;

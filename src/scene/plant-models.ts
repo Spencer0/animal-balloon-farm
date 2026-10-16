@@ -157,6 +157,16 @@ export function loadGardenModels(): Promise<GardenModels> {
   return pending
 }
 
+/**
+ * One clone of every critter a plant type's games can spawn (the bush's garden
+ * critters, or a care cast), to put in a scene while its shaders precompile.
+ * Clones share the source materials, so warming these warms every later spawn.
+ */
+export function cloneWholeCast(type: CareCastType | 'bush'): THREE.Object3D[] {
+  const sources = type === 'bush' ? models?.critters : castModels.get(type)
+  return sources ? [...sources.values()].map((source) => source.clone(true)) : []
+}
+
 /** A fresh bush clone, or null until the model has loaded. */
 export function cloneBush(): THREE.Object3D | null {
   return models ? models.bush.clone(true) : null

@@ -104,9 +104,11 @@ export function createCareGameDom(): CareGameDom {
     showIntro(kind, subject): void {
       reveal();
       const copy = CARE_GAME_COPY[kind];
+      const keys = copy.keysLine && window.matchMedia("(hover: hover) and (pointer: fine)").matches
+        ? `<span class="cg-keys">${escapeHtml(copy.keysLine)}</span>` : "";
       intro.innerHTML =
         `<div class="cg-burst"></div><div class="cg-command"><span class="cg-subject">${escapeHtml(subject)}</span>` +
-        `<span class="cg-word">${escapeHtml(copy.command)}</span><span class="cg-goal">${escapeHtml(copy.goalLine)}</span></div>`;
+        `<span class="cg-word">${escapeHtml(copy.command)}</span><span class="cg-goal">${escapeHtml(copy.goalLine)}</span>${keys}</div>`;
       window.clearTimeout(introTimer);
       intro.classList.remove("cg-show", "cg-leave");
       // Restart the animations even when the same card shows twice in a row.

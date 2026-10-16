@@ -39,6 +39,12 @@ export interface CareGameScene {
   pointerUp(): void
   /** The round just ended: play the scene's own beat (beetles flee, shoots fall). */
   finish(won: boolean): void
+  /**
+   * Templates the scene clones mid-round that are not in its scene yet (a
+   * dewdrop, a puff of fluff). The player shows them to the shader precompile
+   * so the first spawn does not stall. Cast critters are warmed already.
+   */
+  readonly warm?: readonly THREE.Object3D[]
   /** Debug harness: a snapshot of the scene's own state, for scripted play. Optional. */
   debug?(): unknown
   /**

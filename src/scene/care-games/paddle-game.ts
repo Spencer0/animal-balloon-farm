@@ -4,9 +4,9 @@ import {
   PADDLE_HOP_SECONDS,
   PADDLE_LANE_SPACING,
   PADDLE_REACH,
-  buildPaddleCourse,
   paddleAirborne,
   paddleContactTime,
+  paddleCourseFor,
   paddleDistance,
   paddleLaneX,
   paddleOutcome,
@@ -26,9 +26,12 @@ import type { CareGameContext, CareGameScene } from './care-game-types'
  * arrow keys, A and D). Three knocks and the frog is out.
  *
  * The camera sits low behind the frog and the stream runs away from it. The
- * water lily waits at the far end and grows nearer as the round goes on; on the
- * win the frog hops onto its pad. Every beat is keyed to the round's own clock
- * (`rules.seconds - timeLeft`), so the course is the same at any frame rate.
+ * water lily is the finish line: it waits on the horizon, then the stream
+ * carries the frog to it as the clock runs out, and the frog hops onto its pad.
+ * The round is a run to the end (`toTheEnd` in the rules): arrive with the
+ * goal's worth of mosquitoes snapped to win. Every beat is keyed to the round's
+ * own clock (`rules.seconds - timeLeft`), so the course is the same at any
+ * frame rate.
  */
 
 const FROG_SCALE = 0.85
@@ -45,8 +48,12 @@ const TONGUE_HOLD = 0.12
 const TONGUE_RETRACT = 0.22
 /** The frog model faces the camera at rest; a half turn shows its back, so it swims away down the stream. */
 const FROG_AWAY = Math.PI
+/** The lily waits this far ahead on the horizon until the stream really brings it nearer. */
 const LILY_FAR = 13
-const LILY_NEAR = 1.3
+/** How far ahead of the frog the lily's pad stops when the clock runs out; the frog hops the rest. */
+const LILY_ARRIVE = 0.55
+/** Where the pad settles under the frog: a little ahead, so the frog sits on its near edge, clear of the stem. */
+const LILY_LANDED = 0.32
 const WATER_Y = 0.01
 const PAD_Y = 0.1
 const STREAM_HALF_WIDTH = 0.58
@@ -63,7 +70,10 @@ const CAMERA_Y = 0.5
 /** A beat is hidden once it has passed the frog (it flies off past the camera), or while it is still lost in the fog. */
 const SHOW_NEAR = 0.3
 const SHOW_FAR = -24
-const FROG_LAND_AT = 0.8
+/** The finish beats, in game seconds (the outro plays at a third of real speed). */
+const FROG_LAND_AT = 0.1
+const FROG_LAND_SECONDS = 0.35
+const FROG_TURN_SECONDS = 0.3
 const HOP_HEIGHT = 0.13
 
 interface Item {
@@ -221,7 +231,7 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
   }
 
   // ---- the course: each beat is a mosquito, a snag or a log
-  const beats = buildPaddleCourse(Math.random, rules.seconds)
+  const beats = paddleCourseFor(Math.random, rules.seconds, rules.goal)
   const items: Item[] = beats.map((beat, index) => {
     const kind: CareCritterName<'water'> = beat.kind === 'mosquito' ? 'mosquito' : beat.kind === 'snag' ? 'snag' : 'log'
     const object = cloneCastCritter('water', kind) ?? placeholder(beat.kind, `Paddle ${beat.kind} ${index + 1}`)
@@ -256,7 +266,8 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
   let scrollRate = 1
   let elapsed = 0
   let lilyAhead = LILY_FAR
-  let finishing: 'won' | 'lost' | null = null
+  /** How the round ended: won at the lily, arrived hungry, or knocked out (or given up) on the way. */
+  let finishing: 'won' | 'hungry' | 'knocked' | null = null
   let finishClock = 0
   let landed = false
   let rippleClock = 0
@@ -274,6 +285,7 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
     const next = paddleStepLane(lane, direction)
     if (next === lane) return
     lane = next
+    frogTargetX = paddleLaneX(lane)
     sfx.play('swish')
     spawnRipple(frogRig.position.x, 0, 0.12, 0.45)
   }
@@ -329,7 +341,7 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
 
   /** Where a beat is now: it reaches the frog's z = 0 at its own time, and the stream carries it on. */
   function place(item: Item, now: number, dt: number): void {
-    const z = -(paddleDistance(item.beat.at) - scroll)
+    const z = -(paddleDistance(item.beat.at, rules.seconds) - scroll)
     const kind = item.beat.kind
     if (kind === 'mosquito') {
       item.object.position.set(item.centreX, 0.1 + Math.sin(now * 9 + item.beat.at) * 0.018, z)
@@ -401,6 +413,10 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
   }
 
   return {
+    // Long enough to see the frog land on the pad before the stamp; a knock-out is a shorter beat.
+    get outroSeconds(): number {
+      return finishing === 'knocked' ? 1.3 : 2.3
+    },
     update(dt): void {
       if (disposed) return
       const snapshot = context.round.snapshot
@@ -409,10 +425,11 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
 
       // The stream: its distance follows the round's clock, then runs on after the round.
       if (finishing === null) {
-        scroll = paddleDistance(elapsed)
+        scroll = paddleDistance(elapsed, rules.seconds)
       } else {
-        scroll += paddleSpeed(elapsed) * dt * scrollRate
-        scrollRate += ((finishing === 'won' ? 0.18 : 2.4) - scrollRate) * (1 - Math.exp(-dt * 3))
+        // The stream eases to a stop: at the lily, or around a knocked-out frog.
+        scroll += paddleSpeed(elapsed, rules.seconds) * dt * scrollRate
+        scrollRate *= Math.exp(-dt * (finishing === 'knocked' ? 2.5 : 4))
       }
       for (const item of items) place(item, elapsed, dt)
       reedList.forEach((reed, index) => {
@@ -431,9 +448,13 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
       cattails.instanceMatrix.needsUpdate = true
       streamTexture.offset.y = scroll * 0.5
 
-      // The lily: far at the start, nearer as the round goes on.
-      const lilyTarget = finishing === 'won' ? 0 : THREE.MathUtils.lerp(LILY_FAR, LILY_NEAR, Math.min(1, snapshot.hits / rules.goal))
-      lilyAhead += (lilyTarget - lilyAhead) * (1 - Math.exp(-dt * (finishing ? 4 : 3)))
+      // The lily is the finish line: on the horizon at the start, then carried in
+      // by the stream so it reaches the frog as the clock runs out.
+      if (finishing === null || finishing === 'knocked') {
+        lilyAhead = Math.min(LILY_FAR, paddleDistance(rules.seconds, rules.seconds) - scroll + LILY_ARRIVE)
+      } else {
+        lilyAhead += (LILY_LANDED - lilyAhead) * (1 - Math.exp(-dt * 5))
+      }
       lilyHolder.position.set(0, 0, -lilyAhead)
 
       // The frog: lane eases, a lean, a paddle bob, a hop, a blink after a knock.
@@ -445,10 +466,9 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
       const lean = THREE.MathUtils.clamp(-(frogTargetX - frogRig.position.x) * 2.2, -0.5, 0.5)
       frogRig.rotation.z = lean + Math.sin(elapsed * 9) * 0.05
       frogRig.position.y = WATER_Y + 0.004 + Math.sin(elapsed * 6) * 0.008 + hopHeight
-      // A knock blinks the frog; after the round the frog is gone once it has bolted.
-      const bolted = finishing === 'lost' && finishClock > 1.2
-      const blinking = elapsed < blinkUntil && Math.floor(elapsed * 12) % 2 === 1
-      frogRig.visible = !bolted && !blinking
+      // A knock blinks the frog.
+      const blinking = finishing === null && elapsed < blinkUntil && Math.floor(elapsed * 12) % 2 === 1
+      frogRig.visible = !blinking
       frog.rotation.y = FROG_AWAY + Math.sin(elapsed * 7) * 0.06
       if (elapsed < spinUntil) frog.rotation.y += ((spinUntil - elapsed) / SPIN_SECONDS) * Math.PI * 2
       frogShadow.position.set(frogRig.position.x, WATER_Y + 0.003, 0)
@@ -487,25 +507,28 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
       // The finish beats.
       if (finishing !== null) {
         finishClock += dt
-        if (finishing === 'won') {
+        if (finishing === 'knocked') {
+          // Dazed: the frog stays in its lane, spinning slowly as the stream stops around it.
+          frog.rotation.y = FROG_AWAY + finishClock * 2.2
+          frogRig.position.y = WATER_Y + 0.004 + Math.sin(finishClock * 4) * 0.01
+        } else {
           frogTargetX = 0
-          // The frog hops from the lane onto the pad.
-          const landing = Math.min(1, Math.max(0, (finishClock - FROG_LAND_AT) / 0.6))
+          // The frog hops from its lane onto the pad.
+          const landing = Math.min(1, Math.max(0, (finishClock - FROG_LAND_AT) / FROG_LAND_SECONDS))
           frogRig.position.y = WATER_Y + 0.004 + (PAD_Y - WATER_Y - 0.004) * landing + Math.sin(Math.PI * landing) * 0.22
           if (landing >= 1 && !landed) {
             landed = true
-            stage.bounce(0.7)
-            stage.sparkle()
-            sfx.play('win')
-            bursts.add(createBurst(new THREE.Vector3(0, PAD_Y, 0), {
-              count: 16, colors: ['#ffffff', '#cdeff7', '#fff3b0'], size: 0.03, speed: [0.9, 1.7], lift: 0.7, gravity: 3, seconds: 0.7, onTop: true,
-            }), root)
+            stage.bounce(finishing === 'won' ? 0.7 : 0.25)
+            if (finishing === 'won') {
+              stage.sparkle()
+              bursts.add(createBurst(new THREE.Vector3(0, PAD_Y, 0), {
+                count: 16, colors: ['#ffffff', '#cdeff7', '#fff3b0'], size: 0.03, speed: [0.9, 1.7], lift: 0.7, gravity: 3, seconds: 0.7, onTop: true,
+              }), root)
+            }
           }
-          if (landed) frog.rotation.y = FROG_AWAY + Math.min(1, (finishClock - FROG_LAND_AT - 0.6) / 0.9) * Math.PI * 2
-        } else {
-          // The frog bolts for the bank, bouncing away from the stream.
-          frogTargetX = (frogRig.position.x >= 0 ? 1 : -1) * 0.9
-          frogRig.position.y = WATER_Y + 0.004 + Math.abs(Math.sin(finishClock * 9)) * 0.16
+          // A winner twirls on the pad; a hungry frog turns round to look back down the stream.
+          const turn = landed ? Math.min(1, (finishClock - FROG_LAND_AT - FROG_LAND_SECONDS) / FROG_TURN_SECONDS) : 0
+          frog.rotation.y = FROG_AWAY + turn * (finishing === 'won' ? Math.PI * 2 : Math.PI)
         }
       }
       frame(dt)
@@ -527,10 +550,12 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
       gesture()
     },
     finish(won): void {
-      finishing = won ? 'won' : 'lost'
+      const reason = context.round.snapshot.lossReason
+      finishing = won ? 'won' : reason === 'score' ? 'hungry' : 'knocked'
       finishClock = 0
       pressed.active = false
-      if (!won) sfx.play('thunk')
+      hopStart = null
+      if (finishing === 'knocked') sfx.play('thunk')
     },
     dispose(): void {
       if (disposed) return
@@ -556,7 +581,7 @@ export function createPaddleGame(context: CareGameContext): CareGameScene {
             lanes: [...item.beat.lanes],
             at: item.beat.at,
             contact: item.contact,
-            z: Number((-(paddleDistance(item.beat.at) - scroll)).toFixed(3)),
+            z: Number((-(paddleDistance(item.beat.at, rules.seconds) - scroll)).toFixed(3)),
           })),
       }
     },
