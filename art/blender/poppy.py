@@ -2,6 +2,7 @@
 
 Run from repository root:
   blender --background --factory-startup --python art/blender/poppy.py
+Add `-- --cycles` to render the review on the CPU where EEVEE has no GPU.
 
 Regenerates, in public/assets/plants/:
   poppy.blend        editable source
@@ -176,10 +177,10 @@ M = {
     "leafPale": make_material("PP leaf underside", "#93b685", .6, 0, .2),
     "stem": make_material("PP stem", "#6c9a5a", .5, 0, .2),
     "bud": make_material("PP bud", "#7fa86a", .55, 0, .3),
-    "budSlit": make_material("PP bud slit", "#e8553f", .45, 0, .3),
+    "budSlit": make_material("PP bud slit", "#e03a28", .45, 0, .3),
     # One material for every petal, so the game can tint the poppy if it ever wants to.
-    "petal": make_material("PP petal", "#e8553f", .42, 0, .45),
-    "petalDeep": make_material("PP petal fold", "#c63d31", .45, 0, .4),
+    "petal": make_material("PP petal", "#e03a28", .42, 0, .45),
+    "petalDeep": make_material("PP petal fold", "#bf2c24", .45, 0, .4),
     "blotch": make_material("PP blotch", "#2b1e2c", .55, 0, .2),
     "pod": make_material("PP seed pod", "#b7cf86", .5, 0, .3),
     "podCap": make_material("PP pod cap", "#4b3956", .5, 0, .2),
@@ -332,6 +333,12 @@ for leaf_index, t in enumerate((.35, .65)):
 scene = bpy.context.scene
 engines = [item.identifier for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
 scene.render.engine = "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines else "BLENDER_EEVEE"
+if "--cycles" in sys.argv:
+    # For machines without a GPU (cloud containers), where EEVEE cannot start.
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = 64
+    scene.cycles.use_denoising = True
 scene.render.resolution_x, scene.render.resolution_y = 1400, 700
 scene.render.resolution_percentage = 100
 scene.eevee.taa_render_samples = 48
@@ -406,13 +413,13 @@ def stage_copy(location, stalk_scale, bud, bloom, aphids, shoot_shown, rosette_s
     for obj, dup in mapping.items():
         if obj.name.startswith("PP_stalk_") and obj.parent is poppy:
             dup.scale = (.6 + .4 * stalk_scale, .6 + .4 * stalk_scale, stalk_scale)
-        if obj.name.startswith("PP_head_") or obj.name.startswith("PP_aphids_"):
+        if obj.parent is poppy and obj.type == "EMPTY" and (obj.name.startswith("PP_head_") or obj.name.startswith("PP_aphids_")):
             # Ride the shortened stalk, as the game does.
             index = obj.name.rsplit("_", 1)[1]
             stalk = bpy.data.objects[f"PP_stalk_{index}"]
             offset = obj.location - stalk.location
             dup.location = stalk.location + Vector((offset.x * (.6 + .4 * stalk_scale), offset.y * (.6 + .4 * stalk_scale), offset.z * stalk_scale))
-        if obj.name.startswith("PP_head_") and bud and not bloom:
+        if obj.parent is poppy and obj.name.startswith("PP_head_") and bud and not bloom:
             # A bud nods over on its neck.
             dup.rotation_quaternion = obj.rotation_quaternion @ Euler((math.radians(150), 0, 0)).to_quaternion()
     mapping[rosette].scale = (rosette_scale, rosette_scale, rosette_scale)

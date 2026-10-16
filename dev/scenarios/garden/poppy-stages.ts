@@ -9,14 +9,15 @@ const STAGES = [0.12, 0.38, 0.249, 0.449, 0.619, 0.975] as const
 
 export const poppyStages: Scenario = {
   id: 'garden/poppy-stages',
-  description: 'Six Blender poppies in a row, left to right: a seedling on its bed, nodding buds, then one each asking for water (bowed), a pest swat (aphids) and a pinch (stray shoot), and the last opening into bloom. Click anywhere on a bed to select its poppy.',
+  description: 'Six Blender poppies in two rows of three, back row then front row: a seedling on its bed, nodding buds, then one each asking for water (bowed), a pest swat (aphids) and a pinch (stray shoot), and the last opening into bloom. Click anywhere on a bed to select its poppy.',
   async run(d) {
     d.closeMenu()
     d.grantSeeds(STAGES.length)
     // A fresh game has no plants, so these are instances 1..6.
-    STAGES.forEach((_, index) => d.plant('poppy', -3.5 + index * 1.4, 0))
+    // Two rows of three, a spacing ring apart.
+    STAGES.forEach((_, index) => d.plant('poppy', -1.65 + (index % 3) * 1.65, index < 3 ? -0.85 : 0.85))
     STAGES.forEach((growth, index) => d.setPlantGrowth(index + 1, growth))
     await pause(300)
-    d.focusPoint(0, 0, 8)
+    d.focusPoint(0, 0, 6)
   },
 }
