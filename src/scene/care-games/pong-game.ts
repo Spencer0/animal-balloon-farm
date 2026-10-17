@@ -33,7 +33,9 @@ const SOIL_Y = 0.8
 const SHOOT_Z = -1.5
 const SHOOT_HEIGHT = 0.62
 const PEA_SIZE = 0.14
+/** The vegetable's size in its planter: this tall, but never wider than this, so a broad potato hill leaves the shoots in view. */
 const PLANT_HEIGHT = 1.6
+const PLANT_WIDTH = 1.15
 /** Where an incoming pea bounces (its own half) and how high it flies. */
 const BOUNCE_AT = 0.65
 const NET_Z = -0.15
@@ -129,11 +131,12 @@ export function createPongGame(context: CareGameContext): CareGameScene {
   root.add(soil)
   const plantHolder = new THREE.Group()
   plantHolder.name = 'Pong vegetable'
-  plantHolder.position.set(0, SOIL_Y - 0.02, -1.85)
+  plantHolder.position.set(0, SOIL_Y - 0.02, -2)
   root.add(plantHolder)
   if (stage.plant) {
+    const size = new THREE.Box3().setFromObject(stage.plant).getSize(new THREE.Vector3())
     plantHolder.add(stage.plant)
-    plantHolder.scale.setScalar(PLANT_HEIGHT / Math.max(0.01, stage.plantHeight))
+    plantHolder.scale.setScalar(Math.min(PLANT_HEIGHT / Math.max(0.01, stage.plantHeight), PLANT_WIDTH / Math.max(0.01, size.x, size.z)))
   }
 
   // ---- the plant's bat: a big leaf that slides to meet the pea and swats it back.
@@ -470,7 +473,7 @@ export function createPongGame(context: CareGameContext): CareGameScene {
       sweetRing.visible = false
       if (didWin) {
         stage.bounce(1)
-        const at = new THREE.Vector3(0, SOIL_Y + PLANT_HEIGHT * 0.6, -1.78)
+        const at = new THREE.Vector3(0, SOIL_Y + PLANT_HEIGHT * 0.5, -2)
         bursts.add(createBurst(at, { count: 26, colors: ['#fff3b0', '#ffd24a', '#bff27a'], size: 0.05, speed: [0.8, 2], lift: 0.8, gravity: 2.5, seconds: 1, shape: 'star', onTop: true }), root)
       }
     },

@@ -22,16 +22,18 @@ import { rootCritter, standInMesh } from './root-cast'
  */
 
 /**
- * The view: a fixed camera distance; the view height grows on narrow windows so
- * the whole stack fits, the vegetable and the compost heap included. The top
- * tenth is left clear for the HUD bar.
+ * The view: a fixed camera distance, sized so the whole stack (from the lawn to
+ * the top of the rain barrel) fits below the round's HUD bar, whose share of
+ * the screen grows on a short phone screen, and so the vegetable and the
+ * compost heap fit across a narrow one.
  */
 const CAMERA_DISTANCE = 8
-const VIEW_CENTRE_Y = 3.2
-const MIN_VIEW_HEIGHT = 7.4
 const MIN_VIEW_WIDTH = 8.6
 /** The stack stands this high above the stage's lawn, so the bottom plank's low end clears the grass. */
 const LEVEL_Y = 0.3
+/** The world heights the view must show: a little lawn under the stack, and the rain barrel's top. */
+const VIEW_BOTTOM = -0.3
+const VIEW_TOP = LEVEL_Y + 4.98 + 0.72 + 0.15
 /** Depths: planks span the middle, barrels roll on them, the can and ladders stand in front. */
 const PLANK_DEPTH = 0.42
 const LADDER_Z = 0.24
@@ -60,10 +62,20 @@ export function createBarrelGame(context: CareGameContext): CareGameScene {
   /** A point in the stack's space to the world, for pop-up words. */
   const toWorld = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y + LEVEL_Y, z)
 
-  // ---- the framing: straight on, the whole stack in view whatever the window's shape.
-  const frame = { position: new THREE.Vector3(0, VIEW_CENTRE_Y, CAMERA_DISTANCE), look: new THREE.Vector3(0, VIEW_CENTRE_Y, 0), fov: 45 }
+  // ---- the framing: straight on, the whole stack in view below the HUD bar whatever the window's shape.
+  const frame = { position: new THREE.Vector3(0, 3, CAMERA_DISTANCE), look: new THREE.Vector3(0, 3, 0), fov: 45 }
+  const hud = document.querySelector<HTMLElement>('.cg-top')
+  let hudShare = 0.12
+  let hudClock = 0
   stage.setFraming((aspect) => {
-    const height = Math.max(MIN_VIEW_HEIGHT, MIN_VIEW_WIDTH / Math.max(0.2, aspect))
+    // The bar's laid-out height (its slide-in transform aside), measured now and then as its contents settle.
+    if (hud && hudClock-- <= 0) {
+      hudClock = 30
+      hudShare = THREE.MathUtils.clamp((hud.offsetTop + hud.offsetHeight + 12) / Math.max(1, window.innerHeight), 0.05, 0.4)
+    }
+    const height = Math.max((VIEW_TOP - VIEW_BOTTOM) / (1 - hudShare), MIN_VIEW_WIDTH / Math.max(0.2, aspect))
+    frame.position.y = VIEW_BOTTOM + height / 2
+    frame.look.y = frame.position.y
     frame.fov = THREE.MathUtils.radToDeg(2 * Math.atan(height / 2 / CAMERA_DISTANCE))
     return frame
   })
