@@ -9,8 +9,9 @@ import { createHelperFx, type HelperFx } from './care-helper-fx'
 import { createBurst, createBurstPool, springOut } from './garden-bursts'
 import { BANNER_HEIGHT, BANNER_WIDTH, CARE_MARKER_HEIGHT, CARE_MARKER_WIDTH, careMarkerTexture, disposePlantCareArt, maturityBannerTexture, maturitySealTexture } from './plant-care-art'
 import { createPlacementArt, type GhostModel } from './plant-placement-art'
-import { cloneBush, loadGardenModels, loadPoppyModel } from './plant-models'
+import { cloneBush, isRootVegetable, loadGardenModels, loadPoppyModel, loadRootVegetables } from './plant-models'
 import { cloneGrownPoppy, createPoppyVisual, POPPY_GROWN_SCALE, poppyHeight } from './poppy-visual'
+import { cloneGrownRootVegetable, createRootVisual, ROOT_GROWN_SCALE, rootVegetableHeight } from './root-visual'
 
 export interface PlantPointerEvent {
   readonly clientX: number
@@ -91,7 +92,7 @@ interface PlantVisual {
   sealGrow: number
   readonly plantNumber: number
   markerPosition: THREE.Vector3
-  /** The Blender model that grows itself, for species that have one (blueberry, poppy). */
+  /** The Blender model that grows itself, for species that have one (blueberry, poppy, the root vegetables). */
   readonly modeled: BlueberryVisual | null
   /**
    * An invisible column over the plant's footprint that clicks and hovers test
@@ -373,10 +374,10 @@ function makePlantModel(species: PlantId): THREE.Group {
  * Free it with `disposePlantModel`.
  */
 export function clonePlantModel(species: PlantId): THREE.Group {
-  const poppy = species === 'poppy' ? cloneGrownPoppy() : null
+  const poppy = species === 'poppy' ? cloneGrownPoppy() : isRootVegetable(species) ? cloneGrownRootVegetable(species) : null
   if (poppy) {
     const model = new THREE.Group()
-    model.name = 'Plant · poppy'
+    model.name = `Plant · ${species}`
     model.add(poppy)
     // The clone shares the loaded template's geometry and materials.
     model.userData.sharedModel = true
@@ -412,6 +413,9 @@ function disposePlantVisual(visual: PlantVisual): void {
 const MODELED_PLANTS: Partial<Record<PlantId, { readonly create: () => BlueberryVisual; readonly grownScale: number }>> = {
   blueberry: { create: createBlueberryVisual, grownScale: BLUEBERRY_GROWN_SCALE },
   poppy: { create: createPoppyVisual, grownScale: POPPY_GROWN_SCALE },
+  carrot: { create: () => createRootVisual('carrot'), grownScale: ROOT_GROWN_SCALE },
+  potato: { create: () => createRootVisual('potato'), grownScale: ROOT_GROWN_SCALE },
+  onion: { create: () => createRootVisual('onion'), grownScale: ROOT_GROWN_SCALE },
 }
 
 /** A Blender model in a plant group; the model grows itself, the group only places it. */
@@ -444,6 +448,10 @@ function makeGhostModel(species: PlantId): GhostModel | null {
     const poppy = cloneGrownPoppy()
     return poppy ? { object: poppy, dispose: () => {} } : null
   }
+  if (isRootVegetable(species)) {
+    const vegetable = cloneGrownRootVegetable(species)
+    return vegetable ? { object: vegetable, dispose: () => {} } : null
+  }
   if (species === 'blueberry') {
     const bush = cloneBush()
     if (!bush) return null
@@ -463,6 +471,7 @@ function makeGhostModel(species: PlantId): GhostModel | null {
 function plantHeight(plant: GardenPlant, groundCover: boolean, scale: number): number {
   if (plant.species === 'blueberry') return 0.92 * BLUEBERRY_GROWN_SCALE * (0.32 + 0.68 * plant.growth)
   if (plant.species === 'poppy') return POPPY_GROWN_SCALE * poppyHeight(plant.growth)
+  if (isRootVegetable(plant.species)) return ROOT_GROWN_SCALE * rootVegetableHeight(plant.species, plant.growth)
   return (groundCover ? 0.3 : 1) * scale
 }
 
@@ -488,9 +497,10 @@ export function createGardenPlants(
   const bursts = createBurstPool()
   let careHandlers: PlantCareHandlers | null = null
   let answeringId: number | null = null
-  // The bush, the poppy and the minigame cast load early, so a plant is never planted invisible.
+  // The bush, the poppy, the root vegetables and the minigame cast load early, so a plant is never planted invisible.
   void loadGardenModels().catch(() => {})
   void loadPoppyModel().catch(() => {})
+  void loadRootVegetables().catch(() => {})
   let selectedSpecies: PlantId | null = null
   let previewVisible = false
   let hoveredPlantId: number | null = null

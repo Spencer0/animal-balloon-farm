@@ -1,11 +1,12 @@
-export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily' | 'blueberry'
+export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily' | 'blueberry' | 'carrot' | 'potato' | 'onion'
 export type PlantCare = 'water' | 'prune' | 'pest'
 /**
  * What kind of plant it is. Each type has its own three care minigames (see
  * `CARE_GAMES` in `care-minigames.ts`): a flower's bee run, a bush's rain cloud
- * and beetle swat, a water plant's dragonfly skim.
+ * and beetle swat, a water plant's dragonfly skim, a root vegetable's barrel
+ * climb, bug breakout and trim pong.
  */
-export type PlantType = 'flower' | 'bush' | 'water'
+export type PlantType = 'flower' | 'bush' | 'water' | 'root'
 
 /** Every care kind, in the order a care marker or a shop list shows them. */
 export const PLANT_CARE_KINDS: readonly PlantCare[] = ['water', 'pest', 'prune']
@@ -93,6 +94,32 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
     minigames: true,
     fruit: { count: 6, regrowSeconds: 60 },
   },
+  // The root vegetables: what you see is the leafy top and a shoulder of the
+  // root pushing up through its bed. Each asks for all three chores, in its own order.
+  {
+    id: 'carrot', name: 'Carrot', subtitle: 'A sweet orange root',
+    description: 'Plant in bare soil. Fetch it water, trim its feathery top, and squash the root bugs, and an orange shoulder pushes up through the bed.',
+    color: '#ec8a2c', substrate: 'soil', careType: 'root', spacingRadius: 0.56,
+    growthSeconds: 110,
+    care: [{ at: 0.22, kind: 'water' }, { at: 0.48, kind: 'prune' }, { at: 0.74, kind: 'pest' }],
+    minigames: true,
+  },
+  {
+    id: 'potato', name: 'Potato', subtitle: 'A hearty hill of tubers',
+    description: 'Plant in bare soil. Squash the striped beetles, fetch it water, and trim its leggy runners, and a hill of potatoes swells underneath.',
+    color: '#b98a55', substrate: 'soil', careType: 'root', spacingRadius: 0.62,
+    growthSeconds: 130,
+    care: [{ at: 0.25, kind: 'pest' }, { at: 0.5, kind: 'water' }, { at: 0.76, kind: 'prune' }],
+    minigames: true,
+  },
+  {
+    id: 'onion', name: 'Onion', subtitle: 'A red bulb in layers',
+    description: 'Plant in bare soil. Fetch it water, shoo off the onion flies, and snap off its flower stalk so the bulb grows fat.',
+    color: '#a8466e', substrate: 'soil', careType: 'root', spacingRadius: 0.5,
+    growthSeconds: 120,
+    care: [{ at: 0.3, kind: 'water' }, { at: 0.55, kind: 'pest' }, { at: 0.78, kind: 'prune' }],
+    minigames: true,
+  },
 ] as const
 
 /** The shed starts empty: seeds are bought at the shop, never handed out. */
@@ -115,6 +142,9 @@ export const SEED_PRICES: Readonly<Record<PlantId, number>> = {
   poppy: 5,
   'water-lily': 7,
   blueberry: 12,
+  carrot: 6,
+  potato: 8,
+  onion: 7,
 }
 export const PLANT_WATER_MIN_DEPTH = 0.04
 const PLANT_SPACING_GAP = 0.12

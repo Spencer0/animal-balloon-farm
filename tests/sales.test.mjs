@@ -50,7 +50,7 @@ test('only settled, standard residents can be sold — never wild or in-flourish
 })
 
 test('sale prices are fixed by plant and animal species', () => {
-  assert.deepEqual(sales.PLANT_SALE_PRICES, { clover: 5, dandelion: 5, poppy: 7, 'water-lily': 9, blueberry: 26 })
+  assert.deepEqual(sales.PLANT_SALE_PRICES, { clover: 5, dandelion: 5, poppy: 7, 'water-lily': 9, blueberry: 26, carrot: 9, potato: 12, onion: 10 })
   assert.deepEqual(sales.ANIMAL_SALE_PRICES, {
     goose: 18,
     cow: 24,

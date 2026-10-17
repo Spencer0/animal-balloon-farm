@@ -285,9 +285,9 @@ export function createCareGamePlayer(renderer: FarmRenderer, dom: CareGameDom, r
     // The bush's own model is already loaded with the garden: start at once.
     prepareRound()
   } else {
-    // The cast critters load on first use; the command card waits for them.
+    // The cast critters (and a root vegetable's own model) load on first use; the command card waits for them.
     const castType: CareCastType = stage.type
-    void loadCareCast(castType).then(() => {
+    void Promise.all([loadCareCast(castType), stage.ready]).then(() => {
       if (!disposed && phase === 'loading') prepareRound()
     })
   }

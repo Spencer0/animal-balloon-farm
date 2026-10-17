@@ -219,6 +219,28 @@ blender --background --factory-startup --python art/blender/poppy.py
 ```
 
 The second plant built like the bush, and the template for the small flowers: a small bed of tilled soil and pebbles (much smaller than the bush's mound, but enough to see and click on bare soil), a lobed rosette, and three stalks whose heads go from nodding hairy bud to scarlet cup. Care shows on the plant itself: aphids on the stalks (`PP_aphids_N`) and a leggy stray shoot (`PP_shoot`). A stalk stretches as it grows, so its head and aphids are siblings that the game keeps riding the stalk's tip (`src/scene/poppy-visual.ts`); the docstring lists every node name. The review render shows four moments of its life side by side.
+## Root vegetables: carrot, potato, onion
+
+- Authoring script: [`root_vegetables.py`](root_vegetables.py)
+- Outputs in `../../public/assets/plants/`: `<id>.blend`, `<id>-review.png`, `<id>.glb` for each of `carrot`, `potato` and `onion`
+
+```powershell
+blender --background --factory-startup --python art/blender/root_vegetables.py
+```
+
+A root vegetable keeps its prize underground, so each model is its recognisable top over a shoulder of root pushing up through a soil bed: feathery fronds over an orange shoulder, a bushy hill of broad leaves with tubers peeking out (and white blossoms once grown), and tall hollow leaves over a fat red bulb. All three share one set of node names under `RV_root` (`RV_mound`, `RV_crown`, `RV_leaf_N`, `RV_flowers`, `RV_pests`, `RV_shoot`), so `src/scene/root-visual.ts` grows them all the same way: each leaf pivots at its base and grows along its own length, bugs show while pests are about, and `RV_shoot` is what a trim takes off (a bolting umbel, a leggy runner, a flower stalk). Name vegetables after `--` to rebuild only those; add `--cycles` to render the review on the CPU. The seed packets come from `shed_icons.py -- --cycles carrot potato onion`.
+
+## Root vegetable care cast (barrel climb, bug breakout, trim pong)
+
+- Authoring script: [`root_care_cast.py`](root_care_cast.py)
+- Outputs in `../../public/assets/plants/`: `root-care-cast.blend`, `root-care-cast-review.png`, `root-care-cast.glb`
+
+```powershell
+blender --background --factory-startup --python art/blender/root_care_cast.py
+```
+
+One root per critter, like the flower and water casts: trim pong's pea, trowel and wild shoot; bug breakout's hoe, pebble, grub, striped beetle and two-hit shellbug; and the barrel climb's barrel, the barrel-thieving gopher (`arm_L` / `arm_R` throw pivots), the watering-can hero (`leg_L` / `leg_R` stride pivots) and the rain barrel. Steel and brass stay mostly diffuse (low metallic), because the minigame stage has no environment map and a fully metallic part renders near black there. The docstring lists every node name the game reads.
+
 ## Food web icons (goods, foods, hunger bubbles)
 
 - Authoring script: [`goods_icons.py`](goods_icons.py); outputs `../../public/assets/goods/*.png` (128x128, transparent, 10-20 KB each).

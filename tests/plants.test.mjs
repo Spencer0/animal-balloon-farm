@@ -19,7 +19,7 @@ const stockedSimulation = () => {
 const surface = (substrate, waterDepth = 0, inBounds = true) => ({ substrate, waterDepth, inBounds })
 
 test('catalog lists every plant and the seed shed starts empty', () => {
-  assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily', 'blueberry'])
+  assert.deepEqual(PLANT_CATALOG.map(({ id }) => id), ['clover', 'dandelion', 'poppy', 'water-lily', 'blueberry', 'carrot', 'potato', 'onion'])
   const simulation = createPlantSimulation()
   for (const species of PLANT_CATALOG) {
     const gift = STARTING_SEED_GIFTS.find((entry) => entry.species === species.id)
@@ -150,18 +150,18 @@ test('poppy asks for a drink, a pest shoo and a prune during growth, then mature
 })
 
 test('every species has a care type and plays a minigame for each chore it asks for', () => {
-  const types = new Set(['flower', 'bush', 'water'])
+  const types = new Set(['flower', 'bush', 'water', 'root'])
   for (const species of PLANT_CATALOG) {
     assert.ok(types.has(species.careType), `${species.id} has a care type`)
     assert.equal(species.minigames, true, `${species.id} plays minigames`)
     for (const stop of species.care) assert.ok(['water', 'pest', 'prune'].includes(stop.kind), `${species.id} asks a known chore`)
   }
-  const byType = Object.fromEntries(['flower', 'bush', 'water'].map((type) => [type, PLANT_CATALOG.filter((species) => species.careType === type).map(({ id }) => id)]))
-  assert.deepEqual(byType, { flower: ['clover', 'dandelion', 'poppy'], bush: ['blueberry'], water: ['water-lily'] })
+  const byType = Object.fromEntries(['flower', 'bush', 'water', 'root'].map((type) => [type, PLANT_CATALOG.filter((species) => species.careType === type).map(({ id }) => id)]))
+  assert.deepEqual(byType, { flower: ['clover', 'dandelion', 'poppy'], bush: ['blueberry'], water: ['water-lily'], root: ['carrot', 'potato', 'onion'] })
 })
 
-test('every flower and water plant asks for all three chores, so each type uses all three games', () => {
-  for (const id of ['poppy', 'water-lily']) {
+test('every flower, water and root plant asks for all three chores, so each type uses all three games', () => {
+  for (const id of ['poppy', 'water-lily', 'carrot', 'potato', 'onion']) {
     const kinds = PLANT_CATALOG.find((species) => species.id === id).care.map((stop) => stop.kind)
     assert.deepEqual([...new Set(kinds)].sort(), ['pest', 'prune', 'water'], id)
   }
@@ -258,4 +258,25 @@ test('a saved bush waiting on its beetles is still waiting after a reload', () =
   const restored = createPlantSimulation()
   restored.importState(JSON.parse(JSON.stringify(simulation.exportState())))
   assert.equal(restored.plants[0].careNeeded, 'pest')
+})
+
+test('root vegetables grow in bare soil and ask each chore once, each in its own order', () => {
+  const simulation = stockedSimulation()
+  const orders = {}
+  for (const [index, id] of ['carrot', 'potato', 'onion'].entries()) {
+    assert.equal(simulation.placementResult(id, index * 3, 0, surface('grass')).failure, 'wrong-substrate')
+    const plant = simulation.plant(id, index * 3, 0, surface('soil'))
+    assert.ok(plant, id)
+    orders[id] = []
+  }
+  for (let step = 0; step < 400; step += 1) {
+    simulation.tick(1)
+    for (const plant of simulation.plants) {
+      if (!plant.careNeeded) continue
+      orders[plant.species].push(plant.careNeeded)
+      assert.equal(simulation.resolveCare(plant.instanceId, plant.careNeeded), true)
+    }
+  }
+  assert.deepEqual(orders, { carrot: ['water', 'prune', 'pest'], potato: ['pest', 'water', 'prune'], onion: ['water', 'pest', 'prune'] })
+  assert.ok(simulation.plants.every((plant) => plant.mature))
 })

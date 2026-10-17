@@ -13,6 +13,9 @@
  *   water  skim (water)   a dragonfly climbs and sinks over the pond; catch the dew
  *          paddle (pest) a frog swims up the stream in lanes; snap the mosquitoes
  *          rope  (prune)  the lily's runner whips round the pad; hop each pass
+ *   root   barrel (water) climb the planks to the gopher's stolen rain barrel; jump his barrels
+ *          breakout (pest) bounce a pebble off a hoe to squash the rows of bugs
+ *          pong  (prune)  rally a pea with the leaves; a timed smack snips a wild shoot
  *
  * The scenes (`src/scene/care-games/`) only report what happened (a hit, a
  * miss, a harm, a beetle that left); this module decides the outcome, so the
@@ -22,15 +25,16 @@
 import { plantSpecies, type PlantCare, type PlantId, type PlantType } from './plants'
 
 /** Every close-up or farm-side care game. */
-export type CareGameKind = 'rain' | 'swat' | 'snip' | 'buzz' | 'hop' | 'chop' | 'skim' | 'paddle' | 'rope'
+export type CareGameKind = 'rain' | 'swat' | 'snip' | 'buzz' | 'hop' | 'chop' | 'skim' | 'paddle' | 'rope' | 'barrel' | 'breakout' | 'pong'
 
-export const CARE_GAME_KINDS: readonly CareGameKind[] = ['rain', 'swat', 'snip', 'buzz', 'hop', 'chop', 'skim', 'paddle', 'rope']
+export const CARE_GAME_KINDS: readonly CareGameKind[] = ['rain', 'swat', 'snip', 'buzz', 'hop', 'chop', 'skim', 'paddle', 'rope', 'barrel', 'breakout', 'pong']
 
 /** Which game answers each chore, for each plant type. */
 export const CARE_GAMES: Readonly<Record<PlantType, Readonly<Record<PlantCare, CareGameKind>>>> = {
   bush: { water: 'rain', pest: 'swat', prune: 'snip' },
   flower: { water: 'buzz', pest: 'hop', prune: 'chop' },
   water: { water: 'skim', pest: 'paddle', prune: 'rope' },
+  root: { water: 'barrel', pest: 'breakout', prune: 'pong' },
 }
 
 /** The game a species plays for one of its chores. */
@@ -74,6 +78,12 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   paddle: { goal: 12, hearts: 3, misses: 0, seconds: 22, toTheEnd: true },
   // Ten passes skipped; two caught and the frog is out.
   rope: { goal: 10, hearts: 2, misses: 0, seconds: 22 },
+  // Five floors climbed (the last is the rain barrel's ledge); three barrels and the can is out.
+  barrel: { goal: 5, hearts: 3, misses: 0, seconds: 60 },
+  // Every bug in the bed squashed (see care-breakout.ts); three pebbles lost and it is over.
+  breakout: { goal: 15, hearts: 3, misses: 0, seconds: 60 },
+  // Eight wild shoots trimmed at a quick rally; three peas let past and it is over.
+  pong: { goal: 8, hearts: 3, misses: 0, seconds: 35 },
 }
 
 export interface CareGameCopy {
@@ -103,6 +113,27 @@ export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
     chore: 'the frog paddle',
   },
   rope: { command: 'JUMP!', goalLine: 'Hop each sweep of the runner. Ten passes, and do not get caught!', winLine: 'Nothing tripped the frog!', chore: 'the lily skip' },
+  barrel: {
+    command: 'CLIMB!',
+    goalLine: "A gopher stole the rain barrel! Climb to it and jump his barrels. Hold to walk and climb, tap to jump.",
+    keysLine: 'Arrow keys or WASD walk and climb ladders. Space jumps.',
+    winLine: 'Rain barrel reclaimed!',
+    chore: 'the barrel climb',
+  },
+  breakout: {
+    command: 'SQUASH!',
+    goalLine: 'Slide the hoe to bounce the pebble. Squash every bug in the bed. Shiny shells take two!',
+    keysLine: 'The pointer or the arrow keys slide the hoe. Space launches the pebble.',
+    winLine: 'Not a bug left!',
+    chore: 'the bug breakout',
+  },
+  pong: {
+    command: 'VOLLEY!',
+    goalLine: 'Get your trowel under the pea and smack it just as it arrives. Smacks snip wild shoots: trim eight!',
+    keysLine: 'Mouse or arrows move the trowel. Click or press Space to smack.',
+    winLine: 'A tidy top!',
+    chore: 'the trim pong',
+  },
 }
 
 /** How long the command card shows before play starts, in seconds. */
@@ -240,6 +271,9 @@ const LOSS_LINES: Readonly<Record<CareGameKind, Readonly<Partial<Record<CareLoss
   skim: { time: 'Out of time!', hearts: 'The dragonfly got knocked out of the air.' },
   paddle: { score: 'Made it to the lily, but still hungry. Snap more mosquitoes!', hearts: 'The frog got snagged too often.' },
   rope: { time: 'Out of time!', hearts: 'The runner caught the frog.' },
+  barrel: { time: 'The gopher kept the rain barrel.', hearts: 'Too many barrels knocked the can over.' },
+  breakout: { time: 'Out of time! The bugs kept nibbling.', hearts: 'Too many pebbles got past the hoe.' },
+  pong: { time: 'Out of time! Still a bit shaggy.', hearts: 'Too many peas got past the trowel.' },
 }
 
 /** One line on why a round was lost, for the result card. */
