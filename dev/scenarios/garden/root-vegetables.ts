@@ -31,6 +31,6 @@ export const rootVegetables: Scenario = {
       row.stops.forEach((growth, column) => d.setPlantGrowth(rowIndex * 3 + column + 1, growth))
     })
     await pause(300)
-    d.focusPoint(0, 0, 8)
+    d.focusPoint(0, 0, 5.2)
   },
 }
