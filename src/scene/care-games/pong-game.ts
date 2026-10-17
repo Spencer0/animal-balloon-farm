@@ -70,7 +70,7 @@ export function createPongGame(context: CareGameContext): CareGameScene {
   // ---- the framing: from behind the trowel, down the bench to the planter.
   stage.setFraming((aspect) => ({
     position: new THREE.Vector3(0, 1.72, 2.95),
-    look: new THREE.Vector3(0, 0.66, -0.55),
+    look: new THREE.Vector3(0, 0.84, -0.55),
     fov: aspect < 1.25 ? 50 * Math.min(1.75, 1.25 / aspect) : 50,
   }))
 
