@@ -13,6 +13,7 @@ test('each plant type plays its own three games, one per chore', () => {
     bush: { water: 'rain', pest: 'swat', prune: 'snip' },
     flower: { water: 'buzz', pest: 'hop', prune: 'chop' },
     water: { water: 'skim', pest: 'paddle', prune: 'rope' },
+    root: { water: 'barrel', pest: 'breakout', prune: 'pong' },
   })
   for (const type of Object.keys(CARE_GAMES)) {
     assert.deepEqual(Object.keys(CARE_GAMES[type]).sort(), [...PLANT_CARE_KINDS].sort(), type)
@@ -57,6 +58,24 @@ test('flower and water species play their own games', () => {
   assert.equal(careGameFor('water-lily', 'pest'), 'paddle')
   assert.equal(careGameFor('water-lily', 'prune'), 'rope')
   assert.equal(PLANT_CATALOG.find(({ id }) => id === 'poppy').careType, 'flower')
+})
+
+test('root vegetables play the barrel climb, the bug breakout and trim pong', () => {
+  for (const id of ['carrot', 'potato', 'onion']) {
+    assert.equal(PLANT_CATALOG.find((species) => species.id === id).careType, 'root')
+    assert.equal(careGameFor(id, 'water'), 'barrel')
+    assert.equal(careGameFor(id, 'pest'), 'breakout')
+    assert.equal(careGameFor(id, 'prune'), 'pong')
+  }
+  for (const kind of ['barrel', 'breakout', 'pong']) {
+    const round = createCareRound(kind)
+    for (let hit = 0; hit < CARE_GAME_RULES[kind].goal; hit += 1) round.hit()
+    assert.equal(round.snapshot.state, 'won', kind)
+    const hurt = createCareRound(kind)
+    for (let harm = 0; harm < CARE_GAME_RULES[kind].hearts; harm += 1) hurt.harm()
+    assert.equal(hurt.snapshot.lossReason, 'hearts', kind)
+    assert.notEqual(lossLine(kind, 'hearts'), 'So close!', kind)
+  }
 })
 
 test('new games: the chop loses on a low score; the flapping bee loses on bonks', () => {

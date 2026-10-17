@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { PlantId, PlantType } from '../../game/plants'
 import { plantSpecies } from '../../game/plants'
-import { cloneBush, cloneCritter, ownBerryMaterial, berryColor, type BushGroup } from '../plant-models'
+import { cloneBush, cloneCritter, isRootVegetable, loadRootVegetable, ownBerryMaterial, berryColor, type BushGroup } from '../plant-models'
 import { clonePlantModel, disposePlantModel } from '../garden-plants'
 
 /**
@@ -13,6 +13,7 @@ import { clonePlantModel, disposePlantModel } from '../garden-plants'
  *   bush   the Blender blueberry bush, at its own scale (the original stage)
  *   flower the species' own grown model, fitted to about 0.9 units tall, on the lawn
  *   water  the same, floating on a still pond with a soft rim and a few reeds
+ *   root   the vegetable's own grown model in its bed, fitted like a flower
  *
  * It renders with the farm's own renderer (like the cutscenes do), so it costs
  * no second GPU context and works on both the WebGPU and WebGL backends. Only
@@ -36,6 +37,12 @@ export interface CareStage {
   readonly plant: THREE.Object3D | null
   /** How tall the plant stands on the stage, in world units (0 with no plant). */
   readonly plantHeight: number
+  /**
+   * Resolves once the plant is on the stage. A root vegetable opened before its
+   * model has loaded (a debug URL skips the garden) joins the stage when it
+   * arrives; games are built after this, so they always see its height.
+   */
+  readonly ready: Promise<void>
   /** The bush on the stage (blueberry only), or null. Other plants have no bush. */
   readonly bush: THREE.Object3D | null
   readonly bushScale: number
@@ -233,15 +240,29 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
   let plant: THREE.Object3D | null = bush
   let plantHeight = 0
   let ownedPlantModel: THREE.Group | null = null
+  let ready: Promise<void> = Promise.resolve()
   if (bush) {
     plantHeight = new THREE.Box3().setFromObject(bush).getSize(new THREE.Vector3()).y
   } else if (type !== 'bush') {
-    // A bush whose model is not loaded yet shows no plant, as before; only other types fall back to the procedural model.
-    const model = clonePlantModel(species)
-    ownedPlantModel = model
     // A wrapper holds the plant's pivot, so a bounce scales it from the ground up.
     const wrapper = new THREE.Group()
     wrapper.name = `Stage plant · ${species}`
+    // Stand on the lawn, or float on the pond's surface.
+    wrapper.position.y = baseY
+    scene.add(wrapper)
+    plant = wrapper
+    const fit = (): void => {
+      if (ownedPlantModel) return
+      ownedPlantModel = fitPlant(wrapper)
+    }
+    // A root vegetable not loaded yet joins the stage when it arrives; a bush shows no plant, as before.
+    if (isRootVegetable(species)) ready = loadRootVegetable(species).then(fit, fit)
+    else fit()
+  }
+
+  /** The species' grown model in the wrapper, scaled to the stage height and centred on its footing. */
+  function fitPlant(wrapper: THREE.Group): THREE.Group {
+    const model = clonePlantModel(species)
     wrapper.add(model)
     model.updateMatrixWorld(true)
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3())
@@ -255,14 +276,9 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
     const centre = box.getCenter(new THREE.Vector3())
     model.position.set(-centre.x, -box.min.y, -centre.z)
     plantHeight = box.getSize(new THREE.Vector3()).y
-    // Stand on the lawn, or float on the pond's surface.
-    wrapper.position.y = baseY
-    scene.add(wrapper)
-    plant = wrapper
+    return model
   }
   const plantBaseScale = plant?.scale.x ?? 1
-  // Keep the plant's own model in the owned list so the stage disposes it.
-  const plantModel = ownedPlantModel
 
   const sparkleGeometry = new THREE.OctahedronGeometry(0.035, 0)
   const sparkleMaterial = new THREE.MeshBasicMaterial({ color: '#fff3b0', transparent: true, depthWrite: false })
@@ -295,7 +311,8 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
     camera,
     type,
     plant,
-    plantHeight,
+    get plantHeight() { return plantHeight },
+    ready,
     bush,
     bushScale,
     berryMaterial: berries,
@@ -401,8 +418,9 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
       camera.updateProjectionMatrix()
     },
     dispose(): void {
-      if (plantModel) {
-        const model = plantModel
+      // Keep the plant's own model in the owned list so the player frees it.
+      if (ownedPlantModel) {
+        const model = ownedPlantModel
         owned.push({ dispose: () => disposePlantModel(model) })
       }
       scene.clear()

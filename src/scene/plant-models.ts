@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import type { PlantId } from '../game/plants'
 import { mergeStaticMeshes } from './merge-static-meshes'
 
 /**
@@ -26,10 +27,13 @@ export const POPPY_URL = 'assets/plants/poppy.glb'
 export const CARE_CAST_URLS = {
   flower: 'assets/plants/flower-care-cast.glb',
   water: 'assets/plants/water-care-cast.glb',
+  root: 'assets/plants/root-care-cast.glb',
 } as const
 export const CARE_CAST_CRITTERS = {
   flower: ['bee', 'dewdrop', 'aphid', 'burr', 'thorn', 'shears', 'stalk'],
   water: ['dragonfly', 'frog', 'fish', 'cattail', 'mosquito', 'log', 'snag', 'runner_leaf'],
+  // art/blender/root_care_cast.py: trim pong, bug breakout and the barrel climb.
+  root: ['pea', 'trowel', 'shoot', 'hoe', 'pebble', 'grub', 'beetle', 'shellbug', 'barrel', 'gopher', 'can', 'rainbarrel'],
 } as const
 export type CareCastType = keyof typeof CARE_CAST_URLS
 /** A critter name in one cast; the GLB root is `CRITTER_<name>`. */
@@ -92,8 +96,8 @@ function prepareCritters(root: THREE.Object3D): Map<CritterName, THREE.Object3D>
   return critters
 }
 
-/** Nodes that move on their own inside a care critter: wings, shears' blades, a frog's tongue. */
-const CAST_PIVOTS = /^(wing_[LR]|blade_[AB]|tongue)$/
+/** Nodes that move on their own inside a care critter: wings, shears' blades, a frog's tongue, the can's legs, the gopher's arms. */
+const CAST_PIVOTS = /^(wing_[LR]|blade_[AB]|tongue|leg_[LR]|arm_[LR])$/
 
 function prepareCastCritter(node: THREE.Object3D): void {
   node.removeFromParent()
@@ -178,6 +182,63 @@ export function loadPoppyModel(): Promise<THREE.Object3D> {
 /** A fresh poppy clone in its fully grown pose, or null until the model has loaded. */
 export function clonePoppy(): THREE.Object3D | null {
   return poppyModel ? poppyModel.clone(true) : null
+}
+
+/**
+ * The root vegetables (art/blender/root_vegetables.py), one GLB each. They share
+ * one set of group names (see ROOT_PIVOTS), so one visual grows all three.
+ */
+export const ROOT_VEGETABLE_URLS = {
+  carrot: 'assets/plants/carrot.glb',
+  potato: 'assets/plants/potato.glb',
+  onion: 'assets/plants/onion.glb',
+} as const
+export type RootVegetableId = keyof typeof ROOT_VEGETABLE_URLS
+
+export function isRootVegetable(species: PlantId): species is RootVegetableId {
+  return species in ROOT_VEGETABLE_URLS
+}
+
+/** A root vegetable's groups: the bed, the root showing, each leaf, the potato's blossoms, the pests and the shoot a trim takes. */
+const ROOT_PIVOTS = /^RV_(mound|crown|leaf_\d+|flowers|flowers_\d+|pests|shoot)$/
+
+const rootModels = new Map<RootVegetableId, THREE.Object3D>()
+const rootPending = new Map<RootVegetableId, Promise<THREE.Object3D>>()
+
+/** Start loading one root vegetable (once) and resolve when it is ready. */
+export function loadRootVegetable(id: RootVegetableId): Promise<THREE.Object3D> {
+  const loaded = rootModels.get(id)
+  if (loaded) return Promise.resolve(loaded)
+  const existing = rootPending.get(id)
+  if (existing) return existing
+  const next = new GLTFLoader().loadAsync(ROOT_VEGETABLE_URLS[id]).then((gltf) => {
+    const model = gltf.scene.getObjectByName('RV_root') ?? gltf.scene
+    mergeStaticMeshes(model, { isPivot: (object) => ROOT_PIVOTS.test(object.name) })
+    model.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      object.castShadow = true
+      object.receiveShadow = true
+    })
+    rootModels.set(id, model)
+    return model
+  })
+  rootPending.set(id, next)
+  next.catch((error: unknown) => {
+    console.warn(`[plants] could not load the ${id}`, error)
+    rootPending.delete(id)
+  })
+  return next
+}
+
+/** Load all three root vegetables. */
+export function loadRootVegetables(): Promise<unknown> {
+  return Promise.all((Object.keys(ROOT_VEGETABLE_URLS) as RootVegetableId[]).map(loadRootVegetable))
+}
+
+/** A fresh clone of a root vegetable as authored (everything shown), or null until it has loaded. */
+export function cloneRootVegetable(id: RootVegetableId): THREE.Object3D | null {
+  const model = rootModels.get(id)
+  return model ? model.clone(true) : null
 }
 
 /** Start loading (once) and resolve when both models are ready. */

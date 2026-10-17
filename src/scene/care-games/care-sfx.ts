@@ -19,6 +19,12 @@ export type CareSound =
   | 'swish' | 'slurp' | 'splash' | 'thunk'
   // rope
   | 'hop' | 'splash' | 'swish'
+  // pong
+  | 'tock'
+  // breakout
+  | 'clack' | 'crack'
+  // barrel
+  | 'thud' | 'grunt' | 'climb' | 'ding' | 'pour'
 
 export interface CareSfx {
   play(sound: CareSound, pitch?: number): void
@@ -240,6 +246,40 @@ export function createCareSfx(): CareSfx {
         // rope
         case 'hop':
           tone('sine', 360, 760, now, 0.13, 0.22)
+          break
+        // pong: a hollow wooden tock, pitched by the swing's grade
+        case 'tock':
+          tone('sine', 900 * pitch, 520 * pitch, now, 0.07, 0.34)
+          hiss(now, 0.03, 0.2, 'bandpass', 2400, 1600, 2)
+          break
+        // breakout
+        case 'clack':
+          tone('triangle', 620 * pitch, 480 * pitch, now, 0.06, 0.22)
+          hiss(now, 0.02, 0.12, 'highpass', 3000, 2400)
+          break
+        case 'crack':
+          hiss(now, 0.08, 0.45, 'bandpass', 3200, 1400, 2.5)
+          tone('square', 300, 210, now, 0.06, 0.08)
+          break
+        // barrel
+        case 'thud':
+          tone('sine', 110 * pitch, 50 * pitch, now, 0.2, 0.32)
+          hiss(now, 0.1, 0.15, 'lowpass', 500, 150, 1)
+          break
+        case 'grunt':
+          tone('sawtooth', 180, 120, now, 0.18, 0.1)
+          tone('sine', 140, 95, now, 0.2, 0.22)
+          break
+        case 'climb':
+          tone('triangle', 700 * pitch, 640 * pitch, now, 0.04, 0.08)
+          break
+        case 'ding':
+          tone('sine', NOTE(84) * pitch, NOTE(84) * pitch, now, 0.25, 0.22)
+          tone('sine', NOTE(91) * pitch, NOTE(91) * pitch, now + 0.08, 0.3, 0.16)
+          break
+        case 'pour':
+          hiss(now, 1.4, 0.24, 'bandpass', 900, 2400, 0.6)
+          tone('sine', 392, 523, now + 0.1, 0.5, 0.08)
           break
       }
     },
