@@ -50,7 +50,7 @@ locked: tools, shop tabs and seeds, meters and chips.
   earth) and later flower-seekers.
 - **Systems on:** planting, watering, growing, selling plants, the plant
   overhaul (to be designed: more varieties, care, cross-pollinated colours).
-- **Ends when:** the garden has **10 grown plants**.
+- **Ends when:** the garden has **5 kinds of plant fully grown** (one plant each).
 
 ### 2. The Lay of the Land: terrain
 - **Unlocks:** the grass seeder (short lawn): after the chapter film, Pip
