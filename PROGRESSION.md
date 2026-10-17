@@ -94,7 +94,7 @@ Every plant type has its own three games (`CARE_GAMES`). The root vegetables
 | --- | --- | --- |
 | water | Barrel climb: walk and climb the planks to a gopher's stolen rain barrel, jumping his barrels | Reach 5 floors in 60 s; 3 barrels hit loses |
 | pest | Bug breakout: bounce a pebble off a hoe into rows of bugs | Squash all 15 (shelled ones take two hits) in 60 s; 3 pebbles lost loses |
-| prune | Trim pong: volley a pea with the leaves, tapping on time and aiming at wild shoots | Trim 6 shoots in 45 s; 3 peas let past loses |
+| prune | Trim pong: quick table tennis with the leaves; move the trowel under the pea and smack it on time, and a smack snips a wild shoot | Trim 8 shoots in 35 s; 3 peas let past loses |
 
 Prices scale with the species' seed price (`helperPrice`). The rules are pure and
 tested: `src/game/care-minigames.ts` (`tests/care-minigames.test.mjs`) and

@@ -1,21 +1,24 @@
 import * as THREE from 'three'
 import {
-  PONG_GOOD_WITHIN, PONG_HIT_FROM, PONG_PERFECT_WITHIN, PONG_SHOOT_HALF, PONG_SHOOT_LANES, PONG_SWEET,
-  createPongRally, pongShootHit, type PongEvent, type PongGrade, type PongShoot,
+  PONG_GOOD_WITHIN, PONG_PERFECT_WITHIN, PONG_REACH, PONG_SWEET_LEAD,
+  createPongRally, pongAim, pongInReach, pongSmackTarget, type PongEvent, type PongGrade, type PongShoot,
 } from '../../game/care-pong'
 import { createBurst } from '../garden-bursts'
 import type { CareGameContext, CareGameScene } from './care-game-types'
 import { glowTexture, rootCritter, standInMesh } from './root-cast'
 
 /**
- * VOLLEY! Trim pong: table tennis down a potting bench against the vegetable's
- * own overgrown top. The vegetable stands in a planter at the far end with wild
- * shoots sticking up across it; a big leaf bats a pea at you. Tap as the pea
- * reaches your trowel (a ring on the bench closes in on the sweet spot), and tap
- * on a shoot to aim the return at it: a pea that lands on a shoot snips it off.
+ * VOLLEY! Trim pong: quick table tennis down a potting bench against the
+ * vegetable's own overgrown top. The vegetable stands in a planter at the far
+ * end with wild shoots sticking up across it; a big leaf bats a pea at you,
+ * anywhere across the bench. Your trowel follows the pointer (or the arrows):
+ * get it onto the ring where the pea is coming and click as the ring closes to
+ * smack it. A good smack homes in on a wild shoot (it glows) and snips it off;
+ * the part of the trowel the pea meets angles it, like a real bat.
  *
- * The rules live in `src/game/care-pong.ts`; this scene draws them, turns taps
- * into aimed swings, and reports each trim (a hit) and each pea let past (a harm).
+ * The rules live in `src/game/care-pong.ts`; this scene draws them, turns the
+ * pointer into the trowel's place and clicks into smacks, and reports each trim
+ * (a hit) and each pea let past (a harm).
  */
 
 /** The bench: its top's height, half its width, and where the near and far ends are. */
@@ -39,6 +42,8 @@ const PLANT_WIDTH = 1.15
 /** Where an incoming pea bounces (its own half) and how high it flies. */
 const BOUNCE_AT = 0.65
 const NET_Z = -0.15
+/** How fast the arrow keys slide the trowel, in bench widths (-1..1) per second. */
+const KEY_SPEED = 4
 
 interface ShootView {
   readonly shoot: PongShoot
@@ -51,15 +56,15 @@ interface ShootView {
   readonly spin: THREE.Vector3
 }
 
-/** The pea's height along a flight: a hump down to its bounce, then up to where it is struck. */
-function flightY(t: number, startY: number, endY: number): number {
+/** The pea's height along a flight: a hump down to its bounce, then up to where it is struck. `lob` raises the humps (a soft block). */
+function flightY(t: number, startY: number, endY: number, lob = 1): number {
   const table = TABLE_Y + PEA_SIZE / 2
   if (t < BOUNCE_AT) {
     const s = t / BOUNCE_AT
-    return startY + (table - startY) * s + 0.24 * 4 * s * (1 - s)
+    return startY + (table - startY) * s + 0.24 * lob * 4 * s * (1 - s)
   }
   const s = (t - BOUNCE_AT) / (1 - BOUNCE_AT)
-  return table + (endY - table) * s + 0.3 * 4 * s * (1 - s)
+  return table + (endY - table) * s + 0.3 * lob * 4 * s * (1 - s)
 }
 
 export function createPongGame(context: CareGameContext): CareGameScene {
@@ -69,12 +74,19 @@ export function createPongGame(context: CareGameContext): CareGameScene {
   root.name = 'Pong game'
   stage.scene.add(root)
 
-  // ---- the framing: from behind the trowel, down the bench to the planter.
-  stage.setFraming((aspect) => ({
-    position: new THREE.Vector3(0, 1.72, 2.95),
-    look: new THREE.Vector3(0, 0.84, -0.55),
-    fov: aspect < 1.25 ? 50 * Math.min(1.75, 1.25 / aspect) : 50,
-  }))
+  // ---- the framing: from behind the trowel, down the bench to the planter. A tall phone
+  // looks from higher up, so the trowel's whole line fits across its narrow screen.
+  stage.setFraming((aspect) => (aspect < 0.6
+    ? {
+      position: new THREE.Vector3(0, 3, 3.2),
+      look: new THREE.Vector3(0, 0.6, -0.6),
+      fov: THREE.MathUtils.radToDeg(2 * Math.atan(0.362 / aspect)),
+    }
+    : {
+      position: new THREE.Vector3(0, 1.72, 2.95),
+      look: new THREE.Vector3(0, 0.84, -0.55),
+      fov: aspect < 1.25 ? 50 * Math.min(1.75, 1.25 / aspect) : 50,
+    }))
 
   // ---- the bench: planks, legs, a painted centre line and a twine net.
   const wood = new THREE.MeshLambertMaterial({ color: '#c79a62' })
@@ -188,7 +200,7 @@ export function createPongGame(context: CareGameContext): CareGameScene {
   }
   for (const shoot of rally.shoots) addShoot(shoot, 1)
 
-  // ---- the pea, its shadow, the timing ring and the aim marker.
+  // ---- the pea, its shadow, and the ring where it will meet the trowel's line, closing on the sweet spot.
   const pea = rootCritter('pea', PEA_SIZE, standInMesh(new THREE.SphereGeometry(0.5, 12, 8), '#7cc24a', owned), true)
   root.add(pea)
   const shadowMaterial = new THREE.MeshBasicMaterial({ color: '#2f2216', transparent: true, opacity: 0.3, depthWrite: false })
@@ -198,8 +210,8 @@ export function createPongGame(context: CareGameContext): CareGameScene {
   shadow.rotation.x = -Math.PI / 2
   root.add(shadow)
   const ringGeometry = new THREE.RingGeometry(0.86, 1, 40)
-  const timingMaterial = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })
-  const sweetMaterial = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide })
+  const timingMaterial = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide })
+  const sweetMaterial = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide })
   owned.push(ringGeometry, timingMaterial, sweetMaterial)
   const timingRing = new THREE.Mesh(ringGeometry, timingMaterial)
   timingRing.rotation.x = -Math.PI / 2
@@ -209,70 +221,85 @@ export function createPongGame(context: CareGameContext): CareGameScene {
   sweetRing.scale.setScalar(0.11)
   sweetRing.name = 'Pong sweet spot'
   root.add(timingRing, sweetRing)
-  const aimMaterial = new THREE.MeshBasicMaterial({ color: '#fff6dc', transparent: true, opacity: 1, depthWrite: false, side: THREE.DoubleSide })
-  const aimGeometry = new THREE.RingGeometry(0.62, 1, 32)
-  // A bobbing arrow over the aimed spot, so the aim reads from down the bench.
+
+  // ---- the aim: a bobbing arrow over the shoot a smack from here would go for.
+  const aimMaterial = new THREE.MeshBasicMaterial({ color: '#ffd24a', transparent: true, opacity: 1, depthWrite: false })
   const arrowGeometry = new THREE.ConeGeometry(0.07, 0.16, 4).rotateX(Math.PI)
-  owned.push(aimMaterial, aimGeometry, arrowGeometry)
+  owned.push(aimMaterial, arrowGeometry)
   const aimArrow = new THREE.Mesh(arrowGeometry, aimMaterial)
   aimArrow.name = 'Pong aim arrow'
   root.add(aimArrow)
-  const aimRing = new THREE.Mesh(aimGeometry, aimMaterial)
-  aimRing.rotation.x = -Math.PI / 2
-  aimRing.scale.setScalar(PONG_SHOOT_HALF * LANE_X)
-  aimRing.position.set(0, SOIL_Y + 0.02, SHOOT_Z)
-  aimRing.name = 'Pong aim'
-  root.add(aimRing)
 
-  // ---- the trowel, near the camera; it follows the pea across the bench on its own.
+  // ---- the trowel, near the camera, and a pad on the bench under it showing how far it reaches.
   const trowel = new THREE.Group()
   trowel.name = 'Pong trowel'
-  const trowelModel = rootCritter('trowel', 0.5, standInMesh(new THREE.BoxGeometry(0.2, 0.5, 0.03).translate(0, 0.25, 0), '#c4ced6', owned))
+  const trowelModel = rootCritter('trowel', 0.44, standInMesh(new THREE.BoxGeometry(0.18, 0.44, 0.03).translate(0, 0.22, 0), '#c4ced6', owned))
   trowel.add(trowelModel)
   trowel.position.set(0, TABLE_Y + 0.02, HIT_Z + 0.16)
   root.add(trowel)
+  const padMaterial = new THREE.MeshBasicMaterial({ color: '#fff6dc', transparent: true, opacity: 0.22, depthWrite: false })
+  const padGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)
+  owned.push(padMaterial, padGeometry)
+  const reachPad = new THREE.Mesh(padGeometry, padMaterial)
+  reachPad.name = 'Pong trowel reach'
+  reachPad.scale.set(PONG_REACH * 2 * LANE_X, 1, 0.34)
+  reachPad.position.set(0, TABLE_Y + 0.004, HIT_Z)
+  root.add(reachPad)
 
   // ---- the state of the round.
   let time = 0
-  let aimX = 0
   let swingAge = 1
   let lastGrade: PongGrade | null = null
+  /** Which way the last smack was angled, for the trowel's follow-through. */
+  let swingLean = 0
   let batSwing = 0
   let finished = false
   let won = false
   let peaRoll = 0
+  let keyLeft = false
+  let keyRight = false
   const scratch = new THREE.Vector3()
 
-  /** Aim from a screen point: where its ray meets the planter's front, as a lane. */
-  function aimFrom(clientX: number, clientY: number): void {
-    const at = stage.screenToPlane(clientX, clientY, SHOOT_Z, scratch)
-    aimX = THREE.MathUtils.clamp(at.x / LANE_X, -1, 1)
+  /** Move the trowel to a screen point: where its ray meets the trowel's line, across the bench. */
+  function paddleFrom(clientX: number, clientY: number): void {
+    const at = stage.screenToPlane(clientX, clientY, HIT_Z, scratch)
+    rally.movePaddle(at.x / LANE_X)
   }
 
   function swing(): void {
     if (finished) return
-    handle(rally.swing(aimX))
+    handle(rally.swing())
   }
 
   function handle(events: PongEvent[]): void {
     for (const event of events) {
-      if (event.kind === 'swing') {
+      if (event.kind === 'smack') {
         swingAge = 0
         lastGrade = event.grade
-        sfx.play('tock', event.grade === 'perfect' ? 1.25 : event.grade === 'good' ? 1.05 : 0.9)
+        swingLean = THREE.MathUtils.clamp(event.toX - event.atX, -1, 1)
+        sfx.play('tock', event.grade === 'perfect' ? 1.3 : event.grade === 'good' ? 1.08 : 0.9)
         if (event.grade === 'perfect') sfx.play('chopPerfect')
         const at = new THREE.Vector3(event.atX * LANE_X, TABLE_Y + 0.35, HIT_Z)
-        context.popAt(at, event.grade === 'perfect' ? 'PERFECT!' : event.grade === 'good' ? 'GOOD' : 'OK', event.grade === 'ok' ? 'plain' : 'good', event.grade === 'perfect')
+        context.popAt(at, event.grade === 'perfect' ? 'SMASH!' : event.grade === 'good' ? 'GOOD' : 'OK', event.grade === 'ok' ? 'plain' : 'good', event.grade === 'perfect')
         if (event.grade === 'perfect') {
           context.hitStop(0.05)
+          stage.shake(0.05)
           bursts.add(createBurst(at, { count: 10, colors: ['#fff3b0', '#ffd24a'], size: 0.03, speed: [0.6, 1.4], lift: 0.4, gravity: 3, seconds: 0.45, shape: 'star', onTop: true }), root)
         }
+      } else if (event.kind === 'block') {
+        // The pea just meets a still trowel and pops back.
+        sfx.play('tock', 0.7)
+        context.popAt(new THREE.Vector3(event.atX * LANE_X, TABLE_Y + 0.4, HIT_Z), 'Block', 'plain')
       } else if (event.kind === 'whiff') {
         swingAge = 0
         lastGrade = null
+        swingLean = 0
         sfx.play('whiff')
         round.whiff()
-        context.popAt(new THREE.Vector3(trowel.position.x, TABLE_Y + 0.4, HIT_Z), 'Too early!', 'plain')
+        // Only worth a word when a pea was coming; a swing at nothing is just a swish.
+        if (rally.ball.phase === 'incoming') {
+          context.popAt(new THREE.Vector3(trowel.position.x, TABLE_Y + 0.4, HIT_Z), event.reason === 'wide' ? 'Too far!' : 'Too early!', 'plain')
+        }
       } else if (event.kind === 'trim') {
         trim(event.shoot, event.grade)
       } else if (event.kind === 'batted' || event.kind === 'serve') {
@@ -309,23 +336,28 @@ export function createPongGame(context: CareGameContext): CareGameScene {
     stage.bounce(0.4)
   }
 
+  // The arrows (or A and D) slide the trowel while held; Space or Enter smacks.
   const onKey = (event: KeyboardEvent): void => {
-    if (event.repeat) return
-    if (event.code === 'Space' || event.code === 'Enter') {
+    const down = event.type === 'keydown'
+    if (event.code === 'ArrowLeft' || event.code === 'KeyA') keyLeft = down
+    else if (event.code === 'ArrowRight' || event.code === 'KeyD') keyRight = down
+    else if (event.code === 'Space' || event.code === 'Enter') {
       event.preventDefault()
-      swing()
+      if (down && !event.repeat) swing()
       return
-    }
-    // The arrows hop the aim from shoot to shoot.
-    const step = event.code === 'ArrowLeft' || event.code === 'KeyA' ? -1 : event.code === 'ArrowRight' || event.code === 'KeyD' ? 1 : 0
-    if (step === 0) return
+    } else return
     event.preventDefault()
-    const lanes = [...PONG_SHOOT_LANES].sort((a, b) => a - b)
-    const index = lanes.findIndex((lane) => lane >= aimX - 1e-6)
-    const current = index < 0 ? lanes.length - 1 : Math.abs(lanes[index] - aimX) < 1e-3 ? index : step > 0 ? index - 1 : index
-    aimX = lanes[THREE.MathUtils.clamp(current + step, 0, lanes.length - 1)]
   }
   window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
+
+  /** The shoot a smack from here would go for, while a pea is coming and the trowel is under it. */
+  function aimedShoot(): { aimX: number; shoot: PongShoot | null } | null {
+    const ball = rally.ball
+    if (ball.phase !== 'incoming' || !pongInReach(ball.toX, rally.paddleX)) return null
+    const aimX = pongAim(ball.toX, rally.paddleX)
+    return { aimX, shoot: pongSmackTarget(rally.shoots, aimX, 'good') }
+  }
 
   function peaPosition(target: THREE.Vector3): THREE.Vector3 {
     const ball = rally.ball
@@ -341,18 +373,24 @@ export function createPongGame(context: CareGameContext): CareGameScene {
     if (ball.phase === 'incoming') {
       return target.set(x, flightY(t, SOIL_Y + 0.35, TABLE_Y + 0.3), THREE.MathUtils.lerp(ARRIVE_Z, HIT_Z, t))
     }
-    return target.set(x, flightY(t, TABLE_Y + 0.3, SOIL_Y + SHOOT_HEIGHT * 0.45), THREE.MathUtils.lerp(HIT_Z, ARRIVE_Z, t))
+    // A smack flies flat and fast; a block floats back high.
+    return target.set(x, flightY(t, TABLE_Y + 0.3, SOIL_Y + SHOOT_HEIGHT * 0.45, ball.grade ? 0.7 : 1.6), THREE.MathUtils.lerp(HIT_Z, ARRIVE_Z, t))
   }
 
-  /** Debug harness: where the pea is, where the shoots stand on screen, and how the swing window looks. */
+  /** Debug harness: where the pea is coming and where that is on screen, the trowel, the shoots, and the smack window. */
   function debugState(): unknown {
     const ball = rally.ball
+    const arrival = stage.toScreen(new THREE.Vector3(ball.toX * LANE_X, TABLE_Y + 0.1, HIT_Z))
     return {
       phase: ball.phase,
       progress: ball.progress,
-      sweet: PONG_SWEET,
+      untilContact: rally.untilContact,
+      sweetLead: PONG_SWEET_LEAD,
       ballX: rally.ballX,
-      aimX,
+      arrivalX: ball.toX,
+      arrivalScreen: { x: arrival.x, y: arrival.y },
+      paddleX: rally.paddleX,
+      aimedShoot: aimedShoot()?.shoot?.id ?? null,
       shoots: rally.shoots.map((shoot) => {
         const screen = stage.toScreen(new THREE.Vector3(shoot.x * LANE_X, SOIL_Y + SHOOT_HEIGHT * 0.5, SHOOT_Z))
         return { id: shoot.id, x: shoot.x, screenX: screen.x, screenY: screen.y }
@@ -381,28 +419,38 @@ export function createPongGame(context: CareGameContext): CareGameScene {
       shadow.position.set(pea.position.x, TABLE_Y + 0.003, pea.position.z)
       shadow.scale.setScalar(Math.max(0.4, 1.2 - (pea.position.y - TABLE_Y) * 1.6))
 
-      // The timing ring closes on the sweet spot as an incoming pea nears the trowel.
+      // The arrows slide the trowel.
+      const keyStep = (keyRight ? 1 : 0) - (keyLeft ? 1 : 0)
+      if (keyStep !== 0 && !finished) rally.movePaddle(rally.paddleX + keyStep * KEY_SPEED * dt)
+
+      // The ring where the pea will meet the trowel's line closes on the sweet spot. It burns
+      // red while the trowel is not under it, and turns green, then gold, through the smack window.
       const incoming = ball.phase === 'incoming' && !finished
-      const ringX = THREE.MathUtils.lerp(ball.fromX, ball.toX, 1) * LANE_X
-      timingRing.visible = incoming && ball.progress > 0.3
+      const until = rally.untilContact ?? 0
+      const ringX = ball.toX * LANE_X
+      const covered = pongInReach(ball.toX, rally.paddleX)
+      timingRing.visible = incoming
       sweetRing.visible = incoming
       if (incoming) {
-        const closing = THREE.MathUtils.clamp((PONG_SWEET - ball.progress) / (PONG_SWEET - 0.3), 0, 1)
-        timingRing.scale.setScalar(Math.max(0.05, 0.11 + closing * 0.5))
-        const off = Math.abs(ball.progress - PONG_SWEET)
-        const inWindow = ball.progress >= PONG_HIT_FROM
-        timingMaterial.color.set(off <= PONG_PERFECT_WITHIN ? '#ffd24a' : inWindow && off <= PONG_GOOD_WITHIN ? '#bff27a' : '#ffffff')
+        const closing = THREE.MathUtils.clamp((until - PONG_SWEET_LEAD) / 0.6, 0, 1)
+        timingRing.scale.setScalar(Math.max(0.05, 0.11 + closing * 0.32))
+        const off = Math.abs(until - PONG_SWEET_LEAD)
+        timingMaterial.color.set(!covered ? '#ff8a6a' : off <= PONG_PERFECT_WITHIN ? '#ffd24a' : off <= PONG_GOOD_WITHIN ? '#bff27a' : '#ffffff')
         timingRing.position.set(ringX, TABLE_Y + 0.006, HIT_Z)
         sweetRing.position.set(ringX, TABLE_Y + 0.005, HIT_Z)
       }
 
-      // The trowel tracks the pea across the bench and flicks forward on a swing.
-      const followX = ball.phase === 'incoming' ? THREE.MathUtils.lerp(ball.fromX, ball.toX, Math.min(1, ball.progress + 0.15)) * LANE_X : trowel.position.x
-      trowel.position.x += (followX - trowel.position.x) * Math.min(1, dt * 10)
+      // The trowel follows the player across the bench and flicks forward on a smack,
+      // leaning the way it sent the pea. The pad under it lights up while it covers the pea.
+      trowel.position.x += (rally.paddleX * LANE_X - trowel.position.x) * Math.min(1, dt * 30)
       swingAge += dt
-      const flick = swingAge < 0.22 ? Math.sin((swingAge / 0.22) * Math.PI) : 0
-      trowel.rotation.set(-0.25 - flick * (lastGrade ? 0.9 : 0.5), 0, Math.sin(time * 2) * 0.03 - flick * 0.3 * Math.sign(aimX - trowel.position.x / LANE_X))
+      const flick = swingAge < 0.18 ? Math.sin((swingAge / 0.18) * Math.PI) : 0
+      trowel.rotation.set(-0.4 - flick * (lastGrade ? 0.9 : 0.5), 0, Math.sin(time * 2) * 0.03 - flick * 0.5 * swingLean)
       trowel.position.y = TABLE_Y + 0.02 + flick * 0.06
+      reachPad.position.x = trowel.position.x
+      reachPad.visible = !finished
+      padMaterial.color.set(incoming && covered ? '#bff27a' : '#fff6dc')
+      padMaterial.opacity = incoming && covered ? 0.38 : 0.2
 
       // The leaf bat slides to where the pea will arrive and swats when it does; between
       // returns it steps aside to the planter's corner, so the vegetable stays in view.
@@ -413,15 +461,17 @@ export function createPongGame(context: CareGameContext): CareGameScene {
       batPivot.rotation.x = 0.35 + Math.sin(batSwing * Math.PI) * 0.9 + Math.sin(time * 1.7) * 0.05
       batPivot.rotation.z = Math.sin(time * 1.3) * 0.08
 
-      // The aim marker, gold when it is on a shoot.
-      aimRing.position.x = aimX * LANE_X
-      aimRing.visible = !finished
-      const onTarget = pongShootHit(rally.shoots, aimX, 'good')
-      aimMaterial.color.set(onTarget ? '#ffd24a' : '#fff6dc')
-      aimRing.scale.setScalar(PONG_SHOOT_HALF * LANE_X * (1 + Math.sin(time * 6) * 0.06))
-      aimArrow.visible = !finished
-      aimArrow.position.set(aimX * LANE_X, SOIL_Y + SHOOT_HEIGHT + 0.22 + Math.sin(time * 5) * 0.04, SHOOT_Z)
-      aimArrow.rotation.y = time * 2
+      // The arrow over the shoot a smack from here would go for: gold on a shoot, pale when
+      // the angle finds none (lean the trowel's edge into the pea to steer it).
+      const aimed = finished ? null : aimedShoot()
+      const onTarget = aimed?.shoot ?? null
+      aimArrow.visible = aimed !== null
+      if (aimed) {
+        aimMaterial.color.set(onTarget ? '#ffd24a' : '#fff6dc')
+        aimMaterial.opacity = onTarget ? 1 : 0.55
+        aimArrow.position.set((onTarget ? onTarget.x : aimed.aimX) * LANE_X, SOIL_Y + SHOOT_HEIGHT + 0.22 + Math.sin(time * 9) * 0.04, SHOOT_Z)
+        aimArrow.rotation.y = time * 3
+      }
 
       // The shoots: sprouting, swaying, the aimed one glowing, the trimmed ones tumbling away.
       for (let index = shootViews.length - 1; index >= 0; index -= 1) {
@@ -459,11 +509,11 @@ export function createPongGame(context: CareGameContext): CareGameScene {
       }
     },
     pointerDown(x, y): void {
-      aimFrom(x, y)
+      paddleFrom(x, y)
       swing()
     },
     pointerMove(x, y): void {
-      aimFrom(x, y)
+      paddleFrom(x, y)
     },
     pointerUp(): void {},
     finish(didWin): void {
@@ -471,6 +521,7 @@ export function createPongGame(context: CareGameContext): CareGameScene {
       won = didWin
       timingRing.visible = false
       sweetRing.visible = false
+      aimArrow.visible = false
       if (didWin) {
         stage.bounce(1)
         const at = new THREE.Vector3(0, SOIL_Y + PLANT_HEIGHT * 0.5, -2)
@@ -480,6 +531,7 @@ export function createPongGame(context: CareGameContext): CareGameScene {
     debug: debugState,
     dispose(): void {
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
       if (stage.plant && stage.plant.parent === plantHolder) stage.scene.add(stage.plant)
       stage.setFraming(null)
       root.removeFromParent()

@@ -15,7 +15,7 @@
  *          rope  (prune)  the lily's runner whips round the pad; hop each pass
  *   root   barrel (water) climb the planks to the gopher's stolen rain barrel; jump his barrels
  *          breakout (pest) bounce a pebble off a hoe to squash the rows of bugs
- *          pong  (prune)  volley a pea with the leaves; aim each return at a wild shoot
+ *          pong  (prune)  rally a pea with the leaves; a timed smack snips a wild shoot
  *
  * The scenes (`src/scene/care-games/`) only report what happened (a hit, a
  * miss, a harm, a beetle that left); this module decides the outcome, so the
@@ -82,8 +82,8 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   barrel: { goal: 5, hearts: 3, misses: 0, seconds: 60 },
   // Every bug in the bed squashed (see care-breakout.ts); three pebbles lost and it is over.
   breakout: { goal: 15, hearts: 3, misses: 0, seconds: 60 },
-  // Six wild shoots trimmed; three peas let past and it is over.
-  pong: { goal: 6, hearts: 3, misses: 0, seconds: 45 },
+  // Eight wild shoots trimmed at a quick rally; three peas let past and it is over.
+  pong: { goal: 8, hearts: 3, misses: 0, seconds: 35 },
 }
 
 export interface CareGameCopy {
@@ -129,8 +129,8 @@ export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
   },
   pong: {
     command: 'VOLLEY!',
-    goalLine: 'Tap as the pea reaches your trowel. Tap on a wild shoot to aim at it: trim six!',
-    keysLine: 'Point to aim. Click or press Space to swing.',
+    goalLine: 'Get your trowel under the pea and smack it just as it arrives. Smacks snip wild shoots: trim eight!',
+    keysLine: 'Mouse or arrows move the trowel. Click or press Space to smack.',
     winLine: 'A tidy top!',
     chore: 'the trim pong',
   },
