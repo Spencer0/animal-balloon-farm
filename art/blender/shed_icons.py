@@ -11,7 +11,8 @@ Run from the project root in PowerShell:
 
 Name species after `--` to render only those packets (for example
 `-- blueberry`); the review sheet and `seeds.blend` are always rebuilt from
-every packet PNG on disk.
+every packet PNG on disk. Add `--cycles` after `--` to render on the CPU where
+EEVEE has no GPU.
 
 Regeneration command: overwrites `public/assets/seeds/seed-<id>.png`
 (256x256, transparent), the contact sheet `seeds-review.png`, and the editable
@@ -35,6 +36,9 @@ SPECIES = [
     ("poppy", "Poppy", (0.91, 0.48, 0.38, 1.0)),
     ("water-lily", "Water lily", (0.85, 0.58, 0.79, 1.0)),
     ("blueberry", "Blueberry", (0.36, 0.45, 0.78, 1.0)),
+    ("carrot", "Carrot", (0.93, 0.54, 0.17, 1.0)),
+    ("potato", "Potato", (0.73, 0.54, 0.33, 1.0)),
+    ("onion", "Onion", (0.66, 0.27, 0.43, 1.0)),
 ]
 
 CREAM = (0.96, 0.90, 0.76, 1.0)
@@ -132,6 +136,30 @@ def build_motif(plant_id, badge_rgba, y):
             blob((dx, y - 0.02, dz - 0.04), (0.13, 0.05, 0.13), deep)
             blob((dx - 0.04, y - 0.05, dz), (0.035, 0.03, 0.035), light)
             blob((dx, y - 0.06, dz - 0.04 + 0.1), (0.03, 0.02, 0.02), mat_flat("berry_crown", (0.16, 0.17, 0.32, 1.0)))
+    elif plant_id == "carrot":
+        # A carrot standing on its tip, with a feathery green top.
+        bpy.ops.mesh.primitive_cone_add(radius1=0.15, radius2=0.0, depth=0.56, vertices=24)
+        put(bpy.context.active_object, location=(0, y, -0.25), rotation=(math.radians(180), 0, 0), material=mid)
+        for z in (-0.12, -0.24, -0.34):
+            blob((0.02, y - 0.04, z), (0.07 + z * 0.15, 0.02, 0.012), deep)
+        for dx, angle in ((-0.1, 30), (0.0, 0), (0.1, -30)):
+            blob((dx, y + 0.01, 0.12), (0.05, 0.03, 0.15), leaf, rotation=(0, math.radians(angle), 0))
+    elif plant_id == "potato":
+        # Two lumpy potatoes with dark eyes.
+        for dx, dz, sx, sz, turn in ((-0.14, -0.02, 0.27, 0.2, 20), (0.17, -0.25, 0.23, 0.17, -15)):
+            blob((dx, y, dz), (sx, 0.05, sz), mid, rotation=(0, math.radians(turn), 0))
+            for ex, ez in ((-0.08, 0.05), (0.07, -0.04), (0.03, 0.08)):
+                blob((dx + ex, y - 0.05, dz + ez), (0.024, 0.02, 0.018), deep, segments=8, rings=5)
+        blob((-0.22, y - 0.02, 0.07), (0.06, 0.02, 0.035), light)
+    elif plant_id == "onion":
+        # A round red onion with a pointed neck and a few green leaves.
+        blob((0, y, -0.2), (0.24, 0.05, 0.22), mid)
+        for dx in (-0.1, 0.0, 0.1):
+            blob((dx, y - 0.05, -0.2), (0.012, 0.02, 0.17), light)
+        bpy.ops.mesh.primitive_cone_add(radius1=0.07, radius2=0.02, depth=0.14, vertices=16)
+        put(bpy.context.active_object, location=(0, y, 0.06), rotation=(0, 0, 0), material=mid)
+        for dx, angle in ((-0.06, 25), (0.06, -25)):
+            blob((dx, y + 0.01, 0.2), (0.03, 0.02, 0.13), leaf, rotation=(0, math.radians(angle), 0))
     else:
         blob((0, y, -0.34), (0.42, 0.03, 0.1), leaf)
         petals(8, 0.2, (0.075, 0.03, 0.2), mid, y - 0.01, centre=(0, -0.02))
@@ -187,6 +215,13 @@ def setup_render(path, width=SIZE, height=SIZE):
     scene = bpy.context.scene
     engines = [item.identifier for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
     scene.render.engine = "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines else "BLENDER_EEVEE"
+    if "--cycles" in sys.argv:
+        # For machines without a GPU (cloud containers), where EEVEE cannot start.
+        # The packets are unlit emission, so Cycles draws the same flat colours.
+        scene.render.engine = "CYCLES"
+        scene.cycles.device = "CPU"
+        scene.cycles.samples = 16
+        scene.cycles.use_denoising = False
     scene.render.resolution_x = width
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
@@ -226,7 +261,7 @@ def ensure_camera(location, rotation, scale):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    wanted = set(sys.argv[sys.argv.index("--") + 1:]) if "--" in sys.argv else set()
+    wanted = set(arg for arg in sys.argv[sys.argv.index("--") + 1:] if not arg.startswith("--")) if "--" in sys.argv else set()
     for plant_id, _name, badge in SPECIES:
         if wanted and plant_id not in wanted:
             continue
