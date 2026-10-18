@@ -75,6 +75,7 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   squirrel: { rarity: "Uncommon", traits: ["Berry Nibbler", "Bushy Tail", "Daytime Forager"] },
   mole: { rarity: "Uncommon", traits: ["Digs Deep", "Loves Bare Earth", "Poor Eyesight"] },
   starhorn: { rarity: "Legendary", traits: ["One of a Kind", "Sips Nectar", "Makes Star Gems"] },
+  cougar: { rarity: "Legendary", traits: ["Apex Predator", "Raids Crowded Herds", "Opens Any Door"] },
 };
 
 const DEFAULT_META: SpeciesMeta = { rarity: "Common", traits: [] };
@@ -132,6 +133,8 @@ function visualForKind(kind: string, species: string | undefined, metricLabel: s
     case "terrainShare": return { icon: "open-pasture", label: metricLabel ?? "Share of the farm", isCount: true };
     case "propCount": return { icon: "circus-tent", label: metricLabel ?? "Props", isCount: true };
     case "preyEaten": return { icon: "friend-paw", label: metricLabel ?? "Eaten", isCount: true };
+    case "chapter": return { icon: "circus-tent", label: metricLabel ?? "Chapter reached", isCount: true };
+    case "largestHerd": return { icon: "friend-paw", label: metricLabel ?? "Biggest herd", isCount: true };
     default: return null;
   }
 }

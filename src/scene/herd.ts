@@ -24,10 +24,12 @@ export interface HerdDeps {
   readonly animalCreations: Map<string, Promise<BalloonAnimal>>
   readonly farmHomes: Map<string, { parent: THREE.Object3D; position: THREE.Vector3 }>
   readonly crowdFixtures: BalloonAnimal[]
+  /** Animals not to draw right now though they are in the world (the mountain lion inside a house). */
+  readonly hiddenAnimals?: ReadonlySet<string>
 }
 
 export function createHerd(deps: HerdDeps) {
-  const { camera, gameCanvas, fairgroundRoot, gardenTerrain, activeGardenBounds, progress, isLoose, animals, animalById, animalNames, generatedAnimalNames, animalPopulationLimit, animalCreations, farmHomes, crowdFixtures } = deps
+  const { camera, gameCanvas, fairgroundRoot, gardenTerrain, activeGardenBounds, progress, isLoose, animals, animalById, animalNames, generatedAnimalNames, animalPopulationLimit, animalCreations, farmHomes, crowdFixtures, hiddenAnimals } = deps
   const worldRaycaster = new THREE.Raycaster()
   const animalNumber = (id: string): number => Number(id.replace(/^animal-/, '')) || 0
 
@@ -104,7 +106,7 @@ export function createHerd(deps: HerdDeps) {
     let shown = 0
     for (const animal of animals) {
       const record = progress.animal(animal.instanceId)
-      if (!record || record.stage <= 0 || animal.isSold) {
+      if (!record || record.stage <= 0 || animal.isSold || hiddenAnimals?.has(animal.instanceId)) {
         animal.setDetailedVisible(false)
         continue
       }

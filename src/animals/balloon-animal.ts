@@ -220,6 +220,7 @@ const BODY_MATERIALS: Record<BalloonAnimalId, THREE.MeshStandardMaterial> = {
   squirrel: new THREE.MeshStandardMaterial({ color: '#bd683c', roughness: 0.26, metalness: 0.01 }),
   mole: new THREE.MeshStandardMaterial({ color: '#5b5663', roughness: 0.3, metalness: 0.01 }),
   starhorn: new THREE.MeshStandardMaterial({ color: '#bf9fe6', roughness: 0.28, metalness: 0.03 }),
+  cougar: new THREE.MeshStandardMaterial({ color: '#c8955a', roughness: 0.28, metalness: 0.02 }),
 }
 /** An animal's collision footprint radius as a share of its catalog size (its longest side). */
 const BODY_RADIUS_SHARE = 0.24

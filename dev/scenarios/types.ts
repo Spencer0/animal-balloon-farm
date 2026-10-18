@@ -39,7 +39,10 @@ export interface ScenarioHarness {
   advance(steps?: number, secondsPerStep?: number): unknown
   feedOwl(count: number): unknown
   feedSnake(count: number): unknown
+  /** Make every hunter hunt at once; a crowd the mountain lion has smelt brings it over the fence now. */
   hurryHunt(): void
+  /** Pin the farm's Harmony score (0..100), or null to measure it again. */
+  setHarmony(value: number | null): void
   setOwlHelium(level: number): void
   /** Set the helium (0..1) of every settled animal of a species. Returns how many it changed. */
   setHelium(species: string, level: number): number
