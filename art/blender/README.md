@@ -241,6 +241,28 @@ blender --background --factory-startup --python art/blender/root_care_cast.py
 
 One root per critter, like the flower and water casts: trim pong's pea, trowel and wild shoot; bug breakout's hoe, pebble, grub, striped beetle and two-hit shellbug; and the barrel climb's barrel, the barrel-thieving gopher (`arm_L` / `arm_R` throw pivots), the watering-can hero (`leg_L` / `leg_R` stride pivots) and the rain barrel. Steel and brass stay mostly diffuse (low metallic), because the minigame stage has no environment map and a fully metallic part renders near black there. The docstring lists every node name the game reads.
 
+## Vines: pumpkin, watermelon, cucumber
+
+- Authoring script: [`vines.py`](vines.py)
+- Outputs in `../../public/assets/plants/`: `<id>.blend`, `<id>-review.png`, `<id>.glb` for each of `pumpkin`, `watermelon` and `cucumber`
+
+```powershell
+blender --background --factory-startup --python art/blender/vines.py
+```
+
+A vine is big umbrella leaves on runners with its fruit swelling underneath, so each model puts its fruit in front of its leaves, toward the care stage's camera: a ribbed orange pumpkin under broad five-lobed leaves on a straw-mulched bed, a striped melon under deeply cut silvery leaves, and cucumbers hanging off a teepee of three bamboo canes that the vine climbs. All three share one set of node names under `VN_root` (`VN_mound`, `VN_vines`, `VN_leaf_N`, `VN_fruit` holding `VN_fruit_N`, `VN_flowers`, `VN_pests`, `VN_shoot`), so `src/scene/vine-visual.ts` grows them all the same way: the stems creep out, the leaves open (the cucumber's from the bed up), yellow trumpet flowers come and go while it grows, each fruit swells from a green bud, caterpillars sit on the leaves for pests, and `VN_shoot` is the runaway runner a trim pegs down. The leaf blades are generated meshes (a lobed, drooping disc with pale veins), not stretched spheres. Name vines after `--` to rebuild only those; add `--cycles` to render the review on the CPU. The seed packets come from `shed_icons.py -- --cycles pumpkin watermelon cucumber`.
+
+## Vine care cast (pipe spin, caterpillar squirt, runner steer)
+
+- Authoring script: [`vine_care_cast.py`](vine_care_cast.py)
+- Outputs in `../../public/assets/plants/`: `vine-care-cast.blend`, `vine-care-cast-review.png`, `vine-care-cast.glb`
+
+```powershell
+blender --background --factory-startup --python art/blender/vine_care_cast.py
+```
+
+One root per critter. The pipe spin's troughs (straight, elbow, and a cross whose N-S trough arches over the other on a little bridge) are authored at exactly one 0.5 m tile, so the game places them unscaled; the hand pump's lever is the `handle` pivot. The caterpillar squirt's spray bottle, caterpillar head and body bit, trellis leaf, soap bubble and suds face the camera, and the runner steer's tip, leaf, blossom and peg lie on (or stand in) the ground. The docstring lists every node name and the way each faces.
+
 ## Food web icons (goods, foods, hunger bubbles)
 
 - Authoring script: [`goods_icons.py`](goods_icons.py); outputs `../../public/assets/goods/*.png` (128x128, transparent, 10-20 KB each).

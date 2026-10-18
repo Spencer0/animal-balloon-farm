@@ -6,9 +6,12 @@ import { createHopGame } from './hop-game'
 import { createChopGame } from './chop-game'
 import { createSkimGame } from './skim-game'
 import { createPaddleGame } from './paddle-game'
+import { createPipesGame } from './pipes-game'
 import { createPongGame } from './pong-game'
 import { createRopeGame } from './rope-game'
+import { createRunnerGame } from './runner-game'
 import { createSnipGame } from './snip-game'
+import { createSquirtGame } from './squirt-game'
 import { createSwatGame } from './swat-game'
 import type { CareGameContext, CareGameScene } from './care-game-types'
 
@@ -50,9 +53,9 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   barrel: { create: createBarrelGame, input: 'tap' },
   breakout: { create: createBreakoutGame, input: 'tap' },
   pong: { create: createPongGame, input: 'tap' },
-  pipes: { create: null, input: 'tap' },
-  squirt: { create: null, input: 'tap' },
-  runner: { create: null, input: 'tap' },
+  pipes: { create: createPipesGame, input: 'tap' },
+  squirt: { create: createSquirtGame, input: 'tap' },
+  runner: { create: createRunnerGame, input: 'tap' },
 }
 
 /** Whether a kind has a close-up scene yet. */

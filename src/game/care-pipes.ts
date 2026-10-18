@@ -243,7 +243,7 @@ export type PipesEvent =
   /** A new board was laid. */
   | { readonly kind: 'board'; readonly board: number }
 
-export interface PipesGame {
+export interface PipesRun {
   readonly board: number
   readonly boards: number
   readonly sourceRow: number
@@ -267,7 +267,7 @@ export interface PipesGame {
   step(deltaSeconds: number): PipesEvent[]
 }
 
-export function createPipesGame(random: () => number = Math.random, boards = PIPES_BOARDS): PipesGame {
+export function createPipesRun(random: () => number = Math.random, boards = PIPES_BOARDS): PipesRun {
   let board = 0
   let layout = layPipesBoard(0, random)
   let cells: Array<{ kind: PipeKind; turn: number; locked: boolean }> = []

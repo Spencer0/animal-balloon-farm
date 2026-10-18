@@ -6,7 +6,7 @@ const { outputFiles } = await build({ entryPoints: ['src/game/care-pipes.ts'], b
 const pipes = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 const {
   PIPES_BOARDS, PIPES_COLS, PIPES_FLOW_DELAY, PIPES_LEAK_GRACE, PIPES_POUR_SECONDS, PIPES_ROWS, PIPES_RUN_LENGTH,
-  PIPE_E, PIPE_N, PIPE_S, PIPE_W, createPipesGame, layPipesBoard, oppositeSide, pipeExit, pipeOpenings, pipeStep,
+  PIPE_E, PIPE_N, PIPE_S, PIPE_W, createPipesRun, layPipesBoard, oppositeSide, pipeExit, pipeOpenings, pipeStep,
 } = pipes
 const rulesBuild = await build({ entryPoints: ['src/game/care-minigames.ts'], bundle: true, format: 'esm', platform: 'node', write: false })
 const { CARE_GAME_RULES } = await import(`data:text/javascript;base64,${Buffer.from(rulesBuild.outputFiles[0].text).toString('base64')}`)
@@ -104,7 +104,7 @@ test('every board has a run from the pump to the vine, inside its length, that s
 })
 
 test('left alone, the water leaks out of the pump, costs a heart each time, and tries again after a grace', () => {
-  const game = createPipesGame(seeded(3))
+  const game = createPipesRun(seeded(3))
   assert.equal(game.phase, 'waiting')
   assert.ok(Math.abs(game.countdown - PIPES_FLOW_DELAY[0]) < 1e-9)
   // Turn the first trough so it can't take the water.
@@ -120,7 +120,7 @@ test('left alone, the water leaks out of the pump, costs a heart each time, and 
 })
 
 test('a full trough cannot be spun; a leak sloshes the water back out of the last one so it can', () => {
-  const game = createPipesGame(seeded(11))
+  const game = createPipesRun(seeded(11))
   solve(game)
   // Break the run two troughs in, after the water has filled the first.
   const [first, second] = game.solution
@@ -139,7 +139,7 @@ test('a full trough cannot be spun; a leak sloshes the water back out of the las
 })
 
 test('a connected run starts the pump early, rushes to the vine, and the next board follows the drink', () => {
-  const game = createPipesGame(seeded(5))
+  const game = createPipesRun(seeded(5))
   const events = []
   solve(game)
   assert.ok(game.rushing, 'the run is connected before the water starts')
@@ -158,7 +158,7 @@ test('a connected run starts the pump early, rushes to the vine, and the next bo
 })
 
 test('after the last drink the game is done', () => {
-  const game = createPipesGame(seeded(8))
+  const game = createPipesRun(seeded(8))
   for (let board = 0; board < PIPES_BOARDS; board += 1) {
     solve(game)
     stepUntil(game, 'drink', 30)
@@ -171,7 +171,7 @@ test('after the last drink the game is done', () => {
 
 test('a player spinning one trough every 0.35 s drinks three times well inside the round, without a leak', () => {
   for (const seed of [1, 2, 3, 4, 5]) {
-    const game = createPipesGame(seeded(seed))
+    const game = createPipesRun(seeded(seed))
     let seconds = 0
     let drinks = 0
     let leaks = 0
