@@ -88,8 +88,8 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   breakout: { goal: 15, hearts: 3, misses: 0, seconds: 60 },
   // Eight wild shoots trimmed at a quick rally; three peas let past and it is over.
   pong: { goal: 8, hearts: 3, misses: 0, seconds: 35 },
-  // Three boards, each a drink once the water reaches the vine (see care-pipes.ts); three leaks and it is over.
-  pipes: { goal: 3, hearts: 3, misses: 0, seconds: 60 },
+  // Two boards, each a drink once the water reaches the vine (see care-pipes.ts); four leaks and it is over.
+  pipes: { goal: 2, hearts: 4, misses: 0, seconds: 60 },
   // Every bit of the caterpillar squirted (see care-squirt.ts); three drops onto the vine and it is over.
   squirt: { goal: 12, hearts: 3, misses: 0, seconds: 45 },
   // Eight pegs reached (see care-runner.ts); three tangles and it is over.
@@ -146,7 +146,7 @@ export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
   },
   pipes: {
     command: 'SPIN!',
-    goalLine: 'Spin the troughs to run water from the pump to the vine. Stay ahead of the flow! Three drinks to go.',
+    goalLine: 'Spin the troughs to run water from the pump to the vine. Stay ahead of the flow! Two drinks to go.',
     keysLine: 'Click a trough to spin it. Arrow keys pick one, Space spins it.',
     winLine: 'Watered to the roots!',
     chore: 'the pipe spin',

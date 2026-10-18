@@ -26,6 +26,17 @@ function stepUntil(game, kind, seconds = 30) {
   return events
 }
 
+/** Step in small frames until any event of these kinds happens; return every event seen and the most troughs full at once. */
+function stepUntilAny(game, kinds, seconds = 30) {
+  const events = []
+  let deepest = 0
+  for (let frame = 0; frame < seconds * 60 && !events.some((event) => kinds.includes(event.kind)); frame += 1) {
+    events.push(...game.step(1 / 60))
+    deepest = Math.max(deepest, game.fills.length)
+  }
+  return { events, deepest }
+}
+
 /** Whether the water from the pump would run all the way to the vine through these cells as turned. */
 function connected(layout) {
   let col = -1
@@ -103,7 +114,7 @@ test('every board has a run from the pump to the vine, inside its length, that s
   }
 })
 
-test('left alone, the water leaks out of the pump, costs a heart each time, and tries again after a grace', () => {
+test('left alone, the water leaks out of the pump, costs a heart each time, and starts again after a grace', () => {
   const game = createPipesRun(seeded(3))
   assert.equal(game.phase, 'waiting')
   assert.ok(Math.abs(game.countdown - PIPES_FLOW_DELAY[0]) < 1e-9)
@@ -117,9 +128,10 @@ test('left alone, the water leaks out of the pump, costs a heart each time, and 
   assert.equal(game.phase, 'leaking')
   const again = stepUntil(game, 'leak', PIPES_LEAK_GRACE + 0.5)
   assert.equal(again.filter((event) => event.kind === 'leak').length, 1, 'one more leak once the grace is over')
+  assert.ok(again.some((event) => event.kind === 'flow'), 'the pump runs again from the start')
 })
 
-test('a full trough cannot be spun; a leak sloshes the water back out of the last one so it can', () => {
+test('a full trough cannot be spun, but a leak drains the whole stream and frees every trough', () => {
   const game = createPipesRun(seeded(11))
   solve(game)
   // Break the run two troughs in, after the water has filled the first.
@@ -134,8 +146,57 @@ test('a full trough cannot be spun; a leak sloshes the water back out of the las
   const leak = events.find((event) => event.kind === 'leak')
   assert.ok(leak, 'the broken trough leaks')
   assert.deepEqual([leak.col, leak.row, leak.side], [first.col, first.row, first.exit])
-  assert.equal(game.cell(first.col, first.row).locked, false, 'the water backed out of the first trough')
-  assert.equal(game.fills.length, 0)
+  assert.equal(game.fills.length, 0, 'all the water drained back')
+  assert.ok(game.cells.every((cell) => !cell.locked), 'every trough is free again, the first one too')
+  assert.equal(game.phase, 'leaking')
+  assert.ok(game.spin(first.col, first.row).length > 0, 'the first trough can be spun now')
+})
+
+test('a wrong turn in the first troughs is not locked in: after the leak it can be fixed, and the water runs the whole way again', () => {
+  let leaked = 0
+  let wasDeep = 0
+  for (let seed = 1; seed <= 60; seed += 1) {
+    const game = createPipesRun(seeded(seed))
+    solve(game)
+    // Turn an early elbow to its other open end: the water takes it, but it is the wrong way.
+    const early = game.solution.slice(0, 3).find((step) => game.cell(step.col, step.row).kind === 'elbow')
+    if (!early) continue
+    for (let quarter = 0; quarter < 4; quarter += 1) {
+      game.spin(early.col, early.row)
+      const cell = game.cell(early.col, early.row)
+      const exit = pipeExit(cell.kind, cell.turn, early.entry)
+      if (exit !== null && exit !== early.exit) break
+    }
+    const run = stepUntilAny(game, ['leak', 'drink'], 40)
+    if (!run.events.some((event) => event.kind === 'leak')) continue
+    leaked += 1
+    if (run.deepest >= 2) wasDeep += 1
+    assert.equal(game.fills.length, 0, `seed ${seed}: drained`)
+    assert.ok(game.cells.every((cell) => !cell.locked), `seed ${seed}: the troughs upstream are free`)
+    // Put the whole run right, as a player would in the grace.
+    solve(game)
+    const after = stepUntilAny(game, ['drink'], 40)
+    assert.equal(after.events.filter((event) => event.kind === 'leak').length, 0, `seed ${seed}: no second leak`)
+    assert.ok(after.events.some((event) => event.kind === 'flow'), `seed ${seed}: the pump ran again`)
+    assert.ok(after.events.some((event) => event.kind === 'drink'), `seed ${seed}: the fixed run reaches the vine`)
+  }
+  assert.ok(leaked >= 15, `${leaked} seeds leaked`)
+  assert.ok(wasDeep >= 5, `${wasDeep} seeds had the early trough full when the water leaked (the case that used to lock in)`)
+})
+
+test('after a leak the water runs the whole way from the pump, trough by trough', () => {
+  const game = createPipesRun(seeded(14))
+  solve(game)
+  const [first, second] = game.solution
+  stepUntil(game, 'enter', 10)
+  // Ruin the second trough so the water spills after the first.
+  for (let quarter = 0; quarter < 4 && pipeExit(game.cell(second.col, second.row).kind, game.cell(second.col, second.row).turn, second.entry) !== null; quarter += 1) game.spin(second.col, second.row)
+  stepUntil(game, 'leak', 5)
+  solve(game)
+  const again = stepUntil(game, 'enter', PIPES_LEAK_GRACE + 1)
+  assert.ok(again.some((event) => event.kind === 'flow'))
+  const enter = again.find((event) => event.kind === 'enter')
+  assert.deepEqual([enter.col, enter.row], [first.col, first.row], 'it starts at the first trough again, not where it spilled')
 })
 
 test('a connected run starts the pump early, rushes to the vine, and the next board follows the drink', () => {
@@ -169,7 +230,13 @@ test('after the last drink the game is done', () => {
   assert.deepEqual(game.step(1), [])
 })
 
-test('a player spinning one trough every 0.35 s drinks three times well inside the round, without a leak', () => {
+test('the round wants one drink per board and survives four leaks', () => {
+  assert.equal(CARE_GAME_RULES.pipes.goal, PIPES_BOARDS, 'one pip on the HUD per board')
+  assert.equal(PIPES_BOARDS, 2)
+  assert.equal(CARE_GAME_RULES.pipes.hearts, 4)
+})
+
+test('a player spinning one trough every 0.35 s drinks every board well inside the round, without a leak', () => {
   for (const seed of [1, 2, 3, 4, 5]) {
     const game = createPipesRun(seeded(seed))
     let seconds = 0

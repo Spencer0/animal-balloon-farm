@@ -7,11 +7,12 @@
  *
  * - A trough the water has run into is full and can't be spun any more.
  * - The water needs an open end on the side it arrives at. If the next trough
- *   has none (or is a rock, or the board's edge), it leaks: a heart. The water
- *   sloshes back out of the last trough it filled, so that one can be spun again,
- *   and tries again after a short grace.
+ *   has none (or is a rock, or the board's edge), it leaks: a heart. All the
+ *   water drains back to the pump and every trough can be spun again, so a wrong
+ *   turn near the pump can be put right too; after a grace the water runs the
+ *   whole way from the pump once more.
  * - Once every trough from the water to the vine connects, the water rushes.
- * - Three boards, one drink each; each board is a longer run and a quicker flow.
+ * - Two boards, one drink each; the second is a longer run and a quicker flow.
  *
  * The board is a grid: columns run left to right from the pump (0..PIPES_COLS-1),
  * rows from the near edge to the far one (0..PIPES_ROWS-1). Sides are N (far),
@@ -23,20 +24,20 @@
 export const PIPES_COLS = 6
 export const PIPES_ROWS = 4
 /** Boards in a round: one drink each (the round's goal). */
-export const PIPES_BOARDS = 3
+export const PIPES_BOARDS = 2
 
 /** Seconds before the water starts on each board. */
-export const PIPES_FLOW_DELAY: readonly number[] = [6, 5, 4.5]
+export const PIPES_FLOW_DELAY: readonly number[] = [6, 5]
 /** Seconds the water takes to run through one trough on each board. */
-export const PIPES_CELL_SECONDS: readonly number[] = [1.3, 1.15, 1]
+export const PIPES_CELL_SECONDS: readonly number[] = [1.3, 1.15]
 /** How much faster the water runs once the way to the vine is all connected. */
 export const PIPES_RUSH = 4
-/** Seconds the water waits after a leak before it tries again. */
-export const PIPES_LEAK_GRACE = 1.6
+/** Seconds after a leak, with the water drained, before it runs from the pump again: time to put the whole run right. */
+export const PIPES_LEAK_GRACE = 3.5
 /** Seconds the vine drinks before the next board is laid. */
 export const PIPES_POUR_SECONDS = 1.4
 /** The shortest and longest run from the pump to the vine on each board. */
-export const PIPES_RUN_LENGTH: readonly (readonly [number, number])[] = [[6, 8], [8, 10], [9, 12]]
+export const PIPES_RUN_LENGTH: readonly (readonly [number, number])[] = [[6, 8], [8, 10]]
 
 export type PipeSide = 0 | 1 | 2 | 3
 export const PIPE_N: PipeSide = 0
@@ -231,12 +232,12 @@ export type PipesPhase = 'waiting' | 'flowing' | 'leaking' | 'pouring' | 'done'
 
 export type PipesEvent =
   | { readonly kind: 'spin'; readonly col: number; readonly row: number }
-  /** The water left the pump. */
+  /** The water left the pump (the first time, and again after each leak). */
   | { readonly kind: 'flow' }
   | { readonly kind: 'enter'; readonly col: number; readonly row: number }
   /** The way to the vine is all connected: the water rushes. */
   | { readonly kind: 'rush' }
-  /** The water spilled out of (col, row) through `side` (col -1 is the pump's spout). */
+  /** The water spilled out of (col, row) through `side` (col -1 is the pump's spout), and all of it drained back. */
   | { readonly kind: 'leak'; readonly col: number; readonly row: number; readonly side: PipeSide }
   /** The water reached the vine. */
   | { readonly kind: 'drink'; readonly board: number }
@@ -251,7 +252,7 @@ export interface PipesRun {
   readonly cells: readonly PipeCell[]
   cell(col: number, row: number): PipeCell | null
   readonly phase: PipesPhase
-  /** Seconds until the water starts (while waiting) or tries again (after a leak). */
+  /** Seconds until the water starts (while waiting) or runs again from the pump (after a leak). */
   readonly countdown: number
   /** The water in the troughs, in the order it filled them; the last may be part full. */
   readonly fills: readonly PipeFill[]
@@ -329,12 +330,9 @@ export function createPipesRun(random: () => number = Math.random, boards = PIPE
     if (!cell || exit === null) {
       const from = head()
       events.push({ kind: 'leak', col: from.col, row: from.row, side: from.side })
-      // The water sloshes back out of the last trough it filled, so that one can be spun again.
-      const last = fills.pop()
-      if (last) {
-        const lastCell = cellAt(last.col, last.row)
-        if (lastCell) lastCell.locked = false
-      }
+      // The water all drains back to the pump and every trough is free to spin: the mistake may be anywhere upstream.
+      fills = []
+      for (const one of cells) one.locked = false
       phase = 'leaking'
       countdown = PIPES_LEAK_GRACE
       rushing = false
@@ -352,7 +350,7 @@ export function createPipesRun(random: () => number = Math.random, boards = PIPE
       countdown -= dt * (rushing ? PIPES_RUSH * 2 : 1)
       if (countdown > 0) return
       countdown = 0
-      if (phase === 'waiting' && fills.length === 0) events.push({ kind: 'flow' })
+      events.push({ kind: 'flow' })
       phase = 'flowing'
       advance(events)
       if (phase === 'flowing') checkRush(events)

@@ -38,6 +38,8 @@ const BOARD_HALF_Z = (PIPES_ROWS / 2) * CELL
 const PUMP_X = -BOARD_HALF_X - 0.205
 const PLANT_X = BOARD_HALF_X + 0.66
 const SPIN_SECONDS = 0.13
+/** How long the water takes to run back to the pump when a leak drains it. */
+const DRAIN_SECONDS = 0.7
 
 const SIDE_VECTORS: Readonly<Record<PipeSide, THREE.Vector3>> = {
   0: new THREE.Vector3(0, 0, -1),
@@ -216,6 +218,9 @@ export function createPipesGame(context: CareGameContext): CareGameScene {
   root.add(outletWater)
   const puddles: Array<{ mesh: THREE.Mesh; age: number }> = []
   let water: WaterView[] = []
+  /** The water of a drained run, receding to the pump: how much of each ribbon it had drawn, and how long it has been going. */
+  let draining: Array<{ readonly mesh: THREE.Mesh; readonly drawn: number }> = []
+  let drainAge = 0
 
   // ---- the cues: a square on the trough the water reaches next, and a fainter one on the one you point at.
   const ringMaterial = new THREE.MeshBasicMaterial({ color: '#7fd0ff', transparent: true, depthWrite: false, opacity: 0.9 })
@@ -351,6 +356,42 @@ export function createPipesGame(context: CareGameContext): CareGameScene {
     }
   }
 
+  /** Let go of the drained water's ribbons. */
+  function clearDrain(): void {
+    for (const view of draining) {
+      view.mesh.removeFromParent()
+      view.mesh.geometry.dispose()
+    }
+    draining = []
+  }
+
+  /** The rules drained every trough: the water runs back to the pump, so you can see which way it had gone. */
+  function startDrain(): void {
+    clearDrain()
+    draining = water.map((view) => ({ mesh: view.mesh, drawn: Math.min(view.mesh.geometry.drawRange.count, view.mesh.geometry.index?.count ?? 0) }))
+    water = []
+    drainAge = 0
+    lastCount = Math.ceil(game.countdown)
+    if (draining.length > 0) sfx.play('gurgle', 0.6)
+  }
+
+  /** Draw the receding water: the far end first, back toward the pump. */
+  function updateDrain(dt: number): void {
+    if (draining.length === 0) return
+    drainAge += dt
+    if (drainAge >= DRAIN_SECONDS) {
+      clearDrain()
+      return
+    }
+    let left = draining.reduce((sum, view) => sum + view.drawn, 0) * (1 - drainAge / DRAIN_SECONDS)
+    for (const view of draining) {
+      const shown = Math.floor(Math.min(view.drawn, left) / 6) * 6
+      left -= view.drawn
+      view.mesh.geometry.setDrawRange(0, shown)
+      view.mesh.visible = shown > 0
+    }
+  }
+
   function handle(events: PipesEvent[]): void {
     for (const event of events) {
       if (event.kind === 'spin') {
@@ -369,6 +410,7 @@ export function createPipesGame(context: CareGameContext): CareGameScene {
           if (front) context.popAt(cellCentre(front.col, front.row, at).setY(BED_TOP + 0.25), 'WHOOSH!', 'good')
         }
       } else if (event.kind === 'leak') {
+        startDrain()
         leak(event.col, event.row, event.side)
       } else if (event.kind === 'drink') {
         drink()
@@ -465,8 +507,8 @@ export function createPipesGame(context: CareGameContext): CareGameScene {
       if (!finished && dt > 0) {
         handle(game.step(dt))
         if (round.snapshot.state !== 'playing') return
-        // Count the pump in: 3, 2, 1.
-        if (game.phase === 'waiting') {
+        // Count the pump in: 3, 2, 1 (at the start of a board, and again after a leak).
+        if (game.phase === 'waiting' || game.phase === 'leaking') {
           const count = Math.ceil(game.countdown)
           if (count < lastCount && count >= 1 && count <= 3) {
             context.popAt(at.set(PUMP_X, BED_TOP + 0.55, pumpRow), String(count), 'plain', true)
@@ -476,6 +518,7 @@ export function createPipesGame(context: CareGameContext): CareGameScene {
         }
       }
       syncWater()
+      updateDrain(dt)
       updateCues()
       // The troughs ease round to their turns with a little hop, and pop in on a new board.
       for (const [index, piece] of pieces.entries()) {
@@ -553,6 +596,7 @@ export function createPipesGame(context: CareGameContext): CareGameScene {
     dispose(): void {
       window.removeEventListener('keydown', onKeyDown)
       for (const view of water) view.mesh.geometry.dispose()
+      clearDrain()
       returnPlant()
       stage.setFraming(null)
       root.removeFromParent()

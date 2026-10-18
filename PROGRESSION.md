@@ -100,7 +100,7 @@ The vines (pumpkin, watermelon, cucumber) play these, also on the close-up stage
 
 | Care | Game | Win / lose (`CARE_GAME_RULES`) |
 | --- | --- | --- |
-| water | Pipe spin: tap wooden troughs to spin them so the water runs from a hand pump to the vine before it catches up; a connected run rushes | 3 boards (a drink each) in 60 s; 3 leaks loses |
+| water | Pipe spin: tap wooden troughs to spin them so the water runs from a hand pump to the vine before it catches up; a connected run rushes | 2 boards (a drink each) in 60 s; 4 leaks loses (a leak drains the water and frees every trough) |
 | pest | Caterpillar squirt: a caterpillar zig-zags down the trellis wires; slide the spray bottle under it (it squirts by itself), and a squirted bit bubbles away into suds the caterpillar won't cross | Squirt all 12 bits in 45 s; 3 caterpillars dropping onto the vine loses |
 | prune | Runner steer: steer the runaway runner's tip onto garden pegs; it grows and quickens with each, and the bed's edge or the runner itself tangles it | Pin 8 pegs in 40 s; 3 tangles loses |
 
