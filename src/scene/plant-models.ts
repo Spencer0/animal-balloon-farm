@@ -36,7 +36,7 @@ export const CARE_CAST_CRITTERS = {
   // art/blender/root_care_cast.py: trim pong, bug breakout and the barrel climb.
   root: ['pea', 'trowel', 'shoot', 'hoe', 'pebble', 'grub', 'beetle', 'shellbug', 'barrel', 'gopher', 'can', 'rainbarrel'],
   // art/blender/vine_care_cast.py: the pipe spin, the caterpillar squirt and the runner steer.
-  vine: ['pump', 'trough', 'elbow', 'cross', 'rock', 'sprayer', 'caterpillar_head', 'caterpillar_body', 'trellis_leaf', 'bubble', 'tip', 'vine_leaf', 'blossom', 'peg'],
+  vine: ['pump', 'trough', 'elbow', 'cross', 'rock', 'sprayer', 'caterpillar_head', 'caterpillar_body', 'trellis_leaf', 'bubble', 'suds', 'tip', 'vine_leaf', 'blossom', 'peg'],
 } as const
 export type CareCastType = keyof typeof CARE_CAST_URLS
 /** A critter name in one cast; the GLB root is `CRITTER_<name>`. */
@@ -99,8 +99,8 @@ function prepareCritters(root: THREE.Object3D): Map<CritterName, THREE.Object3D>
   return critters
 }
 
-/** Nodes that move on their own inside a care critter: wings, shears' blades, a frog's tongue, the can's legs, the gopher's arms. */
-const CAST_PIVOTS = /^(wing_[LR]|blade_[AB]|tongue|leg_[LR]|arm_[LR])$/
+/** Nodes that move on their own inside a care critter: wings, shears' blades, a frog's tongue, the can's legs, the gopher's arms, the pump's handle. */
+const CAST_PIVOTS = /^(wing_[LR]|blade_[AB]|tongue|leg_[LR]|arm_[LR]|handle)$/
 
 function prepareCastCritter(node: THREE.Object3D): void {
   node.removeFromParent()
@@ -188,6 +188,50 @@ export function clonePoppy(): THREE.Object3D | null {
 }
 
 /**
+ * Plants that are one Blender GLB each, loaded once per species and cloned per
+ * planting. Each GLB holds the plant under `rootName`; its `pivots` (the groups
+ * the plant's visual shows, hides and scales) stay separate when it is merged.
+ */
+function createModelShelf<Id extends string>(urls: Readonly<Record<Id, string>>, rootName: string, pivots: RegExp) {
+  const models = new Map<Id, THREE.Object3D>()
+  const pending = new Map<Id, Promise<THREE.Object3D>>()
+  return {
+    /** Start loading one (once) and resolve when it is ready. */
+    load(id: Id): Promise<THREE.Object3D> {
+      const loaded = models.get(id)
+      if (loaded) return Promise.resolve(loaded)
+      const existing = pending.get(id)
+      if (existing) return existing
+      const next = new GLTFLoader().loadAsync(urls[id]).then((gltf) => {
+        const model = gltf.scene.getObjectByName(rootName) ?? gltf.scene
+        mergeStaticMeshes(model, { isPivot: (object) => pivots.test(object.name) })
+        model.traverse((object) => {
+          if (!(object instanceof THREE.Mesh)) return
+          object.castShadow = true
+          object.receiveShadow = true
+        })
+        models.set(id, model)
+        return model
+      })
+      pending.set(id, next)
+      next.catch((error: unknown) => {
+        console.warn(`[plants] could not load the ${id}`, error)
+        pending.delete(id)
+      })
+      return next
+    },
+    loadAll(): Promise<unknown> {
+      return Promise.all((Object.keys(urls) as Id[]).map((id) => this.load(id)))
+    },
+    /** A fresh clone as authored (everything shown), or null until it has loaded. */
+    clone(id: Id): THREE.Object3D | null {
+      const model = models.get(id)
+      return model ? model.clone(true) : null
+    },
+  }
+}
+
+/**
  * The root vegetables (art/blender/root_vegetables.py), one GLB each. They share
  * one set of group names (see ROOT_PIVOTS), so one visual grows all three.
  */
@@ -204,44 +248,65 @@ export function isRootVegetable(species: PlantId): species is RootVegetableId {
 
 /** A root vegetable's groups: the bed, the root showing, each leaf, the potato's blossoms, the pests and the shoot a trim takes. */
 const ROOT_PIVOTS = /^RV_(mound|crown|leaf_\d+|flowers|flowers_\d+|pests|shoot)$/
-
-const rootModels = new Map<RootVegetableId, THREE.Object3D>()
-const rootPending = new Map<RootVegetableId, Promise<THREE.Object3D>>()
+const rootShelf = createModelShelf(ROOT_VEGETABLE_URLS, 'RV_root', ROOT_PIVOTS)
 
 /** Start loading one root vegetable (once) and resolve when it is ready. */
 export function loadRootVegetable(id: RootVegetableId): Promise<THREE.Object3D> {
-  const loaded = rootModels.get(id)
-  if (loaded) return Promise.resolve(loaded)
-  const existing = rootPending.get(id)
-  if (existing) return existing
-  const next = new GLTFLoader().loadAsync(ROOT_VEGETABLE_URLS[id]).then((gltf) => {
-    const model = gltf.scene.getObjectByName('RV_root') ?? gltf.scene
-    mergeStaticMeshes(model, { isPivot: (object) => ROOT_PIVOTS.test(object.name) })
-    model.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return
-      object.castShadow = true
-      object.receiveShadow = true
-    })
-    rootModels.set(id, model)
-    return model
-  })
-  rootPending.set(id, next)
-  next.catch((error: unknown) => {
-    console.warn(`[plants] could not load the ${id}`, error)
-    rootPending.delete(id)
-  })
-  return next
+  return rootShelf.load(id)
 }
 
 /** Load all three root vegetables. */
 export function loadRootVegetables(): Promise<unknown> {
-  return Promise.all((Object.keys(ROOT_VEGETABLE_URLS) as RootVegetableId[]).map(loadRootVegetable))
+  return rootShelf.loadAll()
 }
 
 /** A fresh clone of a root vegetable as authored (everything shown), or null until it has loaded. */
 export function cloneRootVegetable(id: RootVegetableId): THREE.Object3D | null {
-  const model = rootModels.get(id)
-  return model ? model.clone(true) : null
+  return rootShelf.clone(id)
+}
+
+/**
+ * The vines (art/blender/vines.py), one GLB each. They share one set of group
+ * names (see VINE_PIVOTS), so one visual grows all three.
+ */
+export const VINE_URLS = {
+  pumpkin: 'assets/plants/pumpkin.glb',
+  watermelon: 'assets/plants/watermelon.glb',
+  cucumber: 'assets/plants/cucumber.glb',
+} as const
+export type VineId = keyof typeof VINE_URLS
+
+export function isVine(species: PlantId): species is VineId {
+  return species in VINE_URLS
+}
+
+/** A vine's groups: the bed, its stems, each leaf, each fruit, the flowers, the caterpillars and the runaway runner. */
+const VINE_PIVOTS = /^VN_(mound|vines|leaf_\d+|fruit|fruit_\d+|flowers|pests|shoot)$/
+const vineShelf = createModelShelf(VINE_URLS, 'VN_root', VINE_PIVOTS)
+
+/** Start loading one vine (once) and resolve when it is ready. */
+export function loadVine(id: VineId): Promise<THREE.Object3D> {
+  return vineShelf.load(id)
+}
+
+/** Load all three vines. */
+export function loadVines(): Promise<unknown> {
+  return vineShelf.loadAll()
+}
+
+/** A fresh clone of a vine as authored (everything shown), or null until it has loaded. */
+export function cloneVine(id: VineId): THREE.Object3D | null {
+  return vineShelf.clone(id)
+}
+
+/**
+ * Start loading a species' own model when it is one loaded per species (a root
+ * vegetable or a vine), or null for the rest, which load with the garden.
+ */
+export function loadPlantModel(species: PlantId): Promise<THREE.Object3D> | null {
+  if (isRootVegetable(species)) return loadRootVegetable(species)
+  if (isVine(species)) return loadVine(species)
+  return null
 }
 
 /** Start loading (once) and resolve when both models are ready. */

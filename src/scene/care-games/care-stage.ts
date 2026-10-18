@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { PlantId, PlantType } from '../../game/plants'
 import { plantSpecies } from '../../game/plants'
-import { cloneBush, cloneCritter, isRootVegetable, loadRootVegetable, ownBerryMaterial, berryColor, type BushGroup } from '../plant-models'
+import { cloneBush, cloneCritter, loadPlantModel, ownBerryMaterial, berryColor, type BushGroup } from '../plant-models'
 import { clonePlantModel, disposePlantModel } from '../garden-plants'
 
 /**
@@ -14,6 +14,7 @@ import { clonePlantModel, disposePlantModel } from '../garden-plants'
  *   flower the species' own grown model, fitted to about 0.9 units tall, on the lawn
  *   water  the same, floating on a still pond with a soft rim and a few reeds
  *   root   the vegetable's own grown model in its bed, fitted like a flower
+ *   vine   the same: the vine's own grown model, its fruit in front
  *
  * It renders with the farm's own renderer (like the cutscenes do), so it costs
  * no second GPU context and works on both the WebGPU and WebGL backends. Only
@@ -38,9 +39,9 @@ export interface CareStage {
   /** How tall the plant stands on the stage, in world units (0 with no plant). */
   readonly plantHeight: number
   /**
-   * Resolves once the plant is on the stage. A root vegetable opened before its
-   * model has loaded (a debug URL skips the garden) joins the stage when it
-   * arrives; games are built after this, so they always see its height.
+   * Resolves once the plant is on the stage. A root vegetable or vine opened
+   * before its model has loaded (a debug URL skips the garden) joins the stage
+   * when it arrives; games are built after this, so they always see its height.
    */
   readonly ready: Promise<void>
   /** The bush on the stage (blueberry only), or null. Other plants have no bush. */
@@ -255,8 +256,9 @@ export function createCareStage(cssWidth: number, cssHeight: number, species: Pl
       if (ownedPlantModel) return
       ownedPlantModel = fitPlant(wrapper)
     }
-    // A root vegetable not loaded yet joins the stage when it arrives; a bush shows no plant, as before.
-    if (isRootVegetable(species)) ready = loadRootVegetable(species).then(fit, fit)
+    // A root vegetable or vine not loaded yet joins the stage when it arrives; a bush shows no plant, as before.
+    const loading = loadPlantModel(species)
+    if (loading) ready = loading.then(fit, fit)
     else fit()
   }
 
