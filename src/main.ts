@@ -520,7 +520,9 @@ function chapterSignals(): ChapterSignals {
   const plants = gardenPlants?.simulation.plants ?? []
   return {
     grownSpecies: new Set(plants.filter((plant) => plant.mature).map((plant) => plant.species)).size,
-    lawnArea: farm.tallGrassArea,
+    shortGrassArea: farm.shortGrassArea ?? 0,
+    meadowArea: farm.meadowArea ?? 0,
+    waterArea: farm.waterArea,
     residentSpecies: new Set(adultResidents().map((entry) => entry.species)),
     goodsCoins: goodsCoinsTotal,
     harmony: farm.harmony ?? 0,
