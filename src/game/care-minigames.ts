@@ -16,6 +16,9 @@
  *   root   barrel (water) climb the planks to the gopher's stolen rain barrel; jump his barrels
  *          breakout (pest) bounce a pebble off a hoe to squash the rows of bugs
  *          pong  (prune)  rally a pea with the leaves; a timed smack snips a wild shoot
+ *   vine   pipes (water)  spin the troughs to run water from the pump to the vine
+ *          squirt (pest)  a caterpillar zig-zags down the trellis; squirt every bit of it
+ *          runner (prune) steer the runaway runner onto pegs; don't let it tangle
  *
  * The scenes (`src/scene/care-games/`) only report what happened (a hit, a
  * miss, a harm, a beetle that left); this module decides the outcome, so the
@@ -25,9 +28,9 @@
 import { plantSpecies, type PlantCare, type PlantId, type PlantType } from './plants'
 
 /** Every close-up or farm-side care game. */
-export type CareGameKind = 'rain' | 'swat' | 'snip' | 'buzz' | 'hop' | 'chop' | 'skim' | 'paddle' | 'rope' | 'barrel' | 'breakout' | 'pong'
+export type CareGameKind = 'rain' | 'swat' | 'snip' | 'buzz' | 'hop' | 'chop' | 'skim' | 'paddle' | 'rope' | 'barrel' | 'breakout' | 'pong' | 'pipes' | 'squirt' | 'runner'
 
-export const CARE_GAME_KINDS: readonly CareGameKind[] = ['rain', 'swat', 'snip', 'buzz', 'hop', 'chop', 'skim', 'paddle', 'rope', 'barrel', 'breakout', 'pong']
+export const CARE_GAME_KINDS: readonly CareGameKind[] = ['rain', 'swat', 'snip', 'buzz', 'hop', 'chop', 'skim', 'paddle', 'rope', 'barrel', 'breakout', 'pong', 'pipes', 'squirt', 'runner']
 
 /** Which game answers each chore, for each plant type. */
 export const CARE_GAMES: Readonly<Record<PlantType, Readonly<Record<PlantCare, CareGameKind>>>> = {
@@ -35,6 +38,7 @@ export const CARE_GAMES: Readonly<Record<PlantType, Readonly<Record<PlantCare, C
   flower: { water: 'buzz', pest: 'hop', prune: 'chop' },
   water: { water: 'skim', pest: 'paddle', prune: 'rope' },
   root: { water: 'barrel', pest: 'breakout', prune: 'pong' },
+  vine: { water: 'pipes', pest: 'squirt', prune: 'runner' },
 }
 
 /** The game a species plays for one of its chores. */
@@ -84,6 +88,12 @@ export const CARE_GAME_RULES: Readonly<Record<CareGameKind, CareGameRules>> = {
   breakout: { goal: 15, hearts: 3, misses: 0, seconds: 60 },
   // Eight wild shoots trimmed at a quick rally; three peas let past and it is over.
   pong: { goal: 8, hearts: 3, misses: 0, seconds: 35 },
+  // Two boards, each a drink once the water reaches the vine (see care-pipes.ts); four leaks and it is over.
+  pipes: { goal: 2, hearts: 4, misses: 0, seconds: 60 },
+  // Every bit of the caterpillar squirted (see care-squirt.ts); three drops onto the vine and it is over.
+  squirt: { goal: 12, hearts: 3, misses: 0, seconds: 45 },
+  // Eight pegs reached (see care-runner.ts); three tangles and it is over.
+  runner: { goal: 8, hearts: 3, misses: 0, seconds: 40 },
 }
 
 export interface CareGameCopy {
@@ -133,6 +143,27 @@ export const CARE_GAME_COPY: Readonly<Record<CareGameKind, CareGameCopy>> = {
     keysLine: 'Mouse or arrows move the trowel. Click or press Space to smack.',
     winLine: 'A tidy top!',
     chore: 'the trim pong',
+  },
+  pipes: {
+    command: 'SPIN!',
+    goalLine: 'Spin the troughs to run water from the pump to the vine. Stay ahead of the flow! Two drinks to go.',
+    keysLine: 'Click a trough to spin it. Arrow keys pick one, Space spins it.',
+    winLine: 'Watered to the roots!',
+    chore: 'the pipe spin',
+  },
+  squirt: {
+    command: 'SQUIRT!',
+    goalLine: 'A caterpillar is creeping down the trellis! Slide the sprayer under it: every squirt bubbles a bit away. Squirt all twelve!',
+    keysLine: 'The pointer or the arrow keys slide the sprayer. It squirts by itself.',
+    winLine: 'Not a nibble left!',
+    chore: 'the caterpillar squirt',
+  },
+  runner: {
+    command: 'STEER!',
+    goalLine: "The runner's running wild! Steer its tip onto eight pegs, and don't let it tangle in itself.",
+    keysLine: 'Arrow keys or WASD steer. Or tap or swipe the way to turn.',
+    winLine: 'Trained and tidy!',
+    chore: 'the runner steer',
   },
 }
 
@@ -274,6 +305,9 @@ const LOSS_LINES: Readonly<Record<CareGameKind, Readonly<Partial<Record<CareLoss
   barrel: { time: 'The gopher kept the rain barrel.', hearts: 'Too many barrels knocked the can over.' },
   breakout: { time: 'Out of time! The bugs kept nibbling.', hearts: 'Too many pebbles got past the hoe.' },
   pong: { time: 'Out of time! Still a bit shaggy.', hearts: 'Too many peas got past the trowel.' },
+  pipes: { time: 'Out of time! The vine is still thirsty.', hearts: 'Too many leaks. The water ran into the dirt.' },
+  squirt: { time: 'Out of time! The caterpillar is still munching.', hearts: 'Too many caterpillars dropped onto the vine.' },
+  runner: { time: 'Out of time! The runner is still sprawling.', hearts: 'The runner got tied up in knots.' },
 }
 
 /** One line on why a round was lost, for the result card. */

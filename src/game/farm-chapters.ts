@@ -87,9 +87,9 @@ const has = (label: string, yes: boolean): ChapterGoalPart => ({ label, value: y
 const anyOf = (signals: ChapterSignals, species: readonly string[]): boolean => species.some((name) => signals.residentSpecies.has(name))
 
 /**
- * Chapter 1 ends once this many different species are fully grown. Five is every
- * species a bare-dirt farm can plant (poppy, blueberry, carrot, potato, onion):
- * lawn and pond plants wait for chapter 2.
+ * Chapter 1 ends once this many different species are fully grown: five of the
+ * eight a bare-dirt farm can plant (poppy, blueberry, carrot, potato, onion,
+ * pumpkin, watermelon, cucumber). Pond plants wait for chapter 2.
  */
 export const GARDEN_SPECIES_GOAL = 5
 /** Chapter 2 ends with this much short lawn, tall meadow and pond, all in square meters. */

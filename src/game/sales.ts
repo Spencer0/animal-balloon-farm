@@ -10,6 +10,9 @@ export const PLANT_SALE_PRICES: Readonly<Record<PlantId, number>> = {
   carrot: 9,
   potato: 12,
   onion: 10,
+  pumpkin: 14,
+  watermelon: 15,
+  cucumber: 10,
 }
 
 export const ANIMAL_SALE_PRICES: Readonly<Record<BalloonAnimalId, number>> = {

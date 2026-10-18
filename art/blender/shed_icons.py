@@ -39,6 +39,9 @@ SPECIES = [
     ("carrot", "Carrot", (0.93, 0.54, 0.17, 1.0)),
     ("potato", "Potato", (0.73, 0.54, 0.33, 1.0)),
     ("onion", "Onion", (0.66, 0.27, 0.43, 1.0)),
+    ("pumpkin", "Pumpkin", (0.92, 0.45, 0.12, 1.0)),
+    ("watermelon", "Watermelon", (0.33, 0.6, 0.29, 1.0)),
+    ("cucumber", "Cucumber", (0.42, 0.66, 0.28, 1.0)),
 ]
 
 CREAM = (0.96, 0.90, 0.76, 1.0)
@@ -160,6 +163,44 @@ def build_motif(plant_id, badge_rgba, y):
         put(bpy.context.active_object, location=(0, y, 0.06), rotation=(0, 0, 0), material=mid)
         for dx, angle in ((-0.06, 25), (0.06, -25)):
             blob((dx, y + 0.01, 0.2), (0.03, 0.02, 0.13), leaf, rotation=(0, math.radians(angle), 0))
+    elif plant_id == "pumpkin":
+        # A fat ribbed pumpkin with a stubby stem and a leaf.
+        for dx, sx, tone in ((-0.18, 0.12, mid), (0.18, 0.12, mid), (-0.09, 0.13, light), (0.09, 0.13, light), (0.0, 0.13, mid)):
+            blob((dx, y - (0.01 if tone is light else 0.0), -0.2), (sx, 0.04, 0.2), tone)
+        for dx in (-0.135, 0.0, 0.135):
+            blob((dx, y - 0.05, -0.2), (0.012, 0.01, 0.17), deep)
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.035, depth=0.14, vertices=12)
+        put(bpy.context.active_object, location=(0.02, y - 0.02, 0.04), rotation=(0, math.radians(18), 0), material=mat_flat("pumpkin_stem", (0.42, 0.33, 0.18, 1.0)))
+        blob((-0.15, y + 0.01, 0.06), (0.12, 0.03, 0.07), leaf, rotation=(0, math.radians(25), 0))
+    elif plant_id == "watermelon":
+        # A slice: red flesh with black seeds over a white and green rind, flat side up.
+        def half_disc(radius, offset, material, centre_z=-0.1):
+            verts = [(0.0, y - offset, centre_z)]
+            for step in range(25):
+                angle = math.pi + math.pi * step / 24
+                verts.append((math.cos(angle) * radius, y - offset, centre_z + math.sin(angle) * radius))
+            faces = [(0, k, k + 1) for k in range(1, 25)]
+            mesh = bpy.data.meshes.new(f"slice_{radius}")
+            mesh.from_pydata(verts, [], faces)
+            return put(bpy.data.objects.new(f"slice_{radius}", mesh), material=material)
+        half_disc(0.4, 0.0, deep)
+        half_disc(0.35, 0.01, mat_flat("melon_rind_white", (0.93, 0.95, 0.82, 1.0)))
+        half_disc(0.31, 0.02, mat_flat("melon_flesh", (0.9, 0.25, 0.3, 1.0)))
+        seed = mat_flat("melon_seed", (0.12, 0.1, 0.1, 1.0))
+        for dx, dz in ((-0.17, -0.17), (-0.06, -0.22), (0.06, -0.22), (0.17, -0.17), (0.0, -0.31), (-0.1, -0.29), (0.1, -0.29)):
+            blob((dx, y - 0.04, dz), (0.022, 0.01, 0.034), seed, rotation=(0, math.radians(dx * -120), 0))
+    elif plant_id == "cucumber":
+        # A bumpy cucumber lying aslant, a pale stripe down it and a yellow flower at its tip.
+        blob((0.0, y, -0.12), (0.11, 0.04, 0.34), mid, rotation=(0, math.radians(-38), 0))
+        blob((0.04, y - 0.03, -0.09), (0.025, 0.01, 0.26), light, rotation=(0, math.radians(-38), 0))
+        bump = mat_flat("cucumber_bump", (0.83, 0.92, 0.62, 1.0))
+        for t in (-0.22, -0.1, 0.02, 0.14, 0.24):
+            for side in (-1, 1):
+                blob((t * math.sin(math.radians(38)) + side * 0.055 * math.cos(math.radians(38)), y - 0.045, -0.12 + t * math.cos(math.radians(38)) - side * 0.055 * math.sin(math.radians(38))),
+                     (0.016, 0.01, 0.016), bump, segments=8, rings=5)
+        petals(5, 0.05, (0.03, 0.02, 0.05), mat_flat("cucumber_flower", (0.96, 0.78, 0.2, 1.0)), y - 0.02, centre=(0.24, 0.16))
+        blob((0.24, y - 0.04, 0.16), (0.025, 0.02, 0.025), mat_flat("cucumber_flower_eye", (0.88, 0.55, 0.12, 1.0)))
+        blob((-0.2, y + 0.01, 0.12), (0.1, 0.03, 0.06), leaf, rotation=(0, math.radians(-30), 0))
     else:
         blob((0, y, -0.34), (0.42, 0.03, 0.1), leaf)
         petals(8, 0.2, (0.075, 0.03, 0.2), mid, y - 0.01, centre=(0, -0.02))

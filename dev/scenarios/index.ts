@@ -22,6 +22,7 @@ import { panLimit } from './camera/pan-limit'
 import { careCues } from './garden/care-cues'
 import { poppyStages } from './garden/poppy-stages'
 import { rootVegetables } from './garden/root-vegetables'
+import { vinePatch } from './garden/vine-patch'
 import { chapterOne } from './garden/chapter-one'
 import { escapeKeys } from './ui/escape-keys'
 
@@ -36,7 +37,7 @@ export const SCENARIOS: readonly Scenario[] = [
   gemFarm,
   firstPlant,
   panLimit,
-  careCues, poppyStages, rootVegetables, chapterOne,
+  careCues, poppyStages, rootVegetables, vinePatch, chapterOne,
   escapeKeys,
 ]
 
