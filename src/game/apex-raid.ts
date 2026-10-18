@@ -10,10 +10,11 @@
  * Any species that grows past `CROWD_LIMIT` on the farm draws the lion down from
  * the hills. It catches the scent first (a short warning: sell down to the limit
  * and it loses interest), then comes over the fence and hunts that species to
- * the very last. It outruns anything in the open, pounces, eats in a moment,
- * and goes into the species' houses for whoever is hiding there. A house is no
- * refuge from it. When none are left it leaves the way it came. There is no
- * breeding floor and no dice: it is the reset button for a runaway herd.
+ * the very last. It outruns anything in the open, crouches, leaps, swipes it
+ * down, eats in a moment, and goes into the species' houses for whoever is
+ * hiding there. A house is no refuge from it. When none are left it leaves the
+ * way it came. There is no breeding floor and no dice: it is the reset button
+ * for a runaway herd.
  *
  * Tamed (only on a farm of legend: see `SPECIES_CONDITIONS.cougar`), the lion
  * stays and guards instead. It trims a crowd back to the limit and no further.
@@ -61,7 +62,7 @@ export type LionPhase =
   | 'scent'   // a herd has passed the limit; the lion is on its way (or, tamed, has noticed)
   | 'hunt'    // on the farm, choosing its next meal
   | 'chase'   // sprinting at one animal out in the open
-  | 'pounce'  // close enough: the prey freezes, the lion lunges
+  | 'pounce'  // close enough: the prey freezes, the lion crouches, leaps and swipes
   | 'feed'    // a moment over the catch
   | 'door'    // running to a house its quarry is hiding in
   | 'inside'  // in the house, eating everyone of its quarry
@@ -93,6 +94,8 @@ export interface LionPreyView {
   readonly z: number
   /** False for an animal the lion cannot take right now: mid-reveal, or already walking in through a door. */
   readonly targetable: boolean
+  /** Its body radius: the leap lands a paw's length off its edge, not its middle. */
+  readonly radius?: number
 }
 
 export interface LionHouseView {
@@ -109,6 +112,8 @@ export interface LionWorld {
   /** Where the lion is now (ignored while it is away). */
   readonly x: number
   readonly z: number
+  /** Its walking speed in units a second, which the pursuit's `speedScale` multiplies: it times the leap. */
+  readonly speed: number
   /** How far ahead of its centre its mouth is. Distances to prey run from the mouth. */
   readonly reach?: number
   /** Residents per species, babies and animals indoors included: what "more than six" counts. */
@@ -130,7 +135,7 @@ export type LionEvent =
   /** The scene should bring the lion onto the farm now. */
   | { readonly kind: 'arrive'; readonly species: string }
   | { readonly kind: 'chase'; readonly preyId: string }
-  /** The prey is close: it freezes and the lion lunges. The catch always lands. */
+  /** The prey is close: it freezes, and the lion crouches, leaps and swipes. The catch always lands. */
   | { readonly kind: 'pounce'; readonly preyId: string }
   /** The prey stopped being fair game (it went in, or was sold). */
   | { readonly kind: 'abandon'; readonly preyId: string }
@@ -163,6 +168,8 @@ export interface LionStep {
   readonly pursuit: LionPursuit | null
   /** True while it is inside a house: the scene hides it. */
   readonly hidden: boolean
+  /** A point to turn and face while it stands (its prey, through the crouch and the swipe), or null. */
+  readonly face?: { readonly x: number; readonly z: number } | null
 }
 
 /** Overtuned on purpose: it is the answer to a farm that bred out of hand. */
@@ -171,13 +178,19 @@ export const LION_TUNING = {
   scentSeconds: 15,
   /** Running down prey, as a multiple of its walk. Far faster than a panicking chicken. */
   chaseSpeedScale: 4.5,
-  /** From the mouth: close enough that the prey freezes and the lion lunges. */
+  /** From the mouth: close enough that the prey freezes and the lion strikes. */
   pounceDistance: 2.4,
-  pounceSpeedScale: 7,
-  /** Longest a lunge at frozen prey can take; it always lands by then. */
-  pounceSeconds: 0.5,
-  /** Mouth to prey at the catch, short of where the collision pass holds two bodies apart. */
-  catchDistance: 0.4,
+  /**
+   * The strike comes in three beats, and the `STRIKE` clip in art/blender/balloon_cougar.py is
+   * keyed to them: a crouch on the spot, facing the prey...
+   */
+  coilSeconds: 0.2,
+  /** ...a leap that lands with its mouth `strikeDistance` short of the prey's edge... */
+  lungeSeconds: 0.3,
+  /** ...and a forepaw swiped down across it, which lands this long after touching down: the catch (frame 17, 0.71 s). */
+  swipeSeconds: 0.21,
+  /** Mouth to the prey's edge where the leap lands: a paw's length off, so it swipes rather than rams. */
+  strikeDistance: 0.35,
   /** Over a catch, then on to the next. */
   eatSeconds: 0.7,
   /** A chase that has not closed by now picks another target. */
@@ -364,7 +377,8 @@ export function stepLion(raid: LionRaid, world: LionWorld, deltaSeconds: number)
       if (mouthTo(target) <= T.pounceDistance) {
         enter(raid, 'pounce')
         events.push({ kind: 'pounce', preyId: target.id })
-        return { events, pursuit: { x: target.x, z: target.z, speedScale: T.pounceSpeedScale }, hidden: false }
+        // It pulls up and crouches where it is: the leap comes after.
+        return { events, pursuit: stand, hidden: false, face: { x: target.x, z: target.z } }
       }
       return { events, pursuit: { x: target.x, z: target.z, speedScale: T.chaseSpeedScale }, hidden: false }
     }
@@ -375,15 +389,28 @@ export function stepLion(raid: LionRaid, world: LionWorld, deltaSeconds: number)
         enter(raid, 'hunt')
         return { events, pursuit: stand, hidden: false }
       }
-      // The prey is frozen: the lunge lands on contact, or at the latest when it runs out.
-      if (mouthTo(target) <= T.catchDistance || raid.timer >= T.pounceSeconds) {
+      const face = { x: target.x, z: target.z }
+      // The prey is frozen, so the swipe always lands, on the tick nearest the clip's blow.
+      if (raid.timer + dt / 2 >= T.coilSeconds + T.lungeSeconds + T.swipeSeconds) {
         events.push({ kind: 'catch', preyId: target.id, x: target.x, z: target.z })
         raid.preyId = null
         raid.eaten += 1
         enter(raid, 'feed')
-        return { events, pursuit: stand, hidden: false }
+        return { events, pursuit: stand, hidden: false, face }
       }
-      return { events, pursuit: { x: target.x, z: target.z, speedScale: T.pounceSpeedScale }, hidden: false }
+      // A pursuit set now moves it on the next step, so it leaps while that step falls in the lunge.
+      const landBy = T.coilSeconds + T.lungeSeconds
+      const standOff = Math.max(0, target.radius ?? 0) + T.strikeDistance
+      const gap = mouthTo(target) - standOff
+      const distance = Math.hypot(target.x - world.x, target.z - world.z)
+      if (raid.timer + dt > T.coilSeconds && raid.timer < landBy && gap > 0 && distance > 0) {
+        // Paced to touch down on time: whatever is left of the gap over whatever is left of the leap.
+        const speedScale = gap / Math.max(dt, landBy - raid.timer) / Math.max(0.1, world.speed)
+        const short = reach + standOff
+        const landing = { x: target.x - ((target.x - world.x) / distance) * short, z: target.z - ((target.z - world.z) / distance) * short }
+        return { events, pursuit: { ...landing, speedScale }, hidden: false, face }
+      }
+      return { events, pursuit: stand, hidden: false, face }
     }
     case 'feed': {
       if (raid.timer >= T.eatSeconds) enter(raid, 'hunt')

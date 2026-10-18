@@ -13,7 +13,7 @@
  */
 import { seededRandom } from './seeded-random'
 import { createLionRaid, isRaiding, stepLion, type LionEvent, type LionHouseView, type LionPhase, type LionPreyView, type LionRaid } from './apex-raid'
-import { setSimAlarmed, setSimPursuit, type AnimalSimRecord } from './animal-sim'
+import { headingOf, setSimAlarmed, setSimPursuit, type AnimalSimRecord } from './animal-sim'
 import { createGroundHunter, stepGroundHunter, type GroundHunter, type GroundHuntPhase, type GroundPreyView } from './ground-hunt'
 import {
   createOwlFlight,
@@ -392,6 +392,8 @@ export interface LionInput {
   /** Its sim record, or null while it has no model on the farm. */
   readonly record: AnimalSimRecord | null
   readonly reach: number
+  /** Its walking speed, units a second: the leap is paced by it. */
+  readonly speed: number
   /** Held still (the paint reveal of a taming): it does nothing this tick. */
   readonly busy: boolean
 }
@@ -482,13 +484,14 @@ export function createLionSim(): LionSim {
       }
       lionId = lion.id
       const preyById = new Map(input.prey.map((entry) => [entry.id, entry]))
-      const views: LionPreyView[] = input.prey.map((entry) => ({ id: entry.id, species: entry.species, x: entry.record.x, z: entry.record.z, targetable: entry.targetable }))
+      const views: LionPreyView[] = input.prey.map((entry) => ({ id: entry.id, species: entry.species, x: entry.record.x, z: entry.record.z, targetable: entry.targetable, radius: entry.record.radius }))
       const at = lion.record ?? { x: 0, z: 0 }
       const step = stepLion(raid, {
         stage: lion.stage,
         x: at.x,
         z: at.z,
         reach: lion.reach,
+        speed: lion.speed,
         herds: input.herds,
         prey: views,
         houses: input.houses,
@@ -502,10 +505,12 @@ export function createLionSim(): LionSim {
         } else if (event.kind === 'pounce') {
           const prey = preyById.get(event.preyId)
           if (prey) {
-            // Frozen to the spot: the lunge lands whatever its legs were doing.
+            // Frozen to the spot: the swipe lands whatever its legs were doing.
             setSimPursuit(prey.record, { x: prey.record.x, z: prey.record.z, speedScale: 0 })
             frozen.set(event.preyId, prey.record)
           }
+          // The scene plays the strike on it.
+          events.push({ type: 'raid', hunterId: lion.id, event })
         } else if (event.kind === 'abandon') {
           calm(event.preyId)
         } else if (event.kind === 'catch') {
@@ -536,6 +541,10 @@ export function createLionSim(): LionSim {
         steered = lion.record
       } else {
         release()
+      }
+      // Standing over its prey (the crouch, the swipe), it turns to face it.
+      if (step.face && lion.record && Math.hypot(step.face.x - lion.record.x, step.face.z - lion.record.z) > 1e-3) {
+        lion.record.heading = headingOf(step.face.x - lion.record.x, step.face.z - lion.record.z)
       }
     },
     huntedIds: () => hunted,

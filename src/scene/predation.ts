@@ -337,6 +337,7 @@ export function createPredation(deps: PredationDeps) {
       stage,
       record: live?.sim ?? null,
       reach: (bodySizeBySpecies.get(record.species) ?? 2.9) * LION_MOUTH_SHARE * (live?.currentScale ?? 1),
+      speed: ANIMAL_CATALOG.find((entry) => entry.id === record.species)?.speed ?? 1.4,
       // On the farm but not yet drawn, or mid paint-reveal of a taming: it waits.
       busy: stage >= 2 && (!live || live.isCapturing),
     } : null
@@ -455,6 +456,10 @@ export function createPredation(deps: PredationDeps) {
       }
       case 'arrive':
         summonLion(event.species)
+        break
+      case 'pounce':
+        // The crouch, the leap and the swipe are one clip, keyed to the sim's beats (LION_TUNING).
+        if (lionId) animalById.get(lionId)?.playOnce('STRIKE')
         break
       case 'devour':
         devourInside(event.houseId, event.preyIds)

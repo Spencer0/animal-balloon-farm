@@ -66,7 +66,11 @@ blender --background --factory-startup --python art/blender/balloon_cougar.py
 A long, low tawny cat on the raccoon's skeleton with the legs spread along the body (`LEG_SPREAD`), the head
 carried below the shoulders, a cream muzzle and chest, and a long tail curling up into a black tip. The face is its
 own: amber eyes with slit pupils (the `pupil` nodes still turn to hearts), low stern brows, dark tear lines and two
-small fangs. `WALK` and `IDLE` only, at `DETAIL = .45`. It was authored in a cloud session with Blender 4.2 LTS as
+small fangs. `WALK`, `IDLE` and a one-shot `STRIKE`, at `DETAIL = .45`. `STRIKE` (`animate_strike`) crouches, leaps,
+rears and swipes the near forepaw down across the prey; the raid plays it on every pounce, and its beats match
+`LION_TUNING` in `src/game/apex-raid.ts` (the blow is frame 17, when the prey pops). Planted paws are solved
+against the body's lift, pitch, roll and stretch (`planted_z`) so no frame dips below the lawn: the runtime grounds
+the model on the lowest point any clip reaches. It was authored in a cloud session with Blender 4.2 LTS as
 the `bpy` Python module (`pip install bpy==4.2.23` under Python 3.11) and `ABF_RENDER_ENGINE=CYCLES`, which runs
 the script unchanged: `python art/blender/balloon_cougar.py`.
 

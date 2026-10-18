@@ -18,7 +18,7 @@ import { stepGateTravel, stepHomeTrip, stepPursuit, stepSleep, tickVisitCooldown
 import { ALARM_SPEED_SCALE, chooseWanderTarget, stepWander, type WanderContext } from '../game/animal-wander'
 import { seededRandom } from '../game/seeded-random'
 
-export type AnimalClip = 'IDLE' | 'WALK' | 'SLEEP' | 'EAT'
+export type AnimalClip = 'IDLE' | 'WALK' | 'SLEEP' | 'EAT' | 'STRIKE'
 export type AnimalAppearance = 'standard' | 'wild'
 export type { BalloonAnimalId } from './animal-catalog'
 
@@ -169,6 +169,12 @@ export interface BalloonAnimal {
   sell(): boolean
   readonly gltf: AnimalGLTF | null
   setAnimation(name: AnimalClip, fadeSeconds?: number): void
+  /**
+   * Play a clip once from its start (the mountain lion's `STRIKE`), over whatever its
+   * movement would pick, then hand back to that. Facing still follows the sim. False
+   * when the model is not drawn or has no such clip; the sim goes on either way.
+   */
+  playOnce(name: AnimalClip): boolean
   setAppearance(appearance: AnimalAppearance): void
   beginCapture(): boolean
   readonly isCaptured: boolean
@@ -483,6 +489,8 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
   let heldBerry: THREE.Object3D | null = null
   let flightRate = 1
   let sleepBlend = 0
+  /** Seconds left of a clip played once (`playOnce`); while it runs the movement does not pick the clip. */
+  let oneShotLeft = 0
   // Shared by every walk, chase and wander branch; each one uses it at once, so
   // one scratch quaternion per animal replaces a fresh allocation per frame.
   const facingScratch = new THREE.Quaternion()
@@ -553,7 +561,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
         const actions = new Map<AnimalClip, THREE.AnimationAction>()
         for (const clip of asset.animations) {
           const normalizedName = clip.name.toUpperCase()
-          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : normalizedName.includes('SLEEP') ? 'SLEEP' : normalizedName.includes('EAT') ? 'EAT' : null
+          const kind = normalizedName.includes('WALK') ? 'WALK' : normalizedName.includes('IDLE') ? 'IDLE' : normalizedName.includes('SLEEP') ? 'SLEEP' : normalizedName.includes('STRIKE') ? 'STRIKE' : normalizedName.includes('EAT') ? 'EAT' : null
           if (kind) actions.set(kind, mixer.clipAction(clip))
         }
         loaded = { gltf: asset, root: modelRoot, mixer, actions, activeAnimation: null }
@@ -694,6 +702,22 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     loaded.activeAnimation = name
   }
 
+  const playOnce = (name: AnimalClip): boolean => {
+    const action = loaded?.actions.get(name)
+    if (!loaded || !action || !detailActive || capture) return false
+    action.setLoop(THREE.LoopOnce, 1)
+    action.clampWhenFinished = true
+    const previous = loaded.activeAnimation ? loaded.actions.get(loaded.activeAnimation) : undefined
+    action.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(0.08).play()
+    if (previous && previous !== action) previous.fadeOut(0.08)
+    loaded.activeAnimation = name
+    active = name
+    // A sprint winds the walk up; the one-shot plays at its authored pace.
+    loaded.mixer.timeScale = 1
+    oneShotLeft = action.getClip().duration
+    return true
+  }
+
   chooseTarget()
 
   const beginCapture = (): boolean => {
@@ -710,6 +734,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
     const bounds = getLocalBounds(posePivot, modelRoot ?? posePivot)
     const worldBounds = objectBounds(modelRoot ?? posePivot)
     captureVerticalRange = { bottom: worldBounds.min.y, top: worldBounds.max.y }
+    oneShotLeft = 0
     // Initialize at progress zero so the animal stays glossy red until paint reaches it.
     setAnimalAppearanceProgress(modelRoot ?? posePivot, 0, captureVerticalRange)
     capture = createCapturePresentation(posePivot, wrapper, modelRoot, options.id, bounds, options.seed)
@@ -966,6 +991,7 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       sim.radius = options.size * BODY_RADIUS_SHARE * wrapper.scale.x
     },
     setAnimation,
+    playOnce,
     setAppearance,
     beginCapture,
     get isCaptured(): boolean { return captured },
@@ -1042,7 +1068,13 @@ export async function createBalloonAnimal(parent: THREE.Group, options: BalloonA
       // A hunt or a visitor's walk steers by pursuit: a lunge snaps round to face
       // the prey, a stalk turns smoothly, and creeping is a slow ripple of the body.
       const pursuit = sim.home ? null : sim.pursuit
-      if (sim.motion === 'walk') {
+      if (oneShotLeft > 0) {
+        // A one-shot (the lion's strike) owns the clip; it still snaps round to face the sim's heading.
+        oneShotLeft = Math.max(0, oneShotLeft - delta)
+        facingScratch.setFromAxisAngle(upAxis, sim.heading)
+        wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-14 * delta))
+        if (loaded) loaded.mixer.timeScale = 1
+      } else if (sim.motion === 'walk') {
         facingScratch.setFromAxisAngle(upAxis, sim.heading)
         const turnRate = pursuit ? (pursuit.speedScale > 3 ? 14 : 5) : 4.5
         wrapper.quaternion.slerp(facingScratch, 1 - Math.exp(-turnRate * delta))

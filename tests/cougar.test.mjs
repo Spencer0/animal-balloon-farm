@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 /**
@@ -18,7 +19,7 @@ const { outputFiles } = await build({
       "export { ANIMAL_CATALOG } from './src/animals/animal-catalog.ts'",
       "export { ANIMAL_SALE_PRICES, UNIQUE_ANIMAL_NAMES } from './src/game/sales.ts'",
       "export { DIETS } from './src/game/animal-diet.ts'",
-      "export { APEX_SPECIES } from './src/game/apex-raid.ts'",
+      "export { APEX_SPECIES, LION_TUNING } from './src/game/apex-raid.ts'",
     ].join('\n'),
     resolveDir: process.cwd(),
   },
@@ -128,4 +129,20 @@ test('losing a tamed lion does not send another round through the carnival', () 
   const state = life.exportState()
   life.importState({ ...state, pendingVisitors: ['cougar', 'cow'] })
   assert.deepEqual(life.exportState().pendingVisitors.filter((species) => species === 'cougar'), [])
+})
+
+test('the model ships WALK, IDLE and a one-shot STRIKE whose blow lands on the raid\'s beat', () => {
+  const bytes = readFileSync('public/assets/animals/balloon-cougar.glb')
+  const glb = JSON.parse(bytes.subarray(20, 20 + bytes.readUInt32LE(12)).toString())
+  const clip = (name) => glb.animations.find((animation) => animation.name === name)
+  assert.deepEqual(glb.animations.map((animation) => animation.name).sort(), ['IDLE', 'STRIKE', 'WALK'])
+  // The strike drives every joint the walk does, so nothing snaps to its rest pose mid-pounce.
+  const joints = (name) => new Set(clip(name).channels.map((channel) => `${channel.target.node}:${channel.target.path}`))
+  const strike = joints('STRIKE')
+  for (const joint of joints('WALK')) assert.ok(strike.has(joint), joint)
+  // Frame 17 of 24 fps is the blow (art/blender/balloon_cougar.py); the sim pops the prey then.
+  const T = m.LION_TUNING
+  const end = Math.max(...clip('STRIKE').samplers.map((sampler) => glb.accessors[sampler.input].max[0]))
+  assert.ok(end > 0.9 && end < 1.2, `about a second long (${end})`)
+  assert.ok(Math.abs(T.coilSeconds + T.lungeSeconds + T.swipeSeconds - 17 / 24) < 1 / 24)
 })

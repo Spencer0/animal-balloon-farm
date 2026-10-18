@@ -556,7 +556,8 @@ purpose: it is the answer to a herd that bred out of hand.
 |---------|----------------|
 | Who is apex, the crowd limit, the whole raid state machine and its tuning | `APEX_SPECIES`, `CROWD_LIMIT`, `stepLion`, `LION_TUNING` in `src/game/apex-raid.ts` (pure, `tests/apex-raid.test.mjs`) |
 | Steering the lion, panicking the quarry, freezing the one it pounces on, catches as `caught`/`popped` | `createLionSim` in `src/game/animal-hunt.ts` |
-| Summoning it over the fence, the house raid's pops at the door, notices, sending it home | `stepLionHunt`, `summonLion`, `devourInside`, `playRaidEvent` in `src/scene/predation.ts` |
+| Summoning it over the fence, the house raid's pops at the door, notices, the strike clip, sending it home | `stepLionHunt`, `summonLion`, `devourInside`, `playRaidEvent` in `src/scene/predation.ts` |
+| The one-shot `STRIKE` clip (crouch, leap, swipe) and playing it over the movement clips | `animate_strike` in `art/blender/balloon_cougar.py`; `playOnce` in `src/animals/balloon-animal.ts` |
 | Onto the farm in one step (stage 0 to 2), and back to the hills without a carnival visit | `summon`, `sendAway` in `src/game/animal-life.ts`; `queueVisitor` refuses apex species |
 | Its ladder, `chapter` and `largestHerd` kinds | `COUGAR_CONDITIONS` in `animal-conditions.ts`, `FarmState.chapter` / `largestHerd` from `farm-measure.ts` |
 
@@ -564,7 +565,10 @@ purpose: it is the answer to a herd that bred out of hand.
   Otherwise it lands just inside the fence nearest the crowd (wild, so balloon red), and the whole
   quarry out in the open panics. It sprints at the nearest (`chaseSpeedScale`), and within
   `pounceDistance` of its mouth the prey freezes and the pounce always lands: no dice, no breeding
-  floor. With none left outside it runs to a house holding its quarry, goes in (hidden for
+  floor. The pounce is three beats the `STRIKE` clip is keyed to: it pulls up and crouches facing
+  the prey (`coilSeconds`), leaps to land with its mouth a paw's length short (`lungeSeconds`,
+  `strikeDistance`), and swipes a forepaw down across it; the prey pops on the blow (`swipeSeconds`,
+  frame 17 of the clip). Change a beat and the clip together. With none left outside it runs to a house holding its quarry, goes in (hidden for
   `insideSeconds`), and everyone of the quarry inside pops out of the door one after another. While
   it raids, its quarry indoors stays hidden there (`hidingUntil`), so it has to go in. When the herd is
   gone it walks out past the fence and is sent back to stage 0. Other species are never touched.

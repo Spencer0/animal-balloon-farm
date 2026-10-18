@@ -11,7 +11,7 @@ const { outputFiles } = await build({
     contents: [
       "export * from './src/game/apex-raid.ts'",
       "export { createLionSim } from './src/game/animal-hunt.ts'",
-      "export { createAnimalSimRecord } from './src/game/animal-sim.ts'",
+      "export { createAnimalSimRecord, headingOf } from './src/game/animal-sim.ts'",
     ].join('\n'),
     resolveDir: process.cwd(),
   },
@@ -32,7 +32,8 @@ function farm({ stage = 2, outdoors = [], houses = [], extraHerds = {} } = {}) {
     x: 0,
     z: 0,
     reach: 0.9,
-    prey: outdoors.map((entry, index) => ({ id: entry.id ?? `out-${index}`, species: entry.species, x: entry.x, z: entry.z, targetable: entry.targetable ?? true })),
+    speed: WALK,
+    prey: outdoors.map((entry, index) => ({ id: entry.id ?? `out-${index}`, species: entry.species, x: entry.x, z: entry.z, targetable: entry.targetable ?? true, radius: entry.radius })),
     houses: houses.map((house) => ({ id: house.id, doorX: house.doorX, doorZ: house.doorZ, inside: [...house.inside] })),
     exit: { x: 20, z: 0 },
     herds: {},
@@ -47,33 +48,36 @@ function farm({ stage = 2, outdoors = [], houses = [], extraHerds = {} } = {}) {
   const log = []
   const raid = m.createLionRaid()
   let hiddenSeen = false
-  function run(seconds) {
-    for (let t = 0; t < seconds; t += DT) {
-      const step = m.stepLion(raid, world, DT)
-      if (step.hidden) hiddenSeen = true
-      for (const event of step.events) {
-        log.push(event)
-        if (event.kind === 'catch') world.prey = world.prey.filter((entry) => entry.id !== event.preyId)
-        if (event.kind === 'devour') {
-          for (const house of world.houses) house.inside = house.inside.filter((entry) => !event.preyIds.includes(entry.id))
-        }
-        if (event.kind === 'arrive') world.stage = 2
-        if (event.kind === 'gone') world.stage = 0
+  /** One step: the lion decides, the farm plays it, and the lion moves where it was steered. */
+  function tick() {
+    const step = m.stepLion(raid, world, DT)
+    if (step.hidden) hiddenSeen = true
+    for (const event of step.events) {
+      log.push(event)
+      if (event.kind === 'catch') world.prey = world.prey.filter((entry) => entry.id !== event.preyId)
+      if (event.kind === 'devour') {
+        for (const house of world.houses) house.inside = house.inside.filter((entry) => !event.preyIds.includes(entry.id))
       }
-      if (step.pursuit) {
-        const dx = step.pursuit.x - world.x
-        const dz = step.pursuit.z - world.z
-        const distance = Math.hypot(dx, dz)
-        const travel = Math.min(distance, WALK * step.pursuit.speedScale * DT)
-        if (distance > 1e-6) {
-          world.x += (dx / distance) * travel
-          world.z += (dz / distance) * travel
-        }
-      }
-      recount()
+      if (event.kind === 'arrive') world.stage = 2
+      if (event.kind === 'gone') world.stage = 0
     }
+    if (step.pursuit) {
+      const dx = step.pursuit.x - world.x
+      const dz = step.pursuit.z - world.z
+      const distance = Math.hypot(dx, dz)
+      const travel = Math.min(distance, WALK * step.pursuit.speedScale * DT)
+      if (distance > 1e-6) {
+        world.x += (dx / distance) * travel
+        world.z += (dz / distance) * travel
+      }
+    }
+    recount()
+    return step
   }
-  return { world, raid, log, run, kinds: () => log.map((event) => event.kind), hidden: () => hiddenSeen }
+  function run(seconds) {
+    for (let t = 0; t < seconds; t += DT) tick()
+  }
+  return { world, raid, log, run, tick, kinds: () => log.map((event) => event.kind), hidden: () => hiddenSeen }
 }
 
 const chickens = (count, at = (index) => ({ x: -6 + index * 1.7, z: 3 })) => Array.from({ length: count }, (_, index) => ({ id: `hen-${index}`, species: 'chicken', ...at(index) }))
@@ -151,6 +155,62 @@ test('every catch is a pounce first: the prey freezes, and the catch always land
   assert.ok(!run.kinds().includes('abandon'))
 })
 
+test('a pounce is a crouch, a leap and a swipe: it lands a paw short of the prey and the catch comes on the swipe', () => {
+  const T = m.LION_TUNING
+  const run = farm({ stage: 2, outdoors: [{ id: 'hen', species: 'chicken', x: 6, z: 2 }], extraHerds: { chicken: 6 } })
+  run.world.prey[0].radius = 0.4
+  // From its mouth to her near edge.
+  const mouthToHen = () => Math.hypot(6 - run.world.x, 2 - run.world.z) - run.world.reach - 0.4
+  let pouncedAt = null
+  let mouthAtPounce = null
+  let caughtAt = null
+  let crouchedTravel = 0
+  let closest = Infinity
+  let landedAt = null
+  for (let index = 0; index < 600 && caughtAt === null; index += 1) {
+    const before = { x: run.world.x, z: run.world.z }
+    const step = run.tick()
+    const time = index * DT
+    if (step.events.some((event) => event.kind === 'pounce')) {
+      pouncedAt = time
+      mouthAtPounce = mouthToHen()
+    }
+    if (pouncedAt !== null) {
+      // Through the strike it faces the hen.
+      assert.deepEqual(step.face, { x: 6, z: 2 })
+      const moved = Math.hypot(run.world.x - before.x, run.world.z - before.z)
+      if (time - pouncedAt < T.coilSeconds - DT) crouchedTravel += moved
+      if (landedAt === null && time - pouncedAt > T.coilSeconds && moved < 1e-6) landedAt = time
+      closest = Math.min(closest, mouthToHen())
+    }
+    if (step.events.some((event) => event.kind === 'catch')) caughtAt = time
+  }
+  assert.ok(pouncedAt !== null && caughtAt !== null)
+  assert.ok(mouthAtPounce > T.strikeDistance + 1, 'it pounced from well out of reach, so the leap covers ground')
+  assert.equal(crouchedTravel, 0, 'it pulls up and crouches before it leaps')
+  assert.ok(Math.abs(mouthToHen() - T.strikeDistance) < 0.02, `it lands a paw's length off (${mouthToHen().toFixed(3)})`)
+  assert.ok(closest > T.strikeDistance - 0.02, 'it never runs into the hen')
+  assert.ok(Math.abs(landedAt - pouncedAt - (T.coilSeconds + T.lungeSeconds)) <= DT + 1e-9, 'it touches down on the beat')
+  assert.ok(Math.abs(caughtAt - pouncedAt - (T.coilSeconds + T.lungeSeconds + T.swipeSeconds)) <= DT, 'the catch is the swipe')
+})
+
+test('prey already under its nose is swiped where it stands: no leap back, no leap at all', () => {
+  const T = m.LION_TUNING
+  const run = farm({ stage: 2, outdoors: [{ id: 'hen', species: 'chicken', x: 1.1, z: 0 }], extraHerds: { chicken: 6 } })
+  let pounced = false
+  let travel = 0
+  for (let index = 0; index < 120 && !run.kinds().includes('catch'); index += 1) {
+    const before = { x: run.world.x, z: run.world.z }
+    const step = run.tick()
+    if (pounced) travel += Math.hypot(run.world.x - before.x, run.world.z - before.z)
+    if (step.events.some((event) => event.kind === 'pounce')) pounced = true
+  }
+  assert.ok(pounced)
+  assert.ok(run.kinds().includes('catch'))
+  assert.equal(travel, 0)
+  assert.ok(T.strikeDistance > 0.2)
+})
+
 test('it is quick: seven chickens across the farm are gone inside half a minute', () => {
   const run = farm({ stage: 2, outdoors: chickens(7, (index) => ({ x: index % 2 ? -9 : 9, z: -5 + index * 1.6 })) })
   run.run(30)
@@ -201,7 +261,7 @@ test('a tame lion only takes the surplus out of a house', () => {
 
 test('tamed in the middle of a raid, it stops at six', () => {
   const run = farm({ stage: 2, outdoors: chickens(10) })
-  run.run(0.6)
+  run.run(1.2)
   const eatenWild = run.log.filter((event) => event.kind === 'catch').length
   assert.ok(eatenWild >= 1 && eatenWild < 4, `ate ${eatenWild} before it was tamed`)
   run.world.stage = 3
@@ -231,7 +291,7 @@ test('on the records: the lion is steered, the quarry panics, the one it pounces
   const cow = { id: 'cow-1', species: 'cow', record: record(-4, 0), targetable: true }
   const events = []
   const input = () => ({
-    lion: { id: 'lion-1', stage: 2, record: lion, reach: 0.9, busy: false },
+    lion: { id: 'lion-1', stage: 2, record: lion, reach: 0.9, speed: WALK, busy: false },
     prey: [...hens, cow],
     herds: { chicken: hens.length, cow: 1 },
     houses: [],
@@ -241,12 +301,20 @@ test('on the records: the lion is steered, the quarry panics, the one it pounces
   assert.equal(sim.report().quarry, 'chicken')
   assert.ok(hens.every((hen) => hen.record.alarmed), 'every hen panics')
   assert.equal(cow.record.alarmed, false, 'the cow is left alone')
-  // The nearest hen is already within a pounce: the lion goes for her, lunges, and she freezes.
+  // The nearest hen is already within a pounce: the lion goes for her, crouches facing her, and she freezes.
   sim.step(DT, input(), events)
   sim.step(DT, input(), events)
-  assert.ok(lion.pursuit && lion.pursuit.speedScale > 1, 'the lion is sprinting')
+  assert.equal(lion.pursuit?.speedScale, 0, 'the lion pulls up to crouch')
+  assert.ok(Math.abs(lion.heading - m.headingOf(3, 0)) < 1e-9, 'facing the hen')
+  assert.ok(events.some((event) => event.type === 'raid' && event.event.kind === 'pounce' && event.event.preyId === 'hen-0'), 'the scene hears of the pounce, to play the strike')
   assert.ok(sim.huntedIds().has('hen-0'))
   assert.equal(hens[0].record.pursuit?.speedScale, 0)
+  let leapt = false
+  for (let index = 0; index < 30 && !events.some((event) => event.type === 'caught'); index += 1) {
+    sim.step(DT, input(), events)
+    if ((lion.pursuit?.speedScale ?? 0) > 1) leapt = true
+  }
+  assert.ok(leapt, 'then it leaps')
   for (let index = 0; index < 30 && !events.some((event) => event.type === 'caught'); index += 1) sim.step(DT, input(), events)
   const caught = events.find((event) => event.type === 'caught')
   assert.equal(caught.hunter, 'cougar')
@@ -260,7 +328,7 @@ test('on the records: inside a house the lion is hidden, and the house raid come
   const events = []
   const house = coop(8)
   const input = () => ({
-    lion: { id: 'lion-1', stage: 2, record: lion, reach: 0.9, busy: false },
+    lion: { id: 'lion-1', stage: 2, record: lion, reach: 0.9, speed: WALK, busy: false },
     prey: [],
     herds: { chicken: house.inside.length },
     houses: [house],
@@ -286,7 +354,7 @@ test('on the records: with no lion at all, nothing is steered and nothing is lef
   const sim = m.createLionSim()
   const hen = { id: 'hen-0', species: 'chicken', record: record(2, 0), targetable: true }
   const events = []
-  sim.step(DT, { lion: { id: 'lion-1', stage: 2, record: record(0, 0), reach: 0.9, busy: false }, prey: [hen], herds: { chicken: 7 }, houses: [], exit: { x: 20, z: 0 } }, events)
+  sim.step(DT, { lion: { id: 'lion-1', stage: 2, record: record(0, 0), reach: 0.9, speed: WALK, busy: false }, prey: [hen], herds: { chicken: 7 }, houses: [], exit: { x: 20, z: 0 } }, events)
   assert.equal(hen.record.alarmed, true)
   sim.step(DT, { lion: null, prey: [hen], herds: { chicken: 7 }, houses: [], exit: { x: 20, z: 0 } }, events)
   assert.equal(hen.record.alarmed, false)
