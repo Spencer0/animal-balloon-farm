@@ -13,10 +13,14 @@ export const CHAPTER_ORDER: readonly ChapterId[] = ['garden', 'land', 'care', 'h
 
 /** What the farm reports for chapter triggers. All of it is already measured somewhere. */
 export interface ChapterSignals {
-  /** Grown plants in the garden, all species. */
-  readonly grownPlants: number
-  /** Square meters of grown lawn. */
-  readonly lawnArea: number
+  /** Distinct plant species with at least one fully grown plant in the garden. */
+  readonly grownSpecies: number
+  /** Square meters of mature short lawn grass. */
+  readonly shortGrassArea: number
+  /** Square meters of tall meadow grass (the green seed pack). */
+  readonly meadowArea: number
+  /** Square meters of visible pond water. */
+  readonly waterArea: number
   /** Resident species (stage 3+, adults). */
   readonly residentSpecies: ReadonlySet<string>
   /** Coins earned from collected goods, ever. */
@@ -75,7 +79,6 @@ export interface ChapterGoalPart {
   readonly done: boolean
 }
 
-const GRAZERS = ['cow', 'sheep']
 const PREDATORS = ['owl', 'snake']
 const share = (value: number, target: number): number => Math.max(0, Math.min(1, value / target))
 const count = (label: string, value: number, target: number): ChapterGoalPart =>
@@ -83,10 +86,16 @@ const count = (label: string, value: number, target: number): ChapterGoalPart =>
 const has = (label: string, yes: boolean): ChapterGoalPart => ({ label, value: yes ? 'yes' : 'not yet', done: yes })
 const anyOf = (signals: ChapterSignals, species: readonly string[]): boolean => species.some((name) => signals.residentSpecies.has(name))
 
-/** Chapter 1 ends at this many grown plants. */
-export const GARDEN_PLANTS_GOAL = 10
-/** Chapter 2 ends with this much lawn and a grazer living on it. */
-export const LAND_LAWN_GOAL = 15
+/**
+ * Chapter 1 ends once this many different species are fully grown. Five is every
+ * species a bare-dirt farm can plant (poppy, blueberry, carrot, potato, onion):
+ * lawn and pond plants wait for chapter 2.
+ */
+export const GARDEN_SPECIES_GOAL = 5
+/** Chapter 2 ends with this much short lawn, tall meadow and pond, all in square meters. */
+export const LAND_SHORT_GRASS_GOAL = 10
+export const LAND_MEADOW_GOAL = 10
+export const LAND_POND_GOAL = 10
 /** Chapter 3 ends once goods have earned this many coins. */
 export const CARE_COINS_GOAL = 100
 /** Chapter 5 ends at this Harmony with this many predator and prey links. */
@@ -97,19 +106,23 @@ export const CHAPTERS: Readonly<Record<ChapterId, ChapterDef>> = {
   garden: {
     id: 'garden', number: 1, title: 'The Garden', tagline: 'Every farm starts with a seed.',
     letter: 'Welcome to your plot! Plant a few seeds from the shed and keep them watered. Something always comes to see a garden grow.',
-    goal: `Grow ${GARDEN_PLANTS_GOAL} plants`,
-    endsWhen: (s) => s.grownPlants >= GARDEN_PLANTS_GOAL,
-    progress: (s) => share(s.grownPlants, GARDEN_PLANTS_GOAL),
-    parts: (s) => [count('Grown plants', s.grownPlants, GARDEN_PLANTS_GOAL)],
-    unlocks: ['Seeds that grow in bare dirt', 'Watering and selling plants'],
+    goal: `Grow ${GARDEN_SPECIES_GOAL} kinds of plant to full size`,
+    endsWhen: (s) => s.grownSpecies >= GARDEN_SPECIES_GOAL,
+    progress: (s) => share(s.grownSpecies, GARDEN_SPECIES_GOAL),
+    parts: (s) => [count('Fully grown kinds', s.grownSpecies, GARDEN_SPECIES_GOAL)],
+    unlocks: ['Seeds for every land plant at Pip\'s shop', 'Watering and selling plants'],
   },
   land: {
     id: 'land', number: 2, title: 'The Lay of the Land', tagline: 'Grass, ponds and hills, by your hand.',
-    letter: 'Your garden is the talk of the carnival! Here is a grass seeder: sow a lawn and the grazers will follow. Dig, raise and flood the ground to suit whoever you want to meet.',
-    goal: `Sow ${LAND_LAWN_GOAL} m² of lawn and welcome a grazer`,
-    endsWhen: (s) => s.lawnArea >= LAND_LAWN_GOAL && GRAZERS.some((species) => s.residentSpecies.has(species)),
-    progress: (s) => (share(s.lawnArea, LAND_LAWN_GOAL) + (GRAZERS.some((species) => s.residentSpecies.has(species)) ? 1 : 0)) / 2,
-    parts: (s) => [count('Lawn (m²)', s.lawnArea, LAND_LAWN_GOAL), has('A cow or sheep lives here', anyOf(s, GRAZERS))],
+    letter: 'Your garden is the talk of the carnival! Here is a grass seeder: sow a lawn, then a tall meadow for the hiders, and dig a pond for the swimmers. Dig, raise and flood the ground to suit whoever you want to meet.',
+    goal: `Sow ${LAND_SHORT_GRASS_GOAL} m² of short grass, ${LAND_MEADOW_GOAL} m² of tall grass and a ${LAND_POND_GOAL} m² pond`,
+    endsWhen: (s) => s.shortGrassArea >= LAND_SHORT_GRASS_GOAL && s.meadowArea >= LAND_MEADOW_GOAL && s.waterArea >= LAND_POND_GOAL,
+    progress: (s) => (share(s.shortGrassArea, LAND_SHORT_GRASS_GOAL) + share(s.meadowArea, LAND_MEADOW_GOAL) + share(s.waterArea, LAND_POND_GOAL)) / 3,
+    parts: (s) => [
+      count('Short grass (m²)', s.shortGrassArea, LAND_SHORT_GRASS_GOAL),
+      count('Tall grass (m²)', s.meadowArea, LAND_MEADOW_GOAL),
+      count('Pond (m²)', s.waterArea, LAND_POND_GOAL),
+    ],
     unlocks: ['The grass seeder', 'The shovel and water bucket at Pip\'s shop', 'Lawn seeds: clover and dandelion'],
   },
   care: {

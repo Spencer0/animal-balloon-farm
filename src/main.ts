@@ -535,8 +535,10 @@ function chapterSignals(): ChapterSignals {
   const farm = measureFarmForSim()
   const plants = gardenPlants?.simulation.plants ?? []
   return {
-    grownPlants: plants.filter((plant) => plant.mature).length,
-    lawnArea: farm.tallGrassArea,
+    grownSpecies: new Set(plants.filter((plant) => plant.mature).map((plant) => plant.species)).size,
+    shortGrassArea: farm.shortGrassArea ?? 0,
+    meadowArea: farm.meadowArea ?? 0,
+    waterArea: farm.waterArea,
     residentSpecies: new Set(adultResidents().map((entry) => entry.species)),
     goodsCoins: goodsCoinsTotal,
     harmony: farm.harmony ?? 0,
@@ -997,10 +999,11 @@ const shop: ShopDomPanel = createShopDomPanel({
   gems: () => gems.balance,
   // The Treasures tab is a secret until the first star gem: before then it would only be a puzzle.
   treasuresVisible: () => chapters.flags().mythic && (gems.balance > 0 || treasures.owned().length > 0 || progress.all().some((animal) => animal.species === 'starhorn' && animal.stage > 0)),
-  // Pip stocks what the farm's chapter has introduced: no tools or lawn seeds in the garden chapter, no feed before animal care.
+  // Pip stocks what the farm's chapter has introduced: no tools in the garden chapter, no feed before animal care.
+  // Every land seed is on the shelf from the start; water plants wait for the pond tools of the next chapter.
   offers: {
     upgrade: (id) => id === 'land-deed' || chapters.flags().grassSeeder,
-    seed: (id) => plantSpecies(id).substrate === 'soil' || chapters.flags().grassSeeder,
+    seed: (id) => plantSpecies(id).substrate !== 'water' || chapters.flags().grassSeeder,
     feed: () => chapters.flags().feedShop,
   },
   quoteTreasure: (id: TreasureId) => ({ owned: treasures.owns(id), price: TREASURE_CATALOG[id].price }),
