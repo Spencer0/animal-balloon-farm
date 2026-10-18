@@ -23,6 +23,7 @@ import { careCues } from './garden/care-cues'
 import { poppyStages } from './garden/poppy-stages'
 import { rootVegetables } from './garden/root-vegetables'
 import { vinePatch } from './garden/vine-patch'
+import { chapterOne } from './garden/chapter-one'
 import { escapeKeys } from './ui/escape-keys'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
@@ -36,7 +37,7 @@ export const SCENARIOS: readonly Scenario[] = [
   gemFarm,
   firstPlant,
   panLimit,
-  careCues, poppyStages, rootVegetables, vinePatch,
+  careCues, poppyStages, rootVegetables, vinePatch, chapterOne,
   escapeKeys,
 ]
 

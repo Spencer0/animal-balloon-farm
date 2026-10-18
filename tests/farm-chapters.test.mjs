@@ -6,7 +6,7 @@ const { outputFiles } = await build({ entryPoints: ['src/game/farm-chapters.ts']
 const m = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`)
 
 const signals = (over = {}) => ({
-  grownPlants: 0, lawnArea: 0, residentSpecies: new Set(), goodsCoins: 0, harmony: 0, predatorLinks: 0, day: 0, ...over,
+  grownSpecies: 0, shortGrassArea: 0, meadowArea: 0, waterArea: 0, residentSpecies: new Set(), goodsCoins: 0, harmony: 0, predatorLinks: 0, day: 0, ...over,
 })
 
 test('a new farm starts in the garden with every later system quiet', () => {
@@ -17,12 +17,13 @@ test('a new farm starts in the garden with every later system quiet', () => {
 
 test('chapters open in order as each goal is met', () => {
   const chapters = m.createFarmChapters()
-  assert.deepEqual(chapters.tick(signals({ grownPlants: 9 })), [])
-  assert.deepEqual(chapters.tick(signals({ grownPlants: 10 })).map((c) => c.id), ['land'])
+  assert.deepEqual(chapters.tick(signals({ grownSpecies: 4 })), [])
+  assert.deepEqual(chapters.tick(signals({ grownSpecies: 5 })).map((c) => c.id), ['land'])
   assert.equal(chapters.flags().grassSeeder, true)
   assert.equal(chapters.flags().goods, false)
-  assert.deepEqual(chapters.tick(signals({ lawnArea: 20 })), [], 'lawn alone is not enough: a grazer must move in')
-  assert.deepEqual(chapters.tick(signals({ lawnArea: 20, residentSpecies: new Set(['cow']) })).map((c) => c.id), ['care'])
+  assert.deepEqual(chapters.tick(signals({ shortGrassArea: 10, meadowArea: 10 })), [], 'a pond is the third part of the land goal')
+  assert.deepEqual(chapters.tick(signals({ shortGrassArea: 10, meadowArea: 9.9, waterArea: 10 })), [], 'every part is needed, to the square meter')
+  assert.deepEqual(chapters.tick(signals({ shortGrassArea: 10, meadowArea: 10, waterArea: 10 })).map((c) => c.id), ['care'])
   assert.equal(chapters.flags().goods, true)
   assert.equal(chapters.flags().starvation, false, 'care teaches feeding before hunger can hurt')
   assert.deepEqual(chapters.tick(signals({ goodsCoins: 100 })).map((c) => c.id), ['husbandry'])
@@ -36,14 +37,14 @@ test('chapters open in order as each goal is met', () => {
 
 test('only one chapter opens per tick, and time alone never opens one', () => {
   const chapters = m.createFarmChapters()
-  assert.deepEqual(chapters.tick(signals({ grownPlants: 99, lawnArea: 99, residentSpecies: new Set(['cow']), goodsCoins: 999 })).map((c) => c.id), ['land'])
+  assert.deepEqual(chapters.tick(signals({ grownSpecies: 99, shortGrassArea: 99, meadowArea: 99, waterArea: 99, residentSpecies: new Set(['cow']), goodsCoins: 999 })).map((c) => c.id), ['land'])
   const slow = m.createFarmChapters()
   assert.deepEqual(slow.tick(signals({ day: 400 })), [])
 })
 
 test('progress reads 0..1 toward the current goal', () => {
-  assert.equal(m.CHAPTERS.garden.progress(signals({ grownPlants: 5 })), 0.5)
-  assert.equal(m.CHAPTERS.land.progress(signals({ lawnArea: 15 })), 0.5)
+  assert.equal(m.CHAPTERS.garden.progress(signals({ grownSpecies: 2 })), 0.4)
+  assert.equal(m.CHAPTERS.land.progress(signals({ shortGrassArea: 5, meadowArea: 10, waterArea: 0 })), 0.5)
   assert.equal(m.CHAPTERS.care.progress(signals({ goodsCoins: 250 })), 1)
 })
 
@@ -68,9 +69,9 @@ test('saves keep their chapters, and a missing state starts in the garden', () =
 test('the journal pages show done, current and locked chapters, and hide locked goals', () => {
   const chapters = m.createFarmChapters()
   chapters.openThrough('land')
-  const pages = m.chapterPages(chapters, signals({ lawnArea: 6 }))
+  const pages = m.chapterPages(chapters, signals({ shortGrassArea: 6, meadowArea: 0, waterArea: 2 }))
   assert.deepEqual(pages.map((page) => page.status), ['done', 'current', 'locked', 'locked', 'locked', 'locked'])
-  assert.deepEqual(pages[1].parts.map((part) => [part.value, part.done]), [['6 / 15', false], ['not yet', false]])
+  assert.deepEqual(pages[1].parts.map((part) => [part.value, part.done]), [['6 / 10', false], ['0 / 10', false], ['2 / 10', false]])
   assert.equal(pages[0].progress, 1)
   assert.deepEqual(pages[2].parts, [])
 })
