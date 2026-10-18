@@ -20,20 +20,23 @@ export const GARDEN_CRITTERS_URL = 'assets/plants/garden-critters.glb'
 export const POPPY_URL = 'assets/plants/poppy.glb'
 
 /**
- * The care casts: the critters of the flower and water minigames, authored in
- * Blender (art/blender/flower_care_cast.py, water_care_cast.py). Loaded lazily,
- * the first time a game of that type opens, never at boot.
+ * The care casts: the critters of the flower, water, root and vine minigames,
+ * authored in Blender (art/blender/*_care_cast.py). Loaded lazily, the first
+ * time a game of that type opens, never at boot.
  */
 export const CARE_CAST_URLS = {
   flower: 'assets/plants/flower-care-cast.glb',
   water: 'assets/plants/water-care-cast.glb',
   root: 'assets/plants/root-care-cast.glb',
+  vine: 'assets/plants/vine-care-cast.glb',
 } as const
 export const CARE_CAST_CRITTERS = {
   flower: ['bee', 'dewdrop', 'aphid', 'burr', 'thorn', 'shears', 'stalk'],
   water: ['dragonfly', 'frog', 'fish', 'cattail', 'mosquito', 'log', 'snag', 'runner_leaf'],
   // art/blender/root_care_cast.py: trim pong, bug breakout and the barrel climb.
   root: ['pea', 'trowel', 'shoot', 'hoe', 'pebble', 'grub', 'beetle', 'shellbug', 'barrel', 'gopher', 'can', 'rainbarrel'],
+  // art/blender/vine_care_cast.py: the pipe spin, the caterpillar squirt and the runner steer.
+  vine: ['pump', 'trough', 'elbow', 'cross', 'rock', 'sprayer', 'caterpillar_head', 'caterpillar_body', 'trellis_leaf', 'bubble', 'tip', 'vine_leaf', 'blossom', 'peg'],
 } as const
 export type CareCastType = keyof typeof CARE_CAST_URLS
 /** A critter name in one cast; the GLB root is `CRITTER_<name>`. */

@@ -1,12 +1,13 @@
-export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily' | 'blueberry' | 'carrot' | 'potato' | 'onion'
+export type PlantId = 'clover' | 'dandelion' | 'poppy' | 'water-lily' | 'blueberry' | 'carrot' | 'potato' | 'onion' | 'pumpkin' | 'watermelon' | 'cucumber'
 export type PlantCare = 'water' | 'prune' | 'pest'
 /**
  * What kind of plant it is. Each type has its own three care minigames (see
  * `CARE_GAMES` in `care-minigames.ts`): a flower's bee run, a bush's rain cloud
  * and beetle swat, a water plant's dragonfly skim, a root vegetable's barrel
- * climb, bug breakout and trim pong.
+ * climb, bug breakout and trim pong, a vine's pipe spin, caterpillar squirt and
+ * runner steer.
  */
-export type PlantType = 'flower' | 'bush' | 'water' | 'root'
+export type PlantType = 'flower' | 'bush' | 'water' | 'root' | 'vine'
 
 /** Every care kind, in the order a care marker or a shop list shows them. */
 export const PLANT_CARE_KINDS: readonly PlantCare[] = ['water', 'pest', 'prune']
@@ -120,6 +121,32 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
     care: [{ at: 0.3, kind: 'water' }, { at: 0.55, kind: 'pest' }, { at: 0.78, kind: 'prune' }],
     minigames: true,
   },
+  // The vines: big leaves on runners that sprawl over the bed (or climb a little
+  // trellis), with the fruit swelling underneath. Each asks for all three chores, in its own order.
+  {
+    id: 'pumpkin', name: 'Pumpkin', subtitle: 'A fat orange autumn gourd',
+    description: 'Plant in bare soil. Pipe it water, peg down its runaway runner, and squirt the caterpillars off, and a fat orange pumpkin swells under the leaves.',
+    color: '#e8832a', substrate: 'soil', careType: 'vine', spacingRadius: 0.68,
+    growthSeconds: 140,
+    care: [{ at: 0.22, kind: 'water' }, { at: 0.5, kind: 'prune' }, { at: 0.76, kind: 'pest' }],
+    minigames: true,
+  },
+  {
+    id: 'watermelon', name: 'Watermelon', subtitle: 'A striped summer melon',
+    description: 'Plant in bare soil. Squirt the caterpillars off, pipe it a long drink, and peg down its runaway runner, and a striped melon fattens in the sun.',
+    color: '#4f9a4a', substrate: 'soil', careType: 'vine', spacingRadius: 0.68,
+    growthSeconds: 150,
+    care: [{ at: 0.24, kind: 'pest' }, { at: 0.5, kind: 'water' }, { at: 0.76, kind: 'prune' }],
+    minigames: true,
+  },
+  {
+    id: 'cucumber', name: 'Cucumber', subtitle: 'A climber on a twig trellis',
+    description: 'Plant in bare soil. Peg down its runaway runner, pipe it water, and squirt the caterpillars off, and crisp cucumbers hang from its little trellis.',
+    color: '#6fae4a', substrate: 'soil', careType: 'vine', spacingRadius: 0.52,
+    growthSeconds: 120,
+    care: [{ at: 0.26, kind: 'prune' }, { at: 0.52, kind: 'water' }, { at: 0.78, kind: 'pest' }],
+    minigames: true,
+  },
 ] as const
 
 /** The shed starts empty: seeds are bought at the shop, never handed out. */
@@ -145,6 +172,9 @@ export const SEED_PRICES: Readonly<Record<PlantId, number>> = {
   carrot: 6,
   potato: 8,
   onion: 7,
+  pumpkin: 9,
+  watermelon: 10,
+  cucumber: 7,
 }
 export const PLANT_WATER_MIN_DEPTH = 0.04
 const PLANT_SPACING_GAP = 0.12

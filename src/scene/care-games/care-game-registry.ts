@@ -50,6 +50,9 @@ export const CLOSE_UP_GAMES: Readonly<Record<CloseUpGameKind, CloseUpGameEntry>>
   barrel: { create: createBarrelGame, input: 'tap' },
   breakout: { create: createBreakoutGame, input: 'tap' },
   pong: { create: createPongGame, input: 'tap' },
+  pipes: { create: null, input: 'tap' },
+  squirt: { create: null, input: 'tap' },
+  runner: { create: null, input: 'tap' },
 }
 
 /** Whether a kind has a close-up scene yet. */
