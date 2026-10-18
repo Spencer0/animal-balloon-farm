@@ -170,9 +170,12 @@ export function createCareGameDom(): CareGameDom {
       const word = document.createElement("div");
       word.className = `cg-pop${tone === "plain" ? "" : ` cg-${tone}`}${big ? " cg-big" : ""}`;
       word.textContent = text;
-      word.style.left = `${x}px`;
       word.style.top = `${y}px`;
       pops.append(word);
+      // Keep the whole word on screen (it is centred on x, and swells a little as it pops).
+      const half = (word.offsetWidth * 1.15) / 2 + 8;
+      const room = pops.clientWidth || window.innerWidth;
+      word.style.left = `${half * 2 > room ? room / 2 : Math.min(Math.max(x, half), room - half)}px`;
       word.addEventListener("animationend", () => word.remove(), { once: true });
     },
     setAiming(aiming): void {
