@@ -50,17 +50,17 @@ locked: tools, shop tabs and seeds, meters and chips.
   earth) and later flower-seekers.
 - **Systems on:** planting, watering, growing, selling plants, the plant
   overhaul (to be designed: more varieties, care, cross-pollinated colours).
-- **Ends when:** the garden has **10 grown plants**.
+- **Ends when:** the garden has **5 kinds of plant fully grown** (one plant each).
 
 ### 2. The Lay of the Land: terrain
+- **Ends when:** the farm has 10 m² of short grass, 10 m² of tall grass
+  (the green seed pack) and a 10 m² pond.
 - **Unlocks:** the grass seeder (short lawn): after the chapter film, Pip
   hands it over in its own tool film. Pip's shop then sells the shovel and
   water bucket, and lawn and pond seeds. More terrain tools come
   later: meadow pack, snower, and others to come.
 - **Visitors:** grazers and the creatures of each terrain: cows and sheep on
   lawn, ducks on ponds, mice in meadow.
-- **Ends when:** there is enough grown lawn to draw grazers (**cow-sized
-  pasture: about 15 m²**) and the first grazer has moved in.
 
 ### 3. Animal Care: food and goods
 - **Unlocks:** the Hunger meter on the animal card, hunger bubbles, Pip's

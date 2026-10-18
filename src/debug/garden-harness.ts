@@ -35,6 +35,7 @@ import type { GardenToolId } from '../scene/garden-tool-art'
 import type { ShopBuildReport } from '../scene/shop-build'
 import type { createWallet } from '../game/sales'
 import { treasureEffects, type TreasureId, type TreasureLedger } from '../game/treasures'
+import { CHAPTER_ORDER } from '../game/farm-chapters'
 import type { ChapterDef, ChapterFlags, ChapterId, ChapterSignals, FarmChapters } from '../game/farm-chapters'
 import type { createPredationLedger } from '../game/predator'
 import type { OwlSim, SnakeSim } from '../game/animal-hunt'
@@ -286,6 +287,8 @@ interface GardenDebugHarness {
   setHarmony(value: number | null): void
   /** Open chapters up to and including `id`, announce each and apply its flags. */
   openChapter(id: ChapterId): readonly string[]
+  /** Close every chapter after `id`, quietly (no films or letters): the way back to an earlier chapter. */
+  setChapter(id: ChapterId): readonly string[]
   /** Open chapters, the current one, its flags and the signals the chapter check reads. */
   chapters(): { readonly open: readonly ChapterId[]; readonly current: string; readonly flags: ChapterFlags; readonly signals: ChapterSignals }
   /** Spawn the starhorn as a resident (stage 4 by default) with Harmony pinned high and its residency held, for screenshots. */
@@ -1247,6 +1250,11 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       for (const def of opened) announceChapter(def)
       applyChapterFlags()
       return opened.map((def) => def.id)
+    },
+    setChapter: (id) => {
+      chapters.importState({ open: CHAPTER_ORDER.slice(0, CHAPTER_ORDER.indexOf(id) + 1) })
+      applyChapterFlags()
+      return chapters.exportState().open
     },
     chapters: () => ({
       open: chapters.exportState().open,

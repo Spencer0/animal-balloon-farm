@@ -48,6 +48,8 @@ export interface ScenarioHarness {
   placeAnimal(id: string, x: number, z: number): boolean
   forageFor(seconds: number): unknown
   animalReport(): Record<string, unknown>[]
+  /** Close every chapter after `id`, quietly. Debug scenarios start with all open. */
+  setChapter(id: string): readonly string[]
 }
 
 export interface Scenario {
