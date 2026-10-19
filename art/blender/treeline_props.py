@@ -10,7 +10,7 @@ can draw every copy of a prop with one InstancedMesh and tint each copy a little
 
 The runtime reads the mesh NAMES (src/scene/treeline.ts, TREELINE_PROPS):
 
-  mountain meadow  pine, spruce, birch, bush, flowers_pink, flowers_gold, flowers_white
+  mountain meadow  pine, spruce, birch, bush, flowers
   rocky mountain   peak_tall, peak_broad, boulder, boulder_mossy, snag
   lake             willow, reeds, lily_pads
   swamp            cypress, cattails, stump, toadstool
@@ -136,7 +136,7 @@ class Builder:
     def _tilted(self, base, length, r1, r2, color, tilt, yaw):
         matrix = (Matrix.Translation(Vector(base)) @ Matrix.Rotation(yaw, 4, "Z") @ Matrix.Rotation(tilt, 4, "X")
                   @ Matrix.Translation((0, 0, length / 2)))
-        result = bmesh.ops.create_cone(self.bm, cap_ends=False, segments=4, radius1=r1, radius2=max(r2, .005), depth=length, matrix=matrix)
+        result = bmesh.ops.create_cone(self.bm, cap_ends=False, segments=3, radius1=r1, radius2=max(r2, .005), depth=length, matrix=matrix)
         self._paint(self._faces_of(result["verts"]), color)
 
     def finish(self, material):
@@ -168,10 +168,10 @@ def make_material():
 
 def make_pine(mat):
     b = Builder("pine", 11)
-    b.cone((0, 0, 0), .34, .22, 2.6, "#7d5d40", segments=6)
+    b.cone((0, 0, 0), .34, .22, 2.6, "#7d5d40", segments=5, caps=False)
     tiers = [(2.35, 2.5, 2.6, "#5a8a62"), (1.95, 2.4, 3.8, "#639569"), (1.5, 2.3, 5.0, "#6da070"), (1.05, 2.1, 6.2, "#78ab76"), (.6, 1.9, 7.3, "#85b87f")]
     for radius, height, z, color in tiers:
-        b.cone((0, 0, z - .2), radius, .06, height, color, segments=7, jitter=.07)
+        b.cone((0, 0, z - .2), radius, .06, height, color, segments=7, jitter=.07, caps=False)
     return b.finish(mat)
 
 
@@ -179,7 +179,7 @@ def make_spruce(mat):
     b = Builder("spruce", 12)
     b.cone((0, 0, 0), .24, .16, 1.4, "#76593d", segments=5)
     for radius, height, z, color in [(1.45, 2.6, 1.0, "#4f7f5f"), (1.1, 2.4, 2.4, "#5b8c68"), (.7, 2.1, 3.8, "#689a72")]:
-        b.cone((0, 0, z), radius, .04, height, color, segments=6, jitter=.05)
+        b.cone((0, 0, z), radius, .04, height, color, segments=6, jitter=.05, caps=False)
     return b.finish(mat)
 
 
@@ -200,16 +200,18 @@ def make_bush(mat):
     return b.finish(mat)
 
 
-def make_flowers(name, mat, petals, seed):
-    b = Builder(name, seed)
-    b.blob((0, 0, .12), (1.0, .9, .18), "#86b46c", jitter=.04)
-    for _ in range(14):
+def make_flowers(mat):
+    """One patch with pink, gold and white blooms mixed, so a single draw covers every flower."""
+    b = Builder("flowers", 15)
+    b.blob((0, 0, .1), (1.0, .9, .16), "#86b46c", subdivisions=0, jitter=.04)
+    petals = ["#f2a0b8", "#f4cf5b", "#fdf8ea", "#ec86a4", "#f8e08c"]
+    for _ in range(7):
         angle = b.rng.uniform(0, math.tau)
-        dist = b.rng.uniform(.1, .85)
+        dist = b.rng.uniform(.1, .8)
         x, y = math.cos(angle) * dist, math.sin(angle) * dist
         height = b.rng.uniform(.28, .55)
-        b.cone((x, y, 0), .025, .015, height, "#5f9460", segments=3)
-        b.blob((x, y, height + .04), (.1, .1, .08), b.rng.choice(petals), subdivisions=0)
+        b.cone((x, y, 0), .025, .015, height, "#5f9460", segments=3, caps=False)
+        b.cone((x, y, height), .02, .13, .14, b.rng.choice(petals), segments=5)
     return b.finish(mat)
 
 
@@ -259,18 +261,18 @@ def make_willow(mat):
     b.cone((0, 0, 0), .5, .26, 2.8, "#7d6a52", segments=6, tilt=(.05, .04, 0), jitter=.03)
     b.blob((0, 0, 3.7), (2.2, 2.1, 1.5), "#8fba7a", jitter=.12, color_top="#a2cb88", top_threshold=.3)
     b.blob((.5, .3, 4.9), (1.4, 1.3, 1.0), "#9cc783", jitter=.1, color_top="#aed48f", top_threshold=.3)
-    for i in range(14):
-        angle = i / 14 * math.tau
+    for i in range(10):
+        angle = i / 10 * math.tau
         r = 2.05 + b.rng.uniform(-.2, .2)
         length = b.rng.uniform(2.0, 3.0)
         # Strands hang from the crown rim: an inverted thin cone.
-        b.cone((math.cos(angle) * r, math.sin(angle) * r, 3.4 - length + .4), .03, .16, length, "#a9d08c" if i % 2 else "#9bc47f", segments=4, caps=False)
+        b.cone((math.cos(angle) * r, math.sin(angle) * r, 3.4 - length + .4), .03, .16, length, "#a9d08c" if i % 2 else "#9bc47f", segments=3, caps=False)
     return b.finish(mat)
 
 
 def make_reeds(mat):
     b = Builder("reeds", 42)
-    for i in range(11):
+    for i in range(8):
         angle = b.rng.uniform(0, math.tau)
         dist = b.rng.uniform(0, .55)
         base = (math.cos(angle) * dist, math.sin(angle) * dist, 0)
@@ -281,9 +283,8 @@ def make_reeds(mat):
 def make_lily_pads(mat):
     b = Builder("lily_pads", 43)
     for x, y, r in [(0, 0, .85), (1.3, .5, .6), (-1.0, .9, .65), (.5, -1.2, .7), (-.9, -.8, .5)]:
-        b.cone((x, y, 0), r, r, .04, "#79b46c", segments=8)
-    for x, y in [(.1, .1), (-1.0, .9)]:
-        b.blob((x, y, .14), (.2, .2, .13), "#f4b6c8", subdivisions=0)
+        b.cone((x, y, 0), r, r, .04, "#79b46c", segments=6, caps=False)
+    b.blob((.1, .1, .14), (.2, .2, .13), "#f4b6c8", subdivisions=0)
     return b.finish(mat)
 
 
@@ -293,14 +294,14 @@ def make_cypress(mat):
     b = Builder("cypress", 51)
     b.cone((0, 0, 0), 1.25, .42, 1.6, "#7a6a55", segments=7, jitter=.05)
     b.cone((0, 0, 1.5), .42, .3, 3.0, "#86755f", segments=6, jitter=.04)
-    for i in range(5):
-        angle = i / 5 * math.tau
-        b.cone((math.cos(angle) * 1.5, math.sin(angle) * 1.5, 0), .2, .06, .55 + (i % 2) * .25, "#7a6a55", segments=4)
+    for i in range(4):
+        angle = i / 4 * math.tau
+        b.cone((math.cos(angle) * 1.5, math.sin(angle) * 1.5, 0), .2, .06, .55 + (i % 2) * .25, "#7a6a55", segments=4, caps=False)
     b.blob((0, 0, 4.8), (2.0, 1.9, 1.4), "#68855a", jitter=.12, color_top="#7fa066", top_threshold=.3)
     b.blob((-.6, .5, 6.0), (1.3, 1.2, .9), "#6f8f5d", jitter=.1, color_top="#86a86d", top_threshold=.3)
     b.blob((.9, .5, 4.0), (1.3, 1.2, .7), "#657f52", jitter=.1)
-    for i in range(10):
-        angle = i / 10 * math.tau
+    for i in range(7):
+        angle = i / 7 * math.tau
         length = b.rng.uniform(1.4, 2.4)
         b.cone((math.cos(angle) * 1.9, math.sin(angle) * 1.9, 4.5 - length), .02, .14, length, "#a8b58f", segments=3, caps=False)
     return b.finish(mat)
@@ -308,7 +309,7 @@ def make_cypress(mat):
 
 def make_cattails(mat):
     b = Builder("cattails", 52)
-    for i in range(8):
+    for i in range(6):
         angle = b.rng.uniform(0, math.tau)
         dist = b.rng.uniform(0, .5)
         x, y = math.cos(angle) * dist, math.sin(angle) * dist
@@ -317,8 +318,8 @@ def make_cattails(mat):
         b._tilted((x, y, 0), height, .035, .02, "#7da250", tilt, angle)
         tip = Vector((x, y, 0)) + Matrix.Rotation(angle, 3, "Z") @ Vector((0, -math.sin(tilt) * height, math.cos(tilt) * height))
         b._tilted(tip - Vector((0, 0, .3)), .5, .075, .075, "#7a4e32", tilt, angle)
-    for i in range(6):
-        angle = i / 6 * math.tau
+    for i in range(4):
+        angle = i / 4 * math.tau
         b.blade((math.cos(angle) * .25, math.sin(angle) * .25, 0), 1.6, .06, "#8caf58", .35, angle, bend=.4)
     return b.finish(mat)
 
@@ -339,7 +340,7 @@ def make_toadstool(mat):
         stem = 1.1 * scale
         b.cone((x, y, 0), .22 * scale, .16 * scale, stem, "#efe4cc", segments=6)
         b.blob((x, y, stem + .15 * scale), (.9 * scale, .9 * scale, .55 * scale), "#d8604f", jitter=.02, color_top="#e2705c", top_threshold=.2)
-        for ang in (0.4, 1.9, 3.6, 5.0):
+        for ang in ((0.4, 3.6) if scale > .9 else ()):
             b.blob((x + math.cos(ang) * .5 * scale, y + math.sin(ang) * .5 * scale, stem + .55 * scale), (.12 * scale, .12 * scale, .06 * scale), "#fff6e1", subdivisions=0)
     return b.finish(mat)
 
@@ -349,7 +350,7 @@ def make_toadstool(mat):
 def palm_builder(name, mat, seed, lean):
     """A curved trunk of tapering segments, each pointed along the curve, under a crown of arched fronds."""
     b = Builder(name, seed)
-    segments = 8
+    segments = 5
     height = 7.6
     sway = lean * 2.3
 
@@ -359,11 +360,11 @@ def palm_builder(name, mat, seed, lean):
     for i in range(segments):
         p0, p1 = trunk_point(i / segments), trunk_point((i + 1) / segments)
         run, rise = p1[0] - p0[0], p1[2] - p0[2]
-        b.cone(p0, .37 - i * .017, .36 - (i + 1) * .017, math.hypot(run, rise) * 1.05, "#c9a577" if i % 2 else "#bd9a6b",
-               segments=6, tilt=(0, math.atan2(run, rise), 0))
+        b.cone(p0, .37 - i * .027, .36 - (i + 1) * .027, math.hypot(run, rise) * 1.05, "#c9a577" if i % 2 else "#bd9a6b",
+               segments=5, tilt=(0, math.atan2(run, rise), 0), caps=False)
     top = trunk_point(1.0)
-    for i in range(8):
-        yaw = i / 8 * math.tau + .2
+    for i in range(7):
+        yaw = i / 7 * math.tau + .2
         b.blade(top, 4.4, .42, "#5fae6c" if i % 2 else "#4f9d61", 1.05 + (i % 3) * .1, yaw, bend=.55)
     for ang in (.5, 2.4, 4.3):
         b.blob((top[0] + math.cos(ang) * .3, top[1] + math.sin(ang) * .3, top[2] - .25), (.22, .22, .24), "#6f4a2d", subdivisions=0)
@@ -372,8 +373,8 @@ def palm_builder(name, mat, seed, lean):
 
 def make_dune_grass(mat):
     b = Builder("dune_grass", 61)
-    for i in range(13):
-        angle = i / 13 * math.tau + b.rng.uniform(-.2, .2)
+    for i in range(9):
+        angle = i / 9 * math.tau + b.rng.uniform(-.2, .2)
         dist = b.rng.uniform(0, .25)
         b.blade((math.cos(angle) * dist, math.sin(angle) * dist, 0), b.rng.uniform(1.0, 1.7), .05, b.rng.choice(["#b9c870", "#c9cf7b", "#a9bf66"]), b.rng.uniform(.15, .5), angle, bend=.35)
     return b.finish(mat)
@@ -409,9 +410,7 @@ def build_all():
     mat = make_material()
     objects = [
         make_pine(mat), make_spruce(mat), make_birch(mat), make_bush(mat),
-        make_flowers("flowers_pink", mat, ["#f2a0b8", "#f7c6d4", "#ec86a4"], 15),
-        make_flowers("flowers_gold", mat, ["#f4cf5b", "#f8e08c", "#efb94a"], 16),
-        make_flowers("flowers_white", mat, ["#fdf8ea", "#f0e9ff", "#fff3d6"], 17),
+        make_flowers(mat),
         make_peak("peak_tall", mat, 21, 26, 9.5, .68, .5),
         make_peak("peak_broad", mat, 23, 17, 12.5, .76, -.45),
         make_boulder("boulder", mat, 24, False), make_boulder("boulder_mossy", mat, 25, True), make_snag(mat),

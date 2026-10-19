@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import {
   createTreelinePlan, TREELINE_PROPS,
   type BiomeId, type TreelinePlan, type TreelinePropId, type WaterBody, type WaterKind,
@@ -69,34 +70,43 @@ function makeSoftDiscTexture(): THREE.CanvasTexture {
   return texture
 }
 
-/** A flat polygon on the ground. Shapes are authored in XY, so z flips on the way to XZ. */
-function flatPolygon(points: readonly (readonly [number, number])[], y: number, material: THREE.Material, name: string, uvScale = 1): THREE.Mesh {
+/** A flat, vertex-coloured polygon on the ground. Shapes are authored in XY, so z flips on the way to XZ. */
+function flatPolygon(points: readonly (readonly [number, number])[], y: number, color: string, uvScale: number): THREE.BufferGeometry {
   const shape = new THREE.Shape(points.map(([x, z]) => new THREE.Vector2(x, -z)))
   const geometry = new THREE.ShapeGeometry(shape)
   geometry.rotateX(-Math.PI / 2)
-  if (uvScale !== 1) {
-    const uv = geometry.getAttribute('uv')
-    for (let i = 0; i < uv.count; i += 1) uv.setXY(i, uv.getX(i) * uvScale, uv.getY(i) * uvScale)
-  }
-  const mesh = new THREE.Mesh(geometry, material)
-  mesh.name = name
-  mesh.position.y = y
-  mesh.matrixAutoUpdate = false
-  mesh.updateMatrix()
-  return mesh
+  geometry.translate(0, y, 0)
+  const uv = geometry.getAttribute('uv')
+  for (let i = 0; i < uv.count; i += 1) uv.setXY(i, uv.getX(i) * uvScale, uv.getY(i) * uvScale)
+  const tint = new THREE.Color(color)
+  const colors = new Float32Array(geometry.getAttribute('position').count * 3)
+  for (let i = 0; i < colors.length; i += 3) colors.set([tint.r, tint.g, tint.b], i)
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  return geometry
 }
 
-function buildWater(body: WaterBody, index: number, ripple: THREE.Texture): THREE.Group {
+/** Every body's bank, shallows and deep water, merged into three draws (a draw per polygon was 24). */
+function buildWater(bodies: readonly WaterBody[], ripple: THREE.Texture): THREE.Group {
   const group = new THREE.Group()
-  group.name = `Treeline ${body.kind} ${index}`
-  const bank = new THREE.MeshLambertMaterial({ color: BANK_COLOR[body.kind] })
-  const shallow = new THREE.MeshLambertMaterial({ color: SHALLOW_COLOR[body.kind], map: ripple })
-  const deep = new THREE.MeshLambertMaterial({ color: DEEP_COLOR[body.kind], map: ripple })
-  group.add(
-    flatPolygon(body.bank, -.075, bank, `${group.name} · bank`),
-    flatPolygon(body.water, -.05, shallow, `${group.name} · shallows`, 1 / 14),
-    flatPolygon(body.deep, -.03, deep, `${group.name} · deep`, 1 / 14),
-  )
+  group.name = 'Treeline water · ocean, lakes and swamp pools'
+  const layers = [
+    { name: 'banks', y: -.075, pick: (body: WaterBody) => ({ points: body.bank, color: BANK_COLOR[body.kind] }), map: null },
+    { name: 'shallows', y: -.05, pick: (body: WaterBody) => ({ points: body.water, color: SHALLOW_COLOR[body.kind] }), map: ripple },
+    { name: 'deep water', y: -.03, pick: (body: WaterBody) => ({ points: body.deep, color: DEEP_COLOR[body.kind] }), map: ripple },
+  ]
+  for (const layer of layers) {
+    const pieces = bodies.map((body) => {
+      const { points, color } = layer.pick(body)
+      return flatPolygon(points, layer.y, color, 1 / 14)
+    })
+    const geometry = mergeGeometries(pieces)
+    pieces.forEach((piece) => piece.dispose())
+    if (!geometry) throw new Error('Treeline water merge failed')
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true, map: layer.map }))
+    mesh.name = `Treeline ${layer.name}`
+    mesh.matrixAutoUpdate = false
+    group.add(mesh)
+  }
   return group
 }
 
@@ -145,14 +155,11 @@ export function createTreeline() {
   root.name = 'Treeline · biome ring'
 
   const ripple = makeRippleTexture()
-  const water = new THREE.Group()
-  water.name = 'Treeline water · ocean, lakes and swamp pools'
-  plan.water.forEach((body, i) => water.add(buildWater(body, i, ripple)))
-  root.add(water)
+  root.add(buildWater(plan.water, ripple))
   const patches = buildPatches(plan)
   if (patches) root.add(patches)
 
-  const boats: { holder: THREE.Object3D; phase: number }[] = []
+  let boats: { mesh: THREE.InstancedMesh; bases: readonly { x: number; z: number; rotation: number; scale: number }[] } | null = null
   const propsGroup = new THREE.Group()
   propsGroup.name = 'Treeline props · instanced'
   root.add(propsGroup)
@@ -177,15 +184,13 @@ export function createTreeline() {
       const geometry = bakedGeometry(source)
       geometry.computeBoundingSphere()
       if (prop === 'sailboat') {
-        list.forEach((placement, i) => {
-          const holder = new THREE.Mesh(geometry, material)
-          holder.name = `Treeline sailboat ${i}`
-          holder.position.set(placement.x, -.02, placement.z)
-          holder.rotation.y = placement.rotation
-          holder.scale.setScalar(placement.scale)
-          propsGroup.add(holder)
-          boats.push({ holder, phase: i * 2.1 })
-        })
+        // Boats bob, so their matrices are rewritten each frame; one instanced draw covers them all.
+        const mesh = new THREE.InstancedMesh(geometry, material, list.length)
+        mesh.name = `Treeline sailboat × ${list.length}`
+        mesh.frustumCulled = false
+        propsGroup.add(mesh)
+        boats = { mesh, bases: list.map(({ x, z, rotation, scale }) => ({ x, z, rotation, scale })) }
+        poseBoats(0)
         continue
       }
       const mesh = new THREE.InstancedMesh(geometry, material, list.length)
@@ -208,6 +213,20 @@ export function createTreeline() {
     gltf.scene.traverse((object) => { if (object instanceof THREE.Mesh) object.geometry.dispose() })
   }, undefined, (error) => console.error('[treeline] Could not load the biome props', error))
 
+  const boatDummy = new THREE.Object3D()
+  function poseBoats(time: number): void {
+    if (!boats) return
+    boats.bases.forEach((base, i) => {
+      const phase = i * 2.1
+      boatDummy.position.set(base.x, -.02 + Math.sin(time * .9 + phase) * .07, base.z)
+      boatDummy.rotation.set(0, base.rotation, Math.sin(time * .7 + phase) * .035)
+      boatDummy.scale.setScalar(base.scale)
+      boatDummy.updateMatrix()
+      boats!.mesh.setMatrixAt(i, boatDummy.matrix)
+    })
+    boats.mesh.instanceMatrix.needsUpdate = true
+  }
+
   let elapsed = 0
   return {
     root,
@@ -215,10 +234,7 @@ export function createTreeline() {
     update(delta: number): void {
       elapsed += Math.max(0, delta)
       ripple.offset.set(elapsed * .006, elapsed * .003)
-      for (const { holder, phase } of boats) {
-        holder.position.y = -.02 + Math.sin(elapsed * .9 + phase) * .07
-        holder.rotation.z = Math.sin(elapsed * .7 + phase) * .035
-      }
+      poseBoats(elapsed)
     },
   }
 }

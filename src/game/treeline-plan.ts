@@ -22,7 +22,7 @@ export type BiomeId = 'meadow' | 'woods' | 'rocky' | 'lake' | 'swamp' | 'ocean'
 
 /** Mesh names inside public/assets/props/treeline.glb. */
 export const TREELINE_PROPS = [
-  'pine', 'spruce', 'birch', 'bush', 'flowers_pink', 'flowers_gold', 'flowers_white',
+  'pine', 'spruce', 'birch', 'bush', 'flowers',
   'peak_tall', 'peak_broad', 'boulder', 'boulder_mossy', 'snag',
   'willow', 'reeds', 'lily_pads',
   'cypress', 'cattails', 'stump', 'toadstool',
@@ -195,13 +195,12 @@ interface Spawn { readonly prop: TreelinePropId; readonly weight: number; readon
 const SPAWNS: Record<BiomeId, readonly Spawn[]> = {
   meadow: [
     { prop: 'pine', weight: 4, scale: [.95, 1.45] }, { prop: 'spruce', weight: 3, scale: [.9, 1.4] }, { prop: 'birch', weight: 2.5, scale: [.9, 1.3] },
-    { prop: 'bush', weight: 2, scale: [.8, 1.4], near: true }, { prop: 'flowers_pink', weight: 1.6, scale: [.9, 1.5], near: true },
-    { prop: 'flowers_gold', weight: 1.6, scale: [.9, 1.5], near: true }, { prop: 'flowers_white', weight: 1.4, scale: [.9, 1.5], near: true },
+    { prop: 'bush', weight: 2, scale: [.8, 1.4], near: true }, { prop: 'flowers', weight: 2.2, scale: [.9, 1.5], near: true },
     { prop: 'boulder_mossy', weight: .7, scale: [.5, .9], near: true },
   ],
   woods: [
     { prop: 'birch', weight: 5, scale: [.95, 1.45] }, { prop: 'pine', weight: 2, scale: [.9, 1.3] }, { prop: 'bush', weight: 2, scale: [.9, 1.4], near: true },
-    { prop: 'flowers_white', weight: 1.5, scale: [.9, 1.5], near: true }, { prop: 'flowers_gold', weight: 1.2, scale: [.9, 1.4], near: true },
+    { prop: 'flowers', weight: 2, scale: [.9, 1.5], near: true },
   ],
   rocky: [
     { prop: 'boulder', weight: 2.8, scale: [.6, 1.7] }, { prop: 'boulder_mossy', weight: 1.2, scale: [.7, 1.5] }, { prop: 'snag', weight: .7, scale: [.6, 1] },
@@ -209,8 +208,7 @@ const SPAWNS: Record<BiomeId, readonly Spawn[]> = {
   ],
   lake: [
     { prop: 'willow', weight: 3, scale: [.9, 1.35] }, { prop: 'birch', weight: 2.2, scale: [.9, 1.3] }, { prop: 'pine', weight: 1, scale: [.9, 1.3] },
-    { prop: 'bush', weight: 1.6, scale: [.8, 1.3], near: true }, { prop: 'flowers_pink', weight: 1.4, scale: [.9, 1.4], near: true },
-    { prop: 'flowers_white', weight: 1.2, scale: [.9, 1.4], near: true },
+    { prop: 'bush', weight: 1.6, scale: [.8, 1.3], near: true }, { prop: 'flowers', weight: 1.6, scale: [.9, 1.4], near: true },
   ],
   swamp: [
     { prop: 'cypress', weight: 4.5, scale: [.85, 1.35] }, { prop: 'stump', weight: 1.2, scale: [.8, 1.5], near: true }, { prop: 'toadstool', weight: 1.4, scale: [.8, 1.4], near: true },
@@ -224,7 +222,7 @@ const SPAWNS: Record<BiomeId, readonly Spawn[]> = {
 
 /** Spacing a prop wants around it, so crowns do not interpenetrate. */
 const CLEARANCE: Record<TreelinePropId, number> = {
-  pine: 2.6, spruce: 2, birch: 1.9, bush: 1.3, flowers_pink: 1.2, flowers_gold: 1.2, flowers_white: 1.2,
+  pine: 2.6, spruce: 2, birch: 1.9, bush: 1.3, flowers: 1.2,
   peak_tall: 12, peak_broad: 14, boulder: 1.8, boulder_mossy: 1.7, snag: 1.1,
   willow: 3.2, reeds: 1, lily_pads: 1.4, cypress: 3, cattails: 1, stump: 1.1, toadstool: 1.4,
   palm: 3, palm_lean: 3.4, dune_grass: 1, sea_stack: 4, sailboat: 5,
@@ -318,7 +316,7 @@ export function createTreelinePlan(seed = 20260707): TreelinePlan {
   // Shore life: reeds on lakes, cattails round the swamp pools, dune grass along the beach.
   for (const body of WATER_BODIES) {
     const shore = body.kind === 'ocean' ? body.water.slice(0, body.water.length / 2) : body.water
-    const stride = body.kind === 'ocean' ? 2 : 1
+    const stride = body.kind === 'ocean' ? 3 : 1
     for (let i = 0; i < shore.length; i += stride) {
       const [x, z] = shore[i]
       const away = body.kind === 'ocean' ? Math.hypot(x, z) : Math.hypot(x - body.center[0], z - body.center[1])
@@ -326,7 +324,7 @@ export function createTreelinePlan(seed = 20260707): TreelinePlan {
       const nz = body.kind === 'ocean' ? -z / away : (z - body.center[1]) / away
       const roll = rng()
       const prop: TreelinePropId = body.kind === 'ocean' ? 'dune_grass' : body.kind === 'swamp' ? 'cattails' : 'reeds'
-      if (roll < (body.kind === 'ocean' ? .75 : .8)) {
+      if (roll < (body.kind === 'ocean' ? .45 : .45)) {
         const push = lerp(body.kind === 'ocean' ? 2.5 : .6, body.kind === 'ocean' ? 7 : 2.2)
         const px = x + nx * push
         const pz = z + nz * push
@@ -347,7 +345,7 @@ export function createTreelinePlan(seed = 20260707): TreelinePlan {
   }
 
   // The scatter itself: denser close to the farm, thinning toward the hills.
-  for (let attempt = 0; attempt < 2600; attempt += 1) {
+  for (let attempt = 0; attempt < 1250; attempt += 1) {
     const angle = rng() * Math.PI * 2
     const radius = TREELINE_INNER_RADIUS + Math.pow(rng(), 1.55) * 78
     const x = Math.cos(angle) * radius
