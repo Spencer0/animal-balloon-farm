@@ -555,7 +555,7 @@ purpose: it is the answer to a herd that bred out of hand.
 | Concern | Where it lives |
 |---------|----------------|
 | Who is apex, the crowd limit, the whole raid state machine and its tuning | `APEX_SPECIES`, `CROWD_LIMIT`, `stepLion`, `LION_TUNING` in `src/game/apex-raid.ts` (pure, `tests/apex-raid.test.mjs`) |
-| Steering the lion, panicking the quarry, freezing the one it pounces on, catches as `caught`/`popped` | `createLionSim` in `src/game/animal-hunt.ts` |
+| Steering the lion, panicking and scattering the quarry, freezing the one it pounces on, catches as `caught`/`popped` | `createLionSim` in `src/game/animal-hunt.ts` (the flee steering is `fleePoint` in `apex-raid.ts`) |
 | Summoning it over the fence, the house raid's pops at the door, notices, the strike clip, sending it home | `stepLionHunt`, `summonLion`, `devourInside`, `playRaidEvent` in `src/scene/predation.ts` |
 | The one-shot `STRIKE` clip (crouch, leap, swipe) and playing it over the movement clips | `animate_strike` in `art/blender/balloon_cougar.py`; `playOnce` in `src/animals/balloon-animal.ts` |
 | Onto the farm in one step (stage 0 to 2), and back to the hills without a carnival visit | `summon`, `sendAway` in `src/game/animal-life.ts`; `queueVisitor` refuses apex species |
@@ -563,7 +563,9 @@ purpose: it is the answer to a herd that bred out of hand.
 
 - **The raid.** A crowd gives a warning (`scentSeconds`, 15): sell back to six and it loses interest.
   Otherwise it lands just inside the fence nearest the crowd (wild, so balloon red), and the whole
-  quarry out in the open panics. It sprints at the nearest (`chaseSpeedScale`), and within
+  quarry out in the open panics. Within `fleeRadius` of it they scramble straight away, weaving
+  from side to side and running along the fence when cornered (`fleePoint`), at `fleeSpeedScale`:
+  a frantic dash that is still far short of its sprint. It sprints at the nearest (`chaseSpeedScale`), and within
   `pounceDistance` of its mouth the prey freezes and the pounce always lands: no dice, no breeding
   floor. The pounce is three beats the `STRIKE` clip is keyed to: it pulls up and crouches facing
   the prey (`coilSeconds`), leaps to land with its mouth a paw's length short (`lungeSeconds`,

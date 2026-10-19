@@ -3,7 +3,7 @@ import type { BalloonAnimal } from '../animals/balloon-animal'
 import { ANIMAL_CATALOG } from '../animals/animal-catalog'
 import { createOwlPresenter } from './owl-hunt'
 import { createLionSim, createOwlSim, createSnakeSim, type HuntEvent, type LionInput, type OwlInput, type PreyInput } from '../game/animal-hunt'
-import { isApexSpecies, type LionEvent, type LionHouseView } from '../game/apex-raid'
+import { isApexSpecies, LION_TUNING, type LionEvent, type LionHouseView } from '../game/apex-raid'
 import type { AnimalLifeEvent } from '../game/animal-life'
 import { createPopBurst, type PopBurst } from './pop-burst'
 import { createDeflateEffect } from './deflate-effect'
@@ -356,10 +356,16 @@ export function createPredation(deps: PredationDeps) {
     }
     const houseViews: LionHouseView[] = houses().map((house) => ({ id: house.id, doorX: house.doorX, doorZ: house.doorZ, inside: insideBy.get(house.id) ?? [] }))
     const at = live ? { x: live.sim.x, z: live.sim.z } : { x: 0, z: 0 }
-    lionHunt.step(stepSeconds, { lion, prey, herds, houses: houseViews, exit: fencePoint(at, LION_EXIT_MARGIN) }, huntEvents)
+    const bounds = activeGardenBounds()
+    lionHunt.step(stepSeconds, { lion, prey, herds, houses: houseViews, exit: fencePoint(at, LION_EXIT_MARGIN), bounds: { halfWidth: bounds.halfWidth, halfDepth: bounds.halfDepth } }, huntEvents)
     // While it raids, its quarry indoors cowers there and will not come out: the lion has to go in.
     const report = lionHunt.report()
     if (report.quarry && stage >= 2 && report.phase !== 'leave') {
+      // And any of it on its way in bolts for the door instead of strolling (a trip home beats the scramble).
+      for (const animal of animals) {
+        const home = animal.sim.home
+        if (animal.id === report.quarry && home && home.speedScale < LION_TUNING.fleeSpeedScale) animal.setHomeTrip(home, LION_TUNING.fleeSpeedScale)
+      }
       const until = performance.now() / 1000 + RAID_HIDING_SECONDS
       for (const views of insideBy.values()) {
         for (const entry of views) if (entry.species === report.quarry) hidingUntil.set(entry.id, until)

@@ -12,7 +12,7 @@
  * die) comes from a seeded stream per snake, so a seeded run replays exactly.
  */
 import { seededRandom } from './seeded-random'
-import { createLionRaid, isRaiding, stepLion, type LionEvent, type LionHouseView, type LionPhase, type LionPreyView, type LionRaid } from './apex-raid'
+import { createLionRaid, fleePoint, isRaiding, LION_TUNING, stepLion, type FleeBounds, type LionEvent, type LionHouseView, type LionPhase, type LionPreyView, type LionRaid } from './apex-raid'
 import { headingOf, setSimAlarmed, setSimPursuit, type AnimalSimRecord } from './animal-sim'
 import { createGroundHunter, stepGroundHunter, type GroundHunter, type GroundHuntPhase, type GroundPreyView } from './ground-hunt'
 import {
@@ -408,6 +408,8 @@ export interface LionStepInput {
   readonly houses: readonly LionHouseView[]
   /** Where it leaves to: a point beyond the fence. */
   readonly exit: { readonly x: number; readonly z: number }
+  /** The plot, so its fleeing quarry stays inside the fence. Without it they run unbounded. */
+  readonly bounds?: FleeBounds
 }
 
 export interface LionSimReport {
@@ -418,6 +420,8 @@ export interface LionSimReport {
   readonly cooldown: number
   readonly eaten: number
   readonly hidden: boolean
+  /** Its quarry running from it right now, by id. */
+  readonly fleeing: readonly string[]
 }
 
 export interface LionSim {
@@ -440,6 +444,13 @@ export interface LionSim {
  * freezes the one it pounces on, and turns a catch into the same `caught` and
  * `popped` the owl and snake use. Everything else it decided goes out as `raid`.
  */
+/** A steady per-animal offset for the fleeing weave, so a flock does not swing in step. */
+function fleePhase(id: string): number {
+  let hash = 0
+  for (let index = 0; index < id.length; index += 1) hash = (hash * 31 + id.charCodeAt(index)) | 0
+  return (Math.abs(hash) % 1000) / 1000 * Math.PI * 2
+}
+
 export function createLionSim(): LionSim {
   let raid: LionRaid = createLionRaid()
   let hidden = false
@@ -449,6 +460,10 @@ export function createLionSim(): LionSim {
   const alarmed = new Map<string, AnimalSimRecord>()
   /** The prey it has pounced on, held still until the lunge lands. */
   const frozen = new Map<string, AnimalSimRecord>()
+  /** Its quarry scrambling away from it, steered by `fleePoint`, by id. */
+  const fleeing = new Map<string, AnimalSimRecord>()
+  /** Seconds the sim has run: the fleeing weave swings on it. */
+  let clock = 0
   const hunted = new Set<string>()
 
   function calm(id: string): void {
@@ -458,11 +473,14 @@ export function createLionSim(): LionSim {
     const still = frozen.get(id)
     if (still) setSimPursuit(still, null)
     frozen.delete(id)
+    const running = fleeing.get(id)
+    if (running && !still) setSimPursuit(running, null)
+    fleeing.delete(id)
     hunted.delete(id)
   }
 
   function calmAll(): void {
-    for (const id of [...alarmed.keys(), ...frozen.keys()]) calm(id)
+    for (const id of [...alarmed.keys(), ...frozen.keys(), ...fleeing.keys()]) calm(id)
     hunted.clear()
   }
 
@@ -483,6 +501,7 @@ export function createLionSim(): LionSim {
         return
       }
       lionId = lion.id
+      clock += dt
       const preyById = new Map(input.prey.map((entry) => [entry.id, entry]))
       const views: LionPreyView[] = input.prey.map((entry) => ({ id: entry.id, species: entry.species, x: entry.record.x, z: entry.record.z, targetable: entry.targetable, radius: entry.record.radius }))
       const at = lion.record ?? { x: 0, z: 0 }
@@ -499,6 +518,8 @@ export function createLionSim(): LionSim {
         busy: lion.busy,
       }, dt)
       hidden = step.hidden
+      /** Caught this tick: popped by the scene, past panicking or running. */
+      const eatenNow = new Set<string>()
       for (const event of step.events) {
         if (event.kind === 'chase') {
           hunted.add(event.preyId)
@@ -515,6 +536,7 @@ export function createLionSim(): LionSim {
           calm(event.preyId)
         } else if (event.kind === 'catch') {
           calm(event.preyId)
+          eatenNow.add(event.preyId)
           if (preyById.has(event.preyId)) {
             events.push({ type: 'caught', hunter: 'cougar', hunterId: lion.id, preyId: event.preyId })
             events.push({ type: 'popped', animalId: event.preyId, cause: 'caught' })
@@ -527,14 +549,32 @@ export function createLionSim(): LionSim {
       // While it raids, its whole quarry out in the open scatters in a panic.
       if (isRaiding(raid) && raid.phase !== 'leave') {
         for (const prey of input.prey) {
-          if (prey.species !== raid.quarry || alarmed.has(prey.id)) continue
+          if (prey.species !== raid.quarry || alarmed.has(prey.id) || eatenNow.has(prey.id)) continue
           setSimAlarmed(prey.record, true)
           alarmed.set(prey.id, prey.record)
           hunted.add(prey.id)
         }
+        // Near it, they scramble away from it, weaving; a frozen one is past running.
+        const from = lion.record
+        for (const prey of input.prey) {
+          if (prey.species !== raid.quarry || frozen.has(prey.id) || eatenNow.has(prey.id)) continue
+          const target = from && !hidden ? fleePoint(prey.record, from, input.bounds ?? null, clock, fleePhase(prey.id)) : null
+          if (target) {
+            setSimPursuit(prey.record, { ...target, speedScale: LION_TUNING.fleeSpeedScale })
+            fleeing.set(prey.id, prey.record)
+          } else if (fleeing.has(prey.id)) {
+            setSimPursuit(prey.record, null)
+            fleeing.delete(prey.id)
+          }
+        }
+      } else {
+        for (const [id, record] of fleeing) {
+          if (!frozen.has(id)) setSimPursuit(record, null)
+        }
+        fleeing.clear()
       }
       // Forget animals that have gone (eaten, sold, indoors).
-      for (const id of [...alarmed.keys(), ...frozen.keys()]) if (!preyById.has(id)) calm(id)
+      for (const id of [...alarmed.keys(), ...frozen.keys(), ...fleeing.keys()]) if (!preyById.has(id)) calm(id)
       for (const id of [...hunted]) if (!preyById.has(id)) hunted.delete(id)
       if (step.pursuit && lion.record) {
         setSimPursuit(lion.record, step.pursuit)
@@ -560,7 +600,7 @@ export function createLionSim(): LionSim {
       hidden = false
     },
     report() {
-      return { phase: raid.phase, quarry: raid.quarry, preyId: raid.preyId, houseId: raid.houseId, cooldown: raid.cooldown, eaten: raid.eaten, hidden }
+      return { phase: raid.phase, quarry: raid.quarry, preyId: raid.preyId, houseId: raid.houseId, cooldown: raid.cooldown, eaten: raid.eaten, hidden, fleeing: [...fleeing.keys()] }
     },
   }
 }

@@ -209,7 +209,73 @@ export const LION_TUNING = {
   waitSeconds: 20,
   /** After a raid, before another crowd can draw it. */
   cooldownSeconds: 45,
+  /** Its quarry runs from it within this distance (centre to centre); further off it only mills about in a panic. */
+  fleeRadius: 11,
+  /** Fleeing, as a multiple of the prey's own walk: a frantic scramble, still well short of the lion's sprint. */
+  fleeSpeedScale: 2.6,
+  /** How far ahead a fleeing animal aims each tick. */
+  fleeLookahead: 3,
+  /** The panicked weave either side of straight away, in radians, and how often it swings, per second. */
+  fleeWeave: 0.6,
+  fleeWeaveHz: 0.9,
+  /** Fleeing stays this far inside the fence; cornered there, it scrambles along it. */
+  fleeFenceInset: 1.4,
 } as const
+
+export interface FleeBounds {
+  readonly halfWidth: number
+  readonly halfDepth: number
+}
+
+/**
+ * Where an animal of the quarry scrambles to: straight away from the lion, weaving from
+ * side to side in a panic, and kept inside the fence (an ellipse inside the plot's bounds,
+ * the way the lion's fence points are). Pinned against the fence it runs along it, the
+ * way that takes it further from the lion. Null when the lion is far enough off to ignore.
+ * `seconds` drives the weave and `phase` (any number per animal) keeps a flock out of step.
+ */
+export function fleePoint(
+  prey: { readonly x: number; readonly z: number },
+  lion: { readonly x: number; readonly z: number },
+  bounds: FleeBounds | null,
+  seconds: number,
+  phase: number,
+): { x: number; z: number } | null {
+  const T = LION_TUNING
+  let dx = prey.x - lion.x
+  let dz = prey.z - lion.z
+  const distance = Math.hypot(dx, dz)
+  if (distance > T.fleeRadius) return null
+  if (distance < 1e-6) {
+    dx = Math.cos(phase)
+    dz = Math.sin(phase)
+  } else {
+    dx /= distance
+    dz /= distance
+  }
+  const weave = Math.sin(seconds * T.fleeWeaveHz * Math.PI * 2 + phase) * T.fleeWeave
+  const cos = Math.cos(weave)
+  const sin = Math.sin(weave)
+  const away = { x: dx * cos - dz * sin, z: dx * sin + dz * cos }
+  const target = { x: prey.x + away.x * T.fleeLookahead, z: prey.z + away.z * T.fleeLookahead }
+  if (!bounds) return target
+  const halfWidth = Math.max(1, bounds.halfWidth - T.fleeFenceInset)
+  const halfDepth = Math.max(1, bounds.halfDepth - T.fleeFenceInset)
+  const outside = (point: { readonly x: number; readonly z: number }): number => (point.x / halfWidth) ** 2 + (point.z / halfDepth) ** 2
+  const inside = (point: { x: number; z: number }): { x: number; z: number } => {
+    const reach = outside(point)
+    if (reach <= 1) return point
+    const scale = 1 / Math.sqrt(reach)
+    return { x: point.x * scale, z: point.z * scale }
+  }
+  if (outside(target) <= 1) return target
+  // Against the fence: run along it (the tangent of the ellipse here), whichever way leads off from the lion.
+  const normal = { x: prey.x / (halfWidth * halfWidth), z: prey.z / (halfDepth * halfDepth) }
+  const length = Math.hypot(normal.x, normal.z) || 1
+  const tangent = { x: -normal.z / length, z: normal.x / length }
+  const sign = tangent.x * dx + tangent.z * dz >= 0 ? 1 : -1
+  return inside({ x: prey.x + tangent.x * sign * T.fleeLookahead, z: prey.z + tangent.z * sign * T.fleeLookahead })
+}
 
 export function createLionRaid(): LionRaid {
   return { phase: 'away', timer: 0, raidTimer: 0, quarry: null, preyId: null, houseId: null, cooldown: 0, eaten: 0 }

@@ -360,3 +360,72 @@ test('on the records: with no lion at all, nothing is steered and nothing is lef
   assert.equal(hen.record.alarmed, false)
   assert.equal(sim.report().phase, 'away')
 })
+
+// ---- the scramble --------------------------------------------------------------
+
+test('its quarry scrambles straight away from it, weaving, and ignores it when it is far off', () => {
+  const T = m.LION_TUNING
+  const hen = { x: 4, z: 0 }
+  const lion = { x: 0, z: 0 }
+  const headings = []
+  for (let second = 0; second < 2; second += 0.1) {
+    const target = m.fleePoint(hen, lion, null, second, 0)
+    assert.ok(target.x > hen.x, 'always away from the lion')
+    headings.push(Math.atan2(target.z - hen.z, target.x - hen.x))
+  }
+  assert.ok(Math.max(...headings) > 0.3 && Math.min(...headings) < -0.3, 'weaving from side to side')
+  assert.ok(Math.max(...headings.map(Math.abs)) <= T.fleeWeave + 1e-9)
+  assert.equal(m.fleePoint({ x: T.fleeRadius + 1, z: 0 }, lion, null, 0, 0), null)
+})
+
+test('pinned against the fence it runs along it, away from the lion, and never through it', () => {
+  const bounds = { halfWidth: 12, halfDepth: 8 }
+  const inset = m.LION_TUNING.fleeFenceInset
+  const onFence = (point) => (point.x / (bounds.halfWidth - inset)) ** 2 + (point.z / (bounds.halfDepth - inset)) ** 2
+  // A hen at the east fence with the lion coming from the west and a little south.
+  const hen = { x: 10.5, z: 0 }
+  for (let second = 0; second < 3; second += 0.25) {
+    const target = m.fleePoint(hen, { x: 6, z: -1 }, bounds, second, 1)
+    assert.ok(onFence(target) <= 1 + 1e-9, 'inside the fence')
+    assert.ok(target.z > 0.5, 'off along the fence, away from the lion')
+  }
+})
+
+test('on the records: the herd runs from it, and cannot outrun it', () => {
+  const sim = m.createLionSim()
+  const lion = record(0, 0)
+  const bounds = { halfWidth: 14, halfDepth: 9 }
+  const hens = Array.from({ length: 7 }, (_, index) => ({ id: `hen-${index}`, species: 'chicken', record: record(Math.cos(index) * 5, Math.sin(index) * 4), targetable: true }))
+  const HEN_WALK = 1.02
+  const events = []
+  const caught = new Set()
+  let ranOff = 0
+  const move = (entry, walk) => {
+    const pursuit = entry.pursuit
+    if (!pursuit) return
+    const dx = pursuit.x - entry.x
+    const dz = pursuit.z - entry.z
+    const distance = Math.hypot(dx, dz)
+    const travel = Math.min(distance, walk * pursuit.speedScale * DT)
+    if (distance > 1e-6) { entry.x += (dx / distance) * travel; entry.z += (dz / distance) * travel }
+  }
+  for (let tick = 0; tick < 60 / DT && caught.size < 7; tick += 1) {
+    const live = hens.filter((hen) => !caught.has(hen.id))
+    sim.step(DT, { lion: { id: 'lion-1', stage: 2, record: lion, reach: 0.9, speed: WALK, busy: false }, prey: live, herds: { chicken: live.length }, houses: [], exit: { x: 30, z: 0 }, bounds }, events)
+    for (const event of events.splice(0)) if (event.type === 'caught') caught.add(event.preyId)
+    if (tick === 5) {
+      // A few ticks in, the hens not being pounced on are steered away from the lion at a scramble.
+      for (const hen of live) {
+        if (hen.record.pursuit?.speedScale === 0) continue
+        const away = (hen.record.pursuit.x - hen.record.x) * (hen.record.x - lion.x) + (hen.record.pursuit.z - hen.record.z) * (hen.record.z - lion.z)
+        if (away > 0 && hen.record.pursuit.speedScale === m.LION_TUNING.fleeSpeedScale) ranOff += 1
+      }
+    }
+    move(lion, WALK)
+    for (const hen of live) move(hen.record, HEN_WALK)
+    for (const hen of live) assert.ok((hen.record.x / bounds.halfWidth) ** 2 + (hen.record.z / bounds.halfDepth) ** 2 <= 1, 'they stay inside the fence')
+  }
+  assert.ok(ranOff >= 5, `most of the herd ran (${ranOff})`)
+  assert.equal(caught.size, 7, 'every one caught all the same')
+  assert.ok(hens.every((hen) => hen.record.pursuit === null), 'the survivors (none) and the calmed are let go')
+})
