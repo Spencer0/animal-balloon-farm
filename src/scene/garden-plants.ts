@@ -67,7 +67,7 @@ export interface GardenPlants {
   plantFrame(instanceId: number): { readonly position: THREE.Vector3; readonly height: number } | null
   /** A finished chore's flourish on the plant itself: a splash, a puff of stars, leaf confetti. */
   celebrateCare(instanceId: number, care: PlantCare): void
-  /** A raider just ate a plant bare: a puff of dead leaves as it slumps. */
+  /** A raider just ate a plant bare: a puff of dead leaves as it browns. */
   celebrateWither(instanceId: number): void
   dispose(): void
 }
@@ -131,9 +131,6 @@ const BANNER_WIDTH_PX = 236
 const PLANT_POP_SECONDS = 0.7
 /** How much bigger a plant stands while the pointer rests on it. */
 const HOVER_GROW = 1.12
-/** How far a withered plant slumps over, in radians, and how much it shrinks. */
-const WITHER_LEAN = 0.42
-const WITHER_SHRINK = 0.78
 const WITHER_BROWN = new THREE.Color('#8a6a45')
 const witherHsl = { h: 0, s: 0, l: 0 }
 const WITHER_LEAF_COLORS = ['#8a6a45', '#a0784a', '#6b4a33', '#b08c5e']
@@ -786,11 +783,10 @@ export function createGardenPlants(
       const scale = visual.modeled ? 1 : groundCover ? 0.3 + 0.7 * plant.growth : Math.max(0.16, plant.growth)
       // A fresh plant springs out of the soil with a little overshoot.
       const pop = visual.plantedAge < PLANT_POP_SECONDS ? Math.max(0.02, springOut(visual.plantedAge / PLANT_POP_SECONDS)) : 1
-      visual.group.scale.setScalar((plant.instanceId === hoveredPlantId ? scale * HOVER_GROW : scale) * pop * (plant.withered ? WITHER_SHRINK : 1))
+      visual.group.scale.setScalar((plant.instanceId === hoveredPlantId ? scale * HOVER_GROW : scale) * pop)
       if (plant.withered) {
-        // Slumped over and dead brown; it no longer sways.
+        // Dead brown where it stands, and still; the badge says the rest.
         witherLook(visual.group, visual.modeled !== null)
-        visual.group.rotation.set(0, (plant.instanceId * 1.37) % (Math.PI * 2), WITHER_LEAN)
       } else if (!groundCover && !visual.modeled) {
         visual.group.rotation.y = Math.sin(elapsed * 1.3 + plant.instanceId) * 0.08
         visual.group.position.y += Math.sin(elapsed * 2 + plant.instanceId) * 0.018 * scale
@@ -839,7 +835,7 @@ export function createGardenPlants(
       if (visual.witheredBadge.visible) {
         const size = SEAL_PX * 1.15 * uiScale * worldUnitsPerPixel * growScale(visual.witherGrow, plant.withered)
         const bob = Math.sin(elapsed * 2.2 + plant.instanceId) * 0.03
-        visual.witheredBadge.position.set(plant.x, visual.group.position.y + plantHeight(plant, groundCover, scale) * WITHER_SHRINK + 0.42 + bob, plant.z)
+        visual.witheredBadge.position.set(plant.x, visual.group.position.y + plantHeight(plant, groundCover, scale) + 0.42 + bob, plant.z)
         visual.witheredBadge.scale.set(size, size, 1)
         visual.witheredBadge.material.opacity = Math.min(1, visual.witherGrow * 2)
       }
