@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { GardenBounds } from '../game/farm-expansion'
 import type { CarnivalKind } from '../game/carnival-migration'
+import { isTreelineWater } from '../game/treeline-plan'
+import { createTreeline } from './treeline'
 import { isInShopClearing } from '../game/shop-site'
 
 const PALETTE = ['#c78385', '#d9bd83', '#73aaa6', '#99a2bd', '#c19aaa', '#e2d4b1']
@@ -9,8 +11,6 @@ const material = (color: string) => new THREE.MeshLambertMaterial({ color, flatS
 const distantMaterials = PALETTE.map(material)
 const cream = material('#e2d4b1')
 const wood = material('#a89275')
-const leaf = material('#83a77e')
-const trunk = material('#9b8b70')
 const skylineMaterial = material('#b8b8ac')
 
 function mesh(parent: THREE.Group, geometry: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
@@ -144,8 +144,8 @@ export function createCarnivalBackdrop() {
     const radius = 52 + (i % 4) * 9 + Math.sin(i * 3.1) * 3
     const x = Math.cos(angle) * radius
     const z = Math.sin(angle) * radius
-    // The arcade store's site stays clear of distant tents.
-    if (isInShopClearing(x, z, 9)) continue
+    // The arcade store's site stays clear of distant tents, and so does open water.
+    if (isInShopClearing(x, z, 9) || isTreelineWater(x, z, true)) continue
     const attraction = createDistantAttraction(staticFar, i % 5 === 0 ? 'stall' : 'tent', x, z, i)
     attraction.scale.setScalar(.65 + (i % 5) * .15)
   }
@@ -153,53 +153,48 @@ export function createCarnivalBackdrop() {
   const rides: THREE.Object3D[] = []
   for (let i = 0; i < 5; i += 1) {
     const angle = i / 5 * Math.PI * 2 - 1.1
+    if (isTreelineWater(Math.cos(angle) * 64, Math.sin(angle) * 64, true)) continue
     const ride = createDistantAttraction(distantCarnival, 'ride', Math.cos(angle) * 64, Math.sin(angle) * 64, i)
     ride.scale.setScalar(1.2 + i % 2 * .35)
     const rotor = ride.getObjectByName('Distant wheel rotor')
     if (rotor) rides.push(rotor)
   }
   // Real depth in all directions, not screen-aligned cards. Panning/orbiting is free.
-  const hills = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), material('#a5bca0'), 36)
+  // Hills stay out of the ocean sector so the sea runs open to the horizon.
+  const treeline = createTreeline()
+  const [seaFrom, seaTo] = treeline.plan.oceanArc
+  const hillSlots: number[] = []
+  for (let i = 0; i < 36; i += 1) {
+    const angle = i / 36 * Math.PI * 2
+    if (angle > seaFrom - .08 && angle < seaTo + .08) continue
+    hillSlots.push(i)
+  }
+  const hills = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), material('#a5bca0'), hillSlots.length)
   hills.name = 'Atmospheric rolling hills'
   const dummy = new THREE.Object3D()
-  for (let i = 0; i < 36; i += 1) {
+  hillSlots.forEach((i, slot) => {
     const angle = i / 36 * Math.PI * 2
     const radius = 160 + i % 3 * 26
     dummy.position.set(Math.cos(angle) * radius, 1, Math.sin(angle) * radius)
     dummy.scale.set(30 + i % 4 * 8, 12 + i % 5 * 3, 26 + i % 3 * 8)
     dummy.rotation.y = i * 1.7
     dummy.updateMatrix()
-    hills.setMatrixAt(i, dummy.matrix)
-  }
+    hills.setMatrixAt(slot, dummy.matrix)
+  })
   hills.computeBoundingSphere()
   horizon.add(hills)
   const silhouettes = new THREE.Group()
   distantCarnival.add(silhouettes)
   for (let i = 0; i < 24; i += 1) {
     const angle = i / 24 * Math.PI * 2 + .08
+    if (isTreelineWater(Math.cos(angle) * 117, Math.sin(angle) * 117, true)) continue
     const tent = createDistantAttraction(silhouettes, 'tent', Math.cos(angle) * 117, Math.sin(angle) * 117, i + 3)
     tent.scale.setScalar(1.3 + i % 3 * .4)
     tent.traverse((object) => { if (object instanceof THREE.Mesh) object.material = skylineMaterial })
   }
   bakeStatic(silhouettes)
-  // A soft forest separates attractions into districts instead of a uniform asset ring.
-  const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), leaf, 160)
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(.15, .24, 2, 5), trunk, 160)
-  crowns.name = 'Batched carnival grove canopy'
-  for (let i = 0; i < 160; i += 1) {
-    const angle = i * 2.39996
-    const radius = 43 + i % 7 * 6.5
-    const x = Math.cos(angle) * radius
-    const z = Math.sin(angle) * radius
-    // A tree inside the arcade store's clearing is zero-sized, which hides it.
-    const cleared = isInShopClearing(x, z) ? 0 : 1
-    dummy.position.set(x, .8, z); dummy.scale.set(cleared, cleared, cleared); dummy.rotation.set(0, i, 0); dummy.updateMatrix()
-    trunks.setMatrixAt(i, dummy.matrix)
-    dummy.position.y = 3.3; dummy.scale.set(cleared * (1.7 + i % 3 * .3), cleared * (2.2 + i % 4 * .2), cleared * 1.6); dummy.updateMatrix()
-    crowns.setMatrixAt(i, dummy.matrix)
-  }
-  crowns.computeBoundingSphere(); trunks.computeBoundingSphere()
-  far.add(crowns, trunks)
+  // The tree line: biome props (meadow, rock, lake, swamp, ocean) instead of one repeated grove tree.
+  far.add(treeline.root)
   const balloons: THREE.Group[] = []
   for (let i = 0; i < 6; i += 1) {
     const balloon = new THREE.Group()
@@ -215,6 +210,7 @@ export function createCarnivalBackdrop() {
     root, far, horizon, distantCarnival,
     update(delta: number, _bounds: GardenBounds): void {
       elapsed += Math.max(0, delta)
+      treeline.update(delta)
       rides.forEach((rotor, i) => { rotor.rotation.z += delta * (.035 + i * .004) })
       balloons.forEach((balloon, i) => { balloon.position.y = 27 + i % 3 * 5 + Math.sin(elapsed * .18 + i) * 1.2 })
     },

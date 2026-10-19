@@ -19,6 +19,7 @@ import { balancedFarm, crowdedPasture } from './foodweb/crowded-pasture'
 import { gemFarm } from './starhorn/gem-farm'
 import { firstPlant } from './tutorial/first-plant'
 import { panLimit } from './camera/pan-limit'
+import { treeline } from './scenery/treeline'
 import { careCues } from './garden/care-cues'
 import { poppyStages } from './garden/poppy-stages'
 import { rootVegetables } from './garden/root-vegetables'
@@ -36,7 +37,7 @@ export const SCENARIOS: readonly Scenario[] = [
   crowdedPasture, balancedFarm,
   gemFarm,
   firstPlant,
-  panLimit,
+  panLimit, treeline,
   careCues, poppyStages, rootVegetables, vinePatch, chapterOne,
   escapeKeys,
 ]
