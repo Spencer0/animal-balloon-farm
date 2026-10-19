@@ -161,7 +161,7 @@ export function createTreeline() {
 
   let boats: { mesh: THREE.InstancedMesh; bases: readonly { x: number; z: number; rotation: number; scale: number }[] } | null = null
   const propsGroup = new THREE.Group()
-  propsGroup.name = 'Treeline props · instanced'
+  propsGroup.name = 'Treeline props'
   root.add(propsGroup)
 
   new GLTFLoader().load(PROPS_URL, (gltf) => {
@@ -176,6 +176,7 @@ export function createTreeline() {
     }
     const dummy = new THREE.Object3D()
     const tint = new THREE.Color()
+    const baked: { position: THREE.BufferAttribute | THREE.InterleavedBufferAttribute; color: THREE.BufferAttribute | THREE.InterleavedBufferAttribute; matrix: THREE.Matrix4; tint: THREE.Color }[] = []
     for (const prop of TREELINE_PROPS) {
       const list = byProp.get(prop)
       if (!list?.length) continue
@@ -193,22 +194,44 @@ export function createTreeline() {
         poseBoats(0)
         continue
       }
-      const mesh = new THREE.InstancedMesh(geometry, material, list.length)
-      mesh.name = `Treeline ${prop} × ${list.length}`
-      list.forEach((placement, i) => {
+      // Everything that stands still is baked into one mesh: a draw per prop type was most of the ring's cost.
+      const flat = geometry.index ? geometry.toNonIndexed() : geometry
+      const position = flat.getAttribute('position')
+      const color = flat.getAttribute('color')
+      for (const placement of list) {
         dummy.position.set(placement.x, prop === 'lily_pads' ? -.03 : 0, placement.z)
         dummy.rotation.set(0, placement.rotation, 0)
         dummy.scale.setScalar(placement.scale)
         dummy.updateMatrix()
-        mesh.setMatrixAt(i, dummy.matrix)
         // A little brightness and warm/cool drift, so a stand of one tree is never a stamp.
         const value = .84 + placement.shade * .2
-        mesh.setColorAt(i, tint.setRGB(value * (1 + (placement.shade - .5) * .08), value, value * (1 - (placement.shade - .5) * .1)))
-      })
-      mesh.instanceMatrix.needsUpdate = true
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-      mesh.computeBoundingSphere()
-      propsGroup.add(mesh)
+        tint.setRGB(value * (1 + (placement.shade - .5) * .08), value, value * (1 - (placement.shade - .5) * .1))
+        baked.push({ position, color, matrix: dummy.matrix.clone(), tint: tint.clone() })
+      }
+    }
+    if (baked.length > 0) {
+      let vertices = 0
+      for (const piece of baked) vertices += piece.position.count
+      const positions = new Float32Array(vertices * 3)
+      const colors = new Float32Array(vertices * 3)
+      const vertex = new THREE.Vector3()
+      let offset = 0
+      for (const piece of baked) {
+        for (let i = 0; i < piece.position.count; i += 1) {
+          vertex.fromBufferAttribute(piece.position, i).applyMatrix4(piece.matrix)
+          positions.set([vertex.x, vertex.y, vertex.z], (offset + i) * 3)
+          colors.set([piece.color.getX(i) * piece.tint.r, piece.color.getY(i) * piece.tint.g, piece.color.getZ(i) * piece.tint.b], (offset + i) * 3)
+        }
+        offset += piece.position.count
+      }
+      const merged = new THREE.BufferGeometry()
+      merged.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      merged.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      merged.computeBoundingSphere()
+      const ring = new THREE.Mesh(merged, material)
+      ring.name = `Treeline props · ${baked.length} baked into one mesh`
+      ring.matrixAutoUpdate = false
+      propsGroup.add(ring)
     }
     gltf.scene.traverse((object) => { if (object instanceof THREE.Mesh) object.geometry.dispose() })
   }, undefined, (error) => console.error('[treeline] Could not load the biome props', error))
