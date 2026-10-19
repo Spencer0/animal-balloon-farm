@@ -3,7 +3,7 @@ import type { BalloonAnimal } from '../animals/balloon-animal'
 import { ANIMAL_CATALOG } from '../animals/animal-catalog'
 import { PLANT_CATALOG, type GardenPlant } from '../game/plants'
 import { playerLevelCards } from './player-dom'
-import { animalSaleValue, plantSaleValue, type createWallet } from '../game/sales'
+import { animalSaleValue, gardenPlantSaleValue, type createWallet } from '../game/sales'
 import { UPGRADE_CATALOG, upgradeQuote, purchaseUpgrade, type UpgradeId, type createUpgradeLedger } from '../game/tool-unlocks'
 import type { createAnimalLife } from '../game/animal-life'
 import type { createProgressLedger } from '../game/farm-progression'
@@ -238,8 +238,8 @@ export function createFarmActions(deps: FarmActionsDeps) {
       name: `${species?.name ?? 'Plant'} ${gardenPlants()?.selectedPlantNumber ?? 1}`,
       speciesLabel: species?.subtitle ?? 'Plant',
       growth: plant.growth,
-      care: plant.careNeeded,
-      price: plantSaleValue(plant.species, plant.growth),
+      care: plant.withered ? 'withered' : plant.careNeeded,
+      price: gardenPlantSaleValue(plant),
     }, { x: anchorNdc.x * ui.viewport.width / 2, y: anchorNdc.y * ui.viewport.height / 2 })
     syncFarmChrome()
   }
@@ -256,7 +256,7 @@ export function createFarmActions(deps: FarmActionsDeps) {
       plantCard.close()
       return
     }
-    plantCard.sync({ growth: plant.growth, care: plant.careNeeded, price: plantSaleValue(plant.species, plant.growth) })
+    plantCard.sync({ growth: plant.growth, care: plant.withered ? 'withered' : plant.careNeeded, price: gardenPlantSaleValue(plant) })
   }
 
   return {

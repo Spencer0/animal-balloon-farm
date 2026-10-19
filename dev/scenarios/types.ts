@@ -33,6 +33,10 @@ export interface ScenarioHarness {
   growPlants(steps?: number, secondsPerStep?: number): unknown
   /** Park a plant at a growth (0..1) with earlier care answered; play carries on from there. */
   setPlantGrowth(instanceId: number, growth: number): unknown
+  /** Eat a grown plant bare, so it withers and shows its badge. */
+  witherPlant(instanceId: number): boolean
+  /** A fence run between two lattice vertices (2 m apart); buy its sections first. */
+  placeFence(fromX: number, fromZ: number, toX: number, toZ: number): unknown
   setTimeOfDay(time: number): void
   /** Freeze (or release) the day clock, so a night scenario stays night. */
   holdTime(hold: boolean): void

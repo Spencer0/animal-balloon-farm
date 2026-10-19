@@ -139,6 +139,8 @@ interface GardenDebugHarness {
    * next stop or maturity comes on its own in a moment of real play.
    */
   setPlantGrowth(instanceId: number, growth: number): { instanceId: number; growth: number } | null
+  /** Let raiders take every bite a grown plant can stand, so it withers. Returns whether it did. */
+  witherPlant(instanceId: number): boolean
   /** Press a plant's care marker (default: the first plant that needs care), opening its minigame. */
   startCare(instanceId?: number): unknown
   /** Where the open care minigame is: its phase and round. */
@@ -819,6 +821,12 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       })
       return { instanceId, growth: clamped }
     },
+    witherPlant: (instanceId) => {
+      const simulation = deps.gardenPlants()?.simulation
+      const bites = simulation ? plantSpecies(simulation.plants.find((plant) => plant.instanceId === instanceId)?.species ?? 'poppy').raid?.bites ?? 0 : 0
+      for (let bite = 0; bite < bites; bite += 1) simulation?.raid(instanceId)
+      return simulation?.plants.find((plant) => plant.instanceId === instanceId)?.withered ?? false
+    },
     startCare: (instanceId) => {
       const plant = deps.gardenPlants()?.simulation.plants.find((entry) => (instanceId === undefined ? entry.careNeeded !== null : entry.instanceId === instanceId))
       if (!plant?.careNeeded) return { ok: false, failure: 'no-care-needed' }
@@ -1043,6 +1051,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'growUntilCare / startCare / settleCare': "growUntilCare('pest') then startCare() opens the swat game; settleCare(true) wins it.",
       setPlantGrowth: 'setPlantGrowth(id, 0.49) parks a plant just before a care stop (or 0.99 before maturity); real play takes it from there.',
+      witherPlant: 'witherPlant(id) has raiders eat a grown plant bare, so its withered badge shows.',
       'careGame / playCareGame / careStage / closeCareStage': "playCareGame('buzz') opens a game on the stage with no plant growing (default species: the first of its type; unbuilt games say so). careStage('poppy') shows the bare stage; closeCareStage() ends it. URL: ?gardenDebug=1&careGame=<kind>[&careSpecies=<id>] opens a game at load; &careGames=1 shows a picker of all fifteen.",
       greenThumb: "greenThumb({ species: 'blueberry', care: 'water' }) hires the Pet Raincloud for free.",
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',

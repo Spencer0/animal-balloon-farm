@@ -15,7 +15,7 @@ async function berryPatch(d: ScenarioHarness) {
 
 export const berryPicnic: Scenario = {
   id: 'squirrel/berry-picnic',
-  description: 'One grown blueberry bush and a visiting squirrel. Watch it pluck and nibble six berries, settle, and leave the bush to regrow.',
+  description: 'One grown blueberry bush and a visiting squirrel. Watch it pluck and nibble six berries, settle, and leave the bush withered.',
   async run(d) {
     await berryPatch(d)
     const id = d.addAnimal('squirrel', 2)
