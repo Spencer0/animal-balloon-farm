@@ -7,7 +7,8 @@ import type { GardenPlant } from './plants'
  * nothing in the garden is safe), walks up to it and eats it whole. The plant
  * is gone. A placed salt lick beats any plant: while one stands on the farm,
  * every deer goes and licks it instead, and leaves the garden alone. That is
- * the whole cure, and Pip sells it from the first shelf.
+ * the whole cure, and Pip sells it from the first shelf. A fence is not: deer
+ * jump it.
  */
 
 /** Seconds head-down at a plant before it is gone. Long enough to run over and see it happen. */
@@ -18,7 +19,7 @@ export const DEER_REACH = 1.05
 export const DEER_REST_SECONDS = { min: 28, max: 55 } as const
 /** The first raid after a deer steps onto the farm comes sooner, so the player sees why it came. */
 export const DEER_FIRST_RAID_SECONDS = 6
-/** A plant this far grown is worth eating; a seed just in the ground is not. */
+/** A plant this far grown is worth eating; a seed just in the ground (or a withered one) is not. */
 export const DEER_MIN_GROWTH = 0.25
 /** A deer that cannot reach its plant in this long gives up for a short while. */
 export const DEER_APPROACH_LIMIT_SECONDS = 25
@@ -62,8 +63,9 @@ export interface SaltLickSpot {
   readonly z: number
 }
 
+/** Deer jump fences, so unlike the other raiders (`plant-raid.ts`) a fenced plant is no safer: only a salt lick is. */
 export function edibleForDeer(plant: GardenPlant): boolean {
-  return plant.growth >= DEER_MIN_GROWTH
+  return plant.growth >= DEER_MIN_GROWTH && !plant.withered
 }
 
 function standBeside(animal: { readonly x: number; readonly z: number }, spot: { readonly x: number; readonly z: number }, reach: number, speedScale: number) {
@@ -97,12 +99,15 @@ export function stepDeerRaider(
   random: () => number,
   eat: (plantId: number) => boolean,
 ): DeerCommand {
+  const delta = Number.isFinite(dt) ? Math.max(0, dt) : 0
   if (!animal.eligible) {
-    // Keep the rest it was on, but drop whatever it was walking to.
+    // Drop whatever it was walking to, but a rest keeps running: a deer that strolled off the
+    // farm for a minute comes back hungry.
     if (state.phase !== 'rest') Object.assign(state, { phase: 'rest', targetId: null, elapsed: 0 })
+    else state.elapsed += delta
     return IDLE
   }
-  state.elapsed += Number.isFinite(dt) ? Math.max(0, dt) : 0
+  state.elapsed += delta
 
   // A salt lick wins over every plant, even one half eaten.
   if (licks.length > 0) {

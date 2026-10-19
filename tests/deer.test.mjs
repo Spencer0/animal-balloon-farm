@@ -18,7 +18,7 @@ const { ANIMAL_SALE_PRICES } = await load('src/game/sales.ts')
 const empty = { tallGrassArea: 0, waterArea: 0, flatGrassArea: 0, plantCounts: {} }
 const farm = (extra = {}) => ({ state: { ...empty, ...extra }, residentSpecies: new Set(), night: false })
 
-const plant = (instanceId, x, z, growth = 1) => ({ instanceId, species: 'carrot', x, z, growth, mature: growth >= 1, careNeeded: null })
+const plant = (instanceId, x, z, growth = 1, withered = false) => ({ instanceId, species: 'carrot', x, z, growth, mature: growth >= 1 && !withered, withered, careNeeded: null })
 /** Step one deer until `until` says stop or the clock runs out; returns every command. */
 function run(state, at, plants, licks, seconds, { random = () => 0, eat = () => true, until = () => false } = {}) {
   const commands = []
@@ -91,9 +91,9 @@ test('a deer rests, walks to a random plant, eats it whole and rests again', () 
   assert.ok(state.restFor >= raid.DEER_REST_SECONDS.min)
 })
 
-test('a deer never eats a seedling, and gives up on a plant someone else ate', () => {
+test('a deer never eats a seedling or a withered plant, and gives up on a plant someone else ate', () => {
   const state = raid.createDeerRaider()
-  const commands = run(state, { x: 4, z: 0 }, [plant(1, 0, 0, 0.1)], [], 20)
+  const commands = run(state, { x: 4, z: 0 }, [plant(1, 0, 0, 0.1), plant(2, 2, 0, 1, true)], [], 20)
   assert.ok(commands.every((command) => !command.target && command.ate === null))
   const garden = [plant(1, 0, 0)]
   const racer = raid.createDeerRaider()
@@ -132,4 +132,12 @@ test('an ineligible deer (indoors, leaving, asleep) drops its target and does no
   assert.deepEqual(command, { target: null, face: null, eating: false, licking: false, ate: null })
   assert.equal(state.phase, 'rest')
   assert.equal(state.targetId, null)
+})
+
+test('a rest keeps running while the deer is off the farm, so it raids as soon as it is back', () => {
+  const state = raid.createDeerRaider()
+  for (let t = 0; t < raid.DEER_FIRST_RAID_SECONDS + 1; t += 0.5) raid.stepDeerRaider(state, { x: 20, z: 0, eligible: false }, [plant(1, 0, 0)], [], 0.5, () => 0, () => true)
+  const back = raid.stepDeerRaider(state, { x: 4, z: 0, eligible: true }, [plant(1, 0, 0)], [], 0.1, () => 0, () => true)
+  assert.ok(back.target, 'walks straight to a plant')
+  assert.equal(state.phase, 'approach')
 })
