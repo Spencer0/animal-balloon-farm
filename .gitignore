@@ -20,3 +20,4 @@ coverage/
 
 # Gate outputs (scripts/gate-stress.mjs, scripts/check-no-scenarios.mjs)
 .gate/
+__pycache__/
