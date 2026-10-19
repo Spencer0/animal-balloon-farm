@@ -114,7 +114,8 @@ def animate_strike(body, head, neck, ears, tail, legs, hooves, bell, leg_positio
         bf.begin_action(obj, "BALLOON COUGAR · STRIKE")
     rad = math.radians
     # Per key frame: body (lift, pitch°, roll°, yaw°, forward shift, stretch), head (pitch°, yaw°, forward, drop),
-    # ears pinned back°, tail (lift°, lash°), bell swing°, front (swing°, paw lift), hind (swing°, paw lift),
+    # (a negative drop lifts the head: it stays up over the shoulders through the blow, or a high camera
+    # loses it behind them), ears pinned back°, tail (lift°, lash°), bell swing°, front (swing°, paw lift), hind (swing°, paw lift),
     # and the swiping near forepaw (swing°, across°, paw lift, paw curl°). Swing is about the side axis:
     # negative reaches forward. Across is about the long axis: negative is out to the near side. A paw
     # lift is how far above the lawn the paw would be if the leg hung straight (in the leap, the body's
@@ -128,10 +129,10 @@ def animate_strike(body, head, neck, ears, tail, legs, hooves, bell, leg_positio
         LAND:    dict(lift=-.06, pitch=7, roll=0, yaw=0, shift=.04, stretch=.02, head=(6, 0, .04, .04), ears=-36, tail=(-2, 8), bell=22, front=(-10, 0), hind=(-20, .12), swipe=None),
         14:      dict(lift=.06, pitch=-11, roll=-5, yaw=-6, shift=0, stretch=0, head=(-6, -8, .02, 0), ears=-38, tail=(4, -10), bell=12, front=(0, 0), hind=(-10, 0), swipe=(-135, -26, .20, -40)),
         WIND_UP: dict(lift=.08, pitch=-13, roll=-8, yaw=-10, shift=-.02, stretch=.01, head=(-8, -12, .02, -.02), ears=-40, tail=(6, -14), bell=4, front=(0, 0), hind=(-8, 0), swipe=(-155, -36, .24, -50)),
-        HIT:     dict(lift=-.08, pitch=9, roll=5, yaw=7, shift=.18, stretch=.05, head=(14, 4, .12, .06), ears=-44, tail=(-2, 12), bell=-14, front=(0, 0), hind=(-6, 0), swipe=(-86, 16, .16, 34)),
-        19:      dict(lift=-.10, pitch=7, roll=3, yaw=9, shift=.15, stretch=.03, head=(16, 2, .09, .07), ears=-30, tail=(-4, 8), bell=-6, front=(0, 0), hind=(-4, 0), swipe=(-42, 28, .06, 20)),
-        22:      dict(lift=-.05, pitch=4, roll=1, yaw=2, shift=.06, stretch=.01, head=(16, 0, .05, .06), ears=-16, tail=(-5, -4), bell=5, front=(0, 0), hind=(-2, 0), swipe=(-6, 4, 0, 4)),
-        END:     dict(lift=-.02, pitch=3, roll=0, yaw=0, shift=.01, stretch=0, head=(12, 0, .02, .04), ears=-8, tail=(-4, 3), bell=-1, front=(0, 0), hind=(-1, 0), swipe=None),
+        HIT:     dict(lift=-.04, pitch=5, roll=5, yaw=7, shift=.18, stretch=.05, head=(2, 4, .14, -.08), ears=-44, tail=(-2, 12), bell=-14, front=(0, 0), hind=(-6, 0), swipe=(-86, 16, .16, 34)),
+        19:      dict(lift=-.05, pitch=4, roll=3, yaw=9, shift=.15, stretch=.03, head=(0, 2, .10, -.09), ears=-30, tail=(-4, 8), bell=-6, front=(0, 0), hind=(-4, 0), swipe=(-42, 28, .06, 20)),
+        22:      dict(lift=-.02, pitch=2, roll=1, yaw=2, shift=.06, stretch=.01, head=(-2, 0, .05, -.06), ears=-16, tail=(-5, -4), bell=5, front=(0, 0), hind=(-2, 0), swipe=(-6, 4, 0, 4)),
+        END:     dict(lift=0, pitch=0, roll=0, yaw=0, shift=.01, stretch=0, head=(-1, 0, .01, -.01), ears=-8, tail=(-4, 3), bell=-1, front=(0, 0), hind=(-1, 0), swipe=None),
     }
     for frame, pose in poses.items():
         bpy.context.scene.frame_set(frame)
