@@ -693,7 +693,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
     stages: withStageNumbers([
       CARNIVAL,
       ENTER_FOR_PLANTS('blueberry', 1, 'A grown blueberry bush is an invitation to a berry picnic.'),
-      COUNT_STAGE('Call the farm home', 'Must nibble a whole bush worth of berries itself: six blueberries. The bush stays and each berry regrows in 60 seconds.',
+      COUNT_STAGE('Call the farm home', 'Must nibble a whole bush worth of berries itself: six blueberries. It strips the bush bare, so fence in any bush you want to keep.',
         { kind: 'fruitEaten', species: 'blueberry', amount: plantSpecies('blueberry').fruit!.count },
         'Paints into cinnamon and cream. This berry patch is home.'),
       COUNT_STAGE('Love the farm', 'Wants a snug squirrel house and a grown blueberry bush for the next family picnic.',

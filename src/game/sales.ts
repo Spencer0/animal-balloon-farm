@@ -64,6 +64,11 @@ export function plantSaleValue(species: PlantId, growth: number): number {
   return Math.max(1, Math.round(PLANT_SALE_PRICES[species] * (0.5 + normalizedGrowth)))
 }
 
+/** What a plant in the ground sells for. A withered one is worth nothing: selling it only clears it away. */
+export function gardenPlantSaleValue(plant: { readonly species: PlantId; readonly growth: number; readonly withered?: boolean }): number {
+  return plant.withered ? 0 : plantSaleValue(plant.species, plant.growth)
+}
+
 /** Animal progression adds 25% of base value per earned stage, up to double. */
 export function animalSaleValue(species: BalloonAnimalId, stage: number): number {
   const normalizedStage = Number.isFinite(stage) ? Math.min(4, Math.max(0, Math.floor(stage))) : 0

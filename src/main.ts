@@ -22,7 +22,7 @@ import {
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
-import { createBerryForaging } from './scene/berry-forage'
+import { createPlantRaids } from './scene/plant-raid'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
 import { createHungerBubbles } from './scene/hunger-bubbles'
 import { createHouseGoodsBadges } from './scene/house-goods-badges'
@@ -43,7 +43,7 @@ import { createGardenProps, type GardenProps, type PropSelection } from './scene
 import { PLANT_CARE_KINDS, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
 import { createGreenThumb } from './game/plant-helpers'
 import { createCareController, helperSeedPrice, helperShopCopy } from './care-controller'
-import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
+import { STARTING_COINS, createWallet, generateAnimalNames, gardenPlantSaleValue } from './game/sales'
 import { createTreasureLedger, purchaseTreasure, treasureEffects, TREASURE_CATALOG, type TreasureId } from './game/treasures'
 import type { GardenToolId } from './scene/garden-tool-art'
 import { createFarmCamera } from './scene/farm-camera'
@@ -770,7 +770,7 @@ const salePanel = createSalePanel((target) => {
   const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantId)
   if (!plant || !gardenPlants?.removePlant(plantId)) return null
   shedDom.refresh()
-  const balance = wallet.credit(plantSaleValue(plant.species, plant.growth))
+  const balance = wallet.credit(gardenPlantSaleValue(plant))
   salePanel.setWallet(balance)
   return balance
 }, window.innerWidth, window.innerHeight, (isOpen) => {
@@ -1124,7 +1124,7 @@ const plantCard = createPlantCard({
   onSell: (target) => {
     const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === target.instanceId)
     if (!plant || !gardenPlants?.removePlant(target.instanceId)) return null
-    const price = plantSaleValue(plant.species, plant.growth)
+    const price = gardenPlantSaleValue(plant)
     const balance = wallet.credit(price)
     salePanel.setWallet(balance)
     shedDom.refresh()
@@ -1879,7 +1879,8 @@ function plantShadowKey(): number {
  * walk home, the gate trips, the collision push-out and the owl and snake hunts
  * (game/animal-hunt.ts). Animation, camera and water stay per frame.
  */
-const berryForaging = createBerryForaging(animals, progress, () => gardenPlants)
+const plantRaids = createPlantRaids(animals, progress, () => gardenPlants, () => gardenProps?.occupancy.fenceSegments ?? [],
+  (plant) => gardenPlants?.celebrateWither(plant.instanceId))
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
 
 /**
@@ -1894,7 +1895,7 @@ function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: b
   // Push the walkers out of houses and each other once they have moved; the view blends the result.
   collideAnimalsTick(nowSeconds)
   if (huntsActive) tickHunts(stepSeconds)
-  berryForaging.tick(stepSeconds, huntsActive && !journal.isOpen)
+  plantRaids.tick(stepSeconds, huntsActive && !journal.isOpen)
 }
 
 function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {

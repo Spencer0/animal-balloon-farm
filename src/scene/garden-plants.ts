@@ -7,7 +7,7 @@ import type { GardenWaterField } from '../game/garden-water'
 import { BLUEBERRY_GROWN_SCALE, createBlueberryVisual, type BlueberryVisual } from './blueberry-visual'
 import { createHelperFx, type HelperFx } from './care-helper-fx'
 import { createBurst, createBurstPool, springOut } from './garden-bursts'
-import { BANNER_HEIGHT, BANNER_WIDTH, CARE_MARKER_HEIGHT, CARE_MARKER_WIDTH, careMarkerTexture, disposePlantCareArt, maturityBannerTexture, maturitySealTexture } from './plant-care-art'
+import { BANNER_HEIGHT, BANNER_WIDTH, CARE_MARKER_HEIGHT, CARE_MARKER_WIDTH, careMarkerTexture, disposePlantCareArt, maturityBannerTexture, maturitySealTexture, witheredBadgeTexture } from './plant-care-art'
 import { createPlacementArt, type GhostModel } from './plant-placement-art'
 import { cloneBush, isRootVegetable, isVine, loadGardenModels, loadPoppyModel, loadRootVegetables, loadVines } from './plant-models'
 import { cloneGrownPoppy, createPoppyVisual, POPPY_GROWN_SCALE, poppyHeight } from './poppy-visual'
@@ -50,7 +50,8 @@ export interface GardenPlants {
   pointerDown(event: PlantPointerEvent): boolean
   selectAt(clientX: number, clientY: number): GardenPlant | null
   removePlant(instanceId: number): GardenPlant | null
-  markerKindAt(clientX: number, clientY: number): PlantCare | 'mature' | null
+  /** The cue under the pointer: a chore, the fully grown seal, or a withered plant's badge. */
+  markerKindAt(clientX: number, clientY: number): PlantCare | 'mature' | 'withered' | null
   /** The plant whose body is under the pointer, with where its footprint sits. */
   plantAt(clientX: number, clientY: number): HoverPlant | null
   /** The plant the pointer is over; it grows a little while hovered. */
@@ -66,6 +67,8 @@ export interface GardenPlants {
   plantFrame(instanceId: number): { readonly position: THREE.Vector3; readonly height: number } | null
   /** A finished chore's flourish on the plant itself: a splash, a puff of stars, leaf confetti. */
   celebrateCare(instanceId: number, care: PlantCare): void
+  /** A raider just ate a plant bare: a puff of dead leaves as it browns. */
+  celebrateWither(instanceId: number): void
   dispose(): void
 }
 
@@ -79,6 +82,10 @@ interface PlantVisual {
   readonly sparkles: readonly THREE.Mesh[]
   readonly completionBadge: THREE.Sprite
   readonly maturitySeal: THREE.Sprite
+  /** Over a withered plant: press it to clear the plant away. */
+  readonly witheredBadge: THREE.Sprite
+  /** 0 hidden .. 1 shown, for the withered badge. */
+  witherGrow: number
   maturityCelebrationRemaining: number
   maturitySealDismissed: boolean
   /** 0 hidden .. 1 shown, eased so the marker springs in and tucks away instead of flicking. */
@@ -124,6 +131,56 @@ const BANNER_WIDTH_PX = 236
 const PLANT_POP_SECONDS = 0.7
 /** How much bigger a plant stands while the pointer rests on it. */
 const HOVER_GROW = 1.12
+const WITHER_BROWN = new THREE.Color('#8a6a45')
+const witherHsl = { h: 0, s: 0, l: 0 }
+const WITHER_LEAF_COLORS = ['#8a6a45', '#a0784a', '#6b4a33', '#b08c5e']
+
+/** Withered stand-ins for the loaded Blender models' materials, shared by every withered plant of a kind. */
+const witheredShared = new Map<THREE.Material, THREE.Material>()
+
+function makeWithered(material: THREE.Material): THREE.Material {
+  const withered = material.clone()
+  withered.name = `${material.name} · withered`
+  withered.userData.withered = true
+  if (!('color' in withered) || !(withered.color instanceof THREE.Color)) return withered
+  if (withered.vertexColors) {
+    // A merged model paints its parts in vertex colours, which a tint barely moves: go plain brown.
+    withered.vertexColors = false
+    withered.color.copy(WITHER_BROWN)
+  } else {
+    // Every part turns the same dead brown, keeping its own lightness so the plant still reads.
+    withered.color.getHSL(witherHsl)
+    withered.color.setHSL(0.075, 0.42, Math.min(0.42, witherHsl.l * 0.78))
+  }
+  return withered
+}
+
+/**
+ * Dress a plant in dead browns. A Blender model shares its materials with every
+ * plant of its kind, so it gets cached shared stand-ins; a procedural plant owns
+ * its materials, so its stand-ins join the ones it frees. Runs every frame on a
+ * withered plant, as a model can finish loading after the plant withered.
+ */
+function witherLook(group: THREE.Group, shared: boolean): void {
+  const swap = (material: THREE.Material): THREE.Material => {
+    if (material.userData.withered === true) return material
+    if (!shared) {
+      const own = makeWithered(material)
+      ;((group.userData.disposeMaterials ??= []) as THREE.Material[]).push(own)
+      return own
+    }
+    let withered = witheredShared.get(material)
+    if (!withered) {
+      withered = makeWithered(material)
+      witheredShared.set(material, withered)
+    }
+    return withered
+  }
+  group.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return
+    object.material = Array.isArray(object.material) ? object.material.map(swap) : swap(object.material)
+  })
+}
 
 /** Ease a 0..1 show amount toward shown or hidden; hiding runs twice as fast. */
 function stepGrow(grow: number, wanted: boolean, deltaSeconds: number): number {
@@ -594,6 +651,12 @@ export function createGardenPlants(
     // Anchored at the rosette's middle rather than the canvas's, which includes the ribbon tails.
     maturitySeal.center.set(0.5, 0.6)
     maturitySeal.visible = false
+    const witheredMaterial = new THREE.SpriteMaterial({ map: witheredBadgeTexture(), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
+    const witheredBadge = new THREE.Sprite(witheredMaterial)
+    witheredBadge.name = `Plant withered · ${plant.instanceId}`
+    witheredBadge.renderOrder = 1499
+    witheredBadge.scale.set(0, 0, 1)
+    witheredBadge.visible = false
     const markerMaterial = new THREE.SpriteMaterial({ map: careMarkerTexture('water'), transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false, toneMapped: false })
     const marker = new THREE.Sprite(markerMaterial)
     marker.name = `Plant care marker · ${plant.instanceId}`
@@ -604,7 +667,7 @@ export function createGardenPlants(
     // Anchored at the tail's tip, so the pin always points down at the plant.
     marker.center.set(0.5, MARKER_TIP_FROM_BOTTOM)
     marker.visible = false
-    root.add(group, celebration, completionBadge, maturitySeal, marker, hitArea)
+    root.add(group, celebration, completionBadge, maturitySeal, witheredBadge, marker, hitArea)
     visuals.set(plant.instanceId, {
       instanceId: plant.instanceId,
       species: plant.species,
@@ -615,6 +678,8 @@ export function createGardenPlants(
       sparkles,
       completionBadge,
       maturitySeal,
+      witheredBadge,
+      witherGrow: 0,
       maturityCelebrationRemaining: 0,
       maturitySealDismissed: false,
       markerGrow: 0,
@@ -632,15 +697,16 @@ export function createGardenPlants(
     })
   }
 
-  function markerHit(clientX: number, clientY: number): { visual: PlantVisual; kind: 'care' | 'mature' } | null {
+  function markerHit(clientX: number, clientY: number): { visual: PlantVisual; kind: 'care' | 'mature' | 'withered' } | null {
     const rect = canvas.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) return null
-    let best: { visual: PlantVisual; kind: 'care' | 'mature' } | null = null
+    let best: { visual: PlantVisual; kind: 'care' | 'mature' | 'withered' } | null = null
     let bestDistance = 34
     for (const visual of visuals.values()) {
       for (const [kind, visible, position] of [
         ['care', visual.marker.visible && visual.markerWanted, visual.markerPosition],
         ['mature', visual.maturitySeal.visible && !visual.maturitySealDismissed, visual.maturitySeal.position],
+        ['withered', visual.witheredBadge.visible && visual.witherGrow > 0.5, visual.witheredBadge.position],
       ] as const) {
         if (!visible) continue
         markerProjector.copy(position).project(camera)
@@ -685,11 +751,12 @@ export function createGardenPlants(
     for (const [id, visual] of visuals) {
       if (current.has(id)) continue
       selectedPlantIds.delete(id)
-      root.remove(visual.group, visual.celebration, visual.completionBadge, visual.maturitySeal, visual.marker, visual.hitArea)
+      root.remove(visual.group, visual.celebration, visual.completionBadge, visual.maturitySeal, visual.witheredBadge, visual.marker, visual.hitArea)
       disposePlantVisual(visual)
       ;(visual.marker.material as THREE.Material).dispose()
       visual.completionBadge.material.dispose()
       visual.maturitySeal.material.dispose()
+      visual.witheredBadge.material.dispose()
       visual.celebration.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return
         object.geometry.dispose()
@@ -717,7 +784,10 @@ export function createGardenPlants(
       // A fresh plant springs out of the soil with a little overshoot.
       const pop = visual.plantedAge < PLANT_POP_SECONDS ? Math.max(0.02, springOut(visual.plantedAge / PLANT_POP_SECONDS)) : 1
       visual.group.scale.setScalar((plant.instanceId === hoveredPlantId ? scale * HOVER_GROW : scale) * pop)
-      if (!groundCover && !visual.modeled) {
+      if (plant.withered) {
+        // Dead brown where it stands, and still; the badge says the rest.
+        witherLook(visual.group, visual.modeled !== null)
+      } else if (!groundCover && !visual.modeled) {
         visual.group.rotation.y = Math.sin(elapsed * 1.3 + plant.instanceId) * 0.08
         visual.group.position.y += Math.sin(elapsed * 2 + plant.instanceId) * 0.018 * scale
       }
@@ -759,6 +829,15 @@ export function createGardenPlants(
         visual.maturitySeal.position.set(plant.x + 0.34, visual.group.position.y + 1.02, plant.z)
         visual.maturitySeal.scale.set(size, size, 1)
         visual.maturitySeal.material.opacity = Math.min(1, visual.sealGrow * 2)
+      }
+      visual.witherGrow = stepGrow(visual.witherGrow, plant.withered, deltaSeconds)
+      visual.witheredBadge.visible = visual.witherGrow > 0
+      if (visual.witheredBadge.visible) {
+        const size = SEAL_PX * 1.15 * uiScale * worldUnitsPerPixel * growScale(visual.witherGrow, plant.withered)
+        const bob = Math.sin(elapsed * 2.2 + plant.instanceId) * 0.03
+        visual.witheredBadge.position.set(plant.x, visual.group.position.y + plantHeight(plant, groundCover, scale) + 0.42 + bob, plant.z)
+        visual.witheredBadge.scale.set(size, size, 1)
+        visual.witheredBadge.material.opacity = Math.min(1, visual.witherGrow * 2)
       }
       visual.completionBadge.visible = celebrating
       if (celebrating) {
@@ -901,6 +980,15 @@ export function createGardenPlants(
     if (markerTarget) {
       if (markerTarget.kind === 'mature') {
         markerTarget.visual.maturitySealDismissed = true
+      } else if (markerTarget.kind === 'withered') {
+        // A withered plant only waits to be cleared: the badge digs it up.
+        const plant = simulation.remove(markerTarget.visual.instanceId)
+        if (plant) {
+          const y = markerTarget.visual.group.position.y
+          bursts.add(createBurst(new THREE.Vector3(plant.x, y + 0.1, plant.z), {
+            count: 22, colors: ['#7a5236', '#5e3d27', ...WITHER_LEAF_COLORS], size: 0.05, speed: [1.1, 2.3], lift: 1.6, gravity: 8, seconds: 0.8, cone: 1.1,
+          }), root)
+        }
       } else {
         const plant = plantsById().get(markerTarget.visual.instanceId)
         if (plant?.careNeeded && plantSpecies(plant.species).minigames) {
@@ -989,10 +1077,10 @@ export function createGardenPlants(
     setHoveredPlant(instanceId): void {
       hoveredPlantId = instanceId
     },
-    markerKindAt(clientX, clientY): PlantCare | 'mature' | null {
+    markerKindAt(clientX, clientY): PlantCare | 'mature' | 'withered' | null {
       const target = markerHit(clientX, clientY)
       if (!target) return null
-      if (target.kind === 'mature') return 'mature'
+      if (target.kind === 'mature' || target.kind === 'withered') return target.kind
       return plantsById().get(target.visual.instanceId)?.careNeeded ?? null
     },
     tick(stepSeconds, allowGrowth): void {
@@ -1032,6 +1120,14 @@ export function createGardenPlants(
       // The same springy pop as planting, smaller: the bush shakes itself off.
       visual.plantedAge = PLANT_POP_SECONDS * 0.45
     },
+    celebrateWither(instanceId): void {
+      const plant = plantsById().get(instanceId)
+      const visual = visuals.get(instanceId)
+      if (!plant || !visual) return
+      const height = plantHeight(plant, visual.group.userData.groundCover === true, 1)
+      const at = new THREE.Vector3(plant.x, visual.group.position.y + height * 0.6, plant.z)
+      bursts.add(createBurst(at, { count: 24, colors: WITHER_LEAF_COLORS, size: 0.055, speed: [0.8, 1.9], lift: 0.9, gravity: 4, seconds: 1.3, shape: 'leaf' }), root)
+    },
     update(deltaSeconds): void {
       elapsed += deltaSeconds
       invalidSeconds = Math.max(0, invalidSeconds - deltaSeconds)
@@ -1059,6 +1155,7 @@ export function createGardenPlants(
         visual.marker.material.dispose()
         visual.completionBadge.material.dispose()
         visual.maturitySeal.material.dispose()
+        visual.witheredBadge.material.dispose()
         visual.celebration.traverse((object) => {
           if (!(object instanceof THREE.Mesh)) return
           object.geometry.dispose()
@@ -1067,6 +1164,8 @@ export function createGardenPlants(
       }
       placementArt.dispose()
       bursts.dispose()
+      for (const material of witheredShared.values()) material.dispose()
+      witheredShared.clear()
       disposePlantCareArt()
     },
   }

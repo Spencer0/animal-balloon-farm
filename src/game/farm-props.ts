@@ -709,6 +709,60 @@ export function fencePosts(segments: readonly FenceSegment[]): readonly LatticeV
   return [...seen.values()]
 }
 
+/**
+ * The lattice cells shut inside closed fence loops, as `cellKey`s. Flood the
+ * open ground in from just outside the fences' bounding box, crossing only
+ * unfenced edges; every cell the flood cannot reach is fenced in. A gap of one
+ * segment leaves the whole pen open. Raiders leave plants in these cells alone.
+ */
+export function fencedCells(segments: readonly FenceSegment[]): ReadonlySet<string> {
+  const fenced = new Set<string>()
+  if (segments.length < 4) return fenced
+  const edges = new Set(segments.map(edgeKey))
+  let minX = Infinity
+  let minZ = Infinity
+  let maxX = -Infinity
+  let maxZ = -Infinity
+  for (const segment of segments) {
+    for (const vertex of segmentVertices(segment)) {
+      minX = Math.min(minX, vertex.x)
+      minZ = Math.min(minZ, vertex.z)
+      maxX = Math.max(maxX, vertex.x)
+      maxZ = Math.max(maxZ, vertex.z)
+    }
+  }
+  // Cells run minX..maxX-1 inside the box; one ring beyond it is open ground.
+  const lowX = minX - 1
+  const lowZ = minZ - 1
+  const width = maxX - minX + 2
+  const depth = maxZ - minZ + 2
+  const open = new Uint8Array(width * depth)
+  const stack: number[] = []
+  const visit = (cellX: number, cellZ: number): void => {
+    const index = (cellZ - lowZ) * width + (cellX - lowX)
+    if (open[index]) return
+    open[index] = 1
+    stack.push(cellX, cellZ)
+  }
+  for (let cellX = lowX; cellX < lowX + width; cellX += 1) { visit(cellX, lowZ); visit(cellX, lowZ + depth - 1) }
+  for (let cellZ = lowZ; cellZ < lowZ + depth; cellZ += 1) { visit(lowX, cellZ); visit(lowX + width - 1, cellZ) }
+  while (stack.length > 0) {
+    const cellZ = stack.pop()!
+    const cellX = stack.pop()!
+    // Each step names the fence segment it would have to cross.
+    if (cellX + 1 < lowX + width && !edges.has(`${cellX + 1},${cellZ},z`)) visit(cellX + 1, cellZ)
+    if (cellX - 1 >= lowX && !edges.has(`${cellX},${cellZ},z`)) visit(cellX - 1, cellZ)
+    if (cellZ + 1 < lowZ + depth && !edges.has(`${cellX},${cellZ + 1},x`)) visit(cellX, cellZ + 1)
+    if (cellZ - 1 >= lowZ && !edges.has(`${cellX},${cellZ},x`)) visit(cellX, cellZ - 1)
+  }
+  for (let cellZ = minZ; cellZ < maxZ; cellZ += 1) {
+    for (let cellX = minX; cellX < maxX; cellX += 1) {
+      if (!open[(cellZ - lowZ) * width + (cellX - lowX)]) fenced.add(cellKey({ cellX, cellZ }))
+    }
+  }
+  return fenced
+}
+
 /** A straight run of segments between two lattice vertices, or null when skewed. */
 export function fenceSegmentsBetween(from: LatticeVertex, to: LatticeVertex): readonly FenceSegment[] | null {
   if (from.z === to.z && from.x !== to.x) {

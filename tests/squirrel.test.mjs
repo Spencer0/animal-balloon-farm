@@ -11,7 +11,7 @@ const plants = await load('src/game/plants.ts')
 const conditions = await load('src/game/animal-conditions.ts')
 const { requirementMet } = await load('src/game/animal-progress.ts')
 const { createAnimalLife } = await load('src/game/animal-life.ts')
-const forage = await load('src/game/berry-forage.ts')
+const raid = await load('src/game/plant-raid.ts')
 const props = await load('src/game/farm-props.ts')
 const { houseFor } = await load('src/game/animal-housing.ts')
 const { propUnlocked } = await load('src/game/tool-unlocks.ts')
@@ -151,11 +151,11 @@ test('six berries settle only their eater; partial progress persists and house e
 
 test('foraging approaches a bush, plucks after the reach, chews before credit, and cannot double-pick a contested berry', () => {
   const simulation = matureBush()
-  for (let i = 0; i < 5; i++) simulation.pickFruit(1)
-  const state = forage.createBerryForager()
-  const other = forage.createBerryForager()
-  const pick = (id) => simulation.pickFruit(id)
-  const step = (s, x, dt) => forage.stepBerryForager(s, { x, z: 0, eligible: true }, simulation.plants, dt, pick)
+  for (let i = 0; i < 5; i++) simulation.raid(1)
+  const state = raid.createPlantRaider()
+  const other = raid.createPlantRaider()
+  const bite = (id) => simulation.raid(id)
+  const step = (s, x, dt) => raid.stepPlantRaider(s, { species: 'squirrel', x, z: 0, eligible: true }, simulation.plants, dt, bite)
   assert.ok(step(state, 4, .1).target.speedScale > 0)
   assert.equal(step(state, .82, .1).eating, true)
   assert.equal(step(other, -.82, .1).eating, true)
@@ -170,12 +170,12 @@ test('foraging approaches a bush, plucks after the reach, chews before credit, a
 
 test('selling the target or interrupting a feed stops eating without phantom credit', () => {
   const simulation = matureBush()
-  const state = forage.createBerryForager()
-  const actor = { x: .82, z: 0, eligible: true }
-  forage.stepBerryForager(state, actor, simulation.plants, .1, (id) => simulation.pickFruit(id))
+  const state = raid.createPlantRaider()
+  const actor = { species: 'squirrel', x: .82, z: 0, eligible: true }
+  raid.stepPlantRaider(state, actor, simulation.plants, .1, (id) => simulation.raid(id))
   simulation.remove(1)
-  assert.equal(forage.stepBerryForager(state, actor, simulation.plants, 3, () => null).completedBite, false)
-  assert.equal(forage.stepBerryForager(state, { ...actor, eligible: false }, [], .1, () => null).eating, false)
+  assert.equal(raid.stepPlantRaider(state, actor, simulation.plants, 3, () => false).completedBite, false)
+  assert.equal(raid.stepPlantRaider(state, { ...actor, eligible: false }, [], .1, () => false).eating, false)
   assert.equal(state.phase, 'seek')
 })
 
@@ -193,4 +193,64 @@ test('delivered Blender assets exist, use six berry slots and ship matching WALK
   assert.ok(squirrel.nodes.some((node) => node.name === 'SQUIRREL RIG held berry'))
   const bush = readGlb('public/assets/plants/blueberry-bush.glb')
   for (let slot = 1; slot <= 6; slot++) assert.ok(bush.nodes.some((node) => node.name === `BB_berry_${slot}_1`), `berry group ${slot}`)
+})
+
+test('six squirrel bites strip a bush bare: it withers for good and stops counting as grown', () => {
+  const simulation = matureBush()
+  for (let i = 0; i < 5; i++) assert.equal(simulation.raid(1), true)
+  assert.equal(simulation.plants[0].withered, false)
+  assert.equal(simulation.raid(1), true)
+  const bush = simulation.plants[0]
+  assert.equal(bush.withered, true)
+  assert.equal(bush.mature, false, 'a withered bush is not a grown bush')
+  assert.equal(bush.ripeFruit, 0)
+  simulation.tick(600)
+  assert.equal(simulation.plants[0].ripeFruit, 0, 'its berries never come back')
+  assert.equal(simulation.raid(1), false)
+  assert.equal(simulation.pickFruit(1), null)
+  const restored = plants.createPlantSimulation()
+  restored.importState(JSON.parse(JSON.stringify(simulation.exportState())))
+  assert.equal(restored.plants[0].withered, true, 'a save keeps the bush withered')
+})
+
+test('the bite that withers the bush still counts toward the picnic', () => {
+  const simulation = matureBush()
+  for (let i = 0; i < 5; i++) simulation.raid(1)
+  const state = raid.createPlantRaider()
+  const step = (dt) => raid.stepPlantRaider(state, { species: 'squirrel', x: .82, z: 0, eligible: true }, simulation.plants, dt, (id) => simulation.raid(id))
+  step(.1)
+  step(.7)
+  assert.equal(simulation.plants[0].withered, true)
+  assert.equal(step(1.8).completedBite, true)
+})
+
+test('raiders eat only their own plants, and never a fenced-in one', () => {
+  const simulation = matureBush()
+  const actor = (species) => ({ species, x: 4, z: 0, eligible: true })
+  assert.equal(raid.stepPlantRaider(raid.createPlantRaider(), actor('mole'), simulation.plants, .1, () => true).target, null, 'a mole leaves berries alone')
+  assert.ok(raid.stepPlantRaider(raid.createPlantRaider(), actor('squirrel'), simulation.plants, .1, () => true).target)
+  const fenced = new Set([1])
+  assert.equal(raid.stepPlantRaider(raid.createPlantRaider(), actor('squirrel'), simulation.plants, .1, () => true, fenced).target, null)
+  // Fenced in mid-approach: it gives up.
+  const state = raid.createPlantRaider()
+  raid.stepPlantRaider(state, actor('squirrel'), simulation.plants, .1, () => true)
+  assert.equal(raid.stepPlantRaider(state, actor('squirrel'), simulation.plants, .1, () => true, fenced).target, null)
+  assert.equal(state.phase, 'rest')
+})
+
+test('every plant but the flowers has a raider, and the fence pen math shuts plants in', () => {
+  for (const species of plants.PLANT_CATALOG) {
+    if (species.careType === 'flower') assert.equal(species.raid, undefined, `${species.id} is never eaten`)
+    else assert.ok(species.raid && species.raid.by.length > 0 && species.raid.bites > 0, `${species.id} has a raider`)
+  }
+  // A 2x1-cell pen from vertex (0,0) to (2,1).
+  const pen = [
+    ...props.fenceSegmentsBetween({ x: 0, z: 0 }, { x: 2, z: 0 }),
+    ...props.fenceSegmentsBetween({ x: 0, z: 1 }, { x: 2, z: 1 }),
+    ...props.fenceSegmentsBetween({ x: 0, z: 0 }, { x: 0, z: 1 }),
+    ...props.fenceSegmentsBetween({ x: 2, z: 0 }, { x: 2, z: 1 }),
+  ]
+  assert.deepEqual([...props.fencedCells(pen)].sort(), ['0,0', '1,0'])
+  assert.equal(props.fencedCells(pen.slice(1)).size, 0, 'one missing rail leaves the pen open')
+  assert.equal(props.fencedCells([]).size, 0)
 })
