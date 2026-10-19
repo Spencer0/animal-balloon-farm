@@ -25,6 +25,7 @@ import { rootVegetables } from './garden/root-vegetables'
 import { vinePatch } from './garden/vine-patch'
 import { chapterOne } from './garden/chapter-one'
 import { plantRaiders } from './garden/plant-raiders'
+import { gardenRaid, saltLickDistraction } from './deer/garden-raid'
 import { escapeKeys } from './ui/escape-keys'
 import { chickenRaid, tameTheLion } from './apex/mountain-lion'
 
@@ -41,6 +42,7 @@ export const SCENARIOS: readonly Scenario[] = [
   firstPlant,
   panLimit,
   careCues, poppyStages, rootVegetables, vinePatch, chapterOne, plantRaiders,
+  gardenRaid, saltLickDistraction,
   escapeKeys,
 ]
 

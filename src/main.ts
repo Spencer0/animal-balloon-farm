@@ -22,6 +22,7 @@ import {
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
+import { createDeerRaids } from './scene/deer-raid'
 import { createPlantRaids } from './scene/plant-raid'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
 import { createHungerBubbles } from './scene/hunger-bubbles'
@@ -1881,6 +1882,12 @@ function plantShadowKey(): number {
  */
 const plantRaids = createPlantRaids(animals, progress, () => gardenPlants, () => gardenProps?.occupancy.fenceSegments ?? [],
   (plant) => gardenPlants?.celebrateWither(plant.instanceId))
+// Deer eat the garden, one random plant at a time, unless a salt lick is out (src/game/deer-raid.ts).
+const deerRaids = createDeerRaids(animals, progress, () => gardenPlants, () => gardenProps?.placements('salt-lick') ?? [], (plant) => {
+  notificationPanel.notifyAccomplishment(`A deer ate your ${plantDisplayName(plant.species)}!`, 'Deer would rather lick salt than eat your garden. Pip sells a Salt Lick.')
+  shedDom.refresh()
+  syncFarmChrome()
+})
 const simClock = createSimClock({ hz: SIM_HZ, maxStepsPerFrame: SIM_MAX_STEPS_PER_FRAME })
 
 /**
@@ -1896,6 +1903,7 @@ function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: b
   collideAnimalsTick(nowSeconds)
   if (huntsActive) tickHunts(stepSeconds)
   plantRaids.tick(stepSeconds, huntsActive && !journal.isOpen)
+  deerRaids.tick(stepSeconds, huntsActive && !journal.isOpen)
 }
 
 function runSimTick(stepSeconds: number, nowSeconds: number, huntsActive: boolean): void {

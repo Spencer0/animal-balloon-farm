@@ -47,7 +47,10 @@ locked: tools, shop tabs and seeds, meters and chips.
   all**, and Pip only sells seeds that grow in dirt. (A blueberry bush
   tutorial plant is planned separately.)
 - **Visitors:** dirt and plant lovers only, like the mole (who wants bare
-  earth) and later flower-seekers.
+  earth) and later flower-seekers. And trouble: once two plants are grown a
+  **deer** comes over the fence and eats a random plant every half minute or
+  so, until the player sets out a **salt lick** (Pip's, 35 coins), which every
+  deer would rather lick.
 - **Systems on:** planting, watering, growing, selling plants, the plant
   overhaul (to be designed: more varieties, care, cross-pollinated colours).
 - **Ends when:** the garden has **5 kinds of plant fully grown** (one plant each).

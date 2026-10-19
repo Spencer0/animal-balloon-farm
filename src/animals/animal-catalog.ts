@@ -116,6 +116,12 @@ export const ANIMAL_CATALOG = [
     assetUrl: 'assets/animals/balloon-squirrel.glb', spawn: [-3, 4], carnivalSpawn: [-20, 5], seed: 12421, size: 1.55, speed: 1.35, bounds: { x: 10.5, z: 6.1 },
   },
   {
+    id: 'deer', name: 'Deer', label: 'deer', spriteUrl: 'assets/animals/balloon-deer-review.png',
+    subtitle: 'The garden raider', description: 'A caramel balloon deer with buttercream dapples, big blush ears and velvet antler nubs, and an appetite for whatever you just grew.',
+    note: 'It steps over the fence and eats your plants, one at a time. Set out a salt lick and it would much rather lick that.', color: '#a8683c', gesture: 'Flicks its ears',
+    assetUrl: 'assets/animals/balloon-deer.glb', spawn: [5, 3], carnivalSpawn: [23, 0], seed: 13331, size: 2.6, speed: 1.1, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
     id: 'starhorn', name: 'Starhorn', label: 'starhorn', spriteUrl: 'assets/animals/balloon-starhorn-review.png',
     subtitle: 'The harmony pony', description: 'A pearly lilac balloon pony with a twisted star-tipped horn, a pastel-rainbow cloud mane and a little gold star on its flank.',
     note: 'There is only one. It trots in when the farm is in tune, sips nectar from the flowers, and leaves a star gem behind. It has no house and no young.', color: '#bf9fe6', gesture: 'Tosses its mane',

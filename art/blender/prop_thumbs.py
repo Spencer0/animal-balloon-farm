@@ -44,6 +44,7 @@ PROPS = [
     ("rock-pile", "assets/props/rock-pile.glb"),
     ("molehill", "assets/props/molehill.glb"),
     ("squirrel-house", "assets/props/squirrel-house.glb"),
+    ("salt-lick", "assets/props/salt-lick.glb"),
 ]
 
 
@@ -72,7 +73,19 @@ def add_light(name, kind, energy, location, size=1.0):
 
 def setup_render(path):
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    # EEVEE is `BLENDER_EEVEE_NEXT` in Blender 4.2 and `BLENDER_EEVEE` in 5.x; a box with no GPU
+    # needs Cycles (set ABF_RENDER_ENGINE=CYCLES).
+    forced = os.environ.get("ABF_RENDER_ENGINE")
+    for engine in ([forced] if forced else ["BLENDER_EEVEE_NEXT", "BLENDER_EEVEE", "CYCLES"]):
+        try:
+            scene.render.engine = engine
+            break
+        except TypeError:
+            continue
+    if scene.render.engine == "CYCLES":
+        scene.cycles.device = "CPU"
+        scene.cycles.samples = 32
+        scene.cycles.use_denoising = True
     scene.render.resolution_x = SIZE
     scene.render.resolution_y = SIZE
     scene.render.resolution_percentage = 100

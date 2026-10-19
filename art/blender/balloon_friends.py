@@ -1,4 +1,4 @@
-"""Create Animal Balloon Farm sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat and snake assets.
+"""Create Animal Balloon Farm sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat, snake and deer assets.
 
 Run from the repository root:
   blender --background --factory-startup --python art/blender/balloon_friends.py
@@ -106,6 +106,13 @@ def begin_action(obj, label):
     obj.animation_data.action = bpy.data.actions.new(label)
 
 
+def action_fcurves(action):
+    """An action's F-curves: `action.fcurves` up to Blender 4.x, the layered channel bags from 5.0 on."""
+    if hasattr(action, "fcurves"):
+        return list(action.fcurves)
+    return [fcurve for layer in action.layers for strip in layer.strips for bag in strip.channelbags for fcurve in bag.fcurves]
+
+
 def finish_action(objects, clip, animal):
     for obj in objects:
         data = obj.animation_data
@@ -113,7 +120,7 @@ def finish_action(objects, clip, animal):
         if action is None:
             continue
         action.name = f"BALLOON {animal.upper()} · {clip}"
-        for fcurve in action.fcurves:
+        for fcurve in action_fcurves(action):
             for point in fcurve.keyframe_points:
                 point.interpolation = "BEZIER"
                 point.handle_left_type = "AUTO_CLAMPED"
@@ -204,6 +211,18 @@ def materials(animal):
         base["beak"] = mat("OWL · pale honey beak", "#e6a453", .24, .01, .50)
         base["leg"] = mat("OWL · sandy talon latex", "#d9a15e", .28, .01, .34)
         base["collar"] = mat("OWL · twilight-plum bell ribbon", "#8d5f8e", .24, .04, .46)
+    elif animal.lower() == "deer":
+        base["body"] = mat("DEER · caramel balloon coat", "#a8683c", .25, .02, .54)
+        base["wool"] = mat("DEER · toffee leg balloons", "#93592f", .26, .015, .50)
+        base["face"] = mat("DEER · honey-caramel face balloon", "#b8774a", .24, .02, .54)
+        base["belly"] = mat("DEER · cream belly and throat", "#f6e4c6", .24, .01, .52)
+        base["muzzle"] = mat("DEER · cream muzzle", "#f8ead2", .23, .01, .50)
+        base["spot"] = mat("DEER · buttercream dapples", "#fbf1dc", .22, .01, .56)
+        base["nose"] = mat("DEER · glossy cocoa nose", "#3a2a2e", .16, .01, .60)
+        base["inner"] = mat("DEER · blush ear lining", "#f0b1a8", .24, .01, .46)
+        base["horn"] = mat("DEER · velvet antler cream", "#efdcb4", .30, .01, .34)
+        base["hoof"] = mat("DEER · dark cocoa hooves", "#4a363a", .24, .02, .38)
+        base["collar"] = mat("DEER · meadow-green bell ribbon", "#6faa6a", .24, .04, .46)
     elif animal.lower() == "raccoon":
         base["body"] = mat("RACCOON · moonlit-grey balloon fur", "#8f949b", .27, .02, .52)
         base["wool"] = mat("RACCOON · slate-grey leg balloons", "#767b84", .28, .015, .48)
@@ -1418,6 +1437,118 @@ def make_snake():
     export_asset(root, "snake", review_yaw=-20, texcoords=False)
 
 
+def make_deer_legs(body, m, animal):
+    """Four long, slender legs: a thigh balloon, a thin shank and a small dark hoof each."""
+    positions = ((.62, -.30, "front near"), (.62, .30, "front far"), (-.62, -.30, "hind near"), (-.62, .30, "hind far"))
+    legs, hooves = [], []
+    for x, y, label in positions:
+        sphere(f"{animal} · {label} hip balloon", (x, y, -.30), (.24, .19, .26), m["body"], body, 32, 22)
+        leg = pivot(f"{animal.upper()} RIG · {label} leg", (x, y, -.40), body)
+        legs.append(leg)
+        sphere(f"{animal} · {label} upper leg balloon", (0, 0, -.16), (.15, .13, .30), m["wool"], leg, 30, 20)
+        sphere(f"{animal} · {label} slim shank", (.01, 0, -.62), (.085, .08, .32), m["wool"], leg, 24, 16)
+        hoof = pivot(f"{animal.upper()} RIG · {label} hoof hinge", (.02, 0, -.95), leg)
+        hooves.append(hoof)
+        sphere(f"{animal} · {label} little cocoa hoof", (.02, 0, -.05), (.11, .095, .085), m["hoof"], hoof, 24, 16)
+        sphere(f"{animal} · {label} hoof glimmer", (.11, -.06, -.025), (.022, .011, .015), m["hoofglint"], hoof, 14, 8)
+    return positions, legs, hooves
+
+
+def animate_eat(animal, body, head, neck, ears, tail, legs, hooves, bell, leg_positions, body_z, leg_anchor):
+    """A third clip, EAT: the neck swings down so the muzzle reaches a plant top, and it chews.
+
+    Keys exactly the nodes and channels WALK and IDLE key (rotations, body and leg locations), so
+    the exported rest pose stays the standing one.
+    """
+    nodes = [body, head, neck, *ears, tail, *legs, *hooves, bell]
+    for obj in nodes:
+        begin_action(obj, f"BALLOON {animal.upper()} · EAT")
+    for frame, phase in zip(FRAMES, PHASES):
+        bpy.context.scene.frame_set(frame)
+        chew = math.sin(2 * phase)
+        dip = .20 + .012 * math.sin(phase)
+        key(body, frame, location=(0, 0, body_z - dip), rotation=(math.radians(.6 * math.sin(phase)), math.radians(14 + .6 * math.sin(phase)), 0), scale=(1 + .004 * math.sin(phase), 1, 1 + .006 * math.cos(2 * phase)))
+        key(neck, frame, rotation=(0, math.radians(92 + 3 * math.sin(phase)), math.radians(1.5 * math.sin(phase))))
+        key(head, frame, rotation=(math.radians(2.5 * chew), math.radians(-6 + 5 * chew), math.radians(1.2 * math.sin(phase + .4))))
+        key(bell, frame, rotation=(math.radians(2 * math.sin(phase)), math.radians(-30 + 3 * math.sin(phase + .5)), 0))
+        for index, ear in enumerate(ears):
+            flick = 6 * max(0, math.sin(phase + index * 2.1)) ** 3
+            key(ear, frame, rotation=(math.radians(1 * math.sin(phase + index)), math.radians(4 * math.sin(phase + index)), (-.12 if index == 0 else .12) + math.radians((-1 if index == 0 else 1) * flick)))
+        key(tail, frame, rotation=(0, math.radians(-18 + 6 * math.sin(2 * phase)), math.radians(14 * math.sin(2 * phase + .4))))
+        for index, (leg, hoof, (x, y, _)) in enumerate(zip(legs, hooves, leg_positions)):
+            # The body tips forward and sinks; the legs lean back against it so the hooves stay planted.
+            lift = dip + x * math.sin(math.radians(14))
+            key(leg, frame, location=(x, y, leg_anchor + lift), rotation=(0, math.radians(-14 + .3 * math.sin(phase + index)), 0))
+            key(hoof, frame, rotation=(0, math.radians(.3 * math.sin(phase + index)), 0))
+    finish_action(nodes, "EAT", animal)
+
+
+def make_deer():
+    global DETAIL
+    # Lighter than full detail so it fits the per-animal triangle budget (scripts/asset-budget.mjs).
+    DETAIL = .55
+    m = materials("DEER")
+    root = pivot("BALLOON DEER · export root · forward +X", (0, 0, 0))
+    root["asset_id"] = "animal_balloon_deer"
+    root["description"] = "Caramel balloon deer with buttercream dapples, big blush ears, velvet antler nubs and a white flag tail"
+    body_z = 1.5
+    leg_anchor = -.40
+    body = pivot("DEER RIG · slender dappled body", (0, 0, body_z), root)
+    neck = pivot("DEER RIG · long neck", (.62, 0, .16), body)
+    sphere("DEER · lean caramel balloon body", (0, 0, 0), (.98, .50, .50), m["body"], body, 48, 32)
+    sphere("DEER · cream belly", (.05, 0, -.26), (.74, .36, .26), m["belly"], body, 36, 24)
+    sphere("DEER · rounded haunch", (-.55, 0, .06), (.48, .48, .44), m["body"], body, 36, 24)
+    # Fawn dapples: two rows of little cream spots along each flank.
+    for side, label in ((-1, "near"), (1, "far")):
+        for index, (x, z) in enumerate(((-.62, .26), (-.32, .32), (-.02, .34), (.30, .30), (-.48, .10), (-.16, .14), (.14, .14))):
+            y = side * .5 * math.sqrt(max(.12, 1 - (x / .98) ** 2 - (z / .5) ** 2))
+            spot = sphere(f"DEER · {label} buttercream dapple {index + 1}", (x, y, z), (.075, .03, .06), m["spot"], body, 16, 10)
+            spot.rotation_euler[0] = side * math.radians(-12)
+    # The neck rises up and forward from the shoulder; the head rides on it, so EAT can swing both down.
+    sphere("DEER · neck balloon", (.10, 0, .30), (.24, .22, .44), m["body"], neck, 36, 24).rotation_euler[1] = math.radians(18)
+    sphere("DEER · cream throat", (.22, 0, .22), (.13, .15, .30), m["belly"], neck, 28, 18).rotation_euler[1] = math.radians(18)
+    head = pivot("DEER RIG · gentle head", (.26, 0, .70), neck)
+    sphere("DEER · honey face balloon", (0, 0, 0), (.44, .38, .38), m["face"], head, 44, 30)
+    sphere("DEER · long cream muzzle", (.36, 0, -.10), (.28, .23, .20), m["muzzle"], head, 36, 24)
+    sphere("DEER · glossy cocoa nose", (.62, 0, -.06), (.07, .10, .07), m["nose"], head, 24, 16)
+    curve("DEER · little smile", [(.44, -.18, -.22), (.53, -.17, -.25), (.60, -.12, -.22)], .012, m["seam"], head, 2)
+    for side, label in ((-1, "near"), (1, "far")):
+        sphere(f"DEER · {label} bright eye", (.14, side * .335, .10), (.12, .07, .135), m["white"], head, 28, 18)
+        sphere(f"DEER · {label} dark pupil", (.19, side * .388, .105), (.06, .036, .08), m["eye"], head, 24, 16)
+        sphere(f"DEER · {label} starry catchlight", (.21, side * .414, .145), (.024, .014, .027), m["white"], head, 16, 10)
+        curve(f"DEER · {label} soft brow", [(.06, side * .33, .27), (.15, side * .35, .30), (.24, side * .33, .28)], .015, m["seam"], head, 2)
+        cheek = sphere(f"DEER · {label} rosy cheek", (.27, side * .33, -.10), (.07, .02, .04), m["inner"], head, 20, 12)
+        cheek.rotation_euler[1] = math.radians(-12)
+    ears = []
+    for side, label in ((-1, "near"), (1, "far")):
+        ear = pivot(f"DEER RIG · {label} big ear", (-.12, side * .26, .22), head)
+        ears.append(ear)
+        ear.rotation_euler = (math.radians(side * -38), math.radians(-10), math.radians(side * -6))
+        sphere(f"DEER · {label} big caramel ear", (0, side * .02, .24), (.12, .06, .26), m["face"], ear, 28, 18)
+        sphere(f"DEER · {label} blush ear lining", (.04, side * .03, .24), (.08, .03, .19), m["inner"], ear, 24, 16)
+    # Little velvet antlers: a curved beam with one tine and pearl tips, small and friendly.
+    for side, label in ((-1, "near"), (1, "far")):
+        curve(f"DEER · {label} velvet antler beam", [(-.02, side * .12, .32), (-.06, side * .18, .52), (.02, side * .24, .70)], .042, m["horn"], head, 3)
+        curve(f"DEER · {label} velvet antler tine", [(-.05, side * .17, .50), (.08, side * .19, .58), (.14, side * .20, .64)], .032, m["horn"], head, 3)
+        sphere(f"DEER · {label} antler pearl tip", (.02, side * .24, .70), (.045, .045, .05), m["horn"], head, 16, 10)
+        sphere(f"DEER · {label} tine pearl tip", (.14, side * .20, .64), (.036, .036, .04), m["horn"], head, 14, 8)
+    # A satin collar round the neck base with the keepsake bell.
+    ring = [(.04 + .25 * math.cos(i * math.tau / 36), .23 * math.sin(i * math.tau / 36), .06) for i in range(36)]
+    curve("DEER · satin bell collar", ring, .026, m["collar"], neck, 3)
+    bell = pivot("DEER RIG · keepsake bell", (.28, 0, .0), neck)
+    sphere("DEER · rounded golden bell", (0, 0, 0), (.11, .10, .115), m["gold"], bell, 26, 18)
+    sphere("DEER · tiny bell clapper", (.015, -.014, -.10), (.03, .03, .036), m["seam"], bell, 14, 10)
+    # A short white flag of a tail, held up.
+    tail = pivot("DEER RIG · white flag tail", (-.98, 0, .22), body)
+    sphere("DEER · caramel tail top", (-.08, 0, .10), (.12, .10, .17), m["body"], tail, 24, 16).rotation_euler[1] = math.radians(-30)
+    sphere("DEER · white flag underside", (-.12, 0, .05), (.10, .09, .15), m["spot"], tail, 24, 16).rotation_euler[1] = math.radians(-30)
+    positions, legs, hooves = make_deer_legs(body, m, "DEER")
+    animate_eat("deer", body, head, neck, ears, tail, legs, hooves, bell, positions, body_z, leg_anchor)
+    animate("deer", body, head, neck, ears, tail, legs, hooves, bell, positions, forward_gait=True, body_z=body_z, leg_anchor=leg_anchor)
+    portrait("deer", m)
+    export_asset(root, "deer", review_yaw=-8, texcoords=False)
+
+
 def reset_scene():
     global DETAIL
     DETAIL = 1.0
@@ -1432,7 +1563,7 @@ def reset_scene():
 
 
 
-MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon, "mouse": make_mouse, "rat": make_rat, "mole": make_mole, "snake": make_snake}
+MAKERS = {"sheep": make_sheep, "cow": make_cow, "chicken": make_chicken, "duck": make_duck, "goose": make_goose, "frog": make_frog, "owl": make_owl, "raccoon": make_raccoon, "mouse": make_mouse, "rat": make_rat, "mole": make_mole, "snake": make_snake, "deer": make_deer}
 
 
 def main():

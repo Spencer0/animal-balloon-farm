@@ -19,7 +19,7 @@ import { isNightOnly } from './animal-conditions'
 /** Prop id of each house, and the species it takes in. A species has exactly one house. */
 export const HOUSE_SPECIES: Readonly<Record<string, readonly string[]>> = {
   coop: ['chicken', 'duck'],
-  barn: ['cow', 'sheep'],
+  barn: ['cow', 'sheep', 'deer'],
   'goose-house': ['goose'],
   sty: ['pig'],
   'frog-house': ['frog'],

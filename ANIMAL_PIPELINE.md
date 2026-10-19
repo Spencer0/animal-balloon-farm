@@ -4,8 +4,8 @@ How a new animal gets from "add an X" to a reviewed, playable species. The goal:
 **"Add a new animal X, use the animal pipeline"** and the agent can do the whole thing without
 hand-holding, including any plant, prop or house the animal needs.
 
-Current catalog: **16 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
-snake, mole, squirrel, starhorn, and the mountain lion, id `cougar`).
+Current catalog: **17 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
+snake, mole, squirrel, deer, starhorn, and the mountain lion, id `cougar`).
 
 **Reference animals.** Copy the closest one instead of starting cold.
 
@@ -16,6 +16,7 @@ snake, mole, squirrel, starhorn, and the mountain lion, id `cougar`).
 | **mouse / rat / snake** | The tall-grass animals: settled by *meadow* (`meadowArea`). The mouse and rat are small quadrupeds with a shared `add_rodent_head` / `add_rodent_tail`; the rat is a night animal with a `SLEEP` clip; the snake is the legless body plan (see *A body with no legs*). |
 | **pig / sheep / cow / chicken / duck / goose** | Plain day animals settled by terrain (grass, water, flat ground), a resident friend, or a barn / coop. |
 | **owl** | Only if the animal flies, hunts, or eats another species. The complex case; see *Predators and fliers*. |
+| **deer** | A pest: it eats the player's plants (`src/game/deer-raid.ts`) until a prop distracts it (the salt lick). Long-legged quadruped with an `EAT` clip, built at `DETAIL = .55` to fit the triangle budget. |
 | **mountain lion** (`cougar`) | An apex predator: summoned by a crowd instead of lured to the carnival, eats a whole species (indoors too), then leaves. See *Apex predators*. |
 
 ---
@@ -111,6 +112,11 @@ Do these in order; each is detailed below. Work in a worktree (see `AGENTS.md`).
 ```sh
 blender --version   # 4.2.3 LTS is the known-good version
 ```
+
+In a cloud session with no `blender`, `pip install bpy` (Blender as a Python module, 5.x) in a scratch
+venv and run the same scripts with that venv's `python` (e.g. `python art/blender/balloon_friends.py -- deer`).
+There is no GPU, so set `ABF_RENDER_ENGINE=CYCLES`. The helpers cover the 4.2 to 5.x API changes
+(`action_fcurves`, the EEVEE engine name).
 
 If `blender` is not on `PATH`, use
 `C:\Users\Spencer\Documents\Playground\tools\blender\blender-4.2.3-windows-x64\blender.exe` (check it
@@ -343,7 +349,7 @@ raccoon: {
 |------|-------|-----------------|
 | `grassArea`, `flatArea`, `waterArea` | m² of mature grass / flat grassy ground / water | n/a |
 | `meadowArea` | m² of **tall** meadow: ground where the green seed pack's blades stand over 0.6 m. A lawn never counts | n/a |
-| `plantCount` | **mature** plants of one kind | a plant id |
+| `plantCount` | **mature** plants of one kind, or of every kind with no `species` (the deer's lure) | a plant id, or nothing |
 | `residentSpecies` | is any adult of this species a resident | an animal id |
 | `residentCount` | how many adult residents | an animal id |
 | `preyEaten` | tally of a prey species eaten | an animal id |
@@ -610,6 +616,8 @@ shared between animals and no longer resolve.
 | `meadow/tall-grass-garden` | day: a deep meadow with a hollow log and a rock pile beside a short lawn with dandelions and a can; six mice, two snakes (two mice already eaten) and two rats (asleep in the log), all in love |
 | `meadow/snake-hunt` | day: five resident mice and one visiting snake. Each lunge rolls a d6: 4+ and the mouse pops, otherwise it sprints into the hollow log. Two catches and the snake calls the farm home |
 | `meadow/tall-grass-night` | the same garden at night, rats awake |
+| `deer/garden-raid` | chapter 1, midday: five grown plants and a wild deer that eats a random one every half minute or so; 200 coins for a Salt Lick |
+| `deer/salt-lick` | the same garden with a Salt Lick placed: the deer licks it, leaves the plants alone and settles |
 | `meadow/empty-meadow` | the same garden with no animals and the clock running: mice find the meadow first |
 | `apex/chicken-raid` | day: nine chickens (five out, four in the coop) and two cows. The lion smells the crowd, comes over the fence, eats every chicken in the open and in the coop, and leaves; the cows are left alone |
 | `apex/tame-the-lion` | the same farm with Chapter 6 open, Harmony pinned at 90 and two oaks: the lion tames as it lands and trims the chickens to six |
@@ -709,7 +717,7 @@ only the paths you changed.
    `NIGHT_ONLY_SPECIES`, `SLEEP_PROPS` and `SPECIES_META` onto the catalog entry would make a missing
    one a compile error.
 5. **The animal download budget.** `npm run assets:budget` caps every animal GLB together at 50 MB
-   (raised from 16 MB so animals can be built at full detail) and each one at 2.5 MB / 100k triangles.
+   (raised from 16 MB so animals can be built at full detail) and each one at 2.5 MB / 25k triangles.
    The first nine and the mole are full detail (1.3-2.2 MB each). The tall-grass animals (mouse, rat,
    snake) are built at `LEAN_DETAIL` (a third of the sphere and curve resolution, no UVs: the animals are
    untextured) and are 0.2-0.3 MB. Either is fine; new animals default to full detail. A lean/full

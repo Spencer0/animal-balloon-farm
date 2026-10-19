@@ -30,6 +30,7 @@ export const ANIMAL_SALE_PRICES: Readonly<Record<BalloonAnimalId, number>> = {
   snake: 26,
   mole: 18,
   squirrel: 22,
+  deer: 20,
   // The one-of-a-kind end-game animal: worth the most, though it is far more valuable on the farm making gems.
   starhorn: 60,
   // The tamed apex predator: one of a kind, and it took a farm of legend to keep it.

@@ -50,6 +50,8 @@ export interface GardenPlants {
   pointerDown(event: PlantPointerEvent): boolean
   selectAt(clientX: number, clientY: number): GardenPlant | null
   removePlant(instanceId: number): GardenPlant | null
+  /** Remove a plant an animal ate, with a puff of torn leaves and soil where it stood. */
+  eatPlant(instanceId: number): GardenPlant | null
   /** The cue under the pointer: a chore, the fully grown seal, or a withered plant's badge. */
   markerKindAt(clientX: number, clientY: number): PlantCare | 'mature' | 'withered' | null
   /** The plant whose body is under the pointer, with where its footprint sits. */
@@ -1048,6 +1050,15 @@ export function createGardenPlants(
       selectedPlantIds.delete(instanceId)
       const plant = simulation.remove(instanceId)
       if (plant) syncVisuals()
+      return plant
+    },
+    eatPlant(instanceId): GardenPlant | null {
+      const y = visuals.get(instanceId)?.group.position.y
+      const plant = this.removePlant(instanceId)
+      if (!plant) return null
+      const at = new THREE.Vector3(plant.x, (y ?? GARDEN_LAWN_Y) + 0.25, plant.z)
+      bursts.add(createBurst(at, { count: 30, colors: ['#7fb64f', '#9bc85b', '#5e9a3e', '#b9db7a'], size: 0.06, speed: [1.4, 3], lift: 1.8, gravity: 7, seconds: 1.2, shape: 'leaf' }), root)
+      bursts.add(createBurst(at, { count: 14, colors: ['#7a5236', '#5e3d27', '#9a7049'], size: 0.045, speed: [1, 2.2], lift: 1.4, gravity: 9, seconds: 0.8, cone: 1.1 }), root)
       return plant
     },
     get selectedPlant() {
