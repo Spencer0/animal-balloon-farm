@@ -33,13 +33,20 @@ export interface ScenarioHarness {
   growPlants(steps?: number, secondsPerStep?: number): unknown
   /** Park a plant at a growth (0..1) with earlier care answered; play carries on from there. */
   setPlantGrowth(instanceId: number, growth: number): unknown
+  /** Eat a grown plant bare, so it withers and shows its badge. */
+  witherPlant(instanceId: number): boolean
+  /** A fence run between two lattice vertices (2 m apart); buy its sections first. */
+  placeFence(fromX: number, fromZ: number, toX: number, toZ: number): unknown
   setTimeOfDay(time: number): void
   /** Freeze (or release) the day clock, so a night scenario stays night. */
   holdTime(hold: boolean): void
   advance(steps?: number, secondsPerStep?: number): unknown
   feedOwl(count: number): unknown
   feedSnake(count: number): unknown
+  /** Make every hunter hunt at once; a crowd the mountain lion has smelt brings it over the fence now. */
   hurryHunt(): void
+  /** Pin the farm's Harmony score (0..100), or null to measure it again. */
+  setHarmony(value: number | null): void
   setOwlHelium(level: number): void
   /** Set the helium (0..1) of every settled animal of a species. Returns how many it changed. */
   setHelium(species: string, level: number): number

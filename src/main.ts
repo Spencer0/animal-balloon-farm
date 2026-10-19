@@ -22,8 +22,8 @@ import {
 import { createFarmMeasure } from './scene/farm-measure'
 import { createFarmSave } from './game/farm-save'
 import { createHerd } from './scene/herd'
-import { createBerryForaging } from './scene/berry-forage'
 import { createDeerRaids } from './scene/deer-raid'
+import { createPlantRaids } from './scene/plant-raid'
 import { createFarmLifecycle } from './scene/farm-lifecycle'
 import { createHungerBubbles } from './scene/hunger-bubbles'
 import { createHouseGoodsBadges } from './scene/house-goods-badges'
@@ -44,7 +44,7 @@ import { createGardenProps, type GardenProps, type PropSelection } from './scene
 import { PLANT_CARE_KINDS, PLANT_CATALOG, PLANT_WATER_MIN_DEPTH, SEED_PRICES, plantSpecies, type PlantId, type PlantSubstrate } from './game/plants'
 import { createGreenThumb } from './game/plant-helpers'
 import { createCareController, helperSeedPrice, helperShopCopy } from './care-controller'
-import { STARTING_COINS, createWallet, generateAnimalNames, plantSaleValue } from './game/sales'
+import { STARTING_COINS, createWallet, generateAnimalNames, gardenPlantSaleValue } from './game/sales'
 import { createTreasureLedger, purchaseTreasure, treasureEffects, TREASURE_CATALOG, type TreasureId } from './game/treasures'
 import type { GardenToolId } from './scene/garden-tool-art'
 import { createFarmCamera } from './scene/farm-camera'
@@ -440,6 +440,8 @@ if (loadedSave) {
     if (saved.inside && progress.animal(saved.id)) savedIndoors.set(saved.id, savedPlaces.get(saved.id) ?? { x: 0, z: 0 })
   }
 }
+/** Animals in the world that are not drawn right now: the mountain lion while it is inside a house. */
+const hiddenAnimals = new Set<string>()
 const { pickAnimal, refreshAnimalVisibility, carnivalSpawnFor, clearCrowdFixtures, setCrowdFixtures, createAnimalInstance, shownCount, resetVisibilityClock } = createHerd({
   camera,
   gameCanvas,
@@ -456,6 +458,7 @@ const { pickAnimal, refreshAnimalVisibility, carnivalSpawnFor, clearCrowdFixture
   animalCreations,
   farmHomes,
   crowdFixtures,
+  hiddenAnimals,
 })
 await Promise.all(progress.all()
   .filter((record) => !savedIndoors.has(record.id))
@@ -499,6 +502,19 @@ function adultResidents() {
 function residentCounts(): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const entry of adultResidents()) counts[entry.species] = (counts[entry.species] ?? 0) + 1
+  return counts
+}
+
+/**
+ * Residents per species, babies and animals indoors included: what "more than six"
+ * means to the mountain lion (game/apex-raid.ts), and the journal's biggest-herd bar.
+ */
+function herdCounts(): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const entry of progress.all()) {
+    if (entry.stage < 3 || animalById.get(entry.id)?.isSold) continue
+    counts[entry.species] = (counts[entry.species] ?? 0) + 1
+  }
   return counts
 }
 
@@ -755,7 +771,7 @@ const salePanel = createSalePanel((target) => {
   const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === plantId)
   if (!plant || !gardenPlants?.removePlant(plantId)) return null
   shedDom.refresh()
-  const balance = wallet.credit(plantSaleValue(plant.species, plant.growth))
+  const balance = wallet.credit(gardenPlantSaleValue(plant))
   salePanel.setWallet(balance)
   return balance
 }, window.innerWidth, window.innerHeight, (isOpen) => {
@@ -1109,7 +1125,7 @@ const plantCard = createPlantCard({
   onSell: (target) => {
     const plant = gardenPlants?.simulation.plants.find((entry) => entry.instanceId === target.instanceId)
     if (!plant || !gardenPlants?.removePlant(target.instanceId)) return null
-    const price = plantSaleValue(plant.species, plant.growth)
+    const price = gardenPlantSaleValue(plant)
     const balance = wallet.credit(price)
     salePanel.setWallet(balance)
     shedDom.refresh()
@@ -1187,7 +1203,7 @@ for (const panel of panels) ui.add(panel)
 
 
 
-const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, tickHunts, presentHunts, popAnimal } = createPredation({
+const { predationLedger, owlHunt, snakeHunt, lionHunt, popsInFlight, bolting, hidingUntil, panicking, tickHunts, presentHunts, popAnimal } = createPredation({
   fairgroundRoot: fairground.root,
   lawnY: GARDEN_LAWN_Y,
   scene,
@@ -1211,6 +1227,10 @@ const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil,
   bodySizeBySpecies,
   speciesPluralName: (species) => speciesPluralName(species),
   dayNightClock,
+  herdCounts,
+  hiddenAnimals,
+  applyLifeEvents: (events) => handleAnimalLifeEvents(events),
+  createAnimalInstance,
 })
 const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts, setHarmonyOverride } = createFarmMeasure({
   gardenSurface: () => fairground.gardenSurface,
@@ -1225,6 +1245,8 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts, setH
   frozenWaterCells,
   activeGardenBounds,
   upgrades,
+  herdCounts,
+  chapterNumber: () => chapters.current().number,
 })
 const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimalsTick, updateSleepers } = createHousing({
   progress,
@@ -1241,7 +1263,7 @@ const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAn
   bolting,
   hidingUntil,
   getFocusedAnimal: () => focusedAnimalId,
-  isHunted: (id) => owlHunt.huntedIds().has(id) || snakeHunt.huntedIds().has(id),
+  isHunted: (id) => owlHunt.huntedIds().has(id) || snakeHunt.huntedIds().has(id) || lionHunt.huntedIds().has(id),
   createAnimalInstance,
   animalCreations,
   refreshAnimalVisibility,
@@ -1602,6 +1624,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     predationLedger,
     owlHunt,
     snakeHunt,
+    lionHunt,
+    hiddenAnimals,
+    herdCounts,
     popsInFlight,
     crowdFixtures,
     clearCrowdFixtures,
@@ -1613,6 +1638,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     measureFarm,
     handleAnimalLifeEvents,
     stepAnimalWorld,
+    runSimTick,
     presentHunts,
     bolting,
     hidingUntil,
@@ -1854,7 +1880,8 @@ function plantShadowKey(): number {
  * walk home, the gate trips, the collision push-out and the owl and snake hunts
  * (game/animal-hunt.ts). Animation, camera and water stay per frame.
  */
-const berryForaging = createBerryForaging(animals, progress, () => gardenPlants)
+const plantRaids = createPlantRaids(animals, progress, () => gardenPlants, () => gardenProps?.occupancy.fenceSegments ?? [],
+  (plant) => gardenPlants?.celebrateWither(plant.instanceId))
 // Deer eat the garden, one random plant at a time, unless a salt lick is out (src/game/deer-raid.ts).
 const deerRaids = createDeerRaids(animals, progress, () => gardenPlants, () => gardenProps?.placements('salt-lick') ?? [], (plant) => {
   notificationPanel.notifyAccomplishment(`A deer ate your ${plantDisplayName(plant.species)}!`, 'Deer would rather lick salt than eat your garden. Pip sells a Salt Lick.')
@@ -1875,7 +1902,7 @@ function stepAnimalWorld(stepSeconds: number, nowSeconds: number, huntsActive: b
   // Push the walkers out of houses and each other once they have moved; the view blends the result.
   collideAnimalsTick(nowSeconds)
   if (huntsActive) tickHunts(stepSeconds)
-  berryForaging.tick(stepSeconds, huntsActive && !journal.isOpen)
+  plantRaids.tick(stepSeconds, huntsActive && !journal.isOpen)
   deerRaids.tick(stepSeconds, huntsActive && !journal.isOpen)
 }
 

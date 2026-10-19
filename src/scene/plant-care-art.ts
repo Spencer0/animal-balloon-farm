@@ -9,7 +9,9 @@ import type { PlantCare } from '../game/plants'
  *   the plant, its inner disc tinted for the chore (water drop, beetle, shears);
  * - the fully grown seal: a gold rosette with ribbon tails and a leafy tick;
  * - the fully grown banner: a ribbon that pops up over the plant the moment it
- *   matures.
+ *   matures;
+ * - the withered badge: a paper disc with a drooping brown plant on a dirt
+ *   mound, over a plant raiders ate bare. Clicking it clears the plant.
  *
  * Textures are authored at twice their on-screen size so they stay crisp on
  * high-density screens, and cached: every plant shares one per kind.
@@ -35,6 +37,7 @@ export const BANNER_HEIGHT = 240
 const careCache = new Map<PlantCare, THREE.CanvasTexture>()
 let sealCache: THREE.CanvasTexture | null = null
 let bannerCache: THREE.CanvasTexture | null = null
+let witheredCache: THREE.CanvasTexture | null = null
 
 function canvas2d(width: number, height: number, what: string): CanvasRenderingContext2D {
   const canvas = document.createElement('canvas')
@@ -511,6 +514,78 @@ export function maturityBannerTexture(): THREE.CanvasTexture {
 }
 
 /** Free every cached cue texture; the next request redraws it. */
+/** The withered badge: a dead plant slumped over its mound, on a paper disc with a walnut rim. */
+export function witheredBadgeTexture(): THREE.CanvasTexture {
+  if (witheredCache) return witheredCache
+  const size = SEAL_SIZE
+  const context = canvas2d(size, size, 'plant withered badge')
+  const cx = size / 2
+  const cy = size / 2
+  context.beginPath()
+  context.arc(cx, cy + 6, 74, 0, Math.PI * 2)
+  context.fillStyle = 'rgba(58, 36, 20, .25)'
+  context.fill()
+  context.beginPath()
+  context.arc(cx, cy, 74, 0, Math.PI * 2)
+  context.fillStyle = PAPER
+  context.fill()
+  context.lineWidth = 7
+  context.strokeStyle = BORDER
+  context.stroke()
+  context.save()
+  context.setLineDash([8, 7])
+  context.lineWidth = 3
+  context.strokeStyle = DASH
+  context.beginPath()
+  context.arc(cx, cy, 60, 0, Math.PI * 2)
+  context.stroke()
+  context.restore()
+  // The dirt mound it stands in.
+  context.beginPath()
+  context.ellipse(cx, cy + 40, 46, 15, 0, Math.PI, 0)
+  context.closePath()
+  context.fillStyle = '#8a6040'
+  context.fill()
+  context.lineWidth = 4
+  context.strokeStyle = BORDER
+  context.stroke()
+  // The stem, bent over until its head hangs at the ground.
+  context.lineWidth = 9
+  context.strokeStyle = '#7d6235'
+  context.beginPath()
+  context.moveTo(cx - 6, cy + 34)
+  context.bezierCurveTo(cx - 10, cy - 30, cx + 40, cy - 40, cx + 34, cy + 6)
+  context.stroke()
+  // Its dead head, hanging off the end.
+  context.beginPath()
+  context.ellipse(cx + 34, cy + 14, 9, 13, 0.2, 0, Math.PI * 2)
+  context.fillStyle = '#a0784a'
+  context.fill()
+  context.lineWidth = 4
+  context.strokeStyle = BORDER
+  context.stroke()
+  // Two curled, drooping leaves.
+  const leaf = (x: number, y: number, angle: number): void => {
+    context.save()
+    context.translate(x, y)
+    context.rotate(angle)
+    context.beginPath()
+    context.moveTo(0, 0)
+    context.quadraticCurveTo(14, -12, 30, 4)
+    context.quadraticCurveTo(14, 8, 0, 0)
+    context.fillStyle = '#b08c5e'
+    context.fill()
+    context.lineWidth = 3
+    context.strokeStyle = BORDER
+    context.stroke()
+    context.restore()
+  }
+  leaf(cx - 8, cy + 6, Math.PI * 0.8)
+  leaf(cx + 2, cy - 14, Math.PI * 0.15)
+  witheredCache = finish(context, 'Plant withered badge')
+  return witheredCache
+}
+
 export function disposePlantCareArt(): void {
   for (const texture of careCache.values()) texture.dispose()
   careCache.clear()
@@ -518,4 +593,6 @@ export function disposePlantCareArt(): void {
   sealCache = null
   bannerCache?.dispose()
   bannerCache = null
+  witheredCache?.dispose()
+  witheredCache = null
 }
