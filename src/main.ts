@@ -439,6 +439,8 @@ if (loadedSave) {
     if (saved.inside && progress.animal(saved.id)) savedIndoors.set(saved.id, savedPlaces.get(saved.id) ?? { x: 0, z: 0 })
   }
 }
+/** Animals in the world that are not drawn right now: the mountain lion while it is inside a house. */
+const hiddenAnimals = new Set<string>()
 const { pickAnimal, refreshAnimalVisibility, carnivalSpawnFor, clearCrowdFixtures, setCrowdFixtures, createAnimalInstance, shownCount, resetVisibilityClock } = createHerd({
   camera,
   gameCanvas,
@@ -455,6 +457,7 @@ const { pickAnimal, refreshAnimalVisibility, carnivalSpawnFor, clearCrowdFixture
   animalCreations,
   farmHomes,
   crowdFixtures,
+  hiddenAnimals,
 })
 await Promise.all(progress.all()
   .filter((record) => !savedIndoors.has(record.id))
@@ -498,6 +501,19 @@ function adultResidents() {
 function residentCounts(): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const entry of adultResidents()) counts[entry.species] = (counts[entry.species] ?? 0) + 1
+  return counts
+}
+
+/**
+ * Residents per species, babies and animals indoors included: what "more than six"
+ * means to the mountain lion (game/apex-raid.ts), and the journal's biggest-herd bar.
+ */
+function herdCounts(): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const entry of progress.all()) {
+    if (entry.stage < 3 || animalById.get(entry.id)?.isSold) continue
+    counts[entry.species] = (counts[entry.species] ?? 0) + 1
+  }
   return counts
 }
 
@@ -1186,7 +1202,7 @@ for (const panel of panels) ui.add(panel)
 
 
 
-const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil, panicking, tickHunts, presentHunts, popAnimal } = createPredation({
+const { predationLedger, owlHunt, snakeHunt, lionHunt, popsInFlight, bolting, hidingUntil, panicking, tickHunts, presentHunts, popAnimal } = createPredation({
   fairgroundRoot: fairground.root,
   lawnY: GARDEN_LAWN_Y,
   scene,
@@ -1210,6 +1226,10 @@ const { predationLedger, owlHunt, snakeHunt, popsInFlight, bolting, hidingUntil,
   bodySizeBySpecies,
   speciesPluralName: (species) => speciesPluralName(species),
   dayNightClock,
+  herdCounts,
+  hiddenAnimals,
+  applyLifeEvents: (events) => handleAnimalLifeEvents(events),
+  createAnimalInstance,
 })
 const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts, setHarmonyOverride } = createFarmMeasure({
   gardenSurface: () => fairground.gardenSurface,
@@ -1224,6 +1244,8 @@ const { measureFarm, measureFarmForSim, remeasureMeadow, maturePlantCounts, setH
   frozenWaterCells,
   activeGardenBounds,
   upgrades,
+  herdCounts,
+  chapterNumber: () => chapters.current().number,
 })
 const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAnimalsInside, residentsOf, collideAnimalsTick, updateSleepers } = createHousing({
   progress,
@@ -1240,7 +1262,7 @@ const { houses, setHouses, resetRoster, updateHousing, speciesPluralName, sellAn
   bolting,
   hidingUntil,
   getFocusedAnimal: () => focusedAnimalId,
-  isHunted: (id) => owlHunt.huntedIds().has(id) || snakeHunt.huntedIds().has(id),
+  isHunted: (id) => owlHunt.huntedIds().has(id) || snakeHunt.huntedIds().has(id) || lionHunt.huntedIds().has(id),
   createAnimalInstance,
   animalCreations,
   refreshAnimalVisibility,
@@ -1601,6 +1623,9 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     predationLedger,
     owlHunt,
     snakeHunt,
+    lionHunt,
+    hiddenAnimals,
+    herdCounts,
     popsInFlight,
     crowdFixtures,
     clearCrowdFixtures,
@@ -1612,6 +1637,7 @@ if (__GARDEN_DEBUG__ && gardenDebugMode) {
     measureFarm,
     handleAnimalLifeEvents,
     stepAnimalWorld,
+    runSimTick,
     presentHunts,
     bolting,
     hidingUntil,

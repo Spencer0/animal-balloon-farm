@@ -25,6 +25,7 @@ import { rootVegetables } from './garden/root-vegetables'
 import { vinePatch } from './garden/vine-patch'
 import { chapterOne } from './garden/chapter-one'
 import { escapeKeys } from './ui/escape-keys'
+import { chickenRaid, tameTheLion } from './apex/mountain-lion'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
 export const SCENARIOS: readonly Scenario[] = [
@@ -35,6 +36,7 @@ export const SCENARIOS: readonly Scenario[] = [
   moleReadyToSettle, goingFlat, aboutToGoFlat,
   crowdedPasture, balancedFarm,
   gemFarm,
+  chickenRaid, tameTheLion,
   firstPlant,
   panLimit,
   careCues, poppyStages, rootVegetables, vinePatch, chapterOne,

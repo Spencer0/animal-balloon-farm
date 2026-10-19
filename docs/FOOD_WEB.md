@@ -58,6 +58,11 @@ shape of the late game: a good farm is a *balanced* one, and Harmony scores it.
 | Mole | worms | 0.6 | |
 | Owl, snake | prey | 1 | |
 | Starhorn | nectar | 1.2 | star gems |
+| Mountain lion | nothing between raids (it gorges on a crowded herd) | | |
+
+**The mountain lion** (`src/game/apex-raid.ts`) is the check on a runaway herd: any species past six
+residents brings it, and it eats that species to the last, indoors too. See *Apex predators* in
+`ANIMAL_PIPELINE.md`.
 
 ## Harmony
 

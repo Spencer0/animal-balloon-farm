@@ -4,8 +4,8 @@ How a new animal gets from "add an X" to a reviewed, playable species. The goal:
 **"Add a new animal X, use the animal pipeline"** and the agent can do the whole thing without
 hand-holding, including any plant, prop or house the animal needs.
 
-Current catalog: **14 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
-snake, mole, starhorn).
+Current catalog: **16 species** (pig, sheep, cow, chicken, duck, goose, frog, owl, raccoon, mouse, rat,
+snake, mole, squirrel, starhorn, and the mountain lion, id `cougar`).
 
 **Reference animals.** Copy the closest one instead of starting cold.
 
@@ -16,6 +16,7 @@ snake, mole, starhorn).
 | **mouse / rat / snake** | The tall-grass animals: settled by *meadow* (`meadowArea`). The mouse and rat are small quadrupeds with a shared `add_rodent_head` / `add_rodent_tail`; the rat is a night animal with a `SLEEP` clip; the snake is the legless body plan (see *A body with no legs*). |
 | **pig / sheep / cow / chicken / duck / goose** | Plain day animals settled by terrain (grass, water, flat ground), a resident friend, or a barn / coop. |
 | **owl** | Only if the animal flies, hunts, or eats another species. The complex case; see *Predators and fliers*. |
+| **mountain lion** (`cougar`) | An apex predator: summoned by a crowd instead of lured to the carnival, eats a whole species (indoors too), then leaves. See *Apex predators*. |
 
 ---
 
@@ -348,6 +349,8 @@ raccoon: {
 | `preyEaten` | tally of a prey species eaten | an animal id |
 | `harmony` | the farm's Harmony score, 0 to 100 (`harmony.ts`); a score, not an area | n/a |
 | `flowerCount` | **mature** dandelions, poppies and clover together (`FLOWER_PLANTS`) | n/a |
+| `chapter` | the newest open chapter's number, 1 to 6 (`farm-chapters.ts`): how far into the game the farm is | n/a |
+| `largestHerd` | the most residents of any one species, babies and animals indoors included (the apex trigger) | n/a |
 | `propCount` | how many of a shop prop are **placed** (owned in the inventory does not count) | a prop id (the field name is historical) |
 
 Rules that are easy to get wrong:
@@ -543,6 +546,44 @@ dark. None of that is special-cased in the catalog loop; each piece has one home
 - **Count conditions.** `residentCount`, `preyEaten` and `propCount` read maps on `FarmState`, filled
   in `measureFarm()`.
 
+### Apex predators: the mountain lion
+
+The population check. Any species with **more than six** on the farm (`CROWD_LIMIT`, residents with
+babies and animals indoors counted) draws the mountain lion down from the hills. It is overtuned on
+purpose: it is the answer to a herd that bred out of hand.
+
+| Concern | Where it lives |
+|---------|----------------|
+| Who is apex, the crowd limit, the whole raid state machine and its tuning | `APEX_SPECIES`, `CROWD_LIMIT`, `stepLion`, `LION_TUNING` in `src/game/apex-raid.ts` (pure, `tests/apex-raid.test.mjs`) |
+| Steering the lion, panicking and scattering the quarry, freezing the one it pounces on, catches as `caught`/`popped` | `createLionSim` in `src/game/animal-hunt.ts` (the flee steering is `fleePoint` in `apex-raid.ts`) |
+| Summoning it over the fence, the house raid's pops at the door, notices, the strike clip, sending it home | `stepLionHunt`, `summonLion`, `devourInside`, `playRaidEvent` in `src/scene/predation.ts` |
+| The one-shot `STRIKE` clip (crouch, leap, swipe) and playing it over the movement clips | `animate_strike` in `art/blender/balloon_cougar.py`; `playOnce` in `src/animals/balloon-animal.ts` |
+| Onto the farm in one step (stage 0 to 2), and back to the hills without a carnival visit | `summon`, `sendAway` in `src/game/animal-life.ts`; `queueVisitor` refuses apex species |
+| Its ladder, `chapter` and `largestHerd` kinds | `COUGAR_CONDITIONS` in `animal-conditions.ts`, `FarmState.chapter` / `largestHerd` from `farm-measure.ts` |
+
+- **The raid.** A crowd gives a warning (`scentSeconds`, 15): sell back to six and it loses interest.
+  Otherwise it lands just inside the fence nearest the crowd (wild, so balloon red), and the whole
+  quarry out in the open panics. Within `fleeRadius` of it they scramble straight away, weaving
+  from side to side and running along the fence when cornered (`fleePoint`), at `fleeSpeedScale`:
+  a frantic dash that is still far short of its sprint. It sprints at the nearest (`chaseSpeedScale`), and within
+  `pounceDistance` of its mouth the prey freezes and the pounce always lands: no dice, no breeding
+  floor. The pounce is three beats the `STRIKE` clip is keyed to: it pulls up and crouches facing
+  the prey (`coilSeconds`), leaps to land with its mouth a paw's length short (`lungeSeconds`,
+  `strikeDistance`), and swipes a forepaw down across it; the prey pops on the blow (`swipeSeconds`,
+  frame 17 of the clip). Change a beat and the clip together. With none left outside it runs to a house holding its quarry, goes in (hidden for
+  `insideSeconds`), and everyone of the quarry inside pops out of the door one after another. While
+  it raids, its quarry indoors stays hidden there (`hidingUntil`), so it has to go in. When the herd is
+  gone it walks out past the fence and is sent back to stage 0. Other species are never touched.
+- **It gives up on what it cannot reach** (owls on the wing) after `waitSeconds`, and on any raid after
+  `raidSeconds`; the notice says how many got away.
+- **Taming.** It never comes to the carnival (no `DISCOVERY`), so the only chance is while it raids:
+  Chapter 6 open, Harmony 85 and two oaks. It decides within a couple of seconds of landing
+  (`enterFarmSeconds: 1.5`). Tamed, it is unique, houseless and needs no meals (no `DIETS` entry), and
+  it guards instead: a crowd gets the same warning, then it trims that species back to six.
+- **A second apex** (a bear, a wolf): add it to `APEX_SPECIES` and `UNIQUE_SPECIES`, give it a ladder
+  and art like the lion's. `crowdedSpecies` never counts an apex species, and `createLionSim` steps
+  the one apex record it is given; two at once would need one sim each.
+
 ---
 
 ## 8 · Scenarios and tests
@@ -570,6 +611,8 @@ shared between animals and no longer resolve.
 | `meadow/snake-hunt` | day: five resident mice and one visiting snake. Each lunge rolls a d6: 4+ and the mouse pops, otherwise it sprints into the hollow log. Two catches and the snake calls the farm home |
 | `meadow/tall-grass-night` | the same garden at night, rats awake |
 | `meadow/empty-meadow` | the same garden with no animals and the clock running: mice find the meadow first |
+| `apex/chicken-raid` | day: nine chickens (five out, four in the coop) and two cows. The lion smells the crowd, comes over the fence, eats every chicken in the open and in the coop, and leaves; the cows are left alone |
+| `apex/tame-the-lion` | the same farm with Chapter 6 open, Harmony pinned at 90 and two oaks: the lion tames as it lands and trims the chickens to six |
 
 To add one: write a `Scenario` in `dev/scenarios/<animal>/` using only the verbs on `ScenarioHarness`
 (`dev/scenarios/types.ts`), and list it in `dev/scenarios/index.ts`. Nothing in `dev/` ships: `main.ts`
@@ -601,6 +644,9 @@ d.openJournal(); d.openViewer(); d.resetConditions()
 ```
 
 Predator verbs: `feedOwl(n)`, `feedSnake(n)`, `hurryHunt()`, `stepHunt(seconds)`, `predation()`, `setOwlHelium(0..1)`.
+The mountain lion: `lion()` (phase, quarry, eaten, hidden, herd sizes); `hurryHunt()` also skips its warning.
+`runSim(seconds)` runs the whole sim tick (walks, hunts, ladder, houses) without frames, for a
+software-rendered browser that draws one frame every few seconds.
 `sowGrass`, `digPond` and `plant` go through the real tool code; do not verify a condition by
 hand-dragging the seeder.
 

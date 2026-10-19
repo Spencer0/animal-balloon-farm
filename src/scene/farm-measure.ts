@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { measureDirtShare, measureFarmState, type FarmState, type LawnSample, type TerrainSample, type WaterSample } from '../game/farm-state'
 import { WATER_MIN_RENDER_DEPTH } from '../game/garden-water'
 import { measureHarmony } from '../game/harmony'
+import { largestHerd } from '../game/apex-raid'
 import { containsFarmPoint } from '../game/farm-footprint'
 import { ownsGardenTool, type createUpgradeLedger } from '../game/tool-unlocks'
 import { GARDEN_TOOLS } from './garden-tool-art'
@@ -24,10 +25,14 @@ export interface FarmMeasureDeps {
   readonly frozenWaterCells: () => number
   readonly activeGardenBounds: () => GardenBounds
   readonly upgrades: ReturnType<typeof createUpgradeLedger>
+  /** Residents per species, babies and animals indoors included, for the biggest herd. */
+  readonly herdCounts: () => Record<string, number>
+  /** The newest open chapter's number, 1..6. */
+  readonly chapterNumber: () => number
 }
 
 export function createFarmMeasure(deps: FarmMeasureDeps) {
-  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, harmonyResidents, preyEaten, frozenWaterCells, activeGardenBounds, upgrades } = deps
+  const { gardenSurface, gardenTerrain, gardenWater, gardenTools, gardenPlants, gardenProps, residentCounts, harmonyResidents, preyEaten, frozenWaterCells, activeGardenBounds, upgrades, herdCounts, chapterNumber } = deps
   // ------------------------------------------------------- farm measurement --
 
   /**
@@ -146,6 +151,8 @@ export function createFarmMeasure(deps: FarmMeasureDeps) {
       preyEaten: preyEaten(),
       propCounts: gardenProps()?.propCounts() ?? {},
       toolsOwned: Object.fromEntries(GARDEN_TOOLS.map((tool) => [tool.id, ownsGardenTool(upgrades, tool.id)])),
+      chapter: chapterNumber(),
+      largestHerd: largestHerd(herdCounts()),
     }
     lastMeasuredAt = performance.now()
     return lastFarmState
