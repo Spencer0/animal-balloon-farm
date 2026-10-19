@@ -25,6 +25,10 @@ export type CareSound =
   | 'clack' | 'crack'
   // barrel
   | 'thud' | 'grunt' | 'climb' | 'ding' | 'pour'
+  // pipes
+  | 'creak' | 'gurgle' | 'spurt'
+  // squirt
+  | 'spritz'
 
 export interface CareSfx {
   play(sound: CareSound, pitch?: number): void
@@ -280,6 +284,24 @@ export function createCareSfx(): CareSfx {
         case 'pour':
           hiss(now, 1.4, 0.24, 'bandpass', 900, 2400, 0.6)
           tone('sine', 392, 523, now + 0.1, 0.5, 0.08)
+          break
+        // pipes: a wooden trough turning on its tile, the water running, a leak
+        case 'creak':
+          tone('square', 190 * pitch, 150 * pitch, now, 0.06, 0.07)
+          tone('triangle', 520 * pitch, 610 * pitch, now + 0.02, 0.06, 0.16)
+          break
+        case 'gurgle':
+          tone('sine', 300 * pitch, 520 * pitch, now, 0.09, 0.16)
+          tone('sine', 420 * pitch, 260 * pitch, now + 0.08, 0.1, 0.12)
+          hiss(now, 0.18, 0.08, 'bandpass', 1400, 700, 2)
+          break
+        case 'spurt':
+          hiss(now, 0.5, 0.36, 'bandpass', 3200, 900, 1.2)
+          tone('sine', 1100, 420, now, 0.3, 0.12)
+          break
+        // squirt: a puff off the spray bottle
+        case 'spritz':
+          hiss(now, 0.09, 0.16 * pitch, 'highpass', 5200, 3200, 0.8)
           break
       }
     },

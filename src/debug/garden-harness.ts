@@ -1060,7 +1060,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'growUntilCare / startCare / settleCare': "growUntilCare('pest') then startCare() opens the swat game; settleCare(true) wins it.",
       setPlantGrowth: 'setPlantGrowth(id, 0.49) parks a plant just before a care stop (or 0.99 before maturity); real play takes it from there.',
-      'careGame / playCareGame / careStage / closeCareStage': "playCareGame('buzz') opens a game on the stage with no plant growing (default species: the first of its type; unbuilt games say so). careStage('poppy') shows the bare stage; closeCareStage() ends it. URL: ?gardenDebug=1&careGame=<kind>[&careSpecies=<id>] opens a game at load; &careGames=1 shows a picker of all twelve.",
+      'careGame / playCareGame / careStage / closeCareStage': "playCareGame('buzz') opens a game on the stage with no plant growing (default species: the first of its type; unbuilt games say so). careStage('poppy') shows the bare stage; closeCareStage() ends it. URL: ?gardenDebug=1&careGame=<kind>[&careSpecies=<id>] opens a game at load; &careGames=1 shows a picker of all fifteen.",
       greenThumb: "greenThumb({ species: 'blueberry', care: 'water' }) hires the Pet Raincloud for free.",
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
       expandFarm: 'expandFarm(level) — reveal parcels without earning them.',
@@ -1442,6 +1442,7 @@ function installCareDebugUrls(deps: GardenHarnessDeps, harness: { closeMenu(): v
     { type: 'water', label: 'Water plant' },
     { type: 'bush', label: 'Bush' },
     { type: 'root', label: 'Root vegetable' },
+    { type: 'vine', label: 'Vine' },
   ]
   const groups: CarePickerGroup[] = types.map(({ type, label }) => {
     const plants = PLANT_CATALOG.filter((entry) => entry.careType === type).map((entry) => ({ id: entry.id, name: entry.name }))
