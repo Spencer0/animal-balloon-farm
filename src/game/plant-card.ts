@@ -8,7 +8,8 @@
  * shared with the animal card (`armSellConfirm` and friends).
  */
 
-export type PlantCareNeed = 'water' | 'prune' | 'pest' | null
+/** A chore, or `withered`: raiders ate it bare and it only waits to be cleared. */
+export type PlantCareNeed = 'water' | 'prune' | 'pest' | 'withered' | null
 
 export type PlantGrowthStage = 'Seedling' | 'Growing' | 'Mature'
 
@@ -42,5 +43,6 @@ export function plantCareLine(growth: number, care: PlantCareNeed): string {
   if (care === 'water') return 'Thirsty: tap its water drop to give it a drink.'
   if (care === 'prune') return 'A stray shoot needs pinching back.'
   if (care === 'pest') return 'Beetles are after the berries: tap the bug to swat them.'
+  if (care === 'withered') return 'Eaten bare. Tap its badge to clear it; a fence keeps raiders out.'
   return plantGrowthStage(growth) === 'Mature' ? 'Fully grown and thriving.' : 'Growing happily; nothing needed right now.'
 }

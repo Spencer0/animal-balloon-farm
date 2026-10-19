@@ -17,6 +17,13 @@ export type PlantPlacementFailure = 'out-of-bounds' | 'wrong-substrate' | 'needs
 export interface PlantSpecies {
   /** Number of berries on a mature bush and seconds for each picked berry to regrow. */
   readonly fruit?: { readonly count: number; readonly regrowSeconds: number }
+  /**
+   * Who raids it once it is grown (animal species ids) and how many bites
+   * wreck it. A wrecked plant withers for good: it stops counting as grown and
+   * waits for the farmer to clear it. A fenced-in plant is safe (see
+   * `fencedCells` in `farm-props.ts`). Flowers have none: they are never eaten.
+   */
+  readonly raid?: { readonly by: readonly string[]; readonly bites: number }
   readonly id: PlantId
   readonly name: string
   readonly subtitle: string
@@ -30,7 +37,8 @@ export interface PlantSpecies {
   /**
    * Where in its growth (0..1) the plant stops and asks for something. Care is
    * a short list of moments, not a timer: a few taps per plant, and a plant
-   * that has to wait for you just waits. It never wilts and never dies.
+   * that has to wait for you just waits. Neglect never kills it; only a
+   * raider (`raid`) can.
    */
   readonly care: readonly PlantCareStop[]
   /**
@@ -80,72 +88,81 @@ export const PLANT_CATALOG: readonly PlantSpecies[] = [
   },
   {
     id: 'water-lily', name: 'Water lily', subtitle: 'Pondside floater',
-    description: 'Needs a visible pond, a drink, a shoo for the mosquitoes, and a little pruning as it grows.',
+    description: 'Needs a visible pond, a drink, a shoo for the mosquitoes, and a little pruning as it grows. Geese tear up lily pads: fence the pond in to keep them.',
     color: '#d994c9', substrate: 'water', careType: 'water', spacingRadius: 0.8,
     growthSeconds: 100,
     care: [{ at: 0.28, kind: 'water' }, { at: 0.46, kind: 'pest' }, { at: 0.64, kind: 'prune' }, { at: 0.82, kind: 'water' }],
     minigames: true,
+    raid: { by: ['goose'], bites: 3 },
   },
   {
     id: 'blueberry', name: 'Blueberry bush', subtitle: 'A sour-soil berry bush',
-    description: 'Plant in bare soil. Call a rain cloud, swat the berry beetles, and snip its wild shoots, and it fruits for good.',
+    description: 'Plant in bare soil. Call a rain cloud, swat the berry beetles, and snip its wild shoots, and it fruits. A squirrel will strip it bare; fence it in to keep it.',
     color: '#5b73c7', substrate: 'soil', careType: 'bush', spacingRadius: 0.62,
     growthSeconds: 150,
     care: [{ at: 0.22, kind: 'water' }, { at: 0.5, kind: 'pest' }, { at: 0.76, kind: 'prune' }],
     minigames: true,
     fruit: { count: 6, regrowSeconds: 60 },
+    // Six berries is one squirrel's whole picnic: taming it costs the bush.
+    raid: { by: ['squirrel'], bites: 6 },
   },
   // The root vegetables: what you see is the leafy top and a shoulder of the
   // root pushing up through its bed. Each asks for all three chores, in its own order.
   {
     id: 'carrot', name: 'Carrot', subtitle: 'A sweet orange root',
-    description: 'Plant in bare soil. Fetch it water, trim its feathery top, and squash the root bugs, and an orange shoulder pushes up through the bed.',
+    description: 'Plant in bare soil. Fetch it water, trim its feathery top, and squash the root bugs, and an orange shoulder pushes up through the bed. Moles dig up roots: fence it in.',
     color: '#ec8a2c', substrate: 'soil', careType: 'root', spacingRadius: 0.56,
     growthSeconds: 110,
     care: [{ at: 0.22, kind: 'water' }, { at: 0.48, kind: 'prune' }, { at: 0.74, kind: 'pest' }],
     minigames: true,
+    raid: { by: ['mole'], bites: 3 },
   },
   {
     id: 'potato', name: 'Potato', subtitle: 'A hearty hill of tubers',
-    description: 'Plant in bare soil. Squash the striped beetles, fetch it water, and trim its leggy runners, and a hill of potatoes swells underneath.',
+    description: 'Plant in bare soil. Squash the striped beetles, fetch it water, and trim its leggy runners, and a hill of potatoes swells underneath. Moles dig up roots: fence it in.',
     color: '#b98a55', substrate: 'soil', careType: 'root', spacingRadius: 0.62,
     growthSeconds: 130,
     care: [{ at: 0.25, kind: 'pest' }, { at: 0.5, kind: 'water' }, { at: 0.76, kind: 'prune' }],
     minigames: true,
+    raid: { by: ['mole'], bites: 3 },
   },
   {
     id: 'onion', name: 'Onion', subtitle: 'A red bulb in layers',
-    description: 'Plant in bare soil. Fetch it water, shoo off the onion flies, and snap off its flower stalk so the bulb grows fat.',
+    description: 'Plant in bare soil. Fetch it water, shoo off the onion flies, and snap off its flower stalk so the bulb grows fat. Moles dig up roots: fence it in.',
     color: '#a8466e', substrate: 'soil', careType: 'root', spacingRadius: 0.5,
     growthSeconds: 120,
     care: [{ at: 0.3, kind: 'water' }, { at: 0.55, kind: 'pest' }, { at: 0.78, kind: 'prune' }],
     minigames: true,
+    raid: { by: ['mole'], bites: 3 },
   },
   // The vines: big leaves on runners that sprawl over the bed (or climb a little
   // trellis), with the fruit swelling underneath. Each asks for all three chores, in its own order.
   {
     id: 'pumpkin', name: 'Pumpkin', subtitle: 'A fat orange autumn gourd',
-    description: 'Plant in bare soil. Pipe it water, peg down its runaway runner, and squirt the caterpillars off, and a fat orange pumpkin swells under the leaves.',
+    description: 'Plant in bare soil. Pipe it water, peg down its runaway runner, and squirt the caterpillars off, and a fat orange pumpkin swells under the leaves. Raccoons raid the patch at night: fence it in.',
     color: '#e8832a', substrate: 'soil', careType: 'vine', spacingRadius: 0.68,
     growthSeconds: 140,
     care: [{ at: 0.22, kind: 'water' }, { at: 0.5, kind: 'prune' }, { at: 0.76, kind: 'pest' }],
     minigames: true,
+    raid: { by: ['raccoon'], bites: 4 },
   },
   {
     id: 'watermelon', name: 'Watermelon', subtitle: 'A striped summer melon',
-    description: 'Plant in bare soil. Squirt the caterpillars off, pipe it a long drink, and peg down its runaway runner, and a striped melon fattens in the sun.',
+    description: 'Plant in bare soil. Squirt the caterpillars off, pipe it a long drink, and peg down its runaway runner, and a striped melon fattens in the sun. Raccoons raid the patch at night: fence it in.',
     color: '#4f9a4a', substrate: 'soil', careType: 'vine', spacingRadius: 0.68,
     growthSeconds: 150,
     care: [{ at: 0.24, kind: 'pest' }, { at: 0.5, kind: 'water' }, { at: 0.76, kind: 'prune' }],
     minigames: true,
+    raid: { by: ['raccoon'], bites: 4 },
   },
   {
     id: 'cucumber', name: 'Cucumber', subtitle: 'A climber on a twig trellis',
-    description: 'Plant in bare soil. Peg down its runaway runner, pipe it water, and squirt the caterpillars off, and crisp cucumbers hang from its little trellis.',
+    description: 'Plant in bare soil. Peg down its runaway runner, pipe it water, and squirt the caterpillars off, and crisp cucumbers hang from its little trellis. Raccoons raid the patch at night: fence it in.',
     color: '#6fae4a', substrate: 'soil', careType: 'vine', spacingRadius: 0.52,
     growthSeconds: 120,
     care: [{ at: 0.26, kind: 'prune' }, { at: 0.52, kind: 'water' }, { at: 0.78, kind: 'pest' }],
     minigames: true,
+    raid: { by: ['raccoon'], bites: 4 },
   },
 ] as const
 
@@ -208,7 +225,10 @@ export interface GardenPlant {
   readonly x: number
   readonly z: number
   readonly growth: number
+  /** Grown and not withered: a withered plant no longer counts as grown anywhere. */
   readonly mature: boolean
+  /** Raided bare (see `PlantSpecies.raid`): it waits to be cleared and never recovers. */
+  readonly withered: boolean
   readonly careNeeded: PlantCare | null
   /** Seconds left until each berry returns; zero is ripe. Non-fruiting plants have none. */
   readonly fruitTimers?: readonly number[]
@@ -230,6 +250,12 @@ export interface PlantSimulation {
   plant(species: PlantId, x: number, z: number, surface: PlantSurface): GardenPlant | null
   /** Pick one ripe berry atomically; returns its slot, or null when none remain. */
   pickFruit(instanceId: number): number | null
+  /**
+   * One raider's bite, atomic like `pickFruit`: a fruiting plant gives up a ripe
+   * berry, any other grown plant a mouthful. False when there is nothing to take.
+   * The bite that reaches the species' `raid.bites` withers the plant.
+   */
+  raid(instanceId: number): boolean
   remove(instanceId: number): GardenPlant | null
   resolveCare(instanceId: number, care: PlantCare): boolean
   tick(deltaSeconds: number): void
@@ -249,6 +275,8 @@ export interface SavedPlant {
   readonly stopsDone: number
   /** Optional for old saves, which load with a full crop. */
   readonly fruitTimers?: readonly number[]
+  /** Raiders' bites taken; optional for old saves, which load unbitten. */
+  readonly bites?: number
 }
 
 export interface PlantSimulationState {
@@ -267,6 +295,7 @@ interface MutablePlant {
   /** How many of the species' care stops have been answered. */
   stopsDone: number
   fruitTimers: number[]
+  bites: number
 }
 
 const SPECIES_BY_ID = new Map(PLANT_CATALOG.map((species) => [species.id, species]))
@@ -277,23 +306,32 @@ export function plantSpecies(species: PlantId): PlantSpecies {
   return definition
 }
 
+/** Whether a plant has taken as many bites as its species can stand. */
+function isWithered(plant: MutablePlant): boolean {
+  const raid = plantSpecies(plant.species).raid
+  return raid !== undefined && plant.bites >= raid.bites
+}
+
 export function createPlantSimulation(): PlantSimulation {
   const plants: MutablePlant[] = []
   const seedCounts = new Map<PlantId, number>(PLANT_CATALOG.map(({ id }) => [id, STARTING_SEED_GIFTS.find((gift) => gift.species === id)?.count ?? STARTING_SEEDS_PER_PLANT]))
   let nextInstanceId = 1
 
   function snapshot(plant: MutablePlant): GardenPlant {
+    const withered = isWithered(plant)
+    const mature = plant.growth >= 1 && !withered
     return {
       instanceId: plant.instanceId,
       species: plant.species,
       x: plant.x,
       z: plant.z,
       growth: plant.growth,
-      mature: plant.growth >= 1,
+      mature,
+      withered,
       careNeeded: plant.careNeeded,
       ...(plantSpecies(plant.species).fruit ? {
         fruitTimers: [...plant.fruitTimers],
-        ripeFruit: plant.growth >= 1 ? plant.fruitTimers.filter((timer) => timer === 0).length : 0,
+        ripeFruit: mature ? plant.fruitTimers.filter((timer) => timer === 0).length : 0,
       } : {}),
     }
   }
@@ -320,6 +358,16 @@ export function createPlantSimulation(): PlantSimulation {
     })
     if (tooClose) return { valid: false, failure: 'too-close' }
     return { valid: true, failure: null }
+  }
+
+  function pickFruit(instanceId: number): number | null {
+    const plant = plants.find((entry) => entry.instanceId === instanceId)
+    const fruit = plant && plantSpecies(plant.species).fruit
+    if (!plant || !fruit || plant.growth < 1 || isWithered(plant)) return null
+    const slot = plant.fruitTimers.findIndex((timer) => timer === 0)
+    if (slot < 0) return null
+    plant.fruitTimers[slot] = fruit.regrowSeconds
+    return slot
   }
 
   return {
@@ -349,19 +397,22 @@ export function createPlantSimulation(): PlantSimulation {
         careNeeded: null,
         stopsDone: 0,
         fruitTimers: Array(plantSpecies(species).fruit?.count ?? 0).fill(0),
+        bites: 0,
       }
       plants.push(plant)
       seedCounts.set(species, (seedCounts.get(species) ?? 0) - 1)
       return snapshot(plant)
     },
-    pickFruit(instanceId): number | null {
+    pickFruit,
+    raid(instanceId): boolean {
       const plant = plants.find((entry) => entry.instanceId === instanceId)
-      const fruit = plant && plantSpecies(plant.species).fruit
-      if (!plant || !fruit || plant.growth < 1) return null
-      const slot = plant.fruitTimers.findIndex((timer) => timer === 0)
-      if (slot < 0) return null
-      plant.fruitTimers[slot] = fruit.regrowSeconds
-      return slot
+      const definition = plant && plantSpecies(plant.species)
+      if (!plant || !definition?.raid || plant.growth < 1 || isWithered(plant)) return false
+      if (definition.fruit && pickFruit(instanceId) === null) return false
+      plant.bites += 1
+      // A withered bush keeps no berries; they never come back.
+      if (isWithered(plant)) plant.fruitTimers.fill(definition.fruit?.regrowSeconds ?? 0)
+      return true
     },
     remove(instanceId): GardenPlant | null {
       const index = plants.findIndex((plant) => plant.instanceId === instanceId)
@@ -378,7 +429,7 @@ export function createPlantSimulation(): PlantSimulation {
     exportState(): PlantSimulationState {
       return {
         seeds: Object.fromEntries(seedCounts),
-        plants: plants.map(({ instanceId, species, x, z, growth, careNeeded, stopsDone, fruitTimers }) => ({ instanceId, species, x, z, growth, careNeeded, stopsDone, fruitTimers: [...fruitTimers] })),
+        plants: plants.map(({ instanceId, species, x, z, growth, careNeeded, stopsDone, fruitTimers, bites }) => ({ instanceId, species, x, z, growth, careNeeded, stopsDone, fruitTimers: [...fruitTimers], bites })),
         nextInstanceId,
       }
     },
@@ -406,6 +457,7 @@ export function createPlantSimulation(): PlantSimulation {
           stopsDone: Math.max(0, Math.min(definition.care.length, Math.floor(finite(saved.stopsDone)))),
           fruitTimers: Array.from({ length: definition.fruit?.count ?? 0 }, (_, slot) =>
             Math.max(0, Math.min(definition.fruit?.regrowSeconds ?? 0, finite(saved.fruitTimers?.[slot])))),
+          bites: Math.max(0, Math.min(definition.raid?.bites ?? 0, Math.floor(finite(saved.bites)))),
         })
         highest = Math.max(highest, saved.instanceId)
       }
@@ -416,7 +468,7 @@ export function createPlantSimulation(): PlantSimulation {
       if (delta === 0) return
       for (const plant of plants) {
         if (plant.growth >= 1) {
-          plant.fruitTimers = plant.fruitTimers.map((timer) => Math.max(0, timer - delta))
+          if (!isWithered(plant)) plant.fruitTimers = plant.fruitTimers.map((timer) => Math.max(0, timer - delta))
           continue
         }
         if (plant.careNeeded) continue

@@ -12,7 +12,7 @@
 import type { Wallet } from './sales'
 
 export type PropId = 'fence' | 'statue' | 'fountain' | 'coop' | 'barn' | 'oak' | 'garbage-can' | 'dumpster'
-  | 'goose-house' | 'sty' | 'frog-house' | 'owl-box' | 'hollow-log' | 'rock-pile' | 'molehill' | 'squirrel-house'
+  | 'goose-house' | 'sty' | 'frog-house' | 'owl-box' | 'hollow-log' | 'rock-pile' | 'molehill' | 'squirrel-house' | 'salt-lick'
 export type FenceAxis = 'x' | 'z'
 
 /** The lattice cell size in garden metres. Every prop snaps to this. */
@@ -53,6 +53,13 @@ export interface PropDefinition {
  * cow and a half. Effortless to retune once the earn rate is felt.
  */
 export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
+  'salt-lick': {
+    id: 'salt-lick', name: 'Salt Lick',
+    description: 'A block of rosy rock salt on a cedar stump.',
+    blurb: 'Deer would much rather lick salt than eat your garden. Set one out and every deer on the farm heads for it instead.',
+    color: '#e3aea6', price: 35, footprint: { width: 1, depth: 1 }, size: 1.4,
+    kind: 'cell', rotatable: true, blocking: true, modelUrl: 'assets/props/salt-lick.glb',
+  },
   'squirrel-house': {
     id: 'squirrel-house', name: 'Squirrel House',
     description: 'A tiny cedar den with an acorn-cap roof and a round open door.',
@@ -120,7 +127,7 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
     id: 'barn',
     name: 'Small Barn',
     description: 'A little red barn with a hayloft.',
-    blurb: 'Home to cows and sheep: room for ten, and calves and lambs are born inside.',
+    blurb: 'Home to cows, sheep and deer: room for ten, and calves, lambs and fawns are born inside.',
     color: '#b8503f',
     price: 110,
     footprint: { width: 2, depth: 2 },
@@ -273,7 +280,7 @@ export const PROP_CATALOG: Readonly<Record<PropId, PropDefinition>> = {
 }
 
 /** The order the shop and the inventory list items in. */
-export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'sty', 'goose-house', 'frog-house', 'hollow-log', 'oak', 'owl-box', 'rock-pile', 'molehill', 'squirrel-house', 'garbage-can', 'dumpster']
+export const PROP_ORDER: readonly PropId[] = ['statue', 'fountain', 'fence', 'coop', 'barn', 'sty', 'goose-house', 'frog-house', 'hollow-log', 'oak', 'owl-box', 'rock-pile', 'molehill', 'squirrel-house', 'salt-lick', 'garbage-can', 'dumpster']
 
 export function propDefinition(id: PropId): PropDefinition {
   return PROP_CATALOG[id]
@@ -313,6 +320,7 @@ const PROP_CATEGORY: Readonly<Record<PropId, string>> = {
   'rock-pile': 'Shelter',
   molehill: 'Shelter',
   'squirrel-house': 'Shelter',
+  'salt-lick': 'Utility',
 }
 
 /** Chip copy for the info card, e.g. "Shelter" or "Fence run - 4 sections". */
@@ -338,7 +346,7 @@ export interface PropInventory {
 }
 
 export function createPropInventory(initial?: Partial<Record<PropId, number>>): PropInventory {
-  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0, 'goose-house': 0, sty: 0, 'frog-house': 0, 'owl-box': 0, 'hollow-log': 0, 'rock-pile': 0, molehill: 0, 'squirrel-house': 0 }
+  const counts: Record<PropId, number> = { fence: 0, statue: 0, fountain: 0, coop: 0, barn: 0, oak: 0, 'garbage-can': 0, dumpster: 0, 'goose-house': 0, sty: 0, 'frog-house': 0, 'owl-box': 0, 'hollow-log': 0, 'rock-pile': 0, molehill: 0, 'squirrel-house': 0, 'salt-lick': 0 }
   for (const id of PROP_ORDER) {
     const value = initial?.[id]
     counts[id] = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0
@@ -707,6 +715,60 @@ export function fencePosts(segments: readonly FenceSegment[]): readonly LatticeV
     for (const post of run.posts) seen.set(vertexKey(post), post)
   }
   return [...seen.values()]
+}
+
+/**
+ * The lattice cells shut inside closed fence loops, as `cellKey`s. Flood the
+ * open ground in from just outside the fences' bounding box, crossing only
+ * unfenced edges; every cell the flood cannot reach is fenced in. A gap of one
+ * segment leaves the whole pen open. Raiders leave plants in these cells alone.
+ */
+export function fencedCells(segments: readonly FenceSegment[]): ReadonlySet<string> {
+  const fenced = new Set<string>()
+  if (segments.length < 4) return fenced
+  const edges = new Set(segments.map(edgeKey))
+  let minX = Infinity
+  let minZ = Infinity
+  let maxX = -Infinity
+  let maxZ = -Infinity
+  for (const segment of segments) {
+    for (const vertex of segmentVertices(segment)) {
+      minX = Math.min(minX, vertex.x)
+      minZ = Math.min(minZ, vertex.z)
+      maxX = Math.max(maxX, vertex.x)
+      maxZ = Math.max(maxZ, vertex.z)
+    }
+  }
+  // Cells run minX..maxX-1 inside the box; one ring beyond it is open ground.
+  const lowX = minX - 1
+  const lowZ = minZ - 1
+  const width = maxX - minX + 2
+  const depth = maxZ - minZ + 2
+  const open = new Uint8Array(width * depth)
+  const stack: number[] = []
+  const visit = (cellX: number, cellZ: number): void => {
+    const index = (cellZ - lowZ) * width + (cellX - lowX)
+    if (open[index]) return
+    open[index] = 1
+    stack.push(cellX, cellZ)
+  }
+  for (let cellX = lowX; cellX < lowX + width; cellX += 1) { visit(cellX, lowZ); visit(cellX, lowZ + depth - 1) }
+  for (let cellZ = lowZ; cellZ < lowZ + depth; cellZ += 1) { visit(lowX, cellZ); visit(lowX + width - 1, cellZ) }
+  while (stack.length > 0) {
+    const cellZ = stack.pop()!
+    const cellX = stack.pop()!
+    // Each step names the fence segment it would have to cross.
+    if (cellX + 1 < lowX + width && !edges.has(`${cellX + 1},${cellZ},z`)) visit(cellX + 1, cellZ)
+    if (cellX - 1 >= lowX && !edges.has(`${cellX},${cellZ},z`)) visit(cellX - 1, cellZ)
+    if (cellZ + 1 < lowZ + depth && !edges.has(`${cellX},${cellZ + 1},x`)) visit(cellX, cellZ + 1)
+    if (cellZ - 1 >= lowZ && !edges.has(`${cellX},${cellZ},x`)) visit(cellX, cellZ - 1)
+  }
+  for (let cellZ = minZ; cellZ < maxZ; cellZ += 1) {
+    for (let cellX = minX; cellX < maxX; cellX += 1) {
+      if (!open[(cellZ - lowZ) * width + (cellX - lowX)]) fenced.add(cellKey({ cellX, cellZ }))
+    }
+  }
+  return fenced
 }
 
 /** A straight run of segments between two lattice vertices, or null when skewed. */

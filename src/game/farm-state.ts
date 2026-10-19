@@ -80,6 +80,10 @@ export interface FarmState {
   readonly toolsOwned?: Readonly<Record<string, boolean>>
   /** The farm's Harmony score, 0..100, for `harmony` conditions (see `harmony.ts`). */
   readonly harmony?: number
+  /** The newest open chapter's number, 1..6, for `chapter` conditions (see `farm-chapters.ts`). */
+  readonly chapter?: number
+  /** The most residents of any one species, babies and animals indoors included, for `largestHerd`. */
+  readonly largestHerd?: number
 }
 
 export interface LawnSample {
@@ -315,13 +319,16 @@ export function farmMetric(state: FarmState, kind: string, species?: string): nu
     case 'meadowArea': return state.meadowArea ?? 0
     case 'waterArea': return state.waterArea
     case 'flatArea': return state.flatGrassArea
-    case 'plantCount': return species ? state.plantCounts[species] ?? 0 : 0
+    // No species counts every grown plant in the garden, whatever it is (what a deer smells).
+    case 'plantCount': return species ? state.plantCounts[species] ?? 0 : Object.values(state.plantCounts).reduce((sum, count) => sum + count, 0)
     case 'residentCount': return species ? state.residentCounts?.[species] ?? 0 : 0
     case 'preyEaten': return species ? state.preyEaten?.[species] ?? 0 : 0
     case 'propCount': return species ? state.propCounts?.[species] ?? 0 : 0
     // The terrain's id rides in `species`, the same way a plant's does.
     case 'toolOwned': return species && state.toolsOwned?.[species] ? 1 : 0
     case 'harmony': return state.harmony ?? 0
+    case 'chapter': return state.chapter ?? 0
+    case 'largestHerd': return state.largestHerd ?? 0
     case 'flowerCount': return FLOWER_PLANTS.reduce((sum, plant) => sum + (state.plantCounts[plant] ?? 0), 0)
     case 'terrainShare': return species ? state.terrainShares?.[species as TerrainKind] ?? 0 : 0
     default: return 0

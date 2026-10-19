@@ -54,12 +54,19 @@ export type ConditionKind =
   | 'harmony'
   /** Grown flowers of every kind together: dandelions, poppies and clover. */
   | 'flowerCount'
+  /** The newest chapter open (`farm-chapters.ts`), 1 to 6: how far into the game the farm is. */
+  | 'chapter'
+  /** The most animals of any one species living here, babies and those indoors included. */
+  | 'largestHerd'
 
 export interface ConditionRequirement {
   readonly kind: ConditionKind
   /** Square meters for the area kinds; a whole number of plants for `plantCount`. */
   readonly amount?: number
-  /** Animal species id for `residentSpecies`, plant species id for `plantCount` or `fruitEaten`. */
+  /**
+   * Animal species id for `residentSpecies`, plant species id for `plantCount` or `fruitEaten`.
+   * A `plantCount` without one counts every grown plant, of any kind.
+   */
   readonly species?: string
   /** Minimum grass maturity (0..1) for a patch to count toward `grassArea`. */
   readonly maturity?: number
@@ -100,13 +107,15 @@ export function conditionMetricLabel(requirement: ConditionRequirement | null): 
     case 'meadowArea': return 'Tall meadow grass'
     case 'waterArea': return 'Visible pond water'
     case 'flatArea': return 'Level grassy pasture'
-    case 'plantCount': return requirement.species ? plantMetricLabel(requirement.species) : null
+    case 'plantCount': return requirement.species ? plantMetricLabel(requirement.species) : 'Grown garden plants'
     case 'residentCount': return requirement.species ? `Resident ${speciesPlural(requirement.species)}` : null
     case 'preyEaten': return requirement.species ? `${capitalise(speciesPlural(requirement.species))} eaten` : null
     case 'propCount': return requirement.species ? `${capitalise(propPlural(requirement.species))} on the farm` : null
     case 'toolOwned': return requirement.species ? `${capitalise(toolName(requirement.species))} bought` : null
     case 'harmony': return 'Farm harmony'
     case 'flowerCount': return 'Grown flowers'
+    case 'chapter': return 'Chapter reached'
+    case 'largestHerd': return 'Biggest herd'
     case 'terrainShare': return requirement.species ? `${capitalise(terrainName(requirement.species))} share of the farm` : null
     case 'residentSpecies': return null
   }
@@ -157,6 +166,7 @@ function propPlural(prop: string): string {
 /** True for the kinds that are a whole number of things rather than square meters. */
 export function isCountKind(kind: ConditionKind | undefined): boolean {
   return kind === 'plantCount' || kind === 'residentCount' || kind === 'preyEaten' || kind === 'fruitEaten' || kind === 'propCount' || kind === 'toolOwned' || kind === 'harmony' || kind === 'flowerCount'
+    || kind === 'chapter' || kind === 'largestHerd'
 }
 
 /**
@@ -558,6 +568,48 @@ const STARHORN_CONDITIONS: SpeciesConditions = {
 }
 
 /**
+ * The mountain lion is the first apex predator (`apex-raid.ts`). It never comes
+ * by the carnival (no `DISCOVERY`): a crowd summons it. Its first two rungs are
+ * that raid, and taming it is the hardest thing on the farm.
+ *
+ *  - Appears: never at the tents. It lives up in the hills.
+ *  - Visits the farm: any one species past six. It eats that species to the
+ *    last, even inside its house, and leaves.
+ *  - Stays: only a farm of legend, and only while it is raiding: Chapter 6 open,
+ *    Harmony 85 and two oaks to watch from. Tamed, it trims a crowd back to six
+ *    instead of wiping it out.
+ *  - Loves the farm: Harmony 90. There is only one, with no house, so no cubs.
+ */
+const COUGAR_CONDITIONS: SpeciesConditions = {
+  stages: withStageNumbers([
+    {
+      title: 'Prowl the hills',
+      hint: 'Never comes to the carnival. It watches from the hills for a farm that has let a herd grow too big.',
+      requirement: null,
+      result: 'Somewhere past the fence, something tawny is watching.',
+    },
+    COUNT_STAGE(
+      'Raid the farm',
+      'Smells a crowd: comes over the fence once any one species passes six, babies and those indoors included.',
+      { kind: 'largestHerd', amount: 7 },
+      'Hunts that species to the very last, even inside its house, then leaves. Sell down to six when you see the warning.',
+    ),
+    COUNT_STAGE(
+      'Call the farm home',
+      'Only a farm of legend can tame it, and only while it raids: Chapter 6 reached, Harmony of 85, and two oak trees to watch from.',
+      { kind: 'chapter', amount: 6, and: [{ kind: 'harmony', amount: 85 }, { kind: 'propCount', species: 'oak', amount: 2 }] },
+      'Paints into its own colors and stays. From now on it trims a crowded herd back to six instead of wiping it out.',
+    ),
+    COUNT_STAGE(
+      'Love the farm',
+      'Purrs on a farm in full harmony: Harmony of 90. There is only one mountain lion, so there are no cubs.',
+      { kind: 'harmony', amount: 90, and: [{ kind: 'chapter', amount: 6 }] },
+      'Its eyes go to hearts.',
+    ),
+  ]),
+}
+
+/**
  * The test configuration the user asked for, and the shape the rest of the
  * catalog will grow into.
  *
@@ -644,12 +696,29 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
     stages: withStageNumbers([
       CARNIVAL,
       ENTER_FOR_PLANTS('blueberry', 1, 'A grown blueberry bush is an invitation to a berry picnic.'),
-      COUNT_STAGE('Call the farm home', 'Must nibble a whole bush worth of berries itself: six blueberries. The bush stays and each berry regrows in 60 seconds.',
+      COUNT_STAGE('Call the farm home', 'Must nibble a whole bush worth of berries itself: six blueberries. It strips the bush bare, so fence in any bush you want to keep.',
         { kind: 'fruitEaten', species: 'blueberry', amount: plantSpecies('blueberry').fruit!.count },
         'Paints into cinnamon and cream. This berry patch is home.'),
       COUNT_STAGE('Love the farm', 'Wants a snug squirrel house and a grown blueberry bush for the next family picnic.',
         { kind: 'propCount', species: 'squirrel-house', amount: 1, and: [{ kind: 'plantCount', species: 'blueberry', amount: 1 }] },
         'Eyes go to hearts. Ready to raise kits in its little house.'),
+    ]),
+  },
+  deer: {
+    stages: withStageNumbers([
+      CARNIVAL,
+      {
+        title: 'Visit the farm',
+        hint: 'Smells a growing garden from the tents and steps over the fence for a snack: two plants grown anywhere.',
+        requirement: { kind: 'plantCount', amount: 2 },
+        result: 'Wanders inside the fence and starts eating your plants, one at a time.',
+      },
+      COUNT_STAGE('Call the farm home', 'Would much rather lick salt than eat your garden: set out a salt lick.',
+        { kind: 'propCount', species: 'salt-lick', amount: 1 },
+        'Paints into caramel and cream. Licks salt now, and leaves the plants be.'),
+      COUNT_STAGE('Love the farm', 'Wants a barn to raise fawns in, with the salt lick kept close.',
+        { kind: 'propCount', species: 'barn', amount: 1, and: [{ kind: 'propCount', species: 'salt-lick', amount: 1 }] },
+        'Eyes go to hearts. Ready to raise fawns in the barn.'),
     ]),
   },
   owl: OWL_CONDITIONS,
@@ -659,6 +728,7 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
   snake: SNAKE_CONDITIONS,
   mole: MOLE_CONDITIONS,
   starhorn: STARHORN_CONDITIONS,
+  cougar: COUGAR_CONDITIONS,
   frog: {
     stages: withStageNumbers([
       CARNIVAL,
@@ -689,7 +759,7 @@ export function holdsResidency(species: string): boolean {
  * Species of which only one ever comes. A unique species is not summoned as a repeat guest, has no
  * house and so never breeds (see `HOUSE_SPECIES` in animal-housing.ts).
  */
-export const UNIQUE_SPECIES: readonly string[] = ['starhorn']
+export const UNIQUE_SPECIES: readonly string[] = ['starhorn', 'cougar']
 
 export function isUniqueSpecies(species: string): boolean {
   return UNIQUE_SPECIES.includes(species)
@@ -720,6 +790,8 @@ export function isNightOnly(species: string): boolean {
  * the farm has to look like before that species wanders up to the tents.
  */
 export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonly description: string }>> = {
+  // Chapter 1's trouble: any two grown plants, of any kind, and a deer is on its way.
+  deer: { kind: 'plantCount', amount: 2, description: 'A garden coming up green smells like a salad bar to something with big ears.' },
   squirrel: { kind: 'plantCount', species: 'blueberry', amount: 1, description: 'Ripe blueberry perfume draws a bushy-tailed visitor to the tents.' },
   sheep: { kind: 'plantCount', species: 'clover', amount: 1, description: 'Clover on the breeze carries all the way to the tents.' },
   chicken: { kind: 'plantCount', species: 'dandelion', amount: 1, description: 'Dandelion seed is a rumor every hen hears.' },

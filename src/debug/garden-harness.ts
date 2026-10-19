@@ -38,7 +38,7 @@ import { treasureEffects, type TreasureId, type TreasureLedger } from '../game/t
 import { CHAPTER_ORDER } from '../game/farm-chapters'
 import type { ChapterDef, ChapterFlags, ChapterId, ChapterSignals, FarmChapters } from '../game/farm-chapters'
 import type { createPredationLedger } from '../game/predator'
-import type { OwlSim, SnakeSim } from '../game/animal-hunt'
+import type { LionSim, OwlSim, SnakeSim } from '../game/animal-hunt'
 import { SIM_HZ } from '../game/sim-clock'
 import type { createGardenWaterField } from '../game/garden-water'
 import type { createGardenWaterMesh } from '../scene/garden-water-mesh'
@@ -139,6 +139,8 @@ interface GardenDebugHarness {
    * next stop or maturity comes on its own in a moment of real play.
    */
   setPlantGrowth(instanceId: number, growth: number): { instanceId: number; growth: number } | null
+  /** Let raiders take every bite a grown plant can stand, so it withers. Returns whether it did. */
+  witherPlant(instanceId: number): boolean
   /** Press a plant's care marker (default: the first plant that needs care), opening its minigame. */
   startCare(instanceId?: number): unknown
   /** Where the open care minigame is: its phase and round. */
@@ -205,7 +207,7 @@ interface GardenDebugHarness {
   /** The arcade store's build: null before the model loads, else started/finished. */
   shopBuild(): ShopBuildReport | null
   /** Predator and prey: what the owls are doing, and how many chickens have been eaten. */
-  predation(): { readonly eaten: Readonly<Record<string, number>>; readonly owls: ReturnType<OwlSim['report']>['owls']; readonly snakes: ReturnType<SnakeSim['report']>['snakes']; readonly oaks: number; readonly flock: number }
+  predation(): { readonly eaten: Readonly<Record<string, number>>; readonly owls: ReturnType<OwlSim['report']>['owls']; readonly snakes: ReturnType<SnakeSim['report']>['snakes']; readonly lion: ReturnType<LionSim['report']>; readonly oaks: number; readonly flock: number }
   /** Freeze or release the day clock. */
   holdTime(hold: boolean): void
   /** The test scenarios you can jump into, by id. Nothing here ships. */
@@ -228,10 +230,18 @@ interface GardenDebugHarness {
   toolFilm(id: string, seconds?: number): unknown
   /** Play a chapter's opening film (e.g. 'care'), optionally held at a moment. Inert until main wires `chapterFilm`. */
   chapterFilm(id: string, seconds?: number): unknown
-  /** Make the owls and snakes hunt as soon as they can, instead of waiting out the cooldown. */
+  /** Make the owls, snakes and the mountain lion hunt as soon as they can: no cooldown, and a scented crowd brings the lion at once. */
   hurryHunt(): void
+  /** The mountain lion's raid: phase, quarry, what it has eaten this raid, and whether it is inside a house. */
+  lion(): ReturnType<LionSim['report']> & { readonly stage: number; readonly id: string | null; readonly herds: Readonly<Record<string, number>> }
   /** Step the owl and snake hunts and any pops forward without waiting on rendered frames. */
   stepHunt(seconds: number, secondsPerStep?: number): ReturnType<OwlSim['report']>['owls']
+  /**
+   * Run the whole sim forward (walks, hunts, the ladder, houses, plants) exactly as the
+   * frame loop ticks it, without waiting on frames. For a software-rendered browser that
+   * draws a frame every few seconds.
+   */
+  runSim(seconds: number): void
   /** Add a tracked animal at a rung of the ladder, standing at its farm spawn; returns its id. */
   addAnimal(species: string, stage?: number): string | null
   /** Put goods in a house by its site id (see `houses()`), e.g. `addGoods('barn-1', 'milk', 5)`. */
@@ -425,7 +435,10 @@ export interface GardenHarnessDeps {
   readonly setGrazingOverride: (dryness: number | null) => void
   readonly owlHunt: Pick<OwlSim, 'huntedIds' | 'hurry' | 'setHelium' | 'reset' | 'report'>
   readonly snakeHunt: SnakeSim
-  readonly popsInFlight: { readonly burst: PopBurst; readonly animal: BalloonAnimal }[]
+  readonly lionHunt: LionSim
+  readonly hiddenAnimals: Set<string>
+  readonly herdCounts: () => Record<string, number>
+  readonly popsInFlight: { readonly burst: PopBurst; readonly animal: BalloonAnimal | null }[]
   readonly crowdFixtures: BalloonAnimal[]
   readonly clearCrowdFixtures: () => void
   readonly setCrowdFixtures: (count: number) => Promise<number>
@@ -436,6 +449,7 @@ export interface GardenHarnessDeps {
   readonly measureFarm: () => import('../game/farm-state').FarmState
   readonly handleAnimalLifeEvents: (events: readonly import('../game/animal-life').AnimalLifeEvent[]) => void
   readonly stepAnimalWorld: (stepSeconds: number, nowSeconds: number, huntsActive: boolean) => void
+  readonly runSimTick: (stepSeconds: number, nowSeconds: number, huntsActive: boolean) => void
   readonly presentHunts: (deltaSeconds: number, simAlpha: number) => void
   readonly bolting: Set<string>
   readonly hidingUntil: Map<string, number>
@@ -532,6 +546,9 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
     predationLedger,
     owlHunt,
     snakeHunt,
+    lionHunt,
+    hiddenAnimals,
+    herdCounts,
     popsInFlight,
     crowdFixtures,
     clearCrowdFixtures,
@@ -819,6 +836,12 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       })
       return { instanceId, growth: clamped }
     },
+    witherPlant: (instanceId) => {
+      const simulation = deps.gardenPlants()?.simulation
+      const bites = simulation ? plantSpecies(simulation.plants.find((plant) => plant.instanceId === instanceId)?.species ?? 'poppy').raid?.bites ?? 0 : 0
+      for (let bite = 0; bite < bites; bite += 1) simulation?.raid(instanceId)
+      return simulation?.plants.find((plant) => plant.instanceId === instanceId)?.withered ?? false
+    },
     startCare: (instanceId) => {
       const plant = deps.gardenPlants()?.simulation.plants.find((entry) => (instanceId === undefined ? entry.careNeeded !== null : entry.instanceId === instanceId))
       if (!plant?.careNeeded) return { ok: false, failure: 'no-care-needed' }
@@ -902,12 +925,14 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       animals.length = 0
       for (const pop of popsInFlight) {
         pop.burst.dispose()
-        pop.animal.dispose()
+        pop.animal?.dispose()
       }
       popsInFlight.length = 0
       predationLedger.clear()
       owlHunt.reset()
       snakeHunt.reset()
+      lionHunt.reset()
+      hiddenAnimals.clear()
       bolting.clear()
       hidingUntil.clear()
       panicking.clear()
@@ -1043,6 +1068,7 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       'plant / growPlants': 'plant(species, x, z) then growPlants() to mature.',
       'growUntilCare / startCare / settleCare': "growUntilCare('pest') then startCare() opens the swat game; settleCare(true) wins it.",
       setPlantGrowth: 'setPlantGrowth(id, 0.49) parks a plant just before a care stop (or 0.99 before maturity); real play takes it from there.',
+      witherPlant: 'witherPlant(id) has raiders eat a grown plant bare, so its withered badge shows.',
       'careGame / playCareGame / careStage / closeCareStage': "playCareGame('buzz') opens a game on the stage with no plant growing (default species: the first of its type; unbuilt games say so). careStage('poppy') shows the bare stage; closeCareStage() ends it. URL: ?gardenDebug=1&careGame=<kind>[&careSpecies=<id>] opens a game at load; &careGames=1 shows a picker of all fifteen.",
       greenThumb: "greenThumb({ species: 'blueberry', care: 'water' }) hires the Pet Raincloud for free.",
       'waterSummary / gardenReport / probeGround / probeView': 'Water, terrain/parcel dims, surface inspector.',
@@ -1084,12 +1110,18 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       eaten: predationLedger.totals,
       owls: owlHunt.report().owls,
       snakes: snakeHunt.report().snakes,
+      lion: lionHunt.report(),
       oaks: deps.gardenProps()?.propCounts().oak ?? 0,
       flock: animals.filter((animal) => animal.id === 'chicken' && !animal.isSold && (progress.animal(animal.instanceId)?.stage ?? 0) >= 3).length,
     }),
     hurryHunt: () => {
       owlHunt.hurry()
       snakeHunt.hurry()
+      lionHunt.hurry()
+    },
+    lion: () => {
+      const record = progress.all().filter((entry) => entry.species === 'cougar').sort((a, b) => b.stage - a.stage)[0]
+      return { ...lionHunt.report(), id: record?.id ?? null, stage: record?.stage ?? 0, herds: herdCounts() }
     },
     setOwlHelium: (level) => owlHunt.setHelium(level),
     holdTime: (hold) => { deps.setClockHeld(hold) },
@@ -1101,6 +1133,17 @@ export function installGardenHarness(deps: GardenHarnessDeps): void {
       chapters.openThrough('mythical')
       applyChapterFlags()
       return (await loadScenarios()).runScenario(name, debugHarness)
+    },
+    runSim: (seconds) => {
+      const stepSeconds = 1 / SIM_HZ
+      const steps = Math.max(0, Math.round(seconds / stepSeconds))
+      let simulatedSeconds = performance.now() / 1000
+      for (let step = 0; step < steps; step += 1) {
+        simulatedSeconds += stepSeconds
+        deps.runSimTick(stepSeconds, simulatedSeconds, true)
+        animals.forEach((animal) => animal.update(stepSeconds, 1))
+        presentHunts(stepSeconds, 1)
+      }
     },
     stepHunt: (seconds) => {
       // Tick the sim directly, the way the frame loop does: animals walk, collide, then the

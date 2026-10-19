@@ -6,6 +6,7 @@ import { freeRoomFor, HOUSE_CAPACITY, houseAccepts, houseWithRoom, occupantsByHo
 import type { ProgressAction } from './farm-progression'
 import { createFoodWeb, DIETS, GOODS, HOUSE_GOODS_CAPACITY, hungerLevel, isPredatorDiet, PREDATOR_HUNTS_BELOW, catchMeal, PRODUCE, produceRate, servingOrder, SPOILED_SCRAPS, type FoodBoosts, type FoodReport, type FoodWebState, type GoodId, type HungerLevel } from './animal-diet'
 import { DAY_LENGTH_SECONDS } from './day-night'
+import { isApexSpecies } from './apex-raid'
 
 export interface SpeciesAnimalTuning {
   readonly visitDelaySeconds?: number
@@ -91,6 +92,8 @@ export const ANIMAL_LIFE_CONFIG: AnimalLifeConfig = {
   departSeconds: 18,
   packSizes: DEFAULT_PACK_SIZES,
   adultScale: 1,
+  // A raiding mountain lion makes up its mind about a legendary farm at once, before the raid is over.
+  species: { cougar: { enterFarmSeconds: 1.5 } },
 }
 
 /** Random stretch factors: no two waits, arrivals or visits come out the same. */
@@ -238,6 +241,17 @@ export interface AnimalLife {
   tick(snapshot: AnimalLifeSnapshot, deltaSeconds: number): readonly AnimalLifeEvent[]
   setStage(id: string, stage: AnimalStage): readonly AnimalLifeEvent[]
   discover(species: string): readonly AnimalLifeEvent[]
+  /**
+   * Bring an apex predator straight onto the farm (stage 2), skipping the carnival:
+   * a crowd summoned it (`apex-raid.ts`). Uses its waiting stage-0 record, or makes
+   * one. Refused while one of the species is already in the world.
+   */
+  summon(species: string): readonly AnimalLifeEvent[]
+  /**
+   * Send a visitor back out of the world (stage 0) without queueing another visit:
+   * the mountain lion going back to the hills after a raid.
+   */
+  sendAway(id: string): readonly AnimalLifeEvent[]
   remove(id: string): AnimalRecord | null
   /** Credit one completed bite to this animal only. */
   recordFruitEaten(id: string, plant: string): boolean
@@ -641,12 +655,18 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     }
   }
 
+  /** Queue a carnival visit. An apex predator never comes by the carnival: a crowd summons it. */
+  function queueVisitor(species: string): void {
+    if (isApexSpecies(species) || pendingVisitors.includes(species)) return
+    pendingVisitors.push(species)
+  }
+
   function queueEligibleGuests(farm: FarmSnapshot): void {
     for (const species of speciesIds) {
       const trigger = DISCOVERY[species]
       if (!trigger || !requirementMet(trigger, farm) || discovered.has(species) || !rules.discoverable(species)) continue
       discovered.add(species)
-      pendingVisitors.push(species)
+      queueVisitor(species)
     }
   }
   /**
@@ -768,8 +788,37 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
     discover(species) {
       if (!speciesIds.includes(species) || discovered.has(species)) return []
       discovered.add(species)
-      pendingVisitors.push(species)
+      queueVisitor(species)
       return []
+    },
+    summon(species) {
+      if (!speciesIds.includes(species)) return []
+      if ([...animals.values()].some((animal) => animal.species === species && animal.stage > 0)) return []
+      const animal = [...animals.values()].find((entry) => entry.species === species && entry.stage === 0)
+        ?? (hasPopulationSlot() ? newAnimal(species, 0) : undefined)
+      if (!animal) return []
+      discovered.add(species)
+      animal.stage = 2
+      animal.elapsed = 0
+      animal.invited = true
+      animal.leaving = null
+      animal.packId = null
+      animal.insideId = null
+      animal.helium = 1
+      animal.fullness = 1
+      animal.hunger = 'full'
+      rollWaits(animal)
+      return [{ kind: 'enterFarm', animalId: animal.id, species, stage: 2, action: 'visitSpecies' }]
+    },
+    sendAway(id) {
+      const animal = animals.get(id)
+      if (!animal || animal.stage === 0) return []
+      animal.stage = 0
+      animal.elapsed = 0
+      animal.leaving = null
+      animal.packId = null
+      animal.insideId = null
+      return [{ kind: 'departCarnival', animalId: animal.id, species: animal.species, stage: 0 }]
     },
     setStage(id, stage) {
       const animal = animals.get(id)
@@ -797,7 +846,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
       // species that already has a resident, so without this the farm would
       // never see another cow after the first one left.
       const speciesLeft = [...animals.values()].some((other) => other.species === animal.species && other.stage > 0)
-      if (animal.stage > 0 && !speciesLeft && !pendingVisitors.includes(animal.species)) pendingVisitors.push(animal.species)
+      if (animal.stage > 0 && !speciesLeft) queueVisitor(animal.species)
       // A sale is not a vacancy sign: the next guest takes its time, and the
       // species it was sold from waits a while longer still.
       if (animal.stage > 0) {
@@ -902,7 +951,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
         highestAnimal = Math.max(highestAnimal, Number(saved.id.replace(/^animal-/, '')) || 0)
       }
       for (const species of state.discovered) if (known(species)) discovered.add(species)
-      for (const species of state.pendingVisitors) if (known(species)) pendingVisitors.push(species)
+      for (const species of state.pendingVisitors) if (known(species) && !isApexSpecies(species)) pendingVisitors.push(species)
       nextAnimalId = Math.max(highestAnimal + 1, Math.floor(finite(state.nextAnimalId, 1)))
       arrivalElapsed = Math.max(0, finite(state.arrivalElapsed))
       foodWeb.importState(state.food)
@@ -1014,7 +1063,7 @@ export function createAnimalLife(speciesIds: readonly string[], options: AnimalL
               animal.packId = null
               events.push({ kind: 'departCarnival', animalId: animal.id, species: animal.species, stage: 0 })
               // It will wander back some other day.
-              if (!pendingVisitors.includes(animal.species)) pendingVisitors.push(animal.species)
+              queueVisitor(animal.species)
               startCooldown(animal.species, 0.75)
             }
           } else if (animal.stage === 1 && animal.elapsed >= animal.visitAfter && onTheirShift && suitable) eventsFor(animal, 2, events)

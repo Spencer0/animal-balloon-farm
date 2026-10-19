@@ -30,8 +30,11 @@ export const ANIMAL_SALE_PRICES: Readonly<Record<BalloonAnimalId, number>> = {
   snake: 26,
   mole: 18,
   squirrel: 22,
+  deer: 20,
   // The one-of-a-kind end-game animal: worth the most, though it is far more valuable on the farm making gems.
   starhorn: 60,
+  // The tamed apex predator: one of a kind, and it took a farm of legend to keep it.
+  cougar: 80,
 }
 
 export interface AnimalSaleStatus {
@@ -60,6 +63,11 @@ export function canSellAnimal(status: AnimalSaleStatus): boolean {
 export function plantSaleValue(species: PlantId, growth: number): number {
   const normalizedGrowth = Number.isFinite(growth) ? Math.min(1, Math.max(0, growth)) : 0
   return Math.max(1, Math.round(PLANT_SALE_PRICES[species] * (0.5 + normalizedGrowth)))
+}
+
+/** What a plant in the ground sells for. A withered one is worth nothing: selling it only clears it away. */
+export function gardenPlantSaleValue(plant: { readonly species: PlantId; readonly growth: number; readonly withered?: boolean }): number {
+  return plant.withered ? 0 : plantSaleValue(plant.species, plant.growth)
 }
 
 /** Animal progression adds 25% of base value per earned stage, up to double. */
@@ -119,7 +127,7 @@ const ANIMAL_NAMES = [
 ] as const
 
 /** A one-of-a-kind species keeps one fixed name, not a pick from the list. */
-export const UNIQUE_ANIMAL_NAMES: Readonly<Record<string, string>> = { starhorn: 'Twinkle' }
+export const UNIQUE_ANIMAL_NAMES: Readonly<Record<string, string>> = { starhorn: 'Twinkle', cougar: 'Sable' }
 
 /** Make a fresh, unique set of friendly names for this game session. */
 export function generateAnimalNames(count: number, random: () => number = Math.random): readonly string[] {

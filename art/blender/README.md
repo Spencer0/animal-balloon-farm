@@ -53,6 +53,27 @@ The sheep's vanilla balloon fleece is individually curled, with an apricot face,
 
 The runtime uses a single glossy red balloon material as the **wild carnival mask** for all six species. Every model preserves its standard GLB materials; call `animal.setAppearance('standard')` on capture to restore its authored palette (`'wild'` reapplies the full-red mask). This reversible switch is available now; the red-to-color capture transition will be animated later.
 
+## Mountain Lion: the apex predator
+
+- Authoring script: [`balloon_cougar.py`](balloon_cougar.py) (imports the helpers from `balloon_friends.py` and the
+  slotted-action shim from `balloon_starhorn.py`)
+- Source / portrait / runtime GLB: `../../public/assets/animals/balloon-cougar.blend`, `balloon-cougar-review.png`, `balloon-cougar.glb`
+
+```powershell
+blender --background --factory-startup --python art/blender/balloon_cougar.py
+```
+
+A long, low tawny cat on the raccoon's skeleton with the legs spread along the body (`LEG_SPREAD`), the head
+carried below the shoulders, a cream muzzle and chest, and a long tail curling up into a black tip. The face is its
+own: amber eyes with slit pupils (the `pupil` nodes still turn to hearts), low stern brows, dark tear lines and two
+small fangs. `WALK`, `IDLE` and a one-shot `STRIKE`, at `DETAIL = .45`. `STRIKE` (`animate_strike`) crouches, leaps,
+rears and swipes the near forepaw down across the prey; the raid plays it on every pounce, and its beats match
+`LION_TUNING` in `src/game/apex-raid.ts` (the blow is frame 17, when the prey pops). Planted paws are solved
+against the body's lift, pitch, roll and stretch (`planted_z`) so no frame dips below the lawn: the runtime grounds
+the model on the lowest point any clip reaches. It was authored in a cloud session with Blender 4.2 LTS as
+the `bpy` Python module (`pip install bpy==4.2.23` under Python 3.11) and `ABF_RENDER_ENGINE=CYCLES`, which runs
+the script unchanged: `python art/blender/balloon_cougar.py`.
+
 ## Owl: the night-shift flier
 
 - Authoring script: `make_owl()` in [`balloon_friends.py`](balloon_friends.py)

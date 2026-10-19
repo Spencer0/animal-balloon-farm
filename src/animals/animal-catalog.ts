@@ -116,10 +116,22 @@ export const ANIMAL_CATALOG = [
     assetUrl: 'assets/animals/balloon-squirrel.glb', spawn: [-3, 4], carnivalSpawn: [-20, 5], seed: 12421, size: 1.55, speed: 1.35, bounds: { x: 10.5, z: 6.1 },
   },
   {
+    id: 'deer', name: 'Deer', label: 'deer', spriteUrl: 'assets/animals/balloon-deer-review.png',
+    subtitle: 'The garden raider', description: 'A caramel balloon deer with buttercream dapples, big blush ears and velvet antler nubs, and an appetite for whatever you just grew.',
+    note: 'It steps over the fence and eats your plants, one at a time. Set out a salt lick and it would much rather lick that.', color: '#a8683c', gesture: 'Flicks its ears',
+    assetUrl: 'assets/animals/balloon-deer.glb', spawn: [5, 3], carnivalSpawn: [23, 0], seed: 13331, size: 2.6, speed: 1.1, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
     id: 'starhorn', name: 'Starhorn', label: 'starhorn', spriteUrl: 'assets/animals/balloon-starhorn-review.png',
     subtitle: 'The harmony pony', description: 'A pearly lilac balloon pony with a twisted star-tipped horn, a pastel-rainbow cloud mane and a little gold star on its flank.',
     note: 'There is only one. It trots in when the farm is in tune, sips nectar from the flowers, and leaves a star gem behind. It has no house and no young.', color: '#bf9fe6', gesture: 'Tosses its mane',
     assetUrl: 'assets/animals/balloon-starhorn.glb', spawn: [4, -5], carnivalSpawn: [-22, -15], seed: 11003, size: 2.7, speed: 1.0, bounds: { x: 10.5, z: 6.1 },
+  },
+  {
+    id: 'cougar', name: 'Mountain Lion', label: 'mountain lion', spriteUrl: 'assets/animals/balloon-cougar-review.png',
+    subtitle: 'The apex of the hills', description: 'A tawny balloon mountain lion with a cream muzzle and a black-tipped tail. It never comes to the carnival: it comes for a herd that has grown too big.',
+    note: 'Let any one species pass six and it smells the crowd from the hills. It eats every last one, even the ones hiding indoors, then leaves. Only a farm of legend can tame it.', color: '#c8955a', gesture: 'Bares its fangs',
+    assetUrl: 'assets/animals/balloon-cougar.glb', spawn: [-4, -4], carnivalSpawn: [26, -10], seed: 13331, size: 2.9, speed: 1.4, bounds: { x: 10.5, z: 6.1 },
   },
 ] as const satisfies readonly (AnimalCatalogFields & { readonly id: string })[]
 

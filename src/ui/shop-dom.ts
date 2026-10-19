@@ -85,6 +85,7 @@ const PIP_QUOTES = [
   "Blue pack for a tidy lawn, green pack for a meadow. Press E with the bag out to swap.",
   "Land? I know a surveyor. Reach the next farmer level and I will make the introduction.",
   "The Snower? Balloon on the outside, blizzard on the inside. Press 4 once it is yours.",
+  "Deer in the carrots? A salt lick keeps them busy. They cannot resist it.",
 ];
 
 function escapeHtml(text: string): string {
