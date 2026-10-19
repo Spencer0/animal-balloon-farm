@@ -74,6 +74,7 @@ const SPECIES_META: Readonly<Record<string, SpeciesMeta>> = {
   snake: { rarity: "Rare", traits: ["Meadow Hunter", "Slithers", "Basks on Rocks"] },
   squirrel: { rarity: "Uncommon", traits: ["Berry Nibbler", "Bushy Tail", "Daytime Forager"] },
   mole: { rarity: "Uncommon", traits: ["Digs Deep", "Loves Bare Earth", "Poor Eyesight"] },
+  deer: { rarity: "Common", traits: ["Garden Raider", "Salt Licker", "Light on Its Hooves"] },
   starhorn: { rarity: "Legendary", traits: ["One of a Kind", "Sips Nectar", "Makes Star Gems"] },
 };
 

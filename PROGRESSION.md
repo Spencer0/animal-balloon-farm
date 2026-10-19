@@ -23,7 +23,7 @@ Pip's shop building itself appears at farmer level 2 (`SHOP_UNLOCK_LEVEL` in
 | --- | --- | --- |
 | Tall Grass Seed Pack | `UPGRADE_CATALOG['tall-grass']` | 40 coins, farmer level 2 on screen (`unlockLevel` 1). One only. |
 | Land Deed | `UPGRADE_CATALOG['land-deed']` | `50 + 25 * owned` coins; deed N needs farmer level N+1 on screen. 15 in all. |
-| Props | `PROP_UNLOCK_LEVEL` | Fence at the start, coop and barn at level 2, statue and fountain at 3, oak at 4. |
+| Props | `PROP_UNLOCK_LEVEL` | Fence at the start, coop, barn and salt lick at level 2, statue and fountain at 3, oak at 4. |
 
 `unlockLevel` values are zero-based; the screen shows them plus one.
 

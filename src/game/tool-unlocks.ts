@@ -245,6 +245,8 @@ export const PROP_UNLOCK_LEVEL: Readonly<Record<PropId, number>> = {
   'rock-pile': 3,
   molehill: 1,
   'squirrel-house': 1,
+  // With the shop itself: deer raid a garden in chapter 1, so the cure is on the first shelf.
+  'salt-lick': 1,
 }
 
 export function propUnlockLevel(id: PropId): number {

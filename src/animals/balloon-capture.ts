@@ -18,6 +18,7 @@ const PAINT_PALETTES: Record<BalloonAnimalId, readonly [string, string]> = {
   snake: ['#3f9e6e', '#2a7650'],
   squirrel: ['#bd683c', '#f2d4b0'],
   mole: ['#5b5663', '#f2a3ad'],
+  deer: ['#a8683c', '#fbf1dc'],
   starhorn: ['#bf9fe6', '#ffd84f'],
 }
 
@@ -284,6 +285,15 @@ function captureGesture(id: BalloonAnimalId, time: number, duration: number): Ca
         pitch: Math.sin(time * 2.1) * 0.03 * active,
         roll: Math.sin(time * 2.6) * 0.05 * active,
         yaw: Math.sin(time * 2.6) * 0.22 * active,
+      }
+    case 'deer':
+      // A light, springy prance with the head held high.
+      return {
+        fill,
+        lift: active * (0.03 + Math.max(0, Math.sin(time * 4.2)) * 0.1),
+        pitch: Math.sin(time * 4.2) * 0.06 * active,
+        roll: Math.sin(time * 2.4) * 0.04 * active,
+        yaw: Math.sin(time * 1.9) * 0.14 * active,
       }
     case 'squirrel':
       return {

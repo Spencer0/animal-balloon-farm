@@ -315,7 +315,8 @@ export function farmMetric(state: FarmState, kind: string, species?: string): nu
     case 'meadowArea': return state.meadowArea ?? 0
     case 'waterArea': return state.waterArea
     case 'flatArea': return state.flatGrassArea
-    case 'plantCount': return species ? state.plantCounts[species] ?? 0 : 0
+    // No species counts every grown plant in the garden, whatever it is (what a deer smells).
+    case 'plantCount': return species ? state.plantCounts[species] ?? 0 : Object.values(state.plantCounts).reduce((sum, count) => sum + count, 0)
     case 'residentCount': return species ? state.residentCounts?.[species] ?? 0 : 0
     case 'preyEaten': return species ? state.preyEaten?.[species] ?? 0 : 0
     case 'propCount': return species ? state.propCounts?.[species] ?? 0 : 0

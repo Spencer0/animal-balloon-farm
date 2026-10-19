@@ -24,6 +24,7 @@ import { poppyStages } from './garden/poppy-stages'
 import { rootVegetables } from './garden/root-vegetables'
 import { vinePatch } from './garden/vine-patch'
 import { chapterOne } from './garden/chapter-one'
+import { gardenRaid, saltLickDistraction } from './deer/garden-raid'
 import { escapeKeys } from './ui/escape-keys'
 
 /** Every scenario, in the order the console lists them. Add new ones here. */
@@ -38,6 +39,7 @@ export const SCENARIOS: readonly Scenario[] = [
   firstPlant,
   panLimit,
   careCues, poppyStages, rootVegetables, vinePatch, chapterOne,
+  gardenRaid, saltLickDistraction,
   escapeKeys,
 ]
 

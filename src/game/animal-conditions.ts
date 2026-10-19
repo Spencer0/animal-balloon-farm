@@ -59,7 +59,10 @@ export interface ConditionRequirement {
   readonly kind: ConditionKind
   /** Square meters for the area kinds; a whole number of plants for `plantCount`. */
   readonly amount?: number
-  /** Animal species id for `residentSpecies`, plant species id for `plantCount` or `fruitEaten`. */
+  /**
+   * Animal species id for `residentSpecies`, plant species id for `plantCount` or `fruitEaten`.
+   * A `plantCount` without one counts every grown plant, of any kind.
+   */
   readonly species?: string
   /** Minimum grass maturity (0..1) for a patch to count toward `grassArea`. */
   readonly maturity?: number
@@ -100,7 +103,7 @@ export function conditionMetricLabel(requirement: ConditionRequirement | null): 
     case 'meadowArea': return 'Tall meadow grass'
     case 'waterArea': return 'Visible pond water'
     case 'flatArea': return 'Level grassy pasture'
-    case 'plantCount': return requirement.species ? plantMetricLabel(requirement.species) : null
+    case 'plantCount': return requirement.species ? plantMetricLabel(requirement.species) : 'Grown garden plants'
     case 'residentCount': return requirement.species ? `Resident ${speciesPlural(requirement.species)}` : null
     case 'preyEaten': return requirement.species ? `${capitalise(speciesPlural(requirement.species))} eaten` : null
     case 'propCount': return requirement.species ? `${capitalise(propPlural(requirement.species))} on the farm` : null
@@ -652,6 +655,23 @@ export const SPECIES_CONDITIONS: Readonly<Record<string, SpeciesConditions>> = {
         'Eyes go to hearts. Ready to raise kits in its little house.'),
     ]),
   },
+  deer: {
+    stages: withStageNumbers([
+      CARNIVAL,
+      {
+        title: 'Visit the farm',
+        hint: 'Smells a growing garden from the tents and steps over the fence for a snack: two plants grown anywhere.',
+        requirement: { kind: 'plantCount', amount: 2 },
+        result: 'Wanders inside the fence and starts eating your plants, one at a time.',
+      },
+      COUNT_STAGE('Call the farm home', 'Would much rather lick salt than eat your garden: set out a salt lick.',
+        { kind: 'propCount', species: 'salt-lick', amount: 1 },
+        'Paints into caramel and cream. Licks salt now, and leaves the plants be.'),
+      COUNT_STAGE('Love the farm', 'Wants a barn to raise fawns in, with the salt lick kept close.',
+        { kind: 'propCount', species: 'barn', amount: 1, and: [{ kind: 'propCount', species: 'salt-lick', amount: 1 }] },
+        'Eyes go to hearts. Ready to raise fawns in the barn.'),
+    ]),
+  },
   owl: OWL_CONDITIONS,
   raccoon: RACCOON_CONDITIONS,
   mouse: MOUSE_CONDITIONS,
@@ -720,6 +740,8 @@ export function isNightOnly(species: string): boolean {
  * the farm has to look like before that species wanders up to the tents.
  */
 export const DISCOVERY: Readonly<Record<string, ConditionRequirement & { readonly description: string }>> = {
+  // Chapter 1's trouble: any two grown plants, of any kind, and a deer is on its way.
+  deer: { kind: 'plantCount', amount: 2, description: 'A garden coming up green smells like a salad bar to something with big ears.' },
   squirrel: { kind: 'plantCount', species: 'blueberry', amount: 1, description: 'Ripe blueberry perfume draws a bushy-tailed visitor to the tents.' },
   sheep: { kind: 'plantCount', species: 'clover', amount: 1, description: 'Clover on the breeze carries all the way to the tents.' },
   chicken: { kind: 'plantCount', species: 'dandelion', amount: 1, description: 'Dandelion seed is a rumor every hen hears.' },
