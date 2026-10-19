@@ -136,10 +136,13 @@ test('the model ships WALK, IDLE and a one-shot STRIKE whose blow lands on the r
   const glb = JSON.parse(bytes.subarray(20, 20 + bytes.readUInt32LE(12)).toString())
   const clip = (name) => glb.animations.find((animation) => animation.name === name)
   assert.deepEqual(glb.animations.map((animation) => animation.name).sort(), ['IDLE', 'STRIKE', 'WALK'])
-  // The strike drives every joint the walk does, so nothing snaps to its rest pose mid-pounce.
-  const joints = (name) => new Set(clip(name).channels.map((channel) => `${channel.target.node}:${channel.target.path}`))
-  const strike = joints('STRIKE')
-  for (const joint of joints('WALK')) assert.ok(strike.has(joint), joint)
+  // The strike drives exactly the joints the walk does: none missing, so nothing snaps to its rest pose
+  // mid-pounce, and none extra, because the exporter drops the rest offset of a channel only one clip
+  // keys (a keyed head location once left the head inside the body in every other clip).
+  const joints = (name) => clip(name).channels.map((channel) => `${channel.target.node}:${channel.target.path}`).sort()
+  assert.deepEqual(joints('STRIKE'), joints('WALK'))
+  const head = glb.nodes.find((node) => node.name === 'COUGAR RIG · hunter head')
+  assert.ok(head.translation && head.translation[0] > 0.5, 'the head hangs ahead of the body')
   // Frame 17 of 24 fps is the blow (art/blender/balloon_cougar.py); the sim pops the prey then.
   const T = m.LION_TUNING
   const end = Math.max(...clip('STRIKE').samplers.map((sampler) => glb.accessors[sampler.input].max[0]))

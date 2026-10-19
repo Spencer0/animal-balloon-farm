@@ -113,34 +113,35 @@ def animate_strike(body, head, neck, ears, tail, legs, hooves, bell, leg_positio
     for obj in everything:
         bf.begin_action(obj, "BALLOON COUGAR · STRIKE")
     rad = math.radians
-    # Per key frame: body (lift, pitch°, roll°, yaw°, forward shift, stretch), head (pitch°, yaw°, forward, drop),
-    # (a negative drop lifts the head: it stays up over the shoulders through the blow, or a high camera
-    # loses it behind them), ears pinned back°, tail (lift°, lash°), bell swing°, front (swing°, paw lift), hind (swing°, paw lift),
+    # Per key frame: body (lift, pitch°, roll°, yaw°, forward shift, stretch), head (pitch°, yaw°; it stays up
+    # over the shoulders through the blow, or a high camera loses it behind them), ears pinned back°, tail (lift°, lash°), bell swing°, front (swing°, paw lift), hind (swing°, paw lift),
     # and the swiping near forepaw (swing°, across°, paw lift, paw curl°). Swing is about the side axis:
     # negative reaches forward. Across is about the long axis: negative is out to the near side. A paw
     # lift is how far above the lawn the paw would be if the leg hung straight (in the leap, the body's
     # own lift, so the legs fly with it); a swung leg carries its paw higher still.
     poses = {
-        1:       dict(lift=0, pitch=0, roll=0, yaw=0, shift=0, stretch=0, head=(0, 0, 0, 0), ears=-4, tail=(-4, 0), bell=0, front=(0, 0), hind=(0, 0), swipe=None),
-        3:       dict(lift=-.12, pitch=4, roll=0, yaw=1, shift=-.03, stretch=-.02, head=(8, 0, .03, .05), ears=-20, tail=(-6, 12), bell=4, front=(0, 0), hind=(-4, 0), swipe=None),
-        CROUCH:  dict(lift=-.25, pitch=7, roll=0, yaw=-1, shift=-.07, stretch=-.04, head=(14, 0, .07, .12), ears=-36, tail=(-8, -14), bell=8, front=(0, 0), hind=(-10, 0), swipe=None),
-        TAKEOFF: dict(lift=-.02, pitch=-10, roll=0, yaw=0, shift=.02, stretch=.06, head=(2, 0, .06, .04), ears=-40, tail=(4, 4), bell=-18, front=(-45, .10), hind=(30, 0), swipe=None),
-        APEX:    dict(lift=.40, pitch=-3, roll=0, yaw=0, shift=.04, stretch=.12, head=(-4, 0, .06, 0), ears=-42, tail=(12, 2), bell=-28, front=(-75, .40), hind=(40, .30), swipe=None),
-        LAND:    dict(lift=-.06, pitch=7, roll=0, yaw=0, shift=.04, stretch=.02, head=(6, 0, .04, .04), ears=-36, tail=(-2, 8), bell=22, front=(-10, 0), hind=(-20, .12), swipe=None),
-        14:      dict(lift=.06, pitch=-11, roll=-5, yaw=-6, shift=0, stretch=0, head=(-6, -8, .02, 0), ears=-38, tail=(4, -10), bell=12, front=(0, 0), hind=(-10, 0), swipe=(-135, -26, .20, -40)),
-        WIND_UP: dict(lift=.08, pitch=-13, roll=-8, yaw=-10, shift=-.02, stretch=.01, head=(-8, -12, .02, -.02), ears=-40, tail=(6, -14), bell=4, front=(0, 0), hind=(-8, 0), swipe=(-155, -36, .24, -50)),
-        HIT:     dict(lift=-.04, pitch=5, roll=5, yaw=7, shift=.18, stretch=.05, head=(2, 4, .14, -.08), ears=-44, tail=(-2, 12), bell=-14, front=(0, 0), hind=(-6, 0), swipe=(-86, 16, .16, 34)),
-        19:      dict(lift=-.05, pitch=4, roll=3, yaw=9, shift=.15, stretch=.03, head=(0, 2, .10, -.09), ears=-30, tail=(-4, 8), bell=-6, front=(0, 0), hind=(-4, 0), swipe=(-42, 28, .06, 20)),
-        22:      dict(lift=-.02, pitch=2, roll=1, yaw=2, shift=.06, stretch=.01, head=(-2, 0, .05, -.06), ears=-16, tail=(-5, -4), bell=5, front=(0, 0), hind=(-2, 0), swipe=(-6, 4, 0, 4)),
-        END:     dict(lift=0, pitch=0, roll=0, yaw=0, shift=.01, stretch=0, head=(-1, 0, .01, -.01), ears=-8, tail=(-4, 3), bell=-1, front=(0, 0), hind=(-1, 0), swipe=None),
+        1:       dict(lift=0, pitch=0, roll=0, yaw=0, shift=0, stretch=0, head=(0, 0), ears=-4, tail=(-4, 0), bell=0, front=(0, 0), hind=(0, 0), swipe=None),
+        3:       dict(lift=-.12, pitch=4, roll=0, yaw=1, shift=-.03, stretch=-.02, head=(8, 0), ears=-20, tail=(-6, 12), bell=4, front=(0, 0), hind=(-4, 0), swipe=None),
+        CROUCH:  dict(lift=-.25, pitch=7, roll=0, yaw=-1, shift=-.07, stretch=-.04, head=(14, 0), ears=-36, tail=(-8, -14), bell=8, front=(0, 0), hind=(-10, 0), swipe=None),
+        TAKEOFF: dict(lift=-.02, pitch=-10, roll=0, yaw=0, shift=.02, stretch=.06, head=(2, 0), ears=-40, tail=(4, 4), bell=-18, front=(-45, .10), hind=(30, 0), swipe=None),
+        APEX:    dict(lift=.40, pitch=-3, roll=0, yaw=0, shift=.04, stretch=.12, head=(-4, 0), ears=-42, tail=(12, 2), bell=-28, front=(-75, .40), hind=(40, .30), swipe=None),
+        LAND:    dict(lift=-.06, pitch=7, roll=0, yaw=0, shift=.04, stretch=.02, head=(6, 0), ears=-36, tail=(-2, 8), bell=22, front=(-10, 0), hind=(-20, .12), swipe=None),
+        14:      dict(lift=.06, pitch=-11, roll=-5, yaw=-6, shift=0, stretch=0, head=(-6, -8), ears=-38, tail=(4, -10), bell=12, front=(0, 0), hind=(-10, 0), swipe=(-135, -26, .20, -40)),
+        WIND_UP: dict(lift=.08, pitch=-13, roll=-8, yaw=-10, shift=-.02, stretch=.01, head=(-8, -12), ears=-40, tail=(6, -14), bell=4, front=(0, 0), hind=(-8, 0), swipe=(-155, -36, .24, -50)),
+        HIT:     dict(lift=-.04, pitch=5, roll=5, yaw=7, shift=.18, stretch=.05, head=(2, 4), ears=-44, tail=(-2, 12), bell=-14, front=(0, 0), hind=(-6, 0), swipe=(-86, 16, .16, 34)),
+        19:      dict(lift=-.05, pitch=4, roll=3, yaw=9, shift=.15, stretch=.03, head=(0, 2), ears=-30, tail=(-4, 8), bell=-6, front=(0, 0), hind=(-4, 0), swipe=(-42, 28, .06, 20)),
+        22:      dict(lift=-.02, pitch=2, roll=1, yaw=2, shift=.06, stretch=.01, head=(-2, 0), ears=-16, tail=(-5, -4), bell=5, front=(0, 0), hind=(-2, 0), swipe=(-6, 4, 0, 4)),
+        END:     dict(lift=0, pitch=0, roll=0, yaw=0, shift=.01, stretch=0, head=(-1, 0), ears=-8, tail=(-4, 3), bell=-1, front=(0, 0), hind=(-1, 0), swipe=None),
     }
     for frame, pose in poses.items():
         bpy.context.scene.frame_set(frame)
         pitch = rad(pose["pitch"])
         scale = (1 + pose["stretch"], 1 - pose["stretch"] * .2, 1 - pose["stretch"] * .6)
         key(body, frame, location=(pose["shift"], 0, BODY_Z + pose["lift"]), rotation=(rad(pose["roll"]), pitch, rad(pose["yaw"])), scale=scale)
-        head_pitch, head_yaw, forward, drop = pose["head"]
-        key(head, frame, location=(HEAD_AT[0] + forward, 0, HEAD_AT[2] - drop), rotation=(0, rad(head_pitch), rad(head_yaw)))
+        head_pitch, head_yaw = pose["head"]
+        # Rotation only: a channel WALK and IDLE do not key (the head's location) makes the exporter drop
+        # the node's rest offset, and the head then sits in the middle of the body in every other clip.
+        key(head, frame, rotation=(0, rad(head_pitch), rad(head_yaw)))
         key(neck, frame, rotation=(0, rad(head_pitch * .6), rad(head_yaw * .5)))
         for index, ear in enumerate(ears):
             side = -1 if index == 0 else 1
